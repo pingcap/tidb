@@ -54,12 +54,21 @@ fn start_server() -> (
     SocketAddr,
     JoinHandle<Result<ConnectionReport, MysqlConnectionError>>,
 ) {
+    start_server_with(users())
+}
+
+/// [`start_server`] whose node keeps its accounts in `store`.
+fn start_server_with(
+    store: ConfiguredUserStore,
+) -> (
+    SocketAddr,
+    JoinHandle<Result<ConnectionReport, MysqlConnectionError>>,
+) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let worker = std::thread::spawn(move || {
         let (stream, peer_addr) = listener.accept().unwrap();
-        let store = users();
         serve_mysql_connection(
             stream,
             peer_addr,
@@ -244,7 +253,10 @@ fn live_commands_prefer_zlib_when_both_compression_bits_are_set() {
 
 #[test]
 fn com_refresh_privileges_keeps_go_two_ok_response_shape() {
-    let (address, worker) = start_server();
+    // `FLUSH PRIVILEGES` needs RELOAD (Go `buildFlush`).
+    let store = users();
+    store.accounts().grant("alice", "%", tidb_mysql::ReloadPriv.0);
+    let (address, worker) = start_server_with(store);
     let mut client = TcpStream::connect(address).unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     authenticate(&mut client, &mut reader, 0, 0);
@@ -268,6 +280,26 @@ fn com_refresh_privileges_keeps_go_two_ok_response_shape() {
     write_raw_packet(&mut client, 0, &[COM_QUIT]);
     let report = worker.join().unwrap().unwrap();
     assert_eq!(report.queries, 1, "FLUSH PRIVILEGES runs one SQL query");
+}
+
+/// Go's `handleRefresh(0x01)` returns `handleQuery`'s error: without RELOAD
+/// the `FLUSH PRIVILEGES` it runs is refused (1227), and that ERR is the
+/// command's only response.
+#[test]
+fn com_refresh_privileges_without_reload_is_refused_like_go() {
+    let (address, worker) = start_server();
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, 0, 0);
+
+    write_raw_packet(&mut client, 0, &[COM_REFRESH, 0x01]);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(packet[0], 0xff, "ERR packet: {packet:?}");
+    assert_eq!(u16::from_le_bytes([packet[1], packet[2]]), 1227);
+
+    write_raw_packet(&mut client, 0, &[COM_QUIT]);
+    worker.join().unwrap().unwrap();
 }
 
 #[test]

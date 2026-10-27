@@ -52,7 +52,27 @@ use tidb_txnkv::Key;
 
 /// The read direction of [`KvTable`]: the entry points that open a decoder
 /// or a cursor over the stored bytes.
-impl KvTable {
+/// Go's reader executors over a table (`TableReader`, `IndexReader`, `IndexLookUp`, `PointGet`): the executor's reads of a [`KvTable`].
+pub trait KvTableReader {
+    /// Go FKCheckExec's exact/prefix access, shared with cascade selection.
+    /// Existence checks request one handle and never decode unrelated rows.
+    /// The storage owner merges the transaction's current writes/tombstones.
+    fn foreign_key_handles(
+        &mut self,
+        index_id: Option<i64>,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+        limit: usize,
+    ) -> Result<Vec<TableHandle>, KvTableError>;
+
+    /// Legacy zone-only point read retained for unmigrated DML/FK callers.
+    /// Origin defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
+    fn get_row_by_handle(
+        &mut self,
+        handle: &TableHandle,
+        zone: &SessionTimeZone,
+    ) -> Result<Option<Vec<Datum>>, KvTableError>;
+
     /// The row-decoding metadata, detached from the table and optionally
     /// narrowed to the columns at `keep` (offsets into [`KvTable::columns`],
     /// ascending and unique).
@@ -63,7 +83,621 @@ impl KvTable {
     /// context at cursor-open time. The row codec is asked for only the kept
     /// columns' ids, so an unreferenced column is never decoded; `None` keeps
     /// the whole schema.
-    pub(in crate::kv_table) fn row_decoder_projected(
+    fn row_decoder_projected(
+        &self,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<RowDecoder, KvTableError>;
+
+    fn row_decoder_recomputed(
+        &self,
+        context: &RowDecodeContext,
+    ) -> Result<RowDecoder, KvTableError>;
+
+    /// A forward cursor over the table's record-key range, in key order.
+    ///
+    /// This is the streaming form of [`KvTable::scan_rows_with_handles_with_context`]: the
+    /// storage iterator stays open and one row is *decoded* per pull, so the
+    /// decoded rows alive at once are the caller's chunk rather than the whole
+    /// relation. (How far the laziness reaches below the storage seam is a
+    /// property of the backend's `iter`; see [`crate::access_path`].) The seam
+    /// returns an owned iterator, so the cursor does not borrow the table and
+    /// a caller may hold it across chunk boundaries.
+    fn row_cursor_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<RowCursor, KvTableError>;
+
+    /// [`KvTable::row_cursor_with_context`] narrowed to the columns at `keep`: the cursor
+    /// decodes and yields exactly those columns, in `keep`'s order.
+    ///
+    /// `handle_ranges` narrows which RECORDS are read, as
+    /// [`crate::table_access::TableAccess::accept_handle_ranges`] describes:
+    /// `None` reads the whole table.
+    fn row_cursor_projected_with_context(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: Option<&[IndexRange]>,
+        context: &RowDecodeContext,
+    ) -> Result<RowCursor, KvTableError>;
+
+    /// [`Self::row_cursor_projected_with_context`] with a walk direction:
+    /// `descending` reads the ranges last-to-first, each backwards -- the
+    /// local half of Go's `desc` table scan.
+    fn row_cursor_projected_directed_with_context(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: Option<&[IndexRange]>,
+        descending: bool,
+        ordered: bool,
+        context: &RowDecodeContext,
+    ) -> Result<RowCursor, KvTableError>;
+
+    /// Looks up several record handles through one storage batch and decodes
+    /// them with one row decoder. The returned slots preserve input handle
+    /// order and use `None` for an index entry whose record disappeared.
+    fn get_rows_by_handles_projected_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError>;
+
+    /// Decodes one record per handle in its known physical keyspace. The
+    /// partition IDs come from the index entry, not from probing for a match.
+    fn get_rows_by_routed_handles_projected_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        routes: Option<&[i64]>,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError>;
+
+    /// [`Self::get_rows_by_routed_handles_projected_with_context`] that also
+    /// answers the physical table each found row was read from, so a reader
+    /// reporting Go's `_tidb_tid` knows the partition of a handle it probed
+    /// for in every partition. A slot with no row has no physical id.
+    fn get_located_rows_by_routed_handles_projected_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        routes: Option<&[i64]>,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<(Vec<Option<Vec<Datum>>>, Vec<Option<i64>>), KvTableError>;
+
+    fn row_cursor_with_decoder(
+        &mut self,
+        decoder: RowDecoder,
+        handle_ranges: Option<&[IndexRange]>,
+        descending: bool,
+        ordered: bool,
+        zone: &SessionTimeZone,
+    ) -> Result<RowCursor, KvTableError>;
+
+    /// The record ranges this scan reads, as the storage seam's half-open
+    /// `[start, end)` pairs in ascending key order.
+    ///
+    /// With no handle ranges this is the ONE range the whole relation lives
+    /// in ([`KvTable::record_key_range`]). With them it is the intervals
+    /// [`crate::handle_range::record_key_ranges`] encodes, which is what
+    /// makes a `TableRangeScan` read less than the table. `keep_order`
+    /// selects Go's ordered-read half order versus his merged unordered wire
+    /// order, exactly as [`crate::handle_range::record_key_ranges`] documents.
+    fn record_key_ranges(
+        &self,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+        keep_order: bool,
+    ) -> Result<Vec<(Key, Key)>, KvTableError>;
+
+    /// The same intervals as [`Self::record_key_ranges], split into the
+    /// VALUE-ordered halves an ORDERED reader consumes one after the other --
+    /// Go's `firstPartGroupedRanges then `secondPartGroupedRanges
+    /// (`table_reader.go). An unsigned handle whose domain wraps the int64
+    /// boundary yields `[signed_half, unsigned_half]; a descending read
+    /// reverses the pair, exactly Go's `desc = true answer. Every other
+    /// shape is one group, and an unencodable bound falls back to the whole
+    /// record range as one group, reading a correct superset.
+    fn record_key_range_groups(
+        &self,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+        descending: bool,
+    ) -> Result<Vec<Vec<(Key, Key)>>, KvTableError>;
+
+    /// The record ranges this table's rows live in, as the storage seam's
+    /// half-open `[start, end)` pairs in ascending key order.
+    ///
+    /// One range PER physical id it reads. An unpartitioned table and a
+    /// whole-table scan of a partitioned one both give a contiguous block --
+    /// `CREATE TABLE` allocates the partition ids together, and this table's
+    /// index entries sit under the (smaller) table id, below the block
+    /// entirely -- but a PRUNED or explicitly SELECTED read gives a set with
+    /// holes in it, and the holes are the whole point: a single spanning
+    /// range would read the partitions pruning just proved cannot match.
+    fn record_key_range(&self) -> Vec<(Key, Key)>;
+
+    /// A cursor that reads this table's rows through the backend's
+    /// coprocessor -- predicate, row cap and projection evaluated at the
+    /// region -- with the session's staged writes merged back in, or `None`
+    /// when the backend has none or this table's shape is outside it.
+    ///
+    /// `keep` is the projected column set, in output order; `predicates`
+    /// describe the conjuncts the caller applies to every emitted row anyway,
+    /// so the remote filter is a pre-filter and cannot change the answer.
+    ///
+    /// A common-handle (clustered non-integer primary key) table is served
+    /// without a client-side handle merge. Its clustered primary metadata is
+    /// synthesized when the catalog omits the physical index entry, matching
+    /// the table's record-key layout and Go's always-present `IndexInfo`.
+    ///
+    /// `retain_identity` asks for the record handle beside `keep` even when
+    /// the projection omits it: writers, `_tidb_rowid` readers and a dirty
+    /// table's staged merge need it. A clean reader passes `false` and gets
+    /// Go's TableReader wire schema, exactly the pruned columns.
+    #[allow(clippy::too_many_arguments)]
+    fn pushdown_row_cursor_with_context(
+        &mut self,
+        keep: &[usize],
+        predicates: &[Expression],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
+        descending: bool,
+        keep_order: bool,
+        retain_identity: bool,
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError>;
+
+    /// [`Self::pushdown_row_cursor_with_context`] for a scan whose schema
+    /// carries Go's `ExtraPhysTblID`: a partitioned read then requests that
+    /// column LAST, as Go's TableScan does, and storage fills it from each
+    /// row's key, so a row's record key names its partition.
+    #[allow(clippy::too_many_arguments)]
+    fn pushdown_row_cursor_with_physical_id(
+        &mut self,
+        keep: &[usize],
+        predicates: &[Expression],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
+        descending: bool,
+        keep_order: bool,
+        retain_identity: bool,
+        physical_id: bool,
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError>;
+
+    fn pushdown_row_cursor_with_context_and_key_ranges(
+        &mut self,
+        keep: &[usize],
+        predicates: &[Expression],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
+        descending: bool,
+        keep_order: bool,
+        retain_identity: bool,
+        physical_id: bool,
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
+        precomputed_ranges: Option<&[(Key, Key)]>,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError>;
+
+    /// Builds table tasks with Go's partition-handle identity. Routes, when
+    /// present, are aligned with input handles and validated before any I/O.
+    #[allow(clippy::too_many_arguments)]
+    fn build_table_reader_from_routed_handles(
+        &mut self,
+        handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
+        scan_keep: &[usize],
+        predicates: &[Expression],
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        required_rows: usize,
+    ) -> Result<Option<StagedHandlesLookup>, KvTableError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_physical_table_reader(
+        &mut self,
+        scan_keep: &[usize],
+        predicates: &[Expression],
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        required_rows: usize,
+        key_ranges: &[(Key, Key)],
+        range_hints: &[usize],
+    ) -> Result<Option<StagedPhysicalLookup>, KvTableError>;
+
+    /// Converts sorted handles using the direct KV range builder shared with
+    /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
+    fn table_reader_handle_key_ranges(
+        table_id: i64,
+        handles: &[TableHandle],
+    ) -> Result<(Vec<(Key, Key)>, Vec<usize>), KvTableError>;
+
+    /// Returns original request positions, retaining route identity across
+    /// missing rows, filters and equal handles in different partitions.
+    fn finish_routed_rows_by_handles(
+        handles: &[TableHandle],
+        staged: StagedHandlesLookup,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError>;
+
+    fn finish_physical_rows(
+        handles: &[TableHandle],
+        staged: StagedPhysicalLookup,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError>;
+
+    /// Finishes one staged table lookup using the same chunk-backed handoff as
+    /// Go's `tableWorker.executeTask`, falling back to the row contract for
+    /// sources that cannot transfer typed chunks.
+    fn finish_lookup_by_handles(
+        handles: &[TableHandle],
+        staged: StagedHandlesLookup,
+        allow_chunks: bool,
+    ) -> Result<Option<FinishedLookup>, KvTableError>;
+
+    /// Retains decoded table batches and row positions instead of converting
+    /// each row to `Vec<Datum>` or copying rows into a merged chunk. Go stores
+    /// `chunk.Row` references in the table task and computes the integer
+    /// `rowIdx` once per row before sorting; this implementation follows that
+    /// contract with `(batch,row)` positions.
+    fn finish_lookup_chunks_by_handles(
+        handles: &[TableHandle],
+        staged: StagedPhysicalLookup,
+    ) -> Result<Option<FinishedLookupChunk>, KvTableError>;
+
+    /// Opens a coprocessor partial aggregation over this table, or returns
+    /// `None` so the executor computes the same partial result locally.
+    ///
+    /// An aggregate result cannot be merged with staged rows. A dirty table
+    /// therefore refuses before sending a request, and a backend-reported
+    /// staged buffer closes the request and falls back as a second guard.
+    #[allow(clippy::too_many_arguments)]
+    fn pushdown_partial_aggregate_cursor(
+        &mut self,
+        keep: &[usize],
+        predicates: &[Expression],
+        handle_ranges: Option<&[IndexRange]>,
+        aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError>;
+
+    /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
+    /// Aggregate arguments and group keys are remapped from the pruned scan
+    /// schema to the covering index's physical column order.
+    fn pushdown_index_partial_aggregate_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        scan_keep: &[usize],
+        predicates: &[Expression],
+        aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError>;
+
+    /// Materializes the index/handle columns in table-column order for an
+    /// index-side predicate. No record lookup occurs here.
+    fn index_filter_row(
+        &self,
+        index_id: i64,
+        handle: &TableHandle,
+        key: &[u8],
+        value: &[u8],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Datum>, KvTableError>;
+
+    /// Opens a coprocessor index scan whose rows carry only the indexed
+    /// columns and the table handle. The access source consumes those rows as
+    /// an ordered handle stream before issuing its table lookup batch.
+    /// `allow_prefix_projection` is the selected IndexReader's coverage proof:
+    /// prefix columns may remain in its internal schema for null conditions,
+    /// while the planner has checked every parent requiring their full values.
+    #[allow(clippy::too_many_arguments)]
+    fn pushdown_index_handle_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        scan_keep: &[usize],
+        scan_extra_handle_slot: Option<usize>,
+        predicates: &[Expression],
+        topn: Option<&PushdownTopN>,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+        desc: bool,
+        index_limit: Option<u64>,
+        prefix_limit: Option<&crate::remote_scan::PushdownPrefixLimit>,
+        paging_min_size: Option<u64>,
+        unordered: bool,
+        handle_only: bool,
+        projected_keep: Option<&[usize]>,
+        allow_prefix_projection: bool,
+    ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError>;
+
+    /// Scans the table's record-key range in key order, decoding each value.
+    /// Returns rows as `Datum`s in schema order (a missing column decodes
+    /// NULL, and the handle columns come from the key).
+    fn scan_rows_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Vec<Datum>>, KvTableError>;
+
+    /// Like [`KvTable::scan_rows_with_context`], but each row carries the record handle its
+    /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
+    ///
+    /// Uses the backend's table reader, merging staged writes, or the local
+    /// [`RowCursor`] when the backend cannot serve the table's shape. A caller
+    /// that does not need the whole relation in memory should hold a cursor
+    /// instead (see [`KvTable::row_cursor_with_context`]).
+    fn scan_rows_with_handles_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
+
+    /// Like [`KvTable::scan_rows_with_handles_with_context`], retaining the
+    /// physical table id encoded in every record key.
+    ///
+    /// DDL rewrites need this identity: a partitioned table can contain the
+    /// same local handle in more than one physical partition, and rewriting
+    /// either row under the logical table id would collapse the partitions.
+    /// Go `checkForNullValue` as `modifyColsFromNull2NotNull` runs it before
+    /// a primary key makes its columns NOT NULL: whether any row holds NULL
+    /// in one of `offsets`.
+    fn any_null_in_columns(
+        &mut self,
+        offsets: &[usize],
+        context: &RowDecodeContext,
+    ) -> Result<bool, KvTableError>;
+
+    fn scan_physical_rows_with_handles_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError>;
+
+    /// [`KvTable::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
+    /// same intervals the read side offers a `TableRangeScan` through
+    /// [`crate::table_access::TableAccess::accept_handle_ranges`]. `None`
+    /// reads the whole table.
+    ///
+    /// This is the WRITE path's form of that narrowing, and it narrows only
+    /// WHICH RECORDS ARE FETCHED: the ranges are a superset of the rows the
+    /// `WHERE` admits, and the caller still evaluates that `WHERE` per row, so
+    /// the set of rows a statement acts on is the same set the full scan
+    /// produced.
+    fn scan_rows_with_handles_in_with_context(
+        &mut self,
+        handle_ranges: Option<&[IndexRange]>,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
+
+    fn scan_rows_with_handles_recomputed(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
+
+    /// Go `sampleFetcher.run` over one sampled range: the first record of
+    /// the read snapshot in `[start, end)`, scanned forward whatever the
+    /// sample's order, decoded with generated columns recomputed.
+    fn first_snapshot_row_in_range(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        context: &RowDecodeContext,
+    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError>;
+
+    /// The handles an index range covers, in index order.
+    ///
+    /// Go turns a range into a key interval in `IndexRangesToKVRanges`: the
+    /// low key is the encoded low bound, advanced to its `PrefixNext` when the
+    /// bound is excluded; the high key is the encoded high bound, advanced to
+    /// its `PrefixNext` when the bound is INCLUDED, because the scan's upper
+    /// end is exclusive. This walks that interval and reads the handle out of
+    /// each entry.
+    fn scan_index_range(
+        &mut self,
+        index_id: i64,
+        range: &IndexRange,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<TableHandle>, KvTableError>;
+
+    /// A forward cursor over one index range, in index order -- the streaming
+    /// form of [`KvTable::scan_index_range`].
+    fn index_range_cursor(
+        &mut self,
+        index_id: i64,
+        range: &IndexRange,
+        zone: &SessionTimeZone,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+
+    /// A cursor over one index range in the physical scan direction Go put
+    /// on `PhysicalIndexScan`.
+    fn index_range_cursor_with_direction(
+        &mut self,
+        index_id: i64,
+        range: &IndexRange,
+        zone: &SessionTimeZone,
+        descending: bool,
+        ordered: bool,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+
+    /// A forward cursor over all `ranges`, partition by partition. Go builds
+    /// one index request per physical partition and puts every range for that
+    /// partition in the request before advancing to the next partition.
+    fn index_ranges_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+
+    /// A cursor over several index ranges in the physical scan direction,
+    /// preserving global index order when the plan requires it.
+    fn index_ranges_cursor_with_direction(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+        descending: bool,
+        ordered: bool,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+
+    /// The UNORDERED cursor an index LOOKUP walks: every range, partition by
+    /// partition, no cross-partition merge.
+    ///
+    /// Go's `IndexLookUpExecutor.buildTableKeyRanges` builds ONE index
+    /// request per pruned partition holding EVERY range for that partition
+    /// (`buildKeyRanges` is called once with all ranges and all `tableIDs`),
+    /// and `indexWorker.fetchHandles` drains request `i` to exhaustion
+    /// before touching `i + 1` -- so the handle stream of an unordered
+    /// partitioned lookup is PARTITION-major. Opening one cursor per range
+    /// instead (each concatenating every partition) would make the stream
+    /// RANGE-major, and a multi-range lookup such as `b IN (...)` over a
+    /// partitioned table would interleave partitions where Go finishes each
+    /// partition's tasks first.
+    ///
+    /// Always ascending: an unordered lookup has no `Desc` -- Go sets
+    /// `PhysicalIndexScan.Desc` only for a keep-order plan, and a keep-order
+    /// lookup answers through the cross-partition merge
+    /// ([`Self::index_range_cursor_with_direction`] with `ordered`), never
+    /// through this cursor.
+    fn index_lookup_ranges_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+
+    fn index_ranges_cursor_for_physical_ids(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+        physical_ids: &[i64],
+        descending: bool,
+        ordered: bool,
+    ) -> Result<IndexRangeCursor, KvTableError>;
+}
+
+impl KvTableReader for KvTable {
+    fn foreign_key_handles(
+        &mut self,
+        index_id: Option<i64>,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+        limit: usize,
+    ) -> Result<Vec<TableHandle>, KvTableError> {
+        if self.partition.is_some() {
+            return Err(KvTableError::Decode(
+                "foreign keys do not support partitioned tables".into(),
+            ));
+        }
+        let Some(index_id) = index_id else {
+            let handle = match values {
+                [Datum::Int(value)] => TableHandle::Int(*value),
+                [Datum::UInt(value)] => TableHandle::Int(*value as i64),
+                _ => {
+                    return Err(KvTableError::Encode(
+                        "foreign key integer handle is invalid".into(),
+                    ))
+                }
+            };
+            return Ok(self
+                .stored_record(&handle)?
+                .map(|_| handle)
+                .into_iter()
+                .collect());
+        };
+        let index = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .ok_or_else(|| KvTableError::Decode("foreign key index is missing".into()))?;
+        if index.clustered_primary {
+            let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(zone, values)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            let handle = TableHandle::Common(handle.encoded().to_vec());
+            if values.len() == index.column_offsets.len() {
+                return Ok(self
+                    .stored_record(&handle)?
+                    .map(|_| handle)
+                    .into_iter()
+                    .collect());
+            }
+            let low = Key::from_bytes(encode_row_key_with_handle(
+                self.table_id,
+                &handle.record_handle(),
+            ));
+            let high = low.prefix_next();
+            let mut iter = self.store.iter(Some(&low), Some(&high))?;
+            let mut handles = Vec::new();
+            while iter.valid() && handles.len() < limit {
+                handles.push(TableHandle::Common(
+                    tidb_codec::table_key::cut_row_key_prefix(iter.key().as_bytes()).to_vec(),
+                ));
+                if handles.len() < limit {
+                    iter.next()?;
+                }
+            }
+            return Ok(handles);
+        }
+        if index.unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
+            return Ok(self
+                .lookup_unique(index_id, values, zone)?
+                .into_iter()
+                .collect());
+        }
+        let range = IndexRange {
+            low: values.to_vec(),
+            high: values.to_vec(),
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        let mut cursor = self.index_range_cursor(index_id, &range, zone)?;
+        let mut handles = Vec::new();
+        while handles.len() < limit {
+            let Some(handle) = cursor.next_handle()? else {
+                break;
+            };
+            handles.push(handle);
+        }
+        Ok(handles)
+    }
+
+    fn get_row_by_handle(
+        &mut self,
+        handle: &TableHandle,
+        zone: &SessionTimeZone,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        self.read_row(handle, &RowDecodeContext::legacy_default(zone))
+    }
+
+    fn row_decoder_projected(
         &self,
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
@@ -95,29 +729,14 @@ impl KvTable {
         )
     }
 
-    /// A forward cursor over the table's record-key range, in key order.
-    ///
-    /// This is the streaming form of [`KvTable::scan_rows_with_handles_with_context`]: the
-    /// storage iterator stays open and one row is *decoded* per pull, so the
-    /// decoded rows alive at once are the caller's chunk rather than the whole
-    /// relation. (How far the laziness reaches below the storage seam is a
-    /// property of the backend's `iter`; see [`crate::access_path`].) The seam
-    /// returns an owned iterator, so the cursor does not borrow the table and
-    /// a caller may hold it across chunk boundaries.
-    pub fn row_cursor_with_context(
+    fn row_cursor_with_context(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
         self.row_cursor_projected_with_context(None, None, context)
     }
 
-    /// [`KvTable::row_cursor_with_context`] narrowed to the columns at `keep`: the cursor
-    /// decodes and yields exactly those columns, in `keep`'s order.
-    ///
-    /// `handle_ranges` narrows which RECORDS are read, as
-    /// [`crate::table_access::TableAccess::accept_handle_ranges`] describes:
-    /// `None` reads the whole table.
-    pub fn row_cursor_projected_with_context(
+    fn row_cursor_projected_with_context(
         &mut self,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[IndexRange]>,
@@ -126,10 +745,7 @@ impl KvTable {
         self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, false, context)
     }
 
-    /// [`Self::row_cursor_projected_with_context`] with a walk direction:
-    /// `descending` reads the ranges last-to-first, each backwards -- the
-    /// local half of Go's `desc` table scan.
-    pub fn row_cursor_projected_directed_with_context(
+    fn row_cursor_projected_directed_with_context(
         &mut self,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[IndexRange]>,
@@ -141,10 +757,7 @@ impl KvTable {
         self.row_cursor_with_decoder(decoder, handle_ranges, descending, ordered, context.zone())
     }
 
-    /// Looks up several record handles through one storage batch and decodes
-    /// them with one row decoder. The returned slots preserve input handle
-    /// order and use `None` for an index entry whose record disappeared.
-    pub(crate) fn get_rows_by_handles_projected_with_context(
+    fn get_rows_by_handles_projected_with_context(
         &mut self,
         handles: &[TableHandle],
         keep: Option<&[usize]>,
@@ -153,9 +766,7 @@ impl KvTable {
         self.get_rows_by_routed_handles_projected_with_context(handles, None, keep, context)
     }
 
-    /// Decodes one record per handle in its known physical keyspace. The
-    /// partition IDs come from the index entry, not from probing for a match.
-    pub(crate) fn get_rows_by_routed_handles_projected_with_context(
+    fn get_rows_by_routed_handles_projected_with_context(
         &mut self,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
@@ -168,11 +779,7 @@ impl KvTable {
         .map(|(rows, _)| rows)
     }
 
-    /// [`Self::get_rows_by_routed_handles_projected_with_context`] that also
-    /// answers the physical table each found row was read from, so a reader
-    /// reporting Go's `_tidb_tid` knows the partition of a handle it probed
-    /// for in every partition. A slot with no row has no physical id.
-    pub(crate) fn get_located_rows_by_routed_handles_projected_with_context(
+    fn get_located_rows_by_routed_handles_projected_with_context(
         &mut self,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
@@ -344,15 +951,6 @@ impl KvTable {
         })
     }
 
-    /// The record ranges this scan reads, as the storage seam's half-open
-    /// `[start, end)` pairs in ascending key order.
-    ///
-    /// With no handle ranges this is the ONE range the whole relation lives
-    /// in ([`KvTable::record_key_range`]). With them it is the intervals
-    /// [`crate::handle_range::record_key_ranges`] encodes, which is what
-    /// makes a `TableRangeScan` read less than the table. `keep_order`
-    /// selects Go's ordered-read half order versus his merged unordered wire
-    /// order, exactly as [`crate::handle_range::record_key_ranges`] documents.
     fn record_key_ranges(
         &self,
         handle_ranges: Option<&[IndexRange]>,
@@ -401,14 +999,6 @@ impl KvTable {
         Ok(encoded.unwrap_or_else(|| self.record_key_range()))
     }
 
-    /// The same intervals as [`Self::record_key_ranges], split into the
-    /// VALUE-ordered halves an ORDERED reader consumes one after the other --
-    /// Go's `firstPartGroupedRanges then `secondPartGroupedRanges
-    /// (`table_reader.go). An unsigned handle whose domain wraps the int64
-    /// boundary yields `[signed_half, unsigned_half]; a descending read
-    /// reverses the pair, exactly Go's `desc = true answer. Every other
-    /// shape is one group, and an unencodable bound falls back to the whole
-    /// record range as one group, reading a correct superset.
     fn record_key_range_groups(
         &self,
         handle_ranges: Option<&[IndexRange]>,
@@ -454,16 +1044,6 @@ impl KvTable {
         Ok(groups)
     }
 
-    /// The record ranges this table's rows live in, as the storage seam's
-    /// half-open `[start, end)` pairs in ascending key order.
-    ///
-    /// One range PER physical id it reads. An unpartitioned table and a
-    /// whole-table scan of a partitioned one both give a contiguous block --
-    /// `CREATE TABLE` allocates the partition ids together, and this table's
-    /// index entries sit under the (smaller) table id, below the block
-    /// entirely -- but a PRUNED or explicitly SELECTED read gives a set with
-    /// holes in it, and the holes are the whole point: a single spanning
-    /// range would read the partitions pruning just proved cannot match.
     fn record_key_range(&self) -> Vec<(Key, Key)> {
         self.record_physical_ids()
             .into_iter()
@@ -479,26 +1059,8 @@ impl KvTable {
             .collect()
     }
 
-    /// A cursor that reads this table's rows through the backend's
-    /// coprocessor -- predicate, row cap and projection evaluated at the
-    /// region -- with the session's staged writes merged back in, or `None`
-    /// when the backend has none or this table's shape is outside it.
-    ///
-    /// `keep` is the projected column set, in output order; `predicates`
-    /// describe the conjuncts the caller applies to every emitted row anyway,
-    /// so the remote filter is a pre-filter and cannot change the answer.
-    ///
-    /// A common-handle (clustered non-integer primary key) table is served
-    /// without a client-side handle merge. Its clustered primary metadata is
-    /// synthesized when the catalog omits the physical index entry, matching
-    /// the table's record-key layout and Go's always-present `IndexInfo`.
-    ///
-    /// `retain_identity` asks for the record handle beside `keep` even when
-    /// the projection omits it: writers, `_tidb_rowid` readers and a dirty
-    /// table's staged merge need it. A clean reader passes `false` and gets
-    /// Go's TableReader wire schema, exactly the pruned columns.
     #[allow(clippy::too_many_arguments)]
-    pub fn pushdown_row_cursor_with_context(
+    fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
         predicates: &[Expression],
@@ -534,12 +1096,8 @@ impl KvTable {
         )
     }
 
-    /// [`Self::pushdown_row_cursor_with_context`] for a scan whose schema
-    /// carries Go's `ExtraPhysTblID`: a partitioned read then requests that
-    /// column LAST, as Go's TableScan does, and storage fills it from each
-    /// row's key, so a row's record key names its partition.
     #[allow(clippy::too_many_arguments)]
-    pub fn pushdown_row_cursor_with_physical_id(
+    fn pushdown_row_cursor_with_physical_id(
         &mut self,
         keep: &[usize],
         predicates: &[Expression],
@@ -862,9 +1420,7 @@ impl KvTable {
                 .collect()
         };
         for (physical_id, ranges) in request_groups {
-            let Some(scan) = self
-                .store
-                .open_remote_scan(&build_request(physical_id, ranges))
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &build_request(physical_id, ranges))
             else {
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -1041,10 +1597,8 @@ impl KvTable {
         }))
     }
 
-    /// Builds table tasks with Go's partition-handle identity. Routes, when
-    /// present, are aligned with input handles and validated before any I/O.
     #[allow(clippy::too_many_arguments)]
-    pub fn build_table_reader_from_routed_handles(
+    fn build_table_reader_from_routed_handles(
         &mut self,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
@@ -1185,8 +1739,6 @@ impl KvTable {
         }))
     }
 
-    /// Converts sorted handles using the direct KV range builder shared with
-    /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
     fn table_reader_handle_key_ranges(
         table_id: i64,
         handles: &[TableHandle],
@@ -1223,9 +1775,7 @@ impl KvTable {
         ))
     }
 
-    /// Returns original request positions, retaining route identity across
-    /// missing rows, filters and equal handles in different partitions.
-    pub(crate) fn finish_routed_rows_by_handles(
+    fn finish_routed_rows_by_handles(
         handles: &[TableHandle],
         staged: StagedHandlesLookup,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError> {
@@ -1325,10 +1875,7 @@ impl KvTable {
         Ok(Some((rows, predicates_applied, wire_rows, indices)))
     }
 
-    /// Finishes one staged table lookup using the same chunk-backed handoff as
-    /// Go's `tableWorker.executeTask`, falling back to the row contract for
-    /// sources that cannot transfer typed chunks.
-    pub(crate) fn finish_lookup_by_handles(
+    fn finish_lookup_by_handles(
         handles: &[TableHandle],
         staged: StagedHandlesLookup,
         allow_chunks: bool,
@@ -1380,11 +1927,6 @@ impl KvTable {
         Ok(result.map(FinishedLookup::Chunk))
     }
 
-    /// Retains decoded table batches and row positions instead of converting
-    /// each row to `Vec<Datum>` or copying rows into a merged chunk. Go stores
-    /// `chunk.Row` references in the table task and computes the integer
-    /// `rowIdx` once per row before sorting; this implementation follows that
-    /// contract with `(batch,row)` positions.
     fn finish_lookup_chunks_by_handles(
         handles: &[TableHandle],
         mut staged: StagedPhysicalLookup,
@@ -1452,14 +1994,8 @@ impl KvTable {
         }))
     }
 
-    /// Opens a coprocessor partial aggregation over this table, or returns
-    /// `None` so the executor computes the same partial result locally.
-    ///
-    /// An aggregate result cannot be merged with staged rows. A dirty table
-    /// therefore refuses before sending a request, and a backend-reported
-    /// staged buffer closes the request and falls back as a second guard.
     #[allow(clippy::too_many_arguments)]
-    pub fn pushdown_partial_aggregate_cursor(
+    fn pushdown_partial_aggregate_cursor(
         &mut self,
         keep: &[usize],
         predicates: &[Expression],
@@ -1549,7 +2085,7 @@ impl KvTable {
             })
             .collect();
         let mut remote_aggregate = aggregate.clone();
-        if remote_aggregate.bind_in(context).is_err() {
+        if crate::remote_scan::bind_partial_aggregate(&mut remote_aggregate, context).is_err() {
             return Ok(None);
         }
         let mut streams = Vec::with_capacity(request_groups.len());
@@ -1579,7 +2115,7 @@ impl KvTable {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = self.store.open_remote_scan(&request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -1611,10 +2147,7 @@ impl KvTable {
         }))
     }
 
-    /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
-    /// Aggregate arguments and group keys are remapped from the pruned scan
-    /// schema to the covering index's physical column order.
-    pub fn pushdown_index_partial_aggregate_cursor(
+    fn pushdown_index_partial_aggregate_cursor(
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
@@ -1734,7 +2267,7 @@ impl KvTable {
             return Ok(None);
         }
         let mut remote_aggregate = aggregate.clone();
-        if remote_aggregate.bind_in(context).is_err() {
+        if crate::remote_scan::bind_partial_aggregate(&mut remote_aggregate, context).is_err() {
             return Ok(None);
         }
         // The planner's aggregate offsets name the scan's pruned schema;
@@ -1852,7 +2385,7 @@ impl KvTable {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = self.store.open_remote_scan(&request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -1880,9 +2413,7 @@ impl KvTable {
         }))
     }
 
-    /// Materializes the index/handle columns in table-column order for an
-    /// index-side predicate. No record lookup occurs here.
-    pub(crate) fn index_filter_row(
+    fn index_filter_row(
         &self,
         index_id: i64,
         handle: &TableHandle,
@@ -1968,14 +2499,8 @@ impl KvTable {
         Ok(row)
     }
 
-    /// Opens a coprocessor index scan whose rows carry only the indexed
-    /// columns and the table handle. The access source consumes those rows as
-    /// an ordered handle stream before issuing its table lookup batch.
-    /// `allow_prefix_projection` is the selected IndexReader's coverage proof:
-    /// prefix columns may remain in its internal schema for null conditions,
-    /// while the planner has checked every parent requiring their full values.
     #[allow(clippy::too_many_arguments)]
-    pub fn pushdown_index_handle_cursor(
+    fn pushdown_index_handle_cursor(
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
@@ -2077,7 +2602,7 @@ impl KvTable {
                     .iter()
                     .position(|part| part == offset)
                     .is_some_and(|part| full_length(primary.prefix_length(part)))
-            }) && !(self.common_handle_version == 0
+            }) && !(self.common_handle_version() == 0
                 && self.use_new_collation
                 && column.field_type.eval_type() == tidb_datatype::EvalType::String
                 && !column
@@ -2370,7 +2895,7 @@ impl KvTable {
             range_hints: Vec::new(),
             statement: statement.clone(),
         };
-        let Some(scan) = self.store.open_remote_scan(&request) else {
+        let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
             return Ok(None);
         };
         let mut scan = scan.map_err(KvTableError::from)?;
@@ -2394,16 +2919,13 @@ impl KvTable {
             handle_is_unsigned,
             handle_field_types,
             handle_prefix_lengths: self.common_handle_prefix_lengths.clone(),
-            common_handle_version: self.common_handle_version,
+            common_handle_version: self.common_handle_version(),
             pending_chunk: None,
             pending_chunk_row: 0,
         }))
     }
 
-    /// Scans the table's record-key range in key order, decoding each value.
-    /// Returns rows as `Datum`s in schema order (a missing column decodes
-    /// NULL, and the handle columns come from the key).
-    pub fn scan_rows_with_context(
+    fn scan_rows_with_context(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<Vec<Vec<Datum>>, KvTableError> {
@@ -2414,30 +2936,14 @@ impl KvTable {
             .collect())
     }
 
-    /// Like [`KvTable::scan_rows_with_context`], but each row carries the record handle its
-    /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
-    ///
-    /// Uses the backend's table reader, merging staged writes, or the local
-    /// [`RowCursor`] when the backend cannot serve the table's shape. A caller
-    /// that does not need the whole relation in memory should hold a cursor
-    /// instead (see [`KvTable::row_cursor_with_context`]).
-    pub fn scan_rows_with_handles_with_context(
+    fn scan_rows_with_handles_with_context(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         self.scan_rows_with_handles_in_with_context(None, context)
     }
 
-    /// Like [`KvTable::scan_rows_with_handles_with_context`], retaining the
-    /// physical table id encoded in every record key.
-    ///
-    /// DDL rewrites need this identity: a partitioned table can contain the
-    /// same local handle in more than one physical partition, and rewriting
-    /// either row under the logical table id would collapse the partitions.
-    /// Go `checkForNullValue` as `modifyColsFromNull2NotNull` runs it before
-    /// a primary key makes its columns NOT NULL: whether any row holds NULL
-    /// in one of `offsets`.
-    pub(crate) fn any_null_in_columns(
+    fn any_null_in_columns(
         &mut self,
         offsets: &[usize],
         context: &RowDecodeContext,
@@ -2450,7 +2956,7 @@ impl KvTable {
         }))
     }
 
-    pub(crate) fn scan_physical_rows_with_handles_with_context(
+    fn scan_physical_rows_with_handles_with_context(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
@@ -2464,17 +2970,7 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// [`KvTable::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
-    /// same intervals the read side offers a `TableRangeScan` through
-    /// [`crate::table_access::TableAccess::accept_handle_ranges`]. `None`
-    /// reads the whole table.
-    ///
-    /// This is the WRITE path's form of that narrowing, and it narrows only
-    /// WHICH RECORDS ARE FETCHED: the ranges are a superset of the rows the
-    /// `WHERE` admits, and the caller still evaluates that `WHERE` per row, so
-    /// the set of rows a statement acts on is the same set the full scan
-    /// produced.
-    pub fn scan_rows_with_handles_in_with_context(
+    fn scan_rows_with_handles_in_with_context(
         &mut self,
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
@@ -2502,7 +2998,7 @@ impl KvTable {
             false,
             true,
             context,
-            &PushdownStatementContext::from_stmt(context.expression()),
+            &crate::remote_scan::pushdown_statement_context(crate::stmt_context::stmt_context_of(context.expression())),
             crate::remote_scan::PushdownReadEngine::TiKv,
             0,
         )? {
@@ -2530,7 +3026,7 @@ impl KvTable {
         Ok(rows)
     }
 
-    pub(crate) fn scan_rows_with_handles_recomputed(
+    fn scan_rows_with_handles_recomputed(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
@@ -2544,10 +3040,7 @@ impl KvTable {
         Ok(rows)
     }
 
-    /// Go `sampleFetcher.run` over one sampled range: the first record of
-    /// the read snapshot in `[start, end)`, scanned forward whatever the
-    /// sample's order, decoded with generated columns recomputed.
-    pub(crate) fn first_snapshot_row_in_range(
+    fn first_snapshot_row_in_range(
         &mut self,
         start: &[u8],
         end: &[u8],
@@ -2565,15 +3058,7 @@ impl KvTable {
             .map(Some)
     }
 
-    /// The handles an index range covers, in index order.
-    ///
-    /// Go turns a range into a key interval in `IndexRangesToKVRanges`: the
-    /// low key is the encoded low bound, advanced to its `PrefixNext` when the
-    /// bound is excluded; the high key is the encoded high bound, advanced to
-    /// its `PrefixNext` when the bound is INCLUDED, because the scan's upper
-    /// end is exclusive. This walks that interval and reads the handle out of
-    /// each entry.
-    pub fn scan_index_range(
+    fn scan_index_range(
         &mut self,
         index_id: i64,
         range: &IndexRange,
@@ -2587,9 +3072,7 @@ impl KvTable {
         Ok(handles)
     }
 
-    /// A forward cursor over one index range, in index order -- the streaming
-    /// form of [`KvTable::scan_index_range`].
-    pub fn index_range_cursor(
+    fn index_range_cursor(
         &mut self,
         index_id: i64,
         range: &IndexRange,
@@ -2600,9 +3083,7 @@ impl KvTable {
         self.index_range_cursor_with_direction(index_id, range, zone, false, true)
     }
 
-    /// A cursor over one index range in the physical scan direction Go put
-    /// on `PhysicalIndexScan`.
-    pub fn index_range_cursor_with_direction(
+    fn index_range_cursor_with_direction(
         &mut self,
         index_id: i64,
         range: &IndexRange,
@@ -2620,10 +3101,7 @@ impl KvTable {
         )
     }
 
-    /// A forward cursor over all `ranges`, partition by partition. Go builds
-    /// one index request per physical partition and puts every range for that
-    /// partition in the request before advancing to the next partition.
-    pub fn index_ranges_cursor(
+    fn index_ranges_cursor(
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
@@ -2640,9 +3118,7 @@ impl KvTable {
         )
     }
 
-    /// A cursor over several index ranges in the physical scan direction,
-    /// preserving global index order when the plan requires it.
-    pub fn index_ranges_cursor_with_direction(
+    fn index_ranges_cursor_with_direction(
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
@@ -2661,26 +3137,7 @@ impl KvTable {
         )
     }
 
-    /// The UNORDERED cursor an index LOOKUP walks: every range, partition by
-    /// partition, no cross-partition merge.
-    ///
-    /// Go's `IndexLookUpExecutor.buildTableKeyRanges` builds ONE index
-    /// request per pruned partition holding EVERY range for that partition
-    /// (`buildKeyRanges` is called once with all ranges and all `tableIDs`),
-    /// and `indexWorker.fetchHandles` drains request `i` to exhaustion
-    /// before touching `i + 1` -- so the handle stream of an unordered
-    /// partitioned lookup is PARTITION-major. Opening one cursor per range
-    /// instead (each concatenating every partition) would make the stream
-    /// RANGE-major, and a multi-range lookup such as `b IN (...)` over a
-    /// partitioned table would interleave partitions where Go finishes each
-    /// partition's tasks first.
-    ///
-    /// Always ascending: an unordered lookup has no `Desc` -- Go sets
-    /// `PhysicalIndexScan.Desc` only for a keep-order plan, and a keep-order
-    /// lookup answers through the cross-partition merge
-    /// ([`Self::index_range_cursor_with_direction`] with `ordered`), never
-    /// through this cursor.
-    pub fn index_lookup_ranges_cursor(
+    fn index_lookup_ranges_cursor(
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
@@ -3179,7 +3636,7 @@ impl RemoteCommonHandle {
                 let mut value = datum(*position).ok_or_else(|| {
                     KvTableError::Decode("remote row omitted a common handle column".to_owned())
                 })?;
-                crate::index_prefix_cut::cut_datum_by_prefix_len(&mut value, *prefix, field_type);
+                tidb_tablecodec::cut_datum_by_prefix_len(&mut value, *prefix, field_type);
                 Ok(value)
             })
             .collect::<Result<Vec<_>, KvTableError>>()?;
@@ -3792,7 +4249,7 @@ impl RemoteIndexHandleCursor {
                 }
             }
             if let Some(length) = self.handle_prefix_lengths.get(position) {
-                crate::index_prefix_cut::cut_index_value(value, *length, field_type);
+                tidb_tablecodec::cut_datum_by_prefix_len(value, *length, field_type);
             }
         }
         let encoded = Encoder::new(self.use_new_collation)
@@ -4741,14 +5198,14 @@ impl TableScanExec {
                         PushdownAggregateKind::Min => PartialValue::Extreme {
                             value: None,
                             is_max: false,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
                         PushdownAggregateKind::Max => PartialValue::Extreme {
                             value: None,
                             is_max: true,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -4756,7 +5213,7 @@ impl TableScanExec {
                             value: None,
                             count: 0,
                             is_max: false,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -4764,7 +5221,7 @@ impl TableScanExec {
                             value: None,
                             count: 0,
                             is_max: true,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -4840,7 +5297,7 @@ impl TableScanExec {
                                 Some(candidate),
                             ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
-                                    crate::remote_scan::extreme_replaces(
+                                    crate::aggfuncs::extreme_replaces(
                                         &candidate, current, *is_max, *collation,
                                     )
                                 });
@@ -4933,14 +5390,14 @@ impl TableScanExec {
                             PushdownAggregateKind::Min => PartialValue::Extreme {
                                 value: None,
                                 is_max: false,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
                             PushdownAggregateKind::Max => PartialValue::Extreme {
                                 value: None,
                                 is_max: true,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -4948,7 +5405,7 @@ impl TableScanExec {
                                 value: None,
                                 count: 0,
                                 is_max: false,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -4956,7 +5413,7 @@ impl TableScanExec {
                                 value: None,
                                 count: 0,
                                 is_max: true,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -5036,7 +5493,7 @@ impl TableScanExec {
                                     Some(candidate),
                                 ) => {
                                     let replace = value.as_ref().is_none_or(|current| {
-                                        crate::remote_scan::extreme_replaces(
+                                        crate::aggfuncs::extreme_replaces(
                                             &candidate, current, *is_max, *collation,
                                         )
                                     });
@@ -5553,8 +6010,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
             return false;
         }
-        if aggregate
-            .input_offsets()
+        if crate::remote_scan::partial_aggregate_input_offsets(aggregate)
             .into_iter()
             .any(|offset| offset >= self.keep.len())
             || self.limit.is_some()
@@ -5896,7 +6352,7 @@ fn close_streams(streams: &mut Vec<Box<dyn crate::remote_scan::PushdownRowStream
 #[cfg(test)]
 mod remote_cursor_tests {
     use super::*;
-    use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+    use tidb_datatype::UNSPECIFIED_LENGTH;
     use crate::kv_table::KvColumn;
     use crate::storage::{MemTableStorage, StorageError, TableStorage};
 
@@ -5949,37 +6405,53 @@ mod remote_cursor_tests {
         }
     }
 
-    /// Records requests and optionally acknowledges complete predicate execution.
+    /// The region behind a capture store's `kv.Client`: records every
+    /// request and answers it with no rows; `reject_table` fails the send for
+    /// one physical table. Closing a response marks `closed`.
+    #[derive(Debug)]
+    struct CaptureRegion {
+        last: Option<std::sync::Arc<std::sync::Mutex<Option<crate::test_region::SentRequest>>>>,
+        all: Option<std::sync::Arc<std::sync::Mutex<Vec<crate::test_region::SentRequest>>>>,
+        reject_table: Option<i64>,
+        closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl tidb_txnkv::Client for CaptureRegion {
+        fn send(
+            &self,
+            request: &tidb_txnkv::TransportRequest,
+        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+            let sent = crate::test_region::SentRequest::decode(request);
+            let table_id = sent.table_id();
+            if let Some(last) = &self.last {
+                *last.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(sent.clone());
+            }
+            if let Some(all) = &self.all {
+                all.lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .push(sent);
+            }
+            if self.reject_table == Some(table_id) {
+                return Err("partition request failed".to_owned());
+            }
+            Ok(crate::test_region::Subsets::new(
+                Vec::new(),
+                Some(std::sync::Arc::clone(&self.closed)),
+            ))
+        }
+
+        fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+            true
+        }
+    }
+
+    /// Records the last request its client was sent.
     #[derive(Clone, Debug, Default)]
     struct RequestCapture {
-        captured: std::sync::Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
-        response_predicates_applied: Option<bool>,
-        /// Refuse or error on a later physical request to verify prior cleanup.
-        reject_table: Option<(i64, bool)>,
+        captured: std::sync::Arc<std::sync::Mutex<Option<crate::test_region::SentRequest>>>,
+        /// Fail the send for this physical table, after the earlier ones opened.
+        reject_table: Option<i64>,
         closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    struct CapturedIndexStream {
-        predicates_applied: bool,
-        closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    impl PushdownRowStream for CapturedIndexStream {
-        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-            Ok(None)
-        }
-
-        fn rows_returned(&self) -> u64 {
-            0
-        }
-
-        fn predicates_applied(&self) -> bool {
-            self.predicates_applied
-        }
-
-        fn close(&mut self) {
-            self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
     }
 
     impl TableStorage for RequestCapture {
@@ -6003,29 +6475,17 @@ mod remote_cursor_tests {
             Err(StorageError::Backend("unused".to_owned()))
         }
 
-        fn open_remote_scan(
-            &mut self,
-            request: &crate::remote_scan::PushdownScanRequest,
-        ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
-            *self
-                .captured
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
-            if let Some((id, error)) = self.reject_table {
-                if request.table_id == id {
-                    return error
-                        .then(|| Err(StorageError::Backend("partition request failed".into())));
-                }
-            }
-            self.response_predicates_applied.map(|predicates_applied| {
-                Ok(crate::remote_scan::PushdownScan {
-                    stream: Box::new(CapturedIndexStream {
-                        predicates_applied,
-                        closed: std::sync::Arc::clone(&self.closed),
-                    }),
-                    staged: Vec::new(),
-                })
-            })
+        fn client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::Client>> {
+            Some(std::sync::Arc::new(CaptureRegion {
+                last: Some(std::sync::Arc::clone(&self.captured)),
+                all: None,
+                reject_table: self.reject_table,
+                closed: std::sync::Arc::clone(&self.closed),
+            }))
+        }
+
+        fn start_ts(&self) -> u64 {
+            100
         }
 
         fn key_count(&self) -> usize {
@@ -6039,12 +6499,13 @@ mod remote_cursor_tests {
         }
     }
 
-    /// Serves an empty stream while retaining every request.  A partitioned
-    /// table must open one coprocessor request per physical table id; a
-    /// logical-table request would make TiKV scan the wrong record namespace.
+    /// Records every request its client was sent, each answered with no rows.
+    /// A partitioned table must open one coprocessor request per physical
+    /// table id; a logical-table request would make TiKV scan the wrong
+    /// record namespace.
     #[derive(Debug)]
     struct PartitionRequestCapture {
-        captured: std::sync::Arc<std::sync::Mutex<Vec<crate::remote_scan::PushdownScanRequest>>>,
+        captured: std::sync::Arc<std::sync::Mutex<Vec<crate::test_region::SentRequest>>>,
     }
 
     impl TableStorage for PartitionRequestCapture {
@@ -6068,22 +6529,17 @@ mod remote_cursor_tests {
             Err(StorageError::Backend("unused".to_owned()))
         }
 
-        fn open_remote_scan(
-            &mut self,
-            request: &crate::remote_scan::PushdownScanRequest,
-        ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
-            self.captured
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .push(request.clone());
-            Some(Ok(crate::remote_scan::PushdownScan {
-                stream: Box::new(VecStream {
-                    rows: std::collections::VecDeque::new(),
-                    returned: 0,
-                    predicates_applied: true,
-                }),
-                staged: Vec::new(),
+        fn client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::Client>> {
+            Some(std::sync::Arc::new(CaptureRegion {
+                last: None,
+                all: Some(std::sync::Arc::clone(&self.captured)),
+                reject_table: None,
+                closed: std::sync::Arc::default(),
             }))
+        }
+
+        fn start_ts(&self) -> u64 {
+            100
         }
 
         fn key_count(&self) -> usize {
@@ -6172,21 +6628,18 @@ mod remote_cursor_tests {
                 false,
             )
             .unwrap()
-            .is_none());
+            .is_some());
         let request = captured
             .lock()
             .unwrap()
             .clone()
             .expect("covered index Selection reaches the backend");
-        let [condition] = request.conditions.as_slice() else {
+        let [condition] = request.conditions() else {
             panic!("one index comparison");
         };
-        assert_eq!(
-            crate::predicate_pushdown::fixtures::column_offsets(condition),
-            [0]
-        );
-        assert_eq!(request.output_offsets, Some(vec![1]));
-        assert_eq!(request.limit, Some(1));
+        assert_eq!(crate::test_region::column_ref_offsets(condition), [0]);
+        assert_eq!(request.narrowed_output(), Some(vec![1]));
+        assert_eq!(request.limit(), Some(1));
     }
 
     fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> KvTable {
@@ -6251,7 +6704,6 @@ mod remote_cursor_tests {
             (-1, true, 0, true, 1, Some(0)),
         ] {
             let capture = RequestCapture {
-                response_predicates_applied: Some(true),
                 ..RequestCapture::default()
             };
             let mut table = index_selection_table(capture.clone(), prefix)
@@ -6293,18 +6745,23 @@ mod remote_cursor_tests {
             let request = capture.captured.lock().unwrap().clone();
             if let Some(expected) = expected {
                 let request = request.unwrap();
-                let [condition] = request.conditions.as_slice() else {
+                let [condition] = request.conditions() else {
                     panic!("one index predicate");
                 };
                 assert_eq!(
-                    crate::predicate_pushdown::fixtures::column_offsets(condition),
+                    crate::test_region::column_ref_offsets(condition),
                     [expected as usize]
                 );
                 assert_eq!(
-                    request.output_offsets,
+                    request.narrowed_output(),
                     Some(if common { vec![1, 2] } else { vec![1] })
                 );
-                assert_eq!(request.prefix_limit, prefix_limit);
+                assert_eq!(
+                    request.prefix_limit(),
+                    prefix_limit
+                        .as_ref()
+                        .map(|limit| (limit.count, limit.column_offset))
+                );
                 assert_eq!(
                     cursor.as_ref().unwrap().handle_indices,
                     if common { vec![0, 1] } else { vec![0] }
@@ -6321,13 +6778,14 @@ mod remote_cursor_tests {
     }
 
     #[test]
+    /// Whether the region applied the index Selection is the lowering's own
+    /// answer now (`cop_reader`, pinned by tidb-exec's
+    /// `cop_scan_partial_predicate_limit_source`): a region answers the DAG it
+    /// is sent, so no response can report a Selection it dropped.
     fn index_selection_maps_hidden_handle_slots_and_checks_backend_application() {
         for extra_slot in 0..=2 {
-            for applied in [false, true] {
-                let capture = RequestCapture {
-                    response_predicates_applied: Some(applied),
-                    ..RequestCapture::default()
-                };
+            {
+                let capture = RequestCapture::default();
                 let mut table = index_selection_table(capture.clone(), -1);
                 table.pk_handle_offset = None;
                 // Stored source columns [a, v], with _tidb_rowid inserted at
@@ -6372,22 +6830,19 @@ mod remote_cursor_tests {
                         false,
                     )
                     .unwrap();
-                assert_eq!(cursor.is_some(), applied);
-                assert_eq!(
-                    capture.closed.load(std::sync::atomic::Ordering::SeqCst),
-                    !applied
-                );
+                assert!(cursor.is_some());
+                assert!(!capture.closed.load(std::sync::atomic::Ordering::SeqCst));
                 let request = capture.captured.lock().unwrap().clone().unwrap();
                 let offsets: Vec<_> = request
-                    .conditions
+                    .conditions()
                     .iter()
-                    .flat_map(crate::predicate_pushdown::fixtures::column_offsets)
+                    .flat_map(crate::test_region::column_ref_offsets)
                     .collect();
                 assert_eq!(offsets, [1, 0]);
-                assert_eq!(request.topn.unwrap().order_by[0].offset, 0);
-                assert_eq!(request.output_offsets, Some(vec![1]));
-                assert_eq!(request.handle_index, Some(0));
-                assert_eq!(request.columns[1].id, EXTRA_HANDLE_COLUMN_ID);
+                assert_eq!(request.topn_offsets()[0], 0);
+                assert_eq!(request.narrowed_output(), Some(vec![1]));
+                assert_eq!(request.handle_index(), Some(0));
+                assert_eq!(request.column_ids()[1], EXTRA_HANDLE_COLUMN_ID);
                 drop(cursor);
                 assert!(capture.closed.load(std::sync::atomic::Ordering::SeqCst));
             }
@@ -6398,7 +6853,6 @@ mod remote_cursor_tests {
     fn index_selection_keeps_duplicate_handles_and_full_covering_values() {
         for common in [false, true] {
             let capture = RequestCapture {
-                response_predicates_applied: Some(true),
                 ..RequestCapture::default()
             };
             let mut table = index_selection_table(capture.clone(), 2);
@@ -6434,17 +6888,10 @@ mod remote_cursor_tests {
                 .unwrap()
                 .unwrap();
             let request = capture.captured.lock().unwrap().clone().unwrap();
-            assert_eq!(
-                request
-                    .columns
-                    .iter()
-                    .map(|column| column.id)
-                    .collect::<Vec<_>>(),
-                expected_ids
-            );
+            assert_eq!(request.column_ids(), expected_ids);
             assert_eq!(cursor.handle_indices, expected_handle);
             assert_eq!(cursor.projected_indices, Some(expected_projection));
-            assert!(request.output_offsets.is_none());
+            assert!(request.narrowed_output().is_none());
         }
     }
 
@@ -6452,7 +6899,6 @@ mod remote_cursor_tests {
     fn index_selection_refuses_truncated_primary_values_even_for_covering_output() {
         for index_prefix in [-1, 2] {
             let capture = RequestCapture {
-                response_predicates_applied: Some(true),
                 ..RequestCapture::default()
             };
             let mut table = index_selection_table(capture.clone(), index_prefix);
@@ -6551,7 +6997,6 @@ mod remote_cursor_tests {
     fn index_selection_allows_null_tests_on_prefixes_but_not_value_consumers() {
         use crate::predicate_pushdown::fixtures::{call, column as column_at};
         let capture = RequestCapture {
-            response_predicates_applied: Some(true),
             ..RequestCapture::default()
         };
         let mut table = index_selection_table(capture.clone(), 2);
@@ -6589,15 +7034,15 @@ mod remote_cursor_tests {
         assert_eq!(cursor.projected_indices, Some(vec![0]));
         assert!(cursor.next_projected_row().unwrap().is_none());
         let request = capture.captured.lock().unwrap().clone().unwrap();
-        // The remap moves offsets, never plan column ids. `extract_columns`
-        // orders by id: the id-1 column (the compare) now reads slot 1 and the
-        // id-2 column (the null test) slot 0.
+        // The remap moves offsets, never plan column ids: the null test (the
+        // id-2 column) now reads slot 0 and the compare (the id-1 column)
+        // slot 1, in the condition's own order.
         assert_eq!(
-            crate::predicate_pushdown::fixtures::column_offsets(&request.conditions[0]),
-            [1, 0],
+            crate::test_region::column_ref_offsets(&request.conditions()[0]),
+            [0, 1],
             "the index Selection reads the carried slots"
         );
-        assert_eq!(request.conditions.len(), 1);
+        assert_eq!(request.conditions().len(), 1);
         // Null tests can ignore a direct prefix's length, but cannot observe
         // a function of truncated bytes, or sort those bytes as full values.
         let mut wrong = call("isnull", vec![call("char_length", vec![column])]);
@@ -6688,12 +7133,8 @@ mod remote_cursor_tests {
                     .pop()
                     .expect("one request was sent");
                 (
-                    request
-                        .columns
-                        .iter()
-                        .map(|column| column.id)
-                        .collect::<Vec<_>>(),
-                    request.handle_index,
+                    request.column_ids(),
+                    request.handle_index(),
                     cursor.field_types().len(),
                 )
             };
@@ -6753,11 +7194,7 @@ mod remote_cursor_tests {
                 .clone();
             assert_eq!(requests.len(), 1, "dirty={dirty}: one request was sent");
             assert_eq!(
-                requests[0]
-                    .columns
-                    .iter()
-                    .map(|column| column.id)
-                    .collect::<Vec<_>>(),
+                requests[0].column_ids(),
                 if dirty { vec![2, 1] } else { vec![2] },
                 "dirty={dirty}: the handle is requested only for the staged merge"
             );
@@ -6830,7 +7267,7 @@ mod remote_cursor_tests {
         assert_eq!(
             requests
                 .iter()
-                .map(|request| request.table_id)
+                .map(crate::test_region::SentRequest::table_id)
                 .collect::<Vec<_>>(),
             vec![101, 102],
             "each physical partition gets its own coprocessor request"
@@ -6839,7 +7276,7 @@ mod remote_cursor_tests {
             assert!(request
                 .ranges
                 .iter()
-                .all(|(start, _)| { decode_table_id(start.as_bytes()) == request.table_id }));
+                .all(|(start, _)| { decode_table_id(start) == request.table_id() }));
         }
         captured.lock().unwrap().clear();
         let handles = [TableHandle::Int(7), TableHandle::Int(7)];
@@ -6894,7 +7331,7 @@ mod remote_cursor_tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|request| request.table_id)
+                .map(crate::test_region::SentRequest::table_id)
                 .collect::<Vec<_>>(),
             vec![101, 102]
         );
@@ -6950,33 +7387,28 @@ mod remote_cursor_tests {
             "one selected partition supplies an unambiguous route"
         );
         table.read_partitions = None;
-        for error in [false, true] {
-            let capture = RequestCapture {
-                response_predicates_applied: Some(true),
-                reject_table: Some((102, error)),
-                ..RequestCapture::default()
-            };
-            let closed = capture.closed.clone();
-            table.swap_storage(Box::new(capture));
-            let result = table.build_table_reader_from_routed_handles(
-                &handles,
-                Some(&[101, 102]),
-                &[0],
-                &[],
-                &context,
-                &statement,
-                2,
-            );
-            if error {
-                assert!(result.is_err());
-            } else {
-                assert!(result.unwrap().is_none());
-            }
-            assert!(
-                closed.load(std::sync::atomic::Ordering::SeqCst),
-                "later refusal/error closes the already-open first partition"
-            );
-        }
+        // A region cannot refuse a request (that is the lowering's answer,
+        // before any send), so the failing send is what remains to pin.
+        let capture = RequestCapture {
+            reject_table: Some(102),
+            ..RequestCapture::default()
+        };
+        let closed = capture.closed.clone();
+        table.swap_storage(Box::new(capture));
+        let result = table.build_table_reader_from_routed_handles(
+            &handles,
+            Some(&[101, 102]),
+            &[0],
+            &[],
+            &context,
+            &statement,
+            2,
+        );
+        assert!(result.is_err());
+        assert!(
+            closed.load(std::sync::atomic::Ordering::SeqCst),
+            "a later failure closes the already-open first partition"
+        );
     }
 
 /// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column
@@ -7045,31 +7477,30 @@ mod remote_cursor_tests {
             true,
             true,
         );
-        // The capture store declines to serve, so the builder reports no
-        // cursor -- but only AFTER the request was built and recorded.
-        assert!(stream.unwrap().is_none());
+        assert!(stream.unwrap().is_some());
 
         let request = captured
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
             .expect("the aggregate request was built");
-        let index = request.index.as_ref().expect("an index scan request");
-        assert_eq!(index.index_id, 5);
-        assert!(index.desc, "Go IndexScan.ToPB retains the scan direction");
+        assert_eq!(request.index_id(), Some(5));
+        assert!(
+            request.scan_desc(),
+            "Go IndexScan.ToPB retains the scan direction"
+        );
         assert!(request.desc, "Go SetDesc orders the region tasks");
         assert!(
             request.keep_order,
             "Go SetKeepOrder preserves region results"
         );
         assert_eq!(
-            request.primary_column_ids,
+            request.primary_column_ids(),
             vec![1, 2],
             "the clustered primary travels for TiKV's common-handle decode"
         );
-        let schema_ids: Vec<i64> = request.columns.iter().map(|column| column.id).collect();
         assert_eq!(
-            schema_ids,
+            request.column_ids(),
             vec![3, 1, 2],
             "handle columns ride after the indexed columns, Go InitSchema order"
         );
@@ -7089,9 +7520,9 @@ mod remote_cursor_tests {
                     keep_order,
                 )
                 .unwrap()
-                .is_none());
+                .is_some());
             let request = captured.lock().unwrap().clone().expect("table request");
-            assert!(request.index.is_none());
+            assert!(!request.is_index());
             assert_eq!(request.desc, desc);
             assert_eq!(request.keep_order, keep_order);
         }
@@ -7884,8 +8315,8 @@ mod remote_cursor_tests {
                     1024,
                 )
                 .unwrap()
-                .is_none(),
-            "the recording store intentionally refuses the remote scan"
+                .is_some(),
+            "the recording store serves the remote scan"
         );
         let request = captured
             .lock()
@@ -8485,5 +8916,34 @@ fn integer_record_handle(handle: &RecordHandle) -> Option<i64> {
         RecordHandle::Int(value) => Some(*value),
         RecordHandle::Partition { handle, .. } => integer_record_handle(handle),
         RecordHandle::Common(_) => None,
+    }
+}
+
+/// The executor's constructors of a [`RowDecodeContext`], over its own
+/// statement context: a zone-only context for callers not yet migrated to a
+/// caller class, and the test fixture's.
+/// The executor's constructors of a [`RowDecodeContext`], over its own
+/// statement context: a zone-only context for callers not yet migrated to a
+/// caller class, and the test fixture's.
+pub trait RowDecodeContextExt {
+    /// The pre-migration row-decoder contract: caller supplies only a zone,
+    /// and origin defaults use `DEFAULT_STATEMENT_FLAGS`.
+    fn legacy_default(zone: &SessionTimeZone) -> RowDecodeContext;
+
+    /// Query-class UTC decoding for unit fixtures with no session.
+    fn for_test_query_utc() -> RowDecodeContext;
+}
+
+impl RowDecodeContextExt for RowDecodeContext {
+    fn legacy_default(zone: &SessionTimeZone) -> RowDecodeContext {
+        RowDecodeContext::new(
+            tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+            zone.clone(),
+            std::sync::Arc::new(crate::StmtContext::for_query().with_time_zone(zone.clone())),
+        )
+    }
+
+    fn for_test_query_utc() -> RowDecodeContext {
+        RowDecodeContext::for_query(&crate::StmtContext::for_query())
     }
 }

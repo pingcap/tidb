@@ -33,7 +33,7 @@ pub use alter::ttl::AlterTableRemoveTtl;
 
 #[path = "ddl/field_type.rs"]
 mod field_type;
-pub use field_type::{ColumnType, ColumnTypeArg};
+pub use field_type::{is_intrinsically_binary, type_code_of_name, ColumnType, ColumnTypeArg};
 
 // A column definition is shared by CREATE TABLE and every column-bearing
 // ALTER TABLE action. Its AST/restore behavior therefore owns a leaf of its
@@ -1074,9 +1074,9 @@ impl AlterTableAction {
                     options.as_slice()
                 {
                     out.push_str("CHARACTER SET ");
-                    out.push_str(charset);
+                    out.push_str(&charset.to_ascii_uppercase());
                     out.push_str(" COLLATE ");
-                    out.push_str(collation);
+                    out.push_str(&collation.to_ascii_uppercase());
                     return;
                 }
                 let mut restored = 0;
@@ -1219,26 +1219,6 @@ impl AlterTableAction {
                         out.push_str(&escape_string_literal(label));
                         out.push('\'');
                     }
-                }
-            }
-            AlterTableAction::Compact {
-                partitions,
-                replica_kind,
-            } => {
-                out.push_str("COMPACT");
-                if !partitions.is_empty() {
-                    out.push_str(" PARTITION ");
-                    for (index, partition) in partitions.iter().enumerate() {
-                        if index > 0 {
-                            out.push(',');
-                        }
-                        out.push_str(&back_quote(partition));
-                    }
-                }
-                match replica_kind {
-                    CompactReplicaKind::All => {}
-                    CompactReplicaKind::TiFlash => out.push_str(" TIFLASH REPLICA"),
-                    CompactReplicaKind::TiKv => out.push_str(" TIKV REPLICA"),
                 }
             }
             AlterTableAction::SplitRegion { target, option } => {
@@ -1472,17 +1452,6 @@ pub enum AlterTableAction {
         /// Optional placement labels, in written order.
         labels: Vec<String>,
     },
-    /// Go's separate `CompactTableStmt`, represented here as a typed ALTER
-    /// action because this Rust AST has one `ALTER TABLE` envelope. The
-    /// distinction is structural only: restore exactly follows Go's compact
-    /// statement contract. Execution is rejected before mutation because
-    /// compaction requires real TiKV/TiFlash storage engines.
-    Compact {
-        /// Optional partition names to compact.
-        partitions: Vec<String>,
-        /// Which replica family Go selected (or all when omitted).
-        replica_kind: CompactReplicaKind,
-    },
     /// `SPLIT {TABLE | PRIMARY KEY | INDEX name} {BY ... | BETWEEN ...}`.
     ///
     /// This preserves Go's parser/restore contract only.  Actual region
@@ -1515,6 +1484,54 @@ impl AlterOrderItem {
         if self.desc {
             out.push_str(" DESC");
         }
+    }
+}
+
+/// Go `ast.CompactTableStmt`: `ALTER TABLE name COMPACT [PARTITION p, ...]
+/// [TIFLASH | TIKV REPLICA]`. A plain statement node in Go, not a DDL one:
+/// the parser leaves the `ALTER TABLE` grammar at `COMPACT`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactTableStmt {
+    /// Go `Table`.
+    pub table: Vec<String>,
+    /// Go `PartitionNames`.
+    pub partition_names: Vec<String>,
+    /// Go `ReplicaKind`.
+    pub replica_kind: CompactReplicaKind,
+}
+
+impl CompactTableStmt {
+    /// Go `CompactTableStmt.Restore`.
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str("ALTER TABLE ");
+        push_name_path(out, &self.table);
+        out.push_str(" COMPACT");
+        if !self.partition_names.is_empty() {
+            out.push_str(" PARTITION ");
+            for (index, partition) in self.partition_names.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&back_quote(partition));
+            }
+        }
+        match self.replica_kind {
+            CompactReplicaKind::All => {}
+            CompactReplicaKind::TiFlash => out.push_str(" TIFLASH REPLICA"),
+            CompactReplicaKind::TiKv => out.push_str(" TIKV REPLICA"),
+        }
+    }
+}
+
+impl crate::Visitable for CompactTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        if !crate::Visitable::accept(&mut self.replica_kind, visitor) {
+            return false;
+        }
+        visitor.leave(self)
     }
 }
 
@@ -2170,16 +2187,6 @@ impl crate::Visitable for AlterTableAction {
                 let _ = hypo;
                 let _ = count;
                 let _ = labels;
-            }
-            Self::Compact {
-                partitions,
-                replica_kind,
-            } => {
-                if !crate::Visitable::accept(replica_kind, visitor) {
-                    return false;
-                }
-                let _ = partitions;
-                let _ = replica_kind;
             }
             Self::SplitRegion { target, option } => {
                 if !crate::Visitable::accept(target, visitor) {

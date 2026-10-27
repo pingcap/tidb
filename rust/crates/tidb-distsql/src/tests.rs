@@ -117,7 +117,7 @@ fn test_query_cop_store_limiter_projects_into_read_and_kv_requests() {
     assert_eq!(metadata_limiter.capacity(), 3);
     assert!(Arc::ptr_eq(metadata_limiter, &limiter));
 
-    let request = KvRequestMetadata::from_context(&context);
+    let request = crate::request_from_context(&context);
     let request_limiter = request
         .query_cop_store_limiter
         .as_ref()
@@ -133,7 +133,7 @@ fn test_context_detach_preserves_source_routing_values() {
     assert!(ReplicaReadType::Closest.is_closest_read());
     assert!(!ReplicaReadType::ClosestAdaptive.is_closest_read());
     assert_eq!(ReplicaReadType::Learner.raw(), 5);
-    assert_eq!(Priority::NoPriority as u8, 0);
+    assert_eq!(Priority::None as u8, 0);
     assert_eq!(Priority::Low as u8, 1);
     assert_eq!(Priority::High as u8, 2);
     assert_eq!(Priority::Delayed as u8, 3);
@@ -225,7 +225,7 @@ fn test_request_builder_maps_session_settings_without_transport() {
 #[test]
 fn test_request_builder_preserves_go_priority_and_isolation_precedence() {
     for (priority, expected) in [
-        (Priority::NoPriority, KvPriority::Normal),
+        (Priority::None, KvPriority::Normal),
         (Priority::Delayed, KvPriority::Normal),
         (Priority::Low, KvPriority::Low),
         (Priority::High, KvPriority::High),

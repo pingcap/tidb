@@ -38,5 +38,6 @@ mod pipeline_mysql_client_source;
 mod require_ssl_login_source;
 mod resultset_writer_source;
 mod secure_transport_source;
+mod session_token_login_source;
 mod server_internal_packetio_source;
 mod sql_node_lifecycle_source;

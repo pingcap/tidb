@@ -229,24 +229,36 @@ pub fn is_predefined_table(name: &str) -> bool {
     table_id(name).is_some()
 }
 
-/// Builds every [`TABLES`] entry into `catalog`'s `performance_schema`
-/// database through the ordinary `CREATE TABLE` path, under its Go id.
-///
-/// # Errors
-/// A table this tier's DDL cannot build -- a defect in the port, since the
-/// text is Go's own.
-pub(crate) fn register_tables(catalog: &mut Catalog) -> Result<(), DriverError> {
-    let ctx = crate::StmtContext::for_query();
-    let settings = crate::ddl::CreateTableSettings::default();
-    for (_, offset, sql) in TABLES {
-        crate::ddl::run_create_system_table_in(
-            sql,
-            catalog,
-            PERFORMANCE_SCHEMA,
-            settings,
-            &ctx,
-            PERFORMANCE_SCHEMA_DB_ID + offset,
-        )?;
-    }
-    Ok(())
+/// Go `perfschema.Init`: every [`TABLES`] entry built once per process
+/// (`BuildTableInfoFromAST` under its Go id), as catalog entries keyed by
+/// name.
+pub(crate) fn tables(
+) -> std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>> {
+    static TABLES_BUILT: std::sync::OnceLock<
+        std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>>,
+    > = std::sync::OnceLock::new();
+    TABLES_BUILT
+        .get_or_init(|| {
+            let mut scratch = Catalog::memory_schema_scratch();
+            for (_, offset, sql) in TABLES {
+                crate::ddl::run_create_system_table_in(
+                    sql,
+                    &mut scratch,
+                    PERFORMANCE_SCHEMA,
+                    PERFORMANCE_SCHEMA_DB_ID + offset,
+                )
+                .expect("Go's performance_schema DDL builds in this tier");
+            }
+            let tables = scratch
+                .tables_of(PERFORMANCE_SCHEMA)
+                .map(|(name, entry)| (name.to_owned(), std::sync::Arc::clone(entry)))
+                .collect();
+            Catalog::register_virtual_schema(
+                PERFORMANCE_SCHEMA_DB_ID,
+                "PERFORMANCE_SCHEMA",
+                &tables,
+            );
+            tables
+        })
+        .clone()
 }

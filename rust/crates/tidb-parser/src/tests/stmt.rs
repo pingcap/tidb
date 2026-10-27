@@ -171,10 +171,10 @@ fn nested_statement_owners_preserve_go_source_text_boundaries() {
 
     let statement =
         parse("create procedure p() begin select 1; end").expect("CREATE PROCEDURE parses");
-    let tidb_ast::Stmt::Ddl(ddl) = statement else {
-        panic!("expected DDL statement");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected a ProcedureInfo statement node (not a DDLNode)");
     };
-    let tidb_ast::DdlStmt::CreateProcedure(procedure) = ddl.as_ref() else {
+    let tidb_ast::AdminStmt::CreateProcedure(procedure) = admin.as_ref() else {
         panic!("expected CREATE PROCEDURE");
     };
     assert_eq!(procedure.body.text(), b"begin select 1; end");

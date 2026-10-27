@@ -62,7 +62,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
 /// the large mixed strategy test.
 #[test]
 fn join2_outer_and_duplicate_rows() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (c1 int, c2 int)");
     create(&mut catalog, "create table t1 (c1 int, c2 int)");
     insert(&mut catalog, "insert into t values (1,1),(2,2)");

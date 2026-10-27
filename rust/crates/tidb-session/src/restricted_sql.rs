@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use tidb_datatype::Datum;
-use tidb_executor::{Catalog, DriverError};
+use tidb_executor::DriverError;
 
 use crate::Session;
 
@@ -39,17 +39,17 @@ pub trait RestrictedSqlExecutor: Send + Sync {
 /// The shared handle a session and its retriever snapshots carry.
 pub(crate) type RestrictedSql = Option<Arc<dyn RestrictedSqlExecutor>>;
 
-/// Runs `sql` through `executor`, or, on the in-process tier, over `catalog`.
+/// Go `ExecRestrictedSQL` through the session's executor, which the node
+/// that opened the session installs.
 pub(crate) fn exec_restricted_sql_over(
     executor: Option<&dyn RestrictedSqlExecutor>,
     sql: &str,
-    catalog: &Catalog,
-    ctx: &tidb_executor::StmtContext,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
-    match executor {
-        Some(executor) => executor.exec_restricted_sql(sql),
-        None => tidb_executor::run_select_meta_in(sql, catalog, "mysql", ctx).map(|(_, rows)| rows),
-    }
+    executor
+        .ok_or_else(|| {
+            DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
+        })?
+        .exec_restricted_sql(sql)
 }
 
 impl Session {
@@ -68,10 +68,6 @@ impl Session {
         &mut self,
         sql: &str,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        if let Some(executor) = self.restricted_sql_executor.clone() {
-            return executor.exec_restricted_sql(sql);
-        }
-        let ctx = self.statement_context(false);
-        self.with_catalog_mut(|catalog| exec_restricted_sql_over(None, sql, catalog, &ctx))
+        exec_restricted_sql_over(self.restricted_sql_executor.as_deref(), sql)
     }
 }

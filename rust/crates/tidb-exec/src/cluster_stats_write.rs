@@ -58,7 +58,6 @@ use tidb_datatype::{
     UNSPECIFIED_LENGTH,
 };
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides, SavedAnalyzeOptions};
-use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
@@ -74,7 +73,7 @@ use crate::mysql_system_tables::{
     SystemRow, SystemTableError, SystemTableView,
 };
 use crate::system_row_write::{
-    defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row, row_id_of,
+    defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row,
     store_clustered_row, RowEncodeError, RowValues,
 };
 use tidb_hack::GoToLower;
@@ -289,12 +288,7 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     now: Time,
 ) -> Result<(AnalyzeJobId, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
-    let allocated = allocate_row_id(snapshot, catalog, table)?;
-    let from_allocator = allocated.is_some();
-    let job_id = match allocated {
-        Some(id) => id,
-        None => first_free_row_id(snapshot, catalog, table)?,
-    };
+    let job_id = allocate_row_id(snapshot, catalog, table)?;
     let job_id = u64::try_from(job_id).map_err(|_| {
         StatsWriteError::Encode(RowEncodeError(
             "mysql.analyze_jobs auto-increment id is negative".to_owned(),
@@ -343,17 +337,6 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     let mut rows = StatsRows::open_all(snapshot, table, &["id"])?;
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    // The node's allocator persisted its own reservation; only the in-plan
-    // reservation moves the counter here.
-    if !from_allocator {
-        plan.mutations.push(
-            BufferMutation::set(
-                key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
-                value::encode_int_value(job_id as i64),
-            )
-            .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
-        );
-    }
     Ok((job_id, plan))
 }
 
@@ -748,7 +731,6 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
     );
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -1178,7 +1160,6 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
         Datum::UInt(version),
     );
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -1288,7 +1269,6 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     let row_identity = identity_of(table, identity, &values)?;
     if rows.existing_values(&row_identity).is_none() {
         rows.store(snapshot, catalog, &values, &mut plan)?;
-        rows.publish_watermark(catalog, &mut plan)?;
     }
     Ok(plan)
 }
@@ -1355,7 +1335,6 @@ pub fn plan_insert_column_stats<S: MetaSnapshot>(
     }
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok((true, plan))
 }
 
@@ -1387,7 +1366,6 @@ pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
     let mut plan = StatsWritePlan::default();
     if rows.existing_values(&identity).is_none() {
         rows.store(snapshot, catalog, &values, &mut plan)?;
-        rows.publish_watermark(catalog, &mut plan)?;
     }
     Ok(plan)
 }
@@ -1417,7 +1395,6 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
         Datum::UInt(version),
     );
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -1674,9 +1651,6 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
         );
         rows.store(snapshot, catalog, &values, &mut plan)?;
     }
-    for rows in rows_by_table.values() {
-        rows.publish_watermark(catalog, &mut plan)?;
-    }
     Ok(plan)
 }
 
@@ -1736,9 +1710,6 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
             predicate_time_value(table, "last_used_at", Some(*incoming))?,
         );
         rows.store(snapshot, catalog, &values, &mut plan)?;
-    }
-    for rows in rows_by_table.values() {
-        rows.publish_watermark(catalog, &mut plan)?;
     }
     Ok(plan)
 }
@@ -1877,7 +1848,6 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
         set(table, &mut values, "modify_count", Datum::Int(modify_count));
         set(table, &mut values, "count", Datum::Int(count));
         rows.store(snapshot, catalog, &values, &mut plan)?;
-        rows.publish_watermark(catalog, &mut plan)?;
     }
     Ok(plan)
 }
@@ -1934,7 +1904,6 @@ pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
     );
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -2080,7 +2049,6 @@ pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
     );
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &history_values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -2139,7 +2107,6 @@ pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
     set(history, &mut values, "version", Datum::UInt(version));
     set(history, &mut values, "create_time", Datum::Time(now));
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -2392,7 +2359,6 @@ pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
     );
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
 }
 
@@ -2516,7 +2482,7 @@ fn reset_table_histograms<S: MetaSnapshot>(
         set(table, &mut values, "last_analyze_pos", Datum::Null);
         rows.store(snapshot, catalog, &values, plan)?;
     }
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 /// Plans pinned Go `DeleteTableStatsFromKV` for every supplied physical ID in
@@ -2658,7 +2624,7 @@ fn plan_loaded_meta<S: MetaSnapshot>(
             Datum::UInt(version),
         );
         rows.store(snapshot, catalog, &values, plan)?;
-        return rows.publish_watermark(catalog, plan);
+        return Ok(());
     }
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(table_id));
@@ -2672,7 +2638,7 @@ fn plan_loaded_meta<S: MetaSnapshot>(
         Datum::UInt(version),
     );
     rows.store(snapshot, catalog, &values, plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_loaded_histogram<S: MetaSnapshot>(
@@ -2735,7 +2701,6 @@ fn plan_loaded_histogram<S: MetaSnapshot>(
         Datum::Real(item.histogram.correlation),
     );
     rows.store(snapshot, catalog, &values, plan)?;
-    rows.publish_watermark(catalog, plan)?;
     plan.histogram_count += 1;
     Ok(())
 }
@@ -2856,7 +2821,7 @@ fn plan_loaded_buckets_delete<S: MetaSnapshot>(
         table_id,
     )?;
     rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_loaded_buckets_insert<S: MetaSnapshot>(
@@ -2918,7 +2883,7 @@ fn plan_loaded_buckets_insert<S: MetaSnapshot>(
         rows.store(snapshot, catalog, &values, plan)?;
         plan.bucket_count += 1;
     }
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_loaded_topn_delete<S: MetaSnapshot>(
@@ -2936,7 +2901,7 @@ fn plan_loaded_topn_delete<S: MetaSnapshot>(
         table_id,
     )?;
     rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_loaded_topn_insert<S: MetaSnapshot>(
@@ -2980,7 +2945,7 @@ fn plan_loaded_topn_insert<S: MetaSnapshot>(
         rows.store(snapshot, catalog, &values, plan)?;
         plan.topn_count += 1;
     }
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_loaded_fm_insert<S: MetaSnapshot>(
@@ -3004,7 +2969,7 @@ fn plan_loaded_fm_insert<S: MetaSnapshot>(
     store_fm_sketch(
         snapshot, catalog, &mut rows, table, table_id, item, encoded, now, plan,
     )?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn store_fm_sketch<S: MetaSnapshot>(
@@ -3046,7 +3011,7 @@ fn plan_loaded_fm_delete<S: MetaSnapshot>(
         table_id,
     )?;
     rows.retract_prefix(&loaded_item_prefix(table_id, item), plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_meta<S: MetaSnapshot>(
@@ -3091,7 +3056,6 @@ fn plan_meta<S: MetaSnapshot>(
             Datum::UInt(stats.version),
         );
         rows.store(snapshot, catalog, &values, plan)?;
-        rows.publish_watermark(catalog, plan)?;
         return Ok(true);
     }
 
@@ -3121,7 +3085,6 @@ fn plan_meta<S: MetaSnapshot>(
     // Deliberately no retraction: `mysql.stats_meta` holds one row per table
     // and the identity IS the table, so there is never a leftover. Retracting
     // here would only be a way to delete a row this `ANALYZE` did not write.
-    rows.publish_watermark(catalog, plan)?;
     Ok(true)
 }
 
@@ -3154,7 +3117,6 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
         Datum::UInt(stats.version),
     );
     rows.store(snapshot, catalog, &values, plan)?;
-    rows.publish_watermark(catalog, plan)?;
     Ok(inserted)
 }
 
@@ -3222,7 +3184,7 @@ fn plan_histograms<S: MetaSnapshot>(
     // column that became unanalyzable -- must lose its row, or the loader
     // would keep handing the planner statistics for something that is gone.
     retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_buckets<S: MetaSnapshot>(
@@ -3288,7 +3250,7 @@ fn plan_buckets<S: MetaSnapshot>(
     // bucket read back as part of this histogram would be a range the table
     // no longer has.
     retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_topn<S: MetaSnapshot>(
@@ -3334,7 +3296,7 @@ fn plan_topn<S: MetaSnapshot>(
         }
     }
     retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn plan_fm_sketches<S: MetaSnapshot>(
@@ -3374,7 +3336,7 @@ fn plan_fm_sketches<S: MetaSnapshot>(
     // Go deletes the previous row for every analyzed item even when this is
     // a logical/global write and `needDumpFMS` is false.
     retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
-    rows.publish_watermark(catalog, plan)
+    Ok(())
 }
 
 fn retract_analyzed_items(
@@ -3427,11 +3389,6 @@ struct StatsRows<'table> {
     clustered: bool,
     /// Identity -> (record key, stored values), drained as rows are matched.
     existing: BTreeMap<Vec<String>, (Vec<u8>, RowValues)>,
-    /// The next `_tidb_rowid` to hand out, once one has been reserved.
-    next_row_id: Option<i64>,
-    /// Whether ids came from the node's allocator, which persisted its own
-    /// reservation, so no watermark goes into this plan.
-    allocated: bool,
 }
 
 impl<'table> StatsRows<'table> {
@@ -3450,8 +3407,6 @@ impl<'table> StatsRows<'table> {
             identity,
             clustered,
             existing,
-            next_row_id: None,
-            allocated: false,
         })
     }
 
@@ -3471,8 +3426,6 @@ impl<'table> StatsRows<'table> {
             identity,
             clustered,
             existing,
-            next_row_id: None,
-            allocated: false,
         })
     }
 
@@ -3501,7 +3454,7 @@ impl<'table> StatsRows<'table> {
                 .extend(rewrite_rowid_row(self.table, &key, &stored, values)?);
             return Ok(());
         }
-        let row_id = self.reserve_row_id(snapshot, catalog)?;
+        let row_id = allocate_row_id(snapshot, catalog, self.table)?;
         plan.mutations
             .extend(insert_row(self.table, row_id, values)?);
         Ok(())
@@ -3549,44 +3502,6 @@ impl<'table> StatsRows<'table> {
             }
         }
         Ok(())
-    }
-
-    /// Records the highest `_tidb_rowid` this plan used, so the next writer
-    /// does not hand out a handle this one already did.
-    fn publish_watermark(
-        &self,
-        catalog: &ClusterCatalog,
-        plan: &mut StatsWritePlan,
-    ) -> Result<(), StatsWriteError> {
-        let Some(next) = self.next_row_id.filter(|_| !self.allocated) else {
-            return Ok(());
-        };
-        plan.mutations.push(
-            BufferMutation::set(
-                key::auto_table_id_kv_key(system_db_id(catalog)?, self.table.id),
-                value::encode_int_value(next - 1),
-            )
-            .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
-        );
-        Ok(())
-    }
-
-    fn reserve_row_id<S: MetaSnapshot>(
-        &mut self,
-        snapshot: &mut S,
-        catalog: &ClusterCatalog,
-    ) -> Result<i64, StatsWriteError> {
-        if let Some(row_id) = allocate_row_id(snapshot, catalog, self.table)? {
-            self.allocated = true;
-            self.next_row_id = Some(row_id + 1);
-            return Ok(row_id);
-        }
-        let row_id = match self.next_row_id {
-            Some(next) => next,
-            None => first_free_row_id(snapshot, catalog, self.table)?,
-        };
-        self.next_row_id = Some(row_id + 1);
-        Ok(row_id)
     }
 }
 
@@ -3776,27 +3691,20 @@ fn decode_rows_with_keys(
     Ok(rows)
 }
 
-/// The next free `_tidb_rowid` for `mysql.stats_top_n`, as
-/// [`crate::cluster_account_write`] computes it, and for the same reason:
-/// reserving from the value this snapshot read is what makes a competing
-/// allocation a write conflict rather than a duplicate handle.
-///
-/// Every handle currently stored is counted, including the ones this plan is
-/// about to retract: a key deleted and reinserted in one transaction is two
-/// mutations on one key, which the mutation set rejects.
 /// Go's internal INSERT allocation for a `mysql.*` row: the table's own
 /// allocator (`_tidb_rowid` for a heap table, AUTO_INCREMENT otherwise),
-/// whose reservation commits in its own transaction. `None` when the
-/// snapshot carries no allocator, where [`first_free_row_id`] reserves from
-/// the snapshot inside the plan instead.
+/// whose reservation commits in its own transaction.
 fn allocate_row_id<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table: &TableInfo,
-) -> Result<Option<i64>, StatsWriteError> {
-    let Some(ids) = snapshot.row_ids() else {
-        return Ok(None);
-    };
+) -> Result<i64, StatsWriteError> {
+    let ids = snapshot.row_ids().ok_or_else(|| {
+        StatsWriteError::Encode(RowEncodeError(format!(
+            "{} has no row-ID allocator",
+            table.name.original()
+        )))
+    })?;
     let db_id = system_db_id(catalog)?;
     let allocator = if matches!(HandleLayout::of(table), HandleLayout::RowId) {
         ids.row_allocator_for(db_id, table)
@@ -3809,7 +3717,7 @@ fn allocate_row_id<S: MetaSnapshot>(
             table.name.original()
         )))
     })?;
-    i64::try_from(id).map(Some).map_err(|_| {
+    i64::try_from(id).map_err(|_| {
         StatsWriteError::Encode(RowEncodeError(format!(
             "{}'s row-ID allocator overflowed",
             table.name.original()
@@ -3817,37 +3725,3 @@ fn allocate_row_id<S: MetaSnapshot>(
     })
 }
 
-fn first_free_row_id<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    table: &TableInfo,
-) -> Result<i64, StatsWriteError> {
-    let stored = snapshot
-        .get(&key::auto_table_id_kv_key(system_db_id(catalog)?, table.id))
-        .map_err(|error| StatsWriteError::Read(error.into()))?;
-    let current = match stored {
-        Some(bytes) => value::parse_int_value(&bytes).map_err(|error| {
-            StatsWriteError::Encode(RowEncodeError(format!(
-                "{}'s row-ID allocator: {error}",
-                table.name.original()
-            )))
-        })?,
-        None => 0,
-    };
-    // A `_tidb_rowid` is only ever taken from this allocator (Go's
-    // `alloc.Alloc` reserves from the same meta key, and an explicit row id
-    // rebases it), so the stored handles never pass it and the key alone is
-    // authoritative, as it is for Go. An integer primary key can hold
-    // explicitly written ids, so those tables still count the stored rows.
-    if matches!(HandleLayout::of(table), HandleLayout::RowId) {
-        return Ok(current + 1);
-    }
-    let highest = read_rows_with_keys(snapshot, table, None)?
-        .iter()
-        .map(|(key, _)| row_id_of(key))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-    Ok(current.max(highest) + 1)
-}

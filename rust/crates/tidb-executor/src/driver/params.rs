@@ -258,7 +258,7 @@ mod tests {
     use tidb_datatype::Datum;
 
     fn prepared_catalog() -> crate::Catalog {
-        let mut catalog = crate::Catalog::default();
+        let mut catalog = crate::Catalog::mock();
         crate::run_create_table_on(
             "CREATE TABLE p (id BIGINT PRIMARY KEY, v BIGINT)",
             &mut catalog,
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn prepared_typed_markers_match_go_result_metadata_on_type_changes() {
         use tidb_datatype::{FieldTypeCode as C, FieldTypeFlags as F};
-        let catalog = crate::Catalog::default();
+        let catalog = crate::Catalog::mock();
         let sql = "SELECT POW(?,?), IFNULL(?,11), ? + 11, ? AS marker";
         // Live Go PREPARE/EXECUTE oracle, 2026-09-08. These are logical
         // FieldType lengths, before Go column.ConvertColumnInfo maps

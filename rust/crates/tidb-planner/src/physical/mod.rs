@@ -1606,8 +1606,8 @@ pub struct NominalSort {
 ///
 /// Go's second return value is `true` (enumeration complete) in both arms
 /// and its error is always nil, so the return narrows to the plan list.
-/// `RaiseWarningWhenMPPEnforced` on the refusing arm narrows with the absent
-/// session-vars warning sink.
+/// The refusing arm's `RaiseWarningWhenMPPEnforced` is the dispatcher's,
+/// which holds the warning sink.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_max_one_row(
     p: &crate::logical::LogicalMaxOneRow,
@@ -1901,8 +1901,9 @@ impl PhysicalLock {
 /// Go `ExhaustPhysicalPlans4LogicalLock` (`physical_lock.go:44`): one
 /// root-side Lock over the essential child property, its stats scaled to
 /// the parent's expected count. The `IsFlashProp` arm returns empty exactly
-/// as Go's does (its `RaiseWarningWhenMPPEnforced` narrows with the
-/// session-vars warning sink, as in `enforce.go`'s port).
+/// as Go's does. Its `RaiseWarningWhenMPPEnforced` is unreachable in Go:
+/// `findBestTask`'s self check refuses a Lock under the MPP property first,
+/// with the `SelectLock` warning.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_lock(
     p: &crate::logical::LogicalLock,

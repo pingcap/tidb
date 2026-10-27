@@ -15,7 +15,7 @@
 //! Direct DistSQL consumer obligations for `pkg/util/tiflash`.
 
 use tidb_distsql::{
-    DistSqlContext, KvRequestMetadata, ReadRequestMetadata, ReplicaRead,
+    DistSqlContext, ReadRequestMetadata, ReplicaRead,
 };
 
 #[test]
@@ -29,7 +29,7 @@ fn existing_request_projection_consumes_the_canonical_policy() {
         ReplicaRead::ClosestReplicas
     );
     assert_eq!(
-        KvRequestMetadata::from_context(&context).tiflash_replica_read,
+        tidb_distsql::request_from_context(&context).tiflash_replica_read,
         ReplicaRead::ClosestReplicas
     );
 }

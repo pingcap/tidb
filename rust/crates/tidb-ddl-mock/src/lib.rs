@@ -17,9 +17,9 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use tidb_exec::cluster_catalog::MetaSnapshot;
-use tidb_exec::ddl_job_scheduler::SchemaLoader;
-use tidb_exec::ddl_systable::{Manager, SystemTableManagerError};
+use tidb_cluster::cluster_catalog::MetaSnapshot;
+use tidb_ddl::ddl_job_scheduler::SchemaLoader;
+use tidb_ddl::ddl_systable::{Manager, SystemTableManagerError};
 use tidb_model::JobW;
 
 type ReloadCall = Box<dyn FnOnce() -> Result<(), String> + Send>;
@@ -280,7 +280,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use tidb_exec::ddl_job_scheduler::{must_reload_schemas, UnsyncedJobTracker};
+    use tidb_ddl::ddl_job_scheduler::{must_reload_schemas, UnsyncedJobTracker};
 
     use super::*;
 

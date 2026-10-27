@@ -79,6 +79,7 @@ pub mod mathutil;
 pub mod membuf;
 pub mod memory;
 pub mod memoryusagealarm;
+pub mod misc;
 pub mod monotime;
 pub mod mvmap;
 pub use tidb_naming as naming;

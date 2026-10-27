@@ -11,6 +11,8 @@ description = "Go pkg/store/gcworker: the GC leader that advances safe points, r
 workspace = true
 
 [dependencies]
+tidb-ddl = { path = "../tidb-ddl" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
 chrono.workspace = true
 serde_json = { workspace = true }
 tikv-client.workspace = true
@@ -18,8 +20,7 @@ tokio.workspace = true
 async-trait.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
-tidb-exec = { path = "../tidb-exec" }
-tidb-executor = { path = "../tidb-executor" }
+tidb-cluster = { path = "../tidb-cluster" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-placement = { path = "../tidb-placement" }

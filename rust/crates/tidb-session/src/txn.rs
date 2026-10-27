@@ -27,7 +27,7 @@ use std::sync::MutexGuard;
 
 use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::cluster_storage::BufferCheckpoint;
 use tidb_executor::{Catalog, DriverError};
 
@@ -119,10 +119,19 @@ pub trait TxnManagerOps {
     fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint);
 }
 
+/// The driver error `error` was rendered from, when its client-visible code
+/// and message are still that error's own (a caller that reworded the
+/// message has made the cause stale).
+pub(crate) fn driver_cause(error: &SqlQueryError) -> Option<&DriverError> {
+    let cause = error.cause_of::<DriverError>()?;
+    let rendered = cause.clone().to_mysql_error();
+    (rendered.code == error.code && rendered.message == error.message).then_some(cause)
+}
+
 /// A store-session error as a driver error, its typed cause (Go
 /// `errors.Cause`) kept when it has one.
 pub(crate) fn driver_error_of(error: SqlQueryError) -> DriverError {
-    if let Some(cause) = error.driver_cause() {
+    if let Some(cause) = driver_cause(&error) {
         return cause.clone();
     }
     let mut mapped = tidb_executor::MysqlError::from_parts(error.code, error.state, error.message);
@@ -774,6 +783,18 @@ impl Session {
         Ok(())
     }
 
+    /// Go `sessiontxn.NewTxnInStmt`'s commit (`executor/ddl.go:151`,
+    /// `grant.go:144`, `revoke.go:71`, `simple.go:153`): the executor commits
+    /// the open transaction before its own work, and the statement goes on
+    /// in a fresh transaction context. The caller asks only when the store
+    /// holds a transaction; a commit that fails -- an undetermined one
+    /// included -- is the statement's error.
+    pub(crate) fn new_txn_in_stmt(&mut self, txn: &mut dyn TxnManagerOps) -> Result<(), DriverError> {
+        self.reset_transaction_scope();
+        self.leave_txn_ctx_for_commit();
+        txn.commit_txn(self)
+    }
+
     /// Go `sessiontxn.CommitBeforeEnterNewTxn`: an open transaction is
     /// committed before a new one is entered; a pending one no statement
     /// activated, or writes a finished autocommit statement left behind, are
@@ -942,12 +963,9 @@ impl Session {
             // go appends the statement error into the warning buffer as well
             // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
             // refused ROLLBACK TO carries the same 1305 row.
-            self.append_warning(
-                crate::WarningLevel::Error,
-                1305,
-                format!("SAVEPOINT {name} does not exist"),
-            );
-            return Err(DriverError::SavepointNotExists(name.to_owned()));
+            let error = DriverError::SavepointNotExists(name.to_owned());
+            self.append_driver_error(crate::WarningLevel::Error, &error);
+            return Err(error);
         };
         if let Some(buffer) = &buffer {
             txn.rollback_to_checkpoint(buffer);
@@ -967,12 +985,9 @@ impl Session {
             .as_mut()
             .is_some_and(|ctx| ctx.savepoints.release(name));
         if !released {
-            self.append_warning(
-                crate::WarningLevel::Error,
-                1305,
-                format!("SAVEPOINT {name} does not exist"),
-            );
-            return Err(DriverError::SavepointNotExists(name.to_owned()));
+            let error = DriverError::SavepointNotExists(name.to_owned());
+            self.append_driver_error(crate::WarningLevel::Error, &error);
+            return Err(error);
         }
         Ok(())
     }

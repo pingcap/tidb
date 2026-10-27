@@ -66,7 +66,7 @@ pub fn execute_catalog_stats_lock(
                 .find(|definition| definition.name.go_to_lower() == written_name.go_to_lower())
                 .ok_or_else(|| DriverError::UnknownPartition {
                     partition: written_name.go_to_lower(),
-                    table: table.name.clone(),
+                    table: table.name(),
                 })?;
             partition_names.insert(definition.id, written_name.go_to_lower());
         }
@@ -280,23 +280,20 @@ mod tests {
 
     #[test]
     fn catalog_adapter_persists_lock_rows_and_merges_deltas() {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         let context = StmtContext::for_query();
-        let settings = crate::CreateTableSettings::default();
-        crate::run_create_table_in(
+        crate::ddl::run_create_system_table_in(
             tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
             &mut catalog,
             "mysql",
-            settings,
-            &context,
+            tidb_metadef::system::STATS_META_TABLE_ID,
         )
         .unwrap();
-        crate::run_create_table_in(
+        crate::ddl::run_create_system_table_in(
             tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,
             &mut catalog,
             "mysql",
-            settings,
-            &context,
+            tidb_metadef::system::STATS_TABLE_LOCKED_TABLE_ID,
         )
         .unwrap();
         crate::run_insert_in(

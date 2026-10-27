@@ -18,7 +18,7 @@
 
 use tidb_ast::{
     AlterUserDualPassword, AlterUserResourceKind, AlterUserResourceOption, AlterUserStmt,
-    AlterUserTlsOption, CreateUserAuth, CreateUserCredential, CreateUserSpec, DdlStmt,
+    AlterUserTlsOption, CreateUserAuth, CreateUserCredential, CreateUserSpec, AdminStmt,
     RenameUserPair, RoleSpec, UserSpec,
 };
 use tidb_lexer::{is_reserved, TokenKind};
@@ -41,13 +41,13 @@ impl Parser {
         self.user_ddl_kind().is_some()
     }
 
-    pub(crate) fn parse_user_ddl_statement(&mut self) -> PResult<DdlStmt> {
+    pub(crate) fn parse_user_ddl_statement(&mut self) -> PResult<AdminStmt> {
         match self
             .user_ddl_kind()
             .ok_or_else(|| self.err_here("expected account DDL statement"))?
         {
             UserDdlKind::Create => self.parse_create_user_or_role(),
-            UserDdlKind::Alter => Ok(DdlStmt::AlterUser(Box::new(parse_alter_user(self)?))),
+            UserDdlKind::Alter => Ok(AdminStmt::AlterUser(Box::new(parse_alter_user(self)?))),
             UserDdlKind::Rename => self.parse_rename_user(),
             UserDdlKind::Drop => self.parse_drop_user_or_role(),
         }
@@ -67,11 +67,11 @@ impl Parser {
         }
     }
 
-    fn parse_create_user_or_role(&mut self) -> PResult<DdlStmt> {
+    fn parse_create_user_or_role(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("CREATE")?;
         if self.is_kw("ROLE") {
             self.bump();
-            return Ok(DdlStmt::CreateRole {
+            return Ok(AdminStmt::CreateRole {
                 if_not_exists: self.parse_if_not_exists()?,
                 roles: self.parse_create_role_list()?,
             });
@@ -113,7 +113,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(DdlStmt::CreateUser {
+        Ok(AdminStmt::CreateUser {
             if_not_exists,
             users,
             tls_options,
@@ -124,7 +124,7 @@ impl Parser {
         })
     }
 
-    fn parse_rename_user(&mut self) -> PResult<DdlStmt> {
+    fn parse_rename_user(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("RENAME")?;
         self.expect_kw("USER")?;
         let mut pairs = Vec::new();
@@ -138,10 +138,10 @@ impl Parser {
             }
             self.bump();
         }
-        Ok(DdlStmt::RenameUser { pairs })
+        Ok(AdminStmt::RenameUser { pairs })
     }
 
-    fn parse_drop_user_or_role(&mut self) -> PResult<DdlStmt> {
+    fn parse_drop_user_or_role(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("DROP")?;
         let is_role = if self.is_kw("ROLE") {
             self.bump();
@@ -156,7 +156,7 @@ impl Parser {
             self.bump();
             users.push(self.parse_user_spec()?);
         }
-        Ok(DdlStmt::DropUser {
+        Ok(AdminStmt::DropUser {
             is_role,
             if_exists,
             users,

@@ -527,19 +527,18 @@ fn an_admin_statement_answers_rows_only_when_go_plans_a_schema() {
 
 #[test]
 fn mpp_statement_contexts_share_counters_until_completion() {
-    use tidb_executor::remote_scan::PushdownStatementContext;
 
     let mut session = Session::new();
     session.begin_statement_execution("select 1").unwrap();
     let context = session.statement_context(false);
-    let request = PushdownStatementContext::from_stmt(&context);
+    let request = tidb_executor::remote_scan::pushdown_statement_context(&context);
     let id = request.mpp_query_info.query_id(request.mpp_server_id);
     assert_eq!(request.mpp_query_info.alloc_task_id(), 1);
     assert_eq!(request.mpp_query_info.alloc_gather_id(), 1);
     // Rebuilding an executor context (including retry construction) must not
     // become a new MPP query or restart either counter.
     let rebuilt = session.statement_context(true);
-    let retry = PushdownStatementContext::from_stmt(&rebuilt);
+    let retry = tidb_executor::remote_scan::pushdown_statement_context(&rebuilt);
     assert!(Arc::ptr_eq(&request.mpp_query_info, &retry.mpp_query_info));
     assert_eq!(retry.mpp_query_info.query_id(retry.mpp_server_id), id);
     assert_eq!(retry.mpp_query_info.alloc_task_id(), 2);
@@ -578,7 +577,6 @@ fn mpp_identity_is_retired_when_record_sets_close_or_execution_fails() {
 #[test]
 fn mpp_context_uses_the_live_server_info_identity() {
     use std::sync::atomic::{AtomicU64, Ordering};
-    use tidb_executor::remote_scan::PushdownStatementContext;
 
     let mut session = Session::new();
     // Go's Domain reports `serverIDForStandalone` until etcd assigns one, and
@@ -596,7 +594,7 @@ fn mpp_context_uses_the_live_server_info_identity() {
         info, None,
     )));
     let context = session.statement_context(false);
-    let request = PushdownStatementContext::from_stmt(&context);
+    let request = tidb_executor::remote_scan::pushdown_statement_context(&context);
     assert_eq!(request.mpp_server_id, 42);
     id.store(99, Ordering::SeqCst);
     assert_eq!(session.statement_context(false).mpp_server_id(), 99);
@@ -659,7 +657,7 @@ fn compute_topology_batch_policy_reaches_statement_and_pushdown() {
     let mut session = Session::new();
     session.run("SET tiflash_compute_dispatch_policy = 'round_robin'").unwrap();
     let context = session.statement_context(false);
-    let request = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&context);
+    let request = tidb_executor::remote_scan::pushdown_statement_context(&context);
     assert_eq!(request.tiflash_compute_dispatch_policy, "round_robin");
     session.run("SET tiflash_compute_dispatch_policy = 'consistent_hash'").unwrap();
     assert_eq!(request.tiflash_compute_dispatch_policy, "round_robin");
@@ -670,7 +668,7 @@ fn compute_topology_batch_policy_reaches_statement_and_pushdown() {
 fn mpp_failure_batch_fallback_policy_is_statement_owned() {
     let mut session = Session::new();
     session.run("SET tidb_allow_fallback_to_tikv = 'tiflash'").unwrap();
-    let request = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&session.statement_context(false));
+    let request = tidb_executor::remote_scan::pushdown_statement_context(&session.statement_context(false));
     assert!(request.allow_tiflash_fallback);
     session.run("SET tidb_allow_fallback_to_tikv = ''").unwrap();
     assert!(request.allow_tiflash_fallback);

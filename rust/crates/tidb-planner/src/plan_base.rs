@@ -360,6 +360,10 @@ pub enum PlanErrorKind {
     /// Go `ErrInternal` (1815) carrying a planner message verbatim: the
     /// client renders the errno template (`Internal : %s`) around it.
     InternalCoded { message: String },
+    /// Go `infoschema.ErrCannotAddForeign` (1215).
+    CannotAddForeign,
+    /// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStack(msg)` (8200).
+    GeneralUnsupportedDdl { message: String },
     /// Go `plannererrors.ErrUnsupportedType` (8108), with its rendered diagnostic.
     UnsupportedType { message: String },
     /// Go window frame errors, retaining the original window name.
@@ -611,6 +615,28 @@ impl PlanError {
         let message = message.into();
         Self {
             kind: PlanErrorKind::InternalCoded {
+                message: message.clone(),
+            },
+            message,
+        }
+    }
+
+    /// Go `infoschema.ErrCannotAddForeign` (1215).
+    #[must_use]
+    pub fn cannot_add_foreign() -> Self {
+        Self {
+            kind: PlanErrorKind::CannotAddForeign,
+            message: "Cannot add foreign key constraint".to_owned(),
+        }
+    }
+
+    /// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStack(msg)` (8200): the
+    /// message is the whole diagnostic.
+    #[must_use]
+    pub fn general_unsupported_ddl(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            kind: PlanErrorKind::GeneralUnsupportedDdl {
                 message: message.clone(),
             },
             message,

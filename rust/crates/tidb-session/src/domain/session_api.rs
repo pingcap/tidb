@@ -19,14 +19,14 @@
 
 
 use std::borrow::Cow;
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::net::Shutdown;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_protocol::ColumnInfo;
@@ -193,12 +193,12 @@ impl ConnectionCancellation {
 #[derive(Clone, Debug, Default)]
 pub struct ConnectionClose {
     closed: Arc<AtomicBool>,
-    socket: Option<Arc<TcpStream>>,
+    socket: Option<Arc<crate::domain::client_socket::ClientSocket>>,
 }
 
 impl ConnectionClose {
     /// Binds the handle to the connection's own socket.
-    pub fn with_socket(socket: TcpStream) -> Self {
+    pub fn with_socket(socket: crate::domain::client_socket::ClientSocket) -> Self {
         Self {
             closed: Arc::new(AtomicBool::new(false)),
             socket: Some(Arc::new(socket)),
@@ -267,8 +267,8 @@ impl Drop for QueryCancellationLease {
     }
 }
 
-pub use tidb_exec::sql_query_error::{lock_sql_error, SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
-pub use tidb_exec::sql_query_error::cluster_ddl_error;
+pub use tidb_cluster::sql_query_error::{lock_sql_error, SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
+pub use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
 
 pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {
@@ -777,8 +777,8 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
 pub struct SessionContext {
     /// Server connection identity.
     pub connection_id: u64,
-    /// Accepted peer address.
-    pub peer_addr: SocketAddr,
+    /// Accepted peer: Go's `RemoteAddr` and `isUnixSocket`.
+    pub peer_addr: crate::domain::client_socket::PeerAddress,
     /// Identity established by ordinary password verification or validated
     /// process-wide skip-grant admission.
     pub identity: AuthenticatedIdentity,
@@ -865,7 +865,7 @@ pub trait QuerySession {
     /// after a failed parse reports the error row and NOT the previous
     /// statement's leftovers. Default: nothing, for sessions without a
     /// warning buffer.
-    fn record_parse_failure(&mut self, _code: u16, _message: String) {}
+    fn record_parse_failure(&mut self, _error: &SqlQueryError) {}
 
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.

@@ -469,8 +469,8 @@ pub(crate) fn eval_func_values_in(
     }
     let result = eval_func_values(name, vals, cols)?;
     if name == "JSON_MERGE" && matches!(result, Ok(ref value) if *value != Datum::Null) {
-        cols.append_warning(
-            1681,
+        cols.append_go_warning(
+            &tidb_error::catalog::expression::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT,
             "JSON_MERGE is deprecated and will be removed in a future release.",
         );
     }

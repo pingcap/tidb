@@ -14,7 +14,7 @@
 
 //! Production-consumer coverage for `pkg/util/sem` policy enforcement.
 
-use tidb_session::{privilege, Session, StmtResult};
+use tidb_session::{Session, StmtResult};
 
 #[test]
 fn sem_policy_requires_explicit_restricted_privileges() {
@@ -44,16 +44,16 @@ fn sem_policy_requires_explicit_restricted_privileges() {
     // The same explicit RESTRICTED_TABLES_ADMIN gate owns schema/table
     // visibility and the SEM read-only rule for system schemas.
     assert!(!session.database_is_visible("METRICS_ScHEma"));
-    assert!(!session.has_scoped_privilege("mysql", "tidb", privilege::GlobalPriv::Select));
-    assert!(!session.has_scoped_privilege("mysql", "user", privilege::GlobalPriv::Insert));
+    assert!(!session.has_scoped_privilege("mysql", "tidb", tidb_mysql::SelectPriv));
+    assert!(!session.has_scoped_privilege("mysql", "user", tidb_mysql::InsertPriv));
     session.run("SET ROLE 'sem_role'@'%'").unwrap();
     assert!(session.database_is_visible("METRICS_ScHEma"));
-    assert!(session.has_scoped_privilege("mysql", "tidb", privilege::GlobalPriv::Select));
-    assert!(session.has_scoped_privilege("mysql", "user", privilege::GlobalPriv::Insert));
+    assert!(session.has_scoped_privilege("mysql", "tidb", tidb_mysql::SelectPriv));
+    assert!(session.has_scoped_privilege("mysql", "user", tidb_mysql::InsertPriv));
     session.run("SET ROLE NONE").unwrap();
     assert!(!session.database_is_visible("METRICS_ScHEma"));
-    assert!(!session.has_scoped_privilege("mysql", "tidb", privilege::GlobalPriv::Select));
-    assert!(!session.has_scoped_privilege("mysql", "user", privilege::GlobalPriv::Insert));
+    assert!(!session.has_scoped_privilege("mysql", "tidb", tidb_mysql::SelectPriv));
+    assert!(!session.has_scoped_privilege("mysql", "user", tidb_mysql::InsertPriv));
 
     // Invisible system variables disappear from SHOW and require the
     // explicit RESTRICTED_VARIABLES_ADMIN privilege for every direct scope.
@@ -87,8 +87,8 @@ fn sem_policy_requires_explicit_restricted_privileges() {
         .unwrap();
     tidb_util::sem::enable();
     assert!(session.database_is_visible("METRICS_ScHEma"));
-    assert!(session.has_scoped_privilege("mysql", "tidb", privilege::GlobalPriv::Select));
-    assert!(session.has_scoped_privilege("mysql", "user", privilege::GlobalPriv::Insert));
+    assert!(session.has_scoped_privilege("mysql", "tidb", tidb_mysql::SelectPriv));
+    assert!(session.has_scoped_privilege("mysql", "user", tidb_mysql::InsertPriv));
     for sql in [
         "SHOW VARIABLES LIKE 'tidb_general_log'",
         "SHOW GLOBAL VARIABLES LIKE 'tidb_general_log'",

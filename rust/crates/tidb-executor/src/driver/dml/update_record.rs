@@ -163,7 +163,12 @@ impl<'a> UpdateRecords<'a> {
                         | DriverError::ForeignKeyRowIsReferenced { .. }
                 ) {
                     let warning = error.to_mysql_error();
-                    ctx.append_warning_parts(warning.code, &warning.message);
+                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
                     return Ok(UpdateOutcome::ForeignKeySkipped);
                 }
                 return Err(error);
@@ -316,7 +321,12 @@ fn ignored_write_error(
 ) -> Result<UpdateOutcome, DriverError> {
     if ignore && matches!(error, DriverError::DuplicateEntry { .. }) {
         let warning = error.to_mysql_error();
-        ctx.append_warning_parts(warning.code, &warning.message);
+        ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
     } else {
         handle_partition_write_error(error, ignore, ctx)?;
     }

@@ -18,6 +18,8 @@
 //! the existing Rust suites' distinct rendering and error expectations; they
 //! are not a complete transcreation of that package.
 
+pub mod testkit;
+
 use tidb_session::Session;
 
 pub fn integer_rows_with_sql(session: &mut Session, sql: &str) -> String {

@@ -670,7 +670,24 @@ impl SysVarDef {
     pub fn is_noop(&self) -> bool {
         NOOP_SYS_VARS.binary_search(&self.name).is_ok()
     }
+
+    /// Go `SysVar.RequireDynamicPrivileges` (`pkg/sessionctx/variable/
+    /// variable.go:102`): the dynamic privileges `SetExecutor` demands before
+    /// setting the variable, given `(isGlobal, semEnabled)`.
+    ///
+    /// No entry of Go's built-in `sysVars` sets it; only a variable an
+    /// extension registers through `variable.RegisterSysVar`
+    /// (`pkg/extension/manifest.go:197`) can. This registry has no such
+    /// registration, so every entry answers Go's nil.
+    #[must_use]
+    pub fn require_dynamic_privileges(&self) -> Option<RequireDynamicPrivilegesFn> {
+        None
+    }
 }
+
+/// Go's `func(isGlobal bool, sem bool) []string` of
+/// `SysVar.RequireDynamicPrivileges`.
+pub type RequireDynamicPrivilegesFn = fn(is_global: bool, sem: bool) -> Vec<&'static str>;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

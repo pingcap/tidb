@@ -99,7 +99,7 @@ impl Settings {
             update_global(|config| {
                 config.pessimistic_txn.deadlock_history_collect_retryable = value
             });
-            tidb_exec::configure_deadlock_history(
+            tidb_cluster::configure_deadlock_history(
                 get_global_config()
                     .pessimistic_txn
                     .deadlock_history_capacity as usize,
@@ -205,7 +205,7 @@ mod tests {
             fn drop(&mut self) {
                 tidb_config::config_tree::config::store_global_config(self.0.clone());
                 let _ = tidb_util::logutil::set_level(&self.1);
-                tidb_exec::configure_deadlock_history(
+                tidb_cluster::configure_deadlock_history(
                     self.0.pessimistic_txn.deadlock_history_capacity as usize,
                     self.0.pessimistic_txn.deadlock_history_collect_retryable,
                 );

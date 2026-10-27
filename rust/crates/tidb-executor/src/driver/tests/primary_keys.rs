@@ -18,7 +18,7 @@ fn integer_primary_key_is_the_row_handle() {
         "CREATE TABLE p (id BIGINT PRIMARY KEY, v BIGINT)",
         "CREATE TABLE p (id BIGINT, v BIGINT, PRIMARY KEY (id))",
     ] {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on(ddl, &mut catalog).unwrap();
         run_insert_on(
             "INSERT INTO p VALUES (10, 100), (20, 200)",
@@ -98,7 +98,7 @@ fn integer_primary_key_is_the_row_handle() {
 /// values are fine -- the table is a heap, as in Go with _tidb_rowid.
 #[test]
 fn without_a_primary_key_rows_repeat_freely() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE h (a BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO h VALUES (1), (1), (1)",
@@ -122,7 +122,7 @@ fn without_a_primary_key_rows_repeat_freely() {
 /// than silently dropped, so a table never claims what it cannot enforce.
 #[test]
 fn unsupported_constraints_are_rejected() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     for ddl in [
         // Two primary keys is not a table.
         "CREATE TABLE c (a BIGINT PRIMARY KEY, b BIGINT PRIMARY KEY)",
@@ -145,7 +145,7 @@ fn unsupported_constraints_are_rejected() {
 /// What this test asserts holds for both.
 #[test]
 fn a_non_integer_primary_key_is_enforced_by_its_index() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE s (k VARCHAR(10) PRIMARY KEY)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO s VALUES ('a'), ('b')",
@@ -180,7 +180,7 @@ fn a_non_integer_primary_key_is_enforced_by_its_index() {
 /// duplicate (Go's IsCommonHandle path in addRecord).
 #[test]
 fn clustered_common_handle() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE c (k VARCHAR(8) PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -376,7 +376,7 @@ fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
 
 #[test]
 fn pseudo_composite_index_applies_master_selectivity_floor() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, \
          INDEX idx_bucket(bucket), INDEX idx_rare(rare), INDEX idx_cover(bucket, rare))",
@@ -396,7 +396,7 @@ fn pseudo_composite_index_applies_master_selectivity_floor() {
 
 #[test]
 fn analyzed_composite_index_dominates_single_equality_index() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, payload VARCHAR(20), \
          INDEX idx_bucket(bucket), INDEX idx_rare(rare), INDEX idx_cover(bucket, rare))",
@@ -447,7 +447,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
 
 #[test]
 fn explain_uses_the_lowercase_field_name_identity() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)
         .unwrap();
     let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog);
@@ -464,7 +464,7 @@ fn explain_uses_the_lowercase_field_name_identity() {
 
 #[test]
 fn a_common_handle_table_path_is_a_table_scan() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE ch (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
          PRIMARY KEY (id, part, created)) \
@@ -488,7 +488,7 @@ fn a_common_handle_table_path_is_a_table_scan() {
 
 #[test]
 fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create_with_mode(
         "CREATE TABLE np (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
          PRIMARY KEY (id, part, created)) \
@@ -557,7 +557,7 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
 /// ```
 #[test]
 fn a_handle_column_reads_back_in_its_own_type() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
 
     // A `bit` primary key: the handle holds the integer, the column is BIT,
@@ -638,15 +638,11 @@ fn create_with_mode(
     mode: tidb_vardef::modes::ClusteredIndexDefMode,
     catalog: &mut Catalog,
 ) -> Result<bool, DriverError> {
-    crate::ddl::run_create_table_in(
+    crate::ddl::run_create_table_on_with(
         sql,
         catalog,
         crate::driver::DEFAULT_DATABASE,
-        crate::CreateTableSettings {
-            clustered_index_mode: mode,
-            ..crate::CreateTableSettings::default()
-        },
-        &crate::StmtContext::default(),
+        &crate::StmtContext::default().with_clustered_index_def_mode(mode),
     )
 }
 
@@ -752,7 +748,7 @@ fn the_clustered_index_mode_decides_the_handle() {
         ),
     ];
     for (mode, ddl, pk_is_handle, common) in cases {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         create_with_mode(ddl, *mode, &mut catalog)
             .unwrap_or_else(|_| panic!("{ddl} under {mode:?}"));
         assert_eq!(
@@ -830,7 +826,7 @@ fn an_explicit_clause_overrides_the_variable() {
         ),
     ];
     for (mode, ddl, pk_is_handle, common) in cases {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         create_with_mode(ddl, *mode, &mut catalog)
             .unwrap_or_else(|_| panic!("{ddl} under {mode:?}"));
         assert_eq!(
@@ -855,7 +851,7 @@ fn the_keyword_is_refused_on_a_secondary_key() {
         "CREATE TABLE m (a BIGINT, UNIQUE KEY u (a) NONCLUSTERED)",
         "CREATE TABLE m (a BIGINT, KEY k (a) CLUSTERED)",
     ] {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         assert!(
             create_with_mode(ddl, Mode::ON, &mut catalog).is_err(),
             "{ddl} should be refused"
@@ -869,7 +865,7 @@ fn the_keyword_is_refused_on_a_secondary_key() {
 /// row -- both were wrong-range regressions upstream.
 #[test]
 fn issue_50051_unsigned_boundaries_range_correctly() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE tt (c BIGINT UNSIGNED NOT NULL, d INT NOT NULL, PRIMARY KEY (c, d))",

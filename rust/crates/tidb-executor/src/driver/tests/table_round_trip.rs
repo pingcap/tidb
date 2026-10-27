@@ -104,7 +104,7 @@ fn count_star_field_keeps_its_written_label() {
 
 #[test]
 fn insert_then_select_round_trip() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
@@ -167,7 +167,7 @@ fn insert_then_select_round_trip() {
 fn sql_round_trips_through_real_tikv_bytes() {
     use crate::kv_table::{KvColumn, KvTable};
     use tidb_datatype::FieldTypeCode;
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv(
         "kt",
         KvTable::new(

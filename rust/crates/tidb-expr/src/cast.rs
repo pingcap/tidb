@@ -157,185 +157,185 @@ pub(crate) fn eval_numeric_cast_with_type(
                         crate::ErrorLevel::Error => {
                             return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()))
                         }
-                        crate::ErrorLevel::Warn => ctx.append_warning(
-                            1292,
+                        crate::ErrorLevel::Warn => ctx.append_go_warning(
+                            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
                             &format!(
                                 "Truncated incorrect DECIMAL value: '{}'",
                                 tidb_datatype::format_float_g_shortest(value)
-                            ),
-                        ),
-                        crate::ErrorLevel::Ignore => {}
-                    },
-                    Some(_) => {
-                        return Err(EvalError::Conversion(tidb_datatype::ERR_BAD_NUMBER.clone()))
-                    }
-                }
-                Decimal::from_my_decimal(&decimal)
-            } else {
-                let (decimal, error) = value
-                    .to_decimal_with_context(&context)
-                    .map_err(|_| EvalError::Unsupported("numeric cast decimal source"))?;
-                // JSON conversion already applies its type context; numeric
-                // sources return their original diagnostic to the expression.
-                handle(error)?;
-                decimal
-            };
-            let result =
-                tidb_datatype::produce_decimal_with_type_in_context(decimal, target, &context);
-            handle(result.error)?;
-            Ok(result.value)
-        }
-        EvalType::Real => {
-            if source == EvalType::String {
-                let result = str_to_real_for_cast(&value, ctx)?;
-                let result =
-                    tidb_datatype::produce_float_with_type_in_context(result, target, &context);
-                return result
-                    .error
-                    .map_or(Ok(result.value), |error| Err(EvalError::Conversion(error)));
-            }
-            if matches!(value, Datum::Json(_)) {
-                let converted = value
-                    .to_f64_in_context(&context)
-                    .map_err(|_| EvalError::Unsupported("JSON real conversion"))?;
-                return converted.error.map_or(Ok(converted.value), |error| {
-                    Err(EvalError::Conversion(error))
-                });
-            }
-            let converted = value
-                .to_f64()
-                .map_err(|_| EvalError::Unsupported("real cast source"))?;
-            if converted.event.is_some() {
-                handle(Some(tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.generate(
-                    format!(
-                        "Truncated incorrect FLOAT value: '{}'",
-                        datum_sql_string(&value)?
-                    ),
-                )))?;
-            }
-            Ok(Datum::Real(converted.value))
-        }
-        EvalType::Int => {
-            let unsigned = target.is_unsigned();
-            let integer = |value: i64| {
-                if unsigned {
-                    Datum::UInt(value as u64)
-                } else {
-                    Datum::Int(value)
-                }
-            };
-            match value {
-                Datum::Int(value) => Ok(integer(value)),
-                Datum::UInt(value) => Ok(integer(value as i64)),
-                Datum::Real(value) | Datum::Float32(value) => {
-                    let result = if unsigned {
-                        tidb_datatype::convert_float_to_uint(
-                            ctx.type_flags(),
-                            value,
-                            u64::MAX,
-                            FieldTypeCode::LongLong,
-                        )
-                        .map(|value| value as i64)
-                        .map_err(|(value, error)| (value as i64, error))
-                    } else {
-                        tidb_datatype::convert_float_to_int(
-                            value,
-                            i64::MIN,
-                            i64::MAX,
-                            FieldTypeCode::LongLong,
-                        )
-                    };
-                    // Numeric conversion primitives return a saturated value beside the error.
-                    match result {
-                        Ok(value) => Ok(integer(value)),
-                        Err((converted, _error)) => {
-                            handle(Some(tidb_datatype::ERR_OVERFLOW.generate(format!(
+                                )),
+                                crate::ErrorLevel::Ignore => {}
+                                },
+                                Some(_) => {
+                                return Err(EvalError::Conversion(tidb_datatype::ERR_BAD_NUMBER.clone()))
+                                }
+                                }
+                                Decimal::from_my_decimal(&decimal)
+                                } else {
+                                let (decimal, error) = value
+                                .to_decimal_with_context(&context)
+                                .map_err(|_| EvalError::Unsupported("numeric cast decimal source"))?;
+                                // JSON conversion already applies its type context; numeric
+                                // sources return their original diagnostic to the expression.
+                                handle(error)?;
+                                decimal
+                                };
+                                let result =
+                                tidb_datatype::produce_decimal_with_type_in_context(decimal, target, &context);
+                                handle(result.error)?;
+                                Ok(result.value)
+                                }
+                                EvalType::Real => {
+                                if source == EvalType::String {
+                                let result = str_to_real_for_cast(&value, ctx)?;
+                                let result =
+                                tidb_datatype::produce_float_with_type_in_context(result, target, &context);
+                                return result
+                                .error
+                                .map_or(Ok(result.value), |error| Err(EvalError::Conversion(error)));
+                                }
+                                if matches!(value, Datum::Json(_)) {
+                                let converted = value
+                                .to_f64_in_context(&context)
+                                .map_err(|_| EvalError::Unsupported("JSON real conversion"))?;
+                                return converted.error.map_or(Ok(converted.value), |error| {
+                                Err(EvalError::Conversion(error))
+                                });
+                                }
+                                let converted = value
+                                .to_f64()
+                                .map_err(|_| EvalError::Unsupported("real cast source"))?;
+                                if converted.event.is_some() {
+                                handle(Some(tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.generate(
+                                format!(
+                                "Truncated incorrect FLOAT value: '{}'",
+                                datum_sql_string(&value)?
+                                ),
+                                )))?;
+                                }
+                                Ok(Datum::Real(converted.value))
+                                }
+                                EvalType::Int => {
+                                let unsigned = target.is_unsigned();
+                                let integer = |value: i64| {
+                                if unsigned {
+                                Datum::UInt(value as u64)
+                                } else {
+                                Datum::Int(value)
+                                }
+                                };
+                                match value {
+                                Datum::Int(value) => Ok(integer(value)),
+                                Datum::UInt(value) => Ok(integer(value as i64)),
+                                Datum::Real(value) | Datum::Float32(value) => {
+                                let result = if unsigned {
+                                tidb_datatype::convert_float_to_uint(
+                                ctx.type_flags(),
+                                value,
+                                u64::MAX,
+                                FieldTypeCode::LongLong,
+                                )
+                                .map(|value| value as i64)
+                                .map_err(|(value, error)| (value as i64, error))
+                                } else {
+                                tidb_datatype::convert_float_to_int(
+                                value,
+                                i64::MIN,
+                                i64::MAX,
+                                FieldTypeCode::LongLong,
+                                )
+                                };
+                                // Numeric conversion primitives return a saturated value beside the error.
+                                match result {
+                                Ok(value) => Ok(integer(value)),
+                                Err((converted, _error)) => {
+                                handle(Some(tidb_datatype::ERR_OVERFLOW.generate(format!(
                                 "constant {} overflows bigint",
                                 tidb_datatype::format_float_g_shortest(tidb_datatype::round_float(
-                                    value
+                                value
                                 )),
-                            ))))?;
-                            Ok(integer(converted))
-                        }
-                    }
-                }
-                Datum::Decimal(value) => {
-                    let rounded = value.round_to_scale(0);
-                    let (result, error) = if unsigned {
-                        let (value, error) = rounded.to_u64_trunc();
-                        (value as i64, error)
-                    } else {
-                        rounded.to_i64_trunc()
-                    };
-                    if error.is_some() {
-                        let error = tidb_datatype::ERR_OVERFLOW.clone();
-                        match ctx.truncate_level() {
-                            crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
-                            crate::ErrorLevel::Warn => ctx.append_warning(
-                                1292,
-                                &format!("Truncated incorrect DECIMAL value: '{value}'"),
+                                ))))?;
+                                Ok(integer(converted))
+                                }
+                                }
+                                }
+                                Datum::Decimal(value) => {
+                                let rounded = value.round_to_scale(0);
+                                let (result, error) = if unsigned {
+                                let (value, error) = rounded.to_u64_trunc();
+                                (value as i64, error)
+                                } else {
+                                rounded.to_i64_trunc()
+                                };
+                                if error.is_some() {
+                                let error = tidb_datatype::ERR_OVERFLOW.clone();
+                                match ctx.truncate_level() {
+                                crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
+                                crate::ErrorLevel::Warn => ctx.append_go_warning(
+                                    &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                                    &format!("Truncated incorrect DECIMAL value: '{value}'"),
+                                ),
+                                crate::ErrorLevel::Ignore => {}
+                                }
+                                }
+                                Ok(integer(result))
+                                }
+                                value @ Datum::Json(_) => {
+                                let converted = value
+                                .convert_to_in_context(
+                                &FieldType::new(FieldTypeCode::LongLong).with_unsigned(unsigned),
+                                &context,
+                                &zone,
+                                )
+                                .map_err(|_| EvalError::Unsupported("JSON integer conversion"))?;
+                                handle(converted.error)?;
+                                Ok(converted.value)
+                                }
+                                value => eval_cast_value(
+                                if unsigned {
+                                &CastType::Unsigned
+                                } else {
+                                &CastType::Signed
+                                },
+                                value,
+                                source_field,
+                                ctx,
+                                ),
+                                }
+                                }
+                                _ => Err(EvalError::Unsupported("non-numeric cast result")),
+                                }
+                                }
+                                
+                                /// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
+                                /// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
+                                /// unsigned).  A wrapper cast with an unspecified scale must preserve the
+                                /// source value; mapping `-1` to the ordinary `0` scale would round every
+                                /// fractional value to an integer before Go's constant-refinement step.
+                                pub(crate) const UNSPECIFIED_CAST_SCALE: u32 = u32::MAX;
+                                
+                                /// Go `castJSONAsArrayFunctionSig.evalJSON` (`builtin_cast.go`): the JSON
+                                /// array a multi-valued index stores, each element converted to the array's
+                                /// element type. A scalar is a one-element array; an object is refused.
+                                /// Conversions run under Go's `fakeSctx` (`StrictFlags`), so any truncation
+                                /// or overflow is an error rather than a warning.
+                                pub(crate) fn eval_cast_json_as_array(
+                                value: Datum,
+                                ret_type: &FieldType,
+                                ) -> Result<Datum, EvalError> {
+                                let json = match value {
+                                Datum::Null => return Ok(Datum::Null),
+                                Datum::Json(json) => json,
+                                _ => {
+                                return Err(EvalError::Unsupported(
+                                "CAST(... AS ... ARRAY) received a non-JSON argument",
+                                ))
+                                }
+                                };
+                                if json.type_code() == tidb_datatype::JSON_TYPE_CODE_OBJECT {
+                                return Err(EvalError::NotImplemented(
+                                "CAST-ing JSON OBJECT type to array".into(),
                             ),
-                            crate::ErrorLevel::Ignore => {}
-                        }
-                    }
-                    Ok(integer(result))
-                }
-                value @ Datum::Json(_) => {
-                    let converted = value
-                        .convert_to_in_context(
-                            &FieldType::new(FieldTypeCode::LongLong).with_unsigned(unsigned),
-                            &context,
-                            &zone,
-                        )
-                        .map_err(|_| EvalError::Unsupported("JSON integer conversion"))?;
-                    handle(converted.error)?;
-                    Ok(converted.value)
-                }
-                value => eval_cast_value(
-                    if unsigned {
-                        &CastType::Unsigned
-                    } else {
-                        &CastType::Signed
-                    },
-                    value,
-                    source_field,
-                    ctx,
-                ),
-            }
-        }
-        _ => Err(EvalError::Unsupported("non-numeric cast result")),
-    }
-}
-
-/// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
-/// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
-/// unsigned).  A wrapper cast with an unspecified scale must preserve the
-/// source value; mapping `-1` to the ordinary `0` scale would round every
-/// fractional value to an integer before Go's constant-refinement step.
-pub(crate) const UNSPECIFIED_CAST_SCALE: u32 = u32::MAX;
-
-/// Go `castJSONAsArrayFunctionSig.evalJSON` (`builtin_cast.go`): the JSON
-/// array a multi-valued index stores, each element converted to the array's
-/// element type. A scalar is a one-element array; an object is refused.
-/// Conversions run under Go's `fakeSctx` (`StrictFlags`), so any truncation
-/// or overflow is an error rather than a warning.
-pub(crate) fn eval_cast_json_as_array(
-    value: Datum,
-    ret_type: &FieldType,
-) -> Result<Datum, EvalError> {
-    let json = match value {
-        Datum::Null => return Ok(Datum::Null),
-        Datum::Json(json) => json,
-        _ => {
-            return Err(EvalError::Unsupported(
-                "CAST(... AS ... ARRAY) received a non-JSON argument",
-            ))
-        }
-    };
-    if json.type_code() == tidb_datatype::JSON_TYPE_CODE_OBJECT {
-        return Err(EvalError::NotImplemented(
-            "CAST-ing JSON OBJECT type to array".into(),
-        ));
+                        );
     }
     let element = ret_type.array_type();
     // Go resolves `convertJSON2Tp` before reading any element, so an
@@ -1154,7 +1154,10 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
             // `1292 Truncated incorrect DECIMAL value: '-2.0'`;
             // `cast(1.5 as unsigned)` -> 2 with no warning at all.
             if d.round_to_i64_saturating() < 0 {
-                ctx.append_warning(1292, &format!("Truncated incorrect DECIMAL value: '{d}'"));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                    &format!("Truncated incorrect DECIMAL value: '{d}'"),
+                );
             }
             d.round_to_u64_saturating()
         }
@@ -1190,8 +1193,8 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // Captured under the DEFAULT (strict) sql_mode, where this is still a
         // WARNING rather than a statement error, because
         // `builtinCastRealAsIntSig` routes it through `HandleOverflow`.
-        ctx.append_warning(
-            1690,
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_OVERFLOW,
             &format!(
                 "constant {} overflows bigint",
                 tidb_datatype::format_float_g_shortest(rounded)
@@ -1206,8 +1209,8 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // status for +Inf and every rounded value at or beyond 2^64.  The
         // statement context turns that status into the 1690 warning used by
         // `builtinCastRealAsIntSig`.
-        ctx.append_warning(
-            1690,
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_OVERFLOW,
             &format!(
                 "constant {} overflows bigint",
                 tidb_datatype::format_float_g_shortest(rounded)
@@ -1298,8 +1301,8 @@ fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
         Datum::Real(value) | Datum::Float32(value) => {
             let rounded = value.round_ties_even();
             if !(i64::MIN as f64..=i64::MAX as f64).contains(&rounded) {
-                ctx.append_warning(
-                    1690,
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_OVERFLOW,
                     &format!(
                         "constant {} overflows bigint",
                         tidb_datatype::format_float_g_shortest(rounded)
@@ -1307,8 +1310,8 @@ fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
                 );
             }
         }
-        Datum::Decimal(value) if value.round_to_i64().is_none() => ctx.append_warning(
-            1292,
+        Datum::Decimal(value) if value.round_to_i64().is_none() => ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
             &format!("Truncated incorrect DECIMAL value: '{value}'"),
         ),
         Datum::String(value) => {
@@ -1338,8 +1341,8 @@ fn report_positive_string_signed_complement(text: &str, ctx: &dyn crate::Columns
         .parse::<u64>()
         .is_ok_and(|value| value > i64::MAX as u64)
     {
-        ctx.append_warning(
-            8030,
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_CAST_AS_SIGNED_OVERFLOW,
             "Cast to signed converted positive out-of-range integer to its negative complement",
         );
     }
@@ -1426,8 +1429,8 @@ fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
     {
         return;
     }
-    ctx.append_warning(
-        8031,
+    ctx.append_go_warning(
+        &tidb_error::catalog::types::ERR_CAST_NEG_INT_AS_UNSIGNED,
         "Cast to unsigned converted negative integer to it's positive complement",
     );
 }
@@ -1456,7 +1459,10 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
         // the raw "%s value is out of range in '%s'" template (oracle:
         // CAST('1e300' AS DECIMAL)). The value is still retained (saturated);
         // the production clamp below reports its own formatted row.
-        ctx.append_warning(1690, "%s value is out of range in '%s'");
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_OVERFLOW,
+            "%s value is out of range in '%s'",
+        );
     }
     if matches!(
         parse_error,
@@ -1466,8 +1472,8 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
                 | tidb_datatype::DecimalParseError::TruncatedWrongValue
         )
     ) {
-        ctx.append_warning(
-            1292,
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
             &format!(
                 "Truncated incorrect DECIMAL value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(trimmed)
@@ -1778,7 +1784,10 @@ fn cast_to_time_value(
             }
         };
         if adjusted {
-            ctx.append_warning(8179, &format!("Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'", value.core_time(), zone.dag_zone().0));
+            ctx.append_go_warning(
+                &tidb_error::catalog::types::ERR_TIMESTAMP_IN_DST_TRANSITION,
+                &format!("Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'", value.core_time(), zone.dag_zone().0),
+            );
         }
         let time = match fsp {
             Some(fsp) => time
@@ -1921,8 +1930,8 @@ fn cast_to_time_value(
         }
     };
     if truncated {
-        ctx.append_warning(
-            1292,
+        ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
             &format!(
                 "Truncated incorrect datetime value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(&s)

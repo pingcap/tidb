@@ -218,6 +218,21 @@ impl<PdC: PdClient> TikvStore<PdC> {
             .collect())
     }
 
+    /// Go `infoschema.GetTiFlashStoreCount`: the stores PD lists whose type
+    /// (`tikvrpc.GetStoreTypeByMeta`) is TiFlash.
+    pub fn tiflash_store_count(&self) -> Result<u64, String> {
+        #[cfg(feature = "failpoints")]
+        fail::fail_point!("mockTiFlashStoreCount", |_| Ok(10));
+        let pd = self.store.pd_client();
+        let stores = self
+            .block_on(async move { pd.all_stores().await })
+            .map_err(|error| error.to_string())?;
+        Ok(stores
+            .into_iter()
+            .filter(|store| store.endpoint_type == tikv_client::tikv::EndpointType::TiFlash)
+            .count() as u64)
+    }
+
     /// The store's identity in this process: transactions opened over it
     /// carry it, so a receipt names the store that committed it.
     #[must_use]

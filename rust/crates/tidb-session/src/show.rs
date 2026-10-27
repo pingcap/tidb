@@ -13,9 +13,8 @@
 // limitations under the License.
 
 //! The `SHOW` family: every `AdminStmt::Show*` (and `DESCRIBE`/`KILL`-adjacent
-//! `ShowCreate`/`ShowColumns`/`ShowTables`) arm of
-//! [`crate::Session::apply_schema_statement`], reached through
-//! [`Session::dispatch_admin_stmt`], plus the `SHOW CREATE TABLE`/`VIEW` text
+//! `ShowCreate`/`ShowColumns`/`ShowTables`) arm,
+//! reached through [`Session::dispatch_admin_stmt`], plus the `SHOW CREATE TABLE`/`VIEW` text
 //! builders and column-description rows those arms share with
 //! `Session::retrieve_memory_table` in `dispatch.rs`.
 //!
@@ -24,7 +23,10 @@
 //! modules (`explain_arm`, `account`, `process_arm`) and are only delegated
 //! to from [`Session::dispatch_admin_stmt`] here.
 
+use crate::privilege::PrivilegeTypeExt;
 use crate::show_index::show_index_rows;
+use tidb_executor::simple::account::AccountExec;
+use tidb_executor::simple::account_password::AccountPasswordExec;
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
 use tidb_util::stringutil::go_to_lower;
@@ -432,7 +434,7 @@ impl Session {
                     let Some(affinity) = table.affinity() else {
                         continue;
                     };
-                    let lower = go_to_lower(&table.name);
+                    let lower = go_to_lower(&table.name());
                     if !tidb_executor::show::extractor_admits(extractor, &lower, &lower) {
                         continue;
                     }
@@ -440,14 +442,14 @@ impl Session {
                         db_lower: go_to_lower(&database),
                         table_id: table.table_id,
                         db: database.clone(),
-                        table: table.name.clone(),
+                        table: table.name(),
                         partition,
                         group_id,
                     };
                     match affinity.level.as_str() {
                         "table" => infos.push(row(
                             None,
-                            tidb_exec::ddl_affinity::get_table_affinity_group_id(table.table_id),
+                            tidb_ddl::ddl_affinity::get_table_affinity_group_id(table.table_id),
                         )),
                         "partition" => {
                             for definition in
@@ -455,7 +457,7 @@ impl Session {
                             {
                                 infos.push(row(
                                     Some(definition.name.clone()),
-                                    tidb_exec::ddl_affinity::get_partition_affinity_group_id(
+                                    tidb_ddl::ddl_affinity::get_partition_affinity_group_id(
                                         table.table_id,
                                         definition.id,
                                     ),
@@ -538,7 +540,7 @@ impl Session {
         });
         let ctx = self.statement_context(false);
         let current_db = self.vars.current_db.clone();
-        let plan = self.with_catalog_mut(|catalog| {
+        let (plan, visits) = self.with_catalog_mut(|catalog| {
             tidb_executor::driver::plan_show_stmt(
                 show,
                 auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
@@ -547,6 +549,8 @@ impl Session {
                 &ctx,
             )
         })?;
+        // Go `CheckPrivilege` over `buildShow`'s visit infos.
+        self.check_visit_infos(&visits)?;
         let mut physical = match plan {
             tidb_planner::common_plans::Plan::Physical(physical) => physical,
             // Go `executorBuilder.buildShowNextRowID`.
@@ -567,9 +571,7 @@ impl Session {
                     .collect();
                 return Ok(StmtOutput::Rows { columns, rows });
             }
-            tidb_planner::common_plans::Plan::Logical(_) => {
-                return Err(DriverError::unsupported("an unoptimized SHOW plan"))
-            }
+            _ => return Err(DriverError::unsupported("a SHOW planned as no SHOW plan")),
         };
         // A selection the optimizer folded to false leaves no `PhysicalShow`
         // to fetch for, as Go builds no `ShowExec` under a `TableDual`.
@@ -826,14 +828,13 @@ impl Session {
                     }))
                 }
                 tidb_executor::TableEntry::Kv(table) => {
-                    let stored = if table.name().is_empty() {
-                        table_name.as_str()
-                    } else {
-                        table.name()
+                    let stored = match table.name() {
+                        name if name.is_empty() => table_name.clone(),
+                        name => name,
                     };
                     Ok((
-                        show_create_table_text(&database, stored, table, &ctx)?,
-                        stored.to_owned(),
+                        show_create_table_text(&database, &stored, table, &ctx)?,
+                        stored,
                         None,
                     ))
                 }
@@ -1011,9 +1012,11 @@ impl Session {
             // Go `fetchShowTableRegions`.
             T::Regions => {
                 let table_name = contents.table_name.clone().unwrap_or_default();
+                let store = self.region_store();
                 self.with_catalog_mut(|catalog| {
                     tidb_executor::show_regions::show_table_regions(
                         catalog,
+                        store.as_ref(),
                         &contents.db_name,
                         &table_name,
                         &contents.table_partitions,
@@ -1255,14 +1258,14 @@ impl Session {
                 self.has_scoped_privilege(
                     database,
                     table_name,
-                    crate::privilege::GlobalPriv::ShowView,
+                    tidb_mysql::ShowViewPriv,
                 ),
                 "SHOW VIEW",
             )
         } else {
             let mut mask = crate::privilege::any_priv_mask();
             if !self.is_local_temporary_table(database, table_name) {
-                mask &= !crate::privilege::GlobalPriv::CreateTemporaryTables.bit();
+                mask &= !tidb_mysql::CreateTMPTablePriv.bit();
             }
             (
                 self.has_any_scoped_privilege(database, table_name, mask),
@@ -1280,24 +1283,13 @@ impl Session {
         })
     }
 
-    /// The `AdminStmt` dispatch [`Session::apply_schema_statement`] reaches
-    /// for the whole admin/inspection surface: the `SHOW` family here, plus
+    /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
     /// `EXPLAIN`, `GRANT`/`REVOKE`/`SHOW GRANTS`, and `KILL` delegated to
     /// their own modules.
     pub(crate) fn dispatch_admin_stmt(
         &mut self,
         admin: &tidb_ast::AdminStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        // Go `buildAdmin` appends a SUPER visit for every ADMIN statement it
-        // plans past its early returns, and `CheckPrivilege` reports a denial
-        // as `ErrPrivilegeCheckFail`.
-        if admin_needs_super(admin)
-            && !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super)
-        {
-            return Err(DriverError::PrivilegeCheckFail(
-                privilege::GlobalPriv::Super.check_fail_name().to_owned(),
-            ));
-        }
         match admin {
             // `EXPLAIN <select>`: plan the statement and report the plan,
             // running nothing. Go's EXPLAIN plans without executing (an
@@ -1318,10 +1310,10 @@ impl Session {
                     tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
                     tidb_ast::AdminStmt::UnsetBdrRole => "",
                     _ => {
-                        let role = match self.bdr_role_store.clone() {
-                            Some(store) => store.get().map_err(DriverError::unsupported)?,
-                            None => self.with_catalog_mut(|catalog| Ok(catalog.bdr_role()))?,
-                        };
+                        let role = self
+                            .bdr_role_store()?
+                            .get()
+                            .map_err(DriverError::unsupported)?;
                         let mut field_type =
                             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::String);
                         field_type.set_flen(1);
@@ -1331,13 +1323,9 @@ impl Session {
                         }));
                     }
                 };
-                match self.bdr_role_store.clone() {
-                    Some(store) => store.set(role).map_err(DriverError::unsupported)?,
-                    None => self.with_catalog_mut(|catalog| {
-                        catalog.set_bdr_role(role);
-                        Ok(())
-                    })?,
-                }
+                self.bdr_role_store()?
+                    .set(role)
+                    .map_err(DriverError::unsupported)?;
                 Ok(Some(StmtOutput::Done(true)))
             }
             tidb_ast::AdminStmt::FlushPlanCache(scope) => {
@@ -1357,11 +1345,11 @@ impl Session {
             tidb_ast::AdminStmt::AnalyzeTable(_)
             | tidb_ast::AdminStmt::AnalyzeIncremental(_)
             | tidb_ast::AdminStmt::LoadStats(_)
-            | tidb_ast::AdminStmt::DropStats(_) => Err(DriverError::unsupported(
+            | tidb_ast::AdminStmt::DropStats(_)
+            | tidb_ast::AdminStmt::LockStats(_)
+            | tidb_ast::AdminStmt::UnlockStats(_) => Err(DriverError::unsupported(
                 "statistics statements run on the session's node",
             )),
-            tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
-            tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
                 let worker = self.workload_repository.as_ref().ok_or_else(|| {
                     DriverError::NotSupportedYet("Workload repository is not enabled".into())
@@ -1461,7 +1449,7 @@ impl Session {
                 // refused with `ErrAccessDenied` over the two names alone.
                 if let Some((_, user, host)) = self.privilege_context() {
                     if user != target_row.user
-                        && !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Super)
+                        && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
                     {
                         return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
                             &tidb_error::catalog::privileges::ERR_ACCESS_DENIED,
@@ -1591,10 +1579,22 @@ impl Session {
             tidb_ast::AdminStmt::RecommendIndex(recommend) => {
                 self.recommend_index_stmt(recommend).map(Some)
             }
-            tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
-            tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
-            tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
-            tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
+            tidb_ast::AdminStmt::Grant(grant) => {
+                self.grant_stmt(grant)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::Revoke(revoke) => {
+                self.revoke_stmt(revoke)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::GrantRole(grant) => {
+                self.grant_role_stmt(grant)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::RevokeRole(revoke) => {
+                self.revoke_role_stmt(revoke)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
             // answer without touching a user table, and keeping them here
@@ -1606,18 +1606,7 @@ impl Session {
                 if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
                     self.flush_privileges()?;
                 }
-                let stats_delta_targets = match &flush.target {
-                    tidb_ast::FlushTarget::StatsDelta { objects, .. } => {
-                        Some(self.flush_stats_delta_objects(objects))
-                    }
-                    _ => None,
-                };
-                let shared = self.shared_catalog();
-                let mut catalog = shared
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                return crate::show_admin::flush_stmt(flush, &mut catalog, stats_delta_targets)
-                    .map(Some);
+                return crate::show_admin::flush_stmt(flush).map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
                 return Ok(Some(crate::show_admin::show_ddl_output(
@@ -1741,30 +1730,6 @@ mod column_description_source_tests {
             ]
         );
     }
-}
-
-/// Go `buildAdmin`'s statements that reach its trailing SUPER visit: every
-/// ADMIN statement but the reloads, plugins, binding operations and
-/// FLUSH PLAN CACHE it returns before that line.
-fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
-    matches!(
-        admin,
-        tidb_ast::AdminStmt::AdminCheck(_)
-            | tidb_ast::AdminStmt::AdminChecksum(_)
-            | tidb_ast::AdminStmt::AdminRecoverIndex(_)
-            | tidb_ast::AdminStmt::AdminCleanupIndex(_)
-            | tidb_ast::AdminStmt::ShowNextRowId(_)
-            | tidb_ast::AdminStmt::ShowDdl
-            | tidb_ast::AdminStmt::ShowDdlJobs(_)
-            | tidb_ast::AdminStmt::ShowDdlJobQueries(_)
-            | tidb_ast::AdminStmt::DdlJobControl(_)
-            | tidb_ast::AdminStmt::AlterDdlJobs(_)
-            | tidb_ast::AdminStmt::ShowSlow(_)
-            | tidb_ast::AdminStmt::SetBdrRole(_)
-            | tidb_ast::AdminStmt::UnsetBdrRole
-            | tidb_ast::AdminStmt::ShowBdrRole
-            | tidb_ast::AdminStmt::CreateWorkloadSnapshot
-    )
 }
 
 /// The SHOW kinds Go's `buildShow` plans here ([`Session::run_planned_show`]);

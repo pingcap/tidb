@@ -16,10 +16,9 @@
 
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
-    Arc, Mutex, Weak,
+    Arc,
 };
-pub use tidb_txnkv::KvVariables;
-use tidb_txnkv::UnaryCancellation;
+pub use tidb_txnkv::{CancelHandle, KvVariables};
 
 /// Shared kill signal corresponding to Go's `*sqlkiller.SQLKiller` identity.
 #[derive(Debug, Default)]
@@ -42,67 +41,6 @@ impl KillHandle {
         self.signal
             .compare_exchange(0, signal, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-    }
-}
-
-/// Shared cancellation token retained by detached execution.
-#[derive(Debug, Default)]
-pub struct CancelHandle {
-    cancellation: UnaryCancellation,
-    children: Mutex<Vec<Weak<Self>>>,
-}
-
-impl CancelHandle {
-    /// Marks this scope and every live child request as cancelled.
-    pub fn cancel(&self) {
-        self.cancellation.cancel();
-        let mut children = self
-            .children
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        children.retain(|child| {
-            let Some(child) = child.upgrade() else {
-                return false;
-            };
-            child.cancel();
-            true
-        });
-    }
-
-    /// Creates one request-local cancellation authority linked to this scope.
-    ///
-    /// Registration and the parent cancellation check share one mutex. A
-    /// concurrent parent cancellation therefore either observes this child
-    /// in the registry or completes before the child checks the parent state.
-    #[must_use]
-    pub fn request_child(self: &Arc<Self>) -> Arc<Self> {
-        let child = Arc::new(Self::default());
-        let mut children = self
-            .children
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        children.retain(|child| child.strong_count() > 0);
-        if self.is_cancelled() {
-            child.cancel();
-        } else {
-            children.push(Arc::downgrade(&child));
-        }
-        child
-    }
-
-    /// Returns whether cancellation has been requested.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
-    }
-
-    /// Returns the canonical transport-neutral cancellation carrier.
-    ///
-    /// Every returned carrier shares the same monotonic cancellation state,
-    /// including when cancellation happened before carrier acquisition.
-    #[must_use]
-    pub fn unary_cancellation(&self) -> UnaryCancellation {
-        self.cancellation.clone()
     }
 }
 

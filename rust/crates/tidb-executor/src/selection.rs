@@ -711,7 +711,7 @@ mod tests {
                     "{name}, fast_first={fast_first}"
                 );
                 if let Some(warning) = warnings.first() {
-                    assert_eq!(warning.1, 1365);
+                    assert_eq!(warning.code(), 1365);
                 }
                 selection.close().unwrap();
                 assert_eq!(ctx.statement_memory().bytes_consumed(), 0);

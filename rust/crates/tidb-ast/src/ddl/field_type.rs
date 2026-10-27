@@ -98,26 +98,65 @@ pub struct ColumnType {
     pub charset: Option<String>,
 }
 
+/// The `FieldTypeCode` Go's parser gives one canonical declared type name
+/// (`FieldType.GetType()` after `ddl_fieldtype_parser.go`), or `None` for a
+/// name it does not build into a stored type.
+///
+/// The names are the canonical spellings the parser stores, which have
+/// already folded the SQL aliases (`INTEGER` -> `INT`, `BOOL` -> `TINYINT`,
+/// `NUMERIC`/`DEC`/`FIXED` -> `DECIMAL`).
+#[must_use]
+pub fn type_code_of_name(name: &str) -> Option<FieldTypeCode> {
+    Some(match name {
+        "BOOL" | "BOOLEAN" | "TINYINT" => FieldTypeCode::Tiny,
+        "SMALLINT" => FieldTypeCode::Short,
+        "MEDIUMINT" => FieldTypeCode::Int24,
+        "INT" | "INTEGER" => FieldTypeCode::Long,
+        "BIGINT" => FieldTypeCode::LongLong,
+        "FLOAT" => FieldTypeCode::Float,
+        "DOUBLE" | "REAL" => FieldTypeCode::Double,
+        "DECIMAL" | "NUMERIC" => FieldTypeCode::NewDecimal,
+        "BIT" => FieldTypeCode::Bit,
+        "DATE" => FieldTypeCode::Date,
+        "DATETIME" => FieldTypeCode::Datetime,
+        "TIMESTAMP" => FieldTypeCode::Timestamp,
+        "TIME" => FieldTypeCode::Duration,
+        "YEAR" => FieldTypeCode::Year,
+        "CHAR" | "BINARY" => FieldTypeCode::String,
+        "VARCHAR" | "VARBINARY" => FieldTypeCode::Varchar,
+        "TINYTEXT" | "TINYBLOB" => FieldTypeCode::TinyBlob,
+        "TEXT" | "BLOB" => FieldTypeCode::Blob,
+        "MEDIUMTEXT" | "MEDIUMBLOB" => FieldTypeCode::MediumBlob,
+        "LONGTEXT" | "LONGBLOB" => FieldTypeCode::LongBlob,
+        "JSON" => FieldTypeCode::Json,
+        "ENUM" => FieldTypeCode::Enum,
+        "SET" => FieldTypeCode::Set,
+        "VECTOR" => FieldTypeCode::VectorFloat32,
+        _ => return None,
+    })
+}
+
+/// Whether the declared type NAME is intrinsically binary (`BINARY`,
+/// `VARBINARY`, and the BLOB family) rather than character: the names for
+/// which Go's parser sets `mysql.BinaryFlag` and the `binary` charset itself.
+#[must_use]
+pub fn is_intrinsically_binary(name: &str) -> bool {
+    matches!(
+        name,
+        "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB"
+    )
+}
+
 impl ColumnType {
+    /// [`type_code_of_name`] for this declared type.
+    #[must_use]
+    pub fn type_code(&self) -> Option<FieldTypeCode> {
+        type_code_of_name(&self.name)
+    }
+
     fn semantic_code_and_flags(&self) -> (FieldTypeCode, u32) {
-        let (code, intrinsically_binary) = match self.name.as_str() {
-            "VARCHAR" => (FieldTypeCode::Varchar, false),
-            "CHAR" => (FieldTypeCode::String, false),
-            "VARBINARY" => (FieldTypeCode::Varchar, true),
-            "BINARY" => (FieldTypeCode::String, true),
-            "TINYTEXT" => (FieldTypeCode::TinyBlob, false),
-            "MEDIUMTEXT" => (FieldTypeCode::MediumBlob, false),
-            "LONGTEXT" => (FieldTypeCode::LongBlob, false),
-            "TEXT" => (FieldTypeCode::Blob, false),
-            "TINYBLOB" => (FieldTypeCode::TinyBlob, true),
-            "MEDIUMBLOB" => (FieldTypeCode::MediumBlob, true),
-            "LONGBLOB" => (FieldTypeCode::LongBlob, true),
-            "BLOB" => (FieldTypeCode::Blob, true),
-            "ENUM" => (FieldTypeCode::Enum, false),
-            "SET" => (FieldTypeCode::Set, false),
-            _ => (FieldTypeCode::Unspecified, false),
-        };
-        let flags = if intrinsically_binary || self.binary {
+        let code = self.type_code().unwrap_or(FieldTypeCode::Unspecified);
+        let flags = if is_intrinsically_binary(&self.name) || self.binary {
             FieldTypeFlags::BINARY
         } else {
             0

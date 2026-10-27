@@ -468,8 +468,8 @@ pub fn set_preferred_join_type_and_order(
             let matched_rhs = hints.prefers(rhs.as_ref(), flag);
             let matched_any = matched_lhs || matched_rhs;
             if matched_any {
-                ctx.append_warning(
-                    1815,
+                ctx.append_go_warning(
+                    &tidb_error::plannererrors::ERR_INTERNAL,
                     &format!(
                         "The join can not push down to the MPP side, the {}() hint is invalid",
                         if flag == f::BC_JOIN {
@@ -519,8 +519,8 @@ pub fn set_preferred_join_type_and_order(
             || contain_different_join_types(join.right_prefer_join_type)
     };
     if has_conflict {
-        ctx.append_warning(
-            1815,
+        ctx.append_go_warning(
+            &tidb_error::plannererrors::ERR_INTERNAL,
             "Join hints are conflict, you can only specify one type of join",
         );
         join.prefer_join_type = 0;

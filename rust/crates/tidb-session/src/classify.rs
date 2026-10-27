@@ -52,45 +52,6 @@ pub enum StmtKind {
     Write,
 }
 
-/// Which piece of somebody else's persistent state a statement would change.
-///
-/// See [`Session::statement_stored_state_change`] for why the schema half and
-/// the account half are named apart rather than lumped into one boolean.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredStateChange {
-    /// Nothing persistent outside this process.
-    None,
-    /// The stored schema: every `ast.DDLNode`.
-    Schema,
-    /// The stored accounts: `mysql.user`, `mysql.db` and the role edges.
-    Accounts,
-    /// The stored `SET GLOBAL` overrides: `mysql.global_variables`.
-    GlobalVars,
-    /// The stored statistics: `mysql.stats_meta` and its histogram tables.
-    /// `ANALYZE TABLE` and `LOAD STATS` write them.
-    Statistics,
-    /// The persisted statistics-lock state and the deltas unlocked into
-    /// `mysql.stats_meta`.
-    StatsLock,
-    /// The cluster's BDR role, Go's meta key `BDRRole`: `ADMIN SET` and
-    /// `UNSET BDR ROLE` write it and `ADMIN SHOW BDR ROLE` reads it from
-    /// the store rather than from any node's schema.
-    BdrRole,
-}
-
-/// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
-///
-/// A statement can mix `SESSION` and `GLOBAL` assignments in one `SET`
-/// (Go allows this), so the whole statement is routed to the GLOBAL path the
-/// moment any assignment is GLOBAL-scoped; the session-scoped assignments in
-/// the same statement still run, against the same driver, once routed.
-fn has_global_assignment(session: &tidb_ast::SessionStmt) -> bool {
-    match session {
-        tidb_ast::SessionStmt::Set(set) => set.variables.iter().any(|variable| variable.is_global),
-        _ => false,
-    }
-}
-
 /// The statement classes `ROW_COUNT()` distinguishes.
 ///
 /// Go spells this as four independent `StmtCtx` bits (`InSelectStmt`,
@@ -240,8 +201,20 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
         | AdminStmt::AdminChecksum(_)
         | AdminStmt::AdminRecoverIndex(_)
         | AdminStmt::AdminCleanupIndex(_) => true,
-        // `ast.CleanupTableLockStmt` is `Simple`.
-        AdminStmt::CleanupTableLock(_) => false,
+        // Go builds the account statements, ALTER INSTANCE / RANGE and
+        // DROP PROCEDURE through `buildSimple`, with no schema. CREATE
+        // PROCEDURE never builds (`ErrUnsupportedType`), so it has no
+        // result either.
+        AdminStmt::CreateUser { .. }
+        | AdminStmt::CreateRole { .. }
+        | AdminStmt::AlterUser(_)
+        | AdminStmt::DropUser { .. }
+        | AdminStmt::RenameUser { .. }
+        | AdminStmt::AlterInstance(_)
+        | AdminStmt::AlterRange(_)
+        | AdminStmt::CreateProcedure(_)
+        | AdminStmt::DropProcedure(_)
+        | AdminStmt::CompactTable(_) => false,
         // `buildShow`, `buildExplain`, `buildExplainFor`, `buildTrace`,
         // `buildPlanReplayer` and `buildSplitRegion` all set a schema.
         AdminStmt::Show(_)
@@ -418,262 +391,35 @@ impl Session {
         }
     }
 
-    /// Go DDLExec.Next's session-local CREATE exception.
-    fn is_local_temporary_create_parsed(stmt: &Stmt) -> bool {
-        let Stmt::Ddl(ddl) = stmt else {
-            return false;
-        };
-        matches!(
-            ddl.as_ref(),
-            tidb_ast::DdlStmt::CreateTable(create)
-                if create.temporary == tidb_ast::CreateTableTemporary::Local
-        )
-    }
-
-    /// Whether the session overlay owns DDL execution or its local-target
-    /// refusal. Mixed DROP retains a separate persistent operation.
-    pub fn is_local_temporary_ddl_parsed(&self, stmt: &Stmt) -> bool {
-        if Self::is_local_temporary_create_parsed(stmt) {
-            return true;
-        }
-        let Stmt::Ddl(ddl) = stmt else {
-            return false;
-        };
-        use tidb_ast::DdlStmt;
-        match ddl.as_ref() {
-            DdlStmt::TruncateTable(name) => self.is_local_temporary_table_path(name),
-            DdlStmt::DropTable(drop) => {
-                drop.temporary == tidb_ast::DropTemporary::Local
-                    || self.split_local_temporary_drop(drop).0.names.is_empty()
-            }
-            _ => self.local_temporary_ddl_refusal(stmt).is_some(),
-        }
-    }
-
-    /// DDLExec checks every rename source before starting any durable job.
-    /// The refusal is an executor error, after the implicit commit.
-    pub(crate) fn local_temporary_ddl_refusal(&self, stmt: &Stmt) -> Option<DriverError> {
-        let Stmt::Ddl(ddl) = stmt else {
-            return None;
-        };
-        use tidb_ast::DdlStmt;
-        let operation = match ddl.as_ref() {
-            DdlStmt::AlterTable(alter) if self.is_local_temporary_table_path(&alter.name) => {
-                "ALTER TABLE"
-            }
-            DdlStmt::CreateIndex(index) if self.is_local_temporary_table_path(&index.table) => {
-                "CREATE INDEX"
-            }
-            DdlStmt::DropIndex(index) if self.is_local_temporary_table_path(&index.table) => {
-                "DROP INDEX"
-            }
-            DdlStmt::RenameTable(rename)
-                if rename
-                    .pairs
-                    .iter()
-                    .any(|(from, _)| self.is_local_temporary_table_path(from)) =>
-            {
-                "RENAME TABLE"
-            }
-            _ => return None,
-        };
-        Some(DriverError::UnsupportedLocalTempTableDDL(operation))
-    }
-
-    /// Resolve DROP against the same overlay used by execution and privileges.
-    pub fn split_local_temporary_drop(
-        &self,
-        drop: &tidb_ast::DropTableStmt,
-    ) -> (tidb_ast::DropTableStmt, Vec<Vec<String>>) {
-        tidb_executor::split_drop_table_targets(drop, |name| {
-            self.is_local_temporary_table_path(name)
-        })
-    }
-
-    /// DDLExec.Next's early-return exceptions preserve the user's transaction.
-    /// Explicit local DROP returns early even when some names are missing.
-    pub fn ddl_preserves_transaction(&self, stmt: &Stmt) -> bool {
-        if Self::is_local_temporary_create_parsed(stmt) {
-            return true;
-        }
-        // Go parses `ALTER TABLE ... COMPACT` as its own `CompactTableStmt`,
-        // not a DDL node, so it runs inside the open transaction.
-        if matches!(stmt, Stmt::Ddl(ddl) if matches!(ddl.as_ref(),
-            tidb_ast::DdlStmt::AlterTable(alter)
-                if matches!(alter.actions.as_slice(), [tidb_ast::AlterTableAction::Compact { .. }])))
-        {
-            return true;
-        }
-        matches!(stmt, Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
-            if drop.temporary == tidb_ast::DropTemporary::Local
-                || self.split_local_temporary_drop(drop).0.names.is_empty()))
-    }
-
-    /// Go's `ErrOptOnCacheTable` refusals for a cached table, which its
-    /// executor raises before any job is built (`AlterTable`, `createIndex`,
-    /// `dropIndex`, `TruncateTable`, `renameTable(s)`).
-    pub fn validate_cached_table_ddl(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
-        let catalog = self.lock_catalog()?;
-        tidb_executor::ddl::check_cached_table_ddl(&catalog, &self.vars.current_db, stmt)
-    }
-
-    /// Go's submitter validates persistent FK references after implicit commit.
-    /// These admission checks remain active when the global feature is OFF;
-    /// the gated worker rechecks cannot replace them.
+    /// Go `ExchangeTablePartition` resolves the table exchanged in against
+    /// the session's infoschema first: a LOCAL temporary table lives only in
+    /// the session, so this is the one submitter check the session makes
+    /// itself. The foreign-key checks are the DDL executor's
+    /// (`tidb_ddl::cluster_ddl`), against the latest schema.
     pub fn validate_persistent_ddl_references(
         &mut self,
-        statement: &tidb_exec::cluster_ddl::DdlStatement,
+        statement: &tidb_ddl::cluster_ddl::DdlStatement,
     ) -> Result<(), DriverError> {
-        use tidb_exec::cluster_ddl::DdlStatement;
+        use tidb_ddl::cluster_ddl::DdlStatement;
         // Use the shared persistent image, never a local temporary overlay.
-        let ctx = self.statement_context(false);
-        let mut catalog = self.lock_catalog()?;
-        match statement {
-            // Go `GetModifiableColumnJob` admits the change before it submits
-            // the job; the rows are checked in the DDL transaction.
-            DdlStatement::ModifyColumn {
-                schema,
-                table,
-                column,
-                position,
-                rename_from,
-                if_exists,
-                ..
-            } => {
-                match tidb_executor::ddl::check_modifiable_column(
-                    &mut catalog,
-                    schema,
-                    table,
-                    rename_from.as_deref().unwrap_or(&column.name),
-                    column,
-                    position,
-                    &ctx,
-                ) {
-                    // Go `ModifyColumn` / `ChangeColumn`: under IF EXISTS
-                    // `ErrColumnNotExists` becomes the job builder's note.
-                    Err(DriverError::UnknownColumnInTable { .. }) if *if_exists => {}
-                    other => {
-                        other?;
-                    }
-                }
-            }
-            // Each MODIFY / CHANGE of a multi-schema change is admitted
-            // against the original table, as Go builds every sub-job from it.
-            DdlStatement::MultiSchemaChange {
-                schema,
-                table,
-                actions,
-            } => {
-                for action in actions {
-                    if let tidb_exec::cluster_ddl::AlterColumnAction::Modify {
-                        column,
-                        position,
-                        rename_from,
-                        ..
-                    } = action
-                    {
-                        tidb_executor::ddl::check_modifiable_column(
-                            &mut catalog,
-                            schema,
-                            table,
-                            rename_from.as_deref().unwrap_or(&column.name),
-                            column,
-                            position,
-                            &ctx,
-                        )?;
-                    }
-                }
-            }
-            DdlStatement::DropIndex { schema, table, index, .. } => {
-                tidb_executor::check_index_needed(&catalog, schema, table, index)?;
-            }
-            DdlStatement::DropTable { schema, table, .. } if self.foreign_key_checks() => {
-                tidb_executor::ddl::check_drop_table_references(
-                    &catalog, &[(schema.clone(), table.clone())],
-                )?;
-            }
-            DdlStatement::DropTables { names, .. } if self.foreign_key_checks() => {
-                tidb_executor::ddl::check_drop_table_references(&catalog, names)?;
-            }
-            DdlStatement::TruncateTable { schema, table } if self.foreign_key_checks() => {
-                if let Some(error) = tidb_executor::find_table_referred(
-                    &catalog, schema, table, &[(schema.clone(), table.clone())],
-                ) {
-                    return Err(error);
-                }
-            }
-            DdlStatement::DropDatabase { name, .. } if self.foreign_key_checks() => {
-                if let Some(error) = tidb_executor::find_database_referred(&catalog, name) {
-                    return Err(error);
-                }
-            }
-            DdlStatement::ExchangePartition {
-                schema,
-                table,
-                standalone_schema,
-                standalone_table,
-                ..
-            } => {
-                Self::exchange_local_temporary_refusal(
-                    &catalog,
-                    (schema, table),
-                    self.local_temporary_table_name(standalone_schema, standalone_table)
-                        .as_deref(),
-                )?;
-            }
-            _ => {}
+        let catalog = self.lock_catalog()?;
+        if let DdlStatement::ExchangePartition {
+            schema,
+            table,
+            standalone_schema,
+            standalone_table,
+            ..
+        } = statement
+        {
+            Self::exchange_local_temporary_refusal(
+                &catalog,
+                (schema, table),
+                self.local_temporary_table(standalone_schema, standalone_table)
+                    .map(|table| table.name())
+                    .as_deref(),
+            )?;
         }
         Ok(())
-    }
-
-    /// Complete only the already-resolved local leg of a successful cluster DROP.
-    /// This does not start another statement or replace its warnings/attribution.
-    pub fn drop_local_temporary_targets(
-        &mut self,
-        names: Vec<Vec<String>>,
-    ) -> Result<(), DriverError> {
-        let database = self.vars.current_db.clone();
-        // The shared splitter reverses local names; restore input order here
-        // so its executor walks the same reverse order as the original DROP.
-        let drop = tidb_ast::DropTableStmt {
-            temporary: tidb_ast::DropTemporary::Local,
-            if_exists: false,
-            names: names.into_iter().rev().collect(),
-        };
-        self.with_catalog_mut(|catalog| {
-            // A LOCAL temporary drop submits no DDL job, so no BDR admission.
-            tidb_executor::run_drop_table_stmt_in(
-                &drop,
-                catalog,
-                &database,
-                false,
-                &tidb_executor::StmtContext::for_query(),
-            )
-            .map(|_| ())
-        })
-    }
-
-    pub(crate) fn is_local_temporary_table_path(&self, name: &[String]) -> bool {
-        let (database, table) = match name {
-            [table] => (self.vars.current_db.as_str(), table.as_str()),
-            [database, table] => (database.as_str(), table.as_str()),
-            _ => return false,
-        };
-        self.is_local_temporary_table(database, table)
-    }
-
-    /// The stored name of the session's LOCAL temporary table `table`, if
-    /// it has one.
-    pub(crate) fn local_temporary_table_name(&self, database: &str, table: &str) -> Option<String> {
-        let database = tidb_util::stringutil::go_to_lower(database);
-        let table = tidb_util::stringutil::go_to_lower(table);
-        self.local_temporary_tables
-            .iter()
-            .find(|(db, name, _)| {
-                tidb_util::stringutil::go_to_lower(db) == database
-                    && tidb_util::stringutil::go_to_lower(name) == table
-            })
-            .map(|(_, _, stored)| stored.name.clone())
     }
 
     /// Go `ExchangeTablePartition` resolves the table exchanged in against
@@ -696,195 +442,30 @@ impl Session {
         }
     }
 
-    pub(crate) fn is_local_temporary_table(&self, database: &str, table: &str) -> bool {
-        let database = tidb_util::stringutil::go_to_lower(database);
-        let table = tidb_util::stringutil::go_to_lower(table);
-        self.local_temporary_tables.iter().any(|(db, name, _)| {
-            tidb_util::stringutil::go_to_lower(db) == database
-                && tidb_util::stringutil::go_to_lower(name) == table
-        })
-    }
-
-    /// Which persistent state `sql` would change: the stored schema (Go's
-    /// `ast.DDLNode`), the stored accounts (the privilege and role statements
-    /// TiDB's parser builds as administrative rather than DDL, plus `SET
-    /// PASSWORD`), or neither.
-    ///
-    /// A front end whose catalog and account table are a *read* of somebody
-    /// else's stored state needs this: running such a statement would change
-    /// only this process's in-memory copy, which is a silently wrong answer
-    /// rather than a slow one. The two halves are named apart because a front
-    /// end can gain a route for one without gaining a route for the other --
-    /// the convergence node writes the cluster's catalog but not its `mysql.*`
-    /// rows. Classifying it here keeps that decision on the parse, next to
-    /// [`Self::statement_kind`], instead of in each front end's own matcher.
-    pub fn statement_stored_state_change(
-        &self,
-        sql: &str,
-    ) -> Result<StoredStateChange, DriverError> {
-        let stmt = self.parse(sql)?;
-        Ok(Self::stored_state_change_parsed(&stmt))
-    }
-
-    /// [`Self::statement_stored_state_change`] over a statement a front end
-    /// already parsed. See [`Self::statement_kind_parsed`] for why this stays
-    /// a separate question rather than folding into the answer shape.
+    /// Go `SimpleExec.Next`'s account arms (and `GrantExec` / `RevokeExec`):
+    /// the statements that write `mysql.user`, `mysql.db`, the role edges or
+    /// `mysql.default_roles`. `SHOW GRANTS` and the other inspections read.
     #[must_use]
-    pub fn stored_state_change_parsed(stmt: &Stmt) -> StoredStateChange {
+    pub fn is_account_statement(stmt: &Stmt) -> bool {
         match stmt {
-            // The account statements the parser builds as DDL nodes, because
-            // Go's `ast.DDLNode` covers them too: they write `mysql.user` and
-            // the role edges, never the catalog.
-            Stmt::Ddl(ddl)
-                if matches!(
-                    ddl.as_ref(),
-                    tidb_ast::DdlStmt::CreateUser { .. }
-                        | tidb_ast::DdlStmt::CreateRole { .. }
-                        | tidb_ast::DdlStmt::AlterUser(_)
-                        | tidb_ast::DdlStmt::DropUser { .. }
-                        | tidb_ast::DdlStmt::RenameUser { .. }
-                ) =>
-            {
-                StoredStateChange::Accounts
-            }
-            // Only ALTER INSTANCE changes process state. Sequence and
-            // partition DDL change persistent schema and must reach the same
-            // cluster authority as every other schema change.
-            Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::AlterInstance(_)) => {
-                StoredStateChange::None
-            }
-            // Go's hypothetical indexes and TiFlash replicas are
-            // `SessionVars` state: no job runs and no schema version moves.
-            Stmt::Ddl(ddl) if is_hypo_ddl(ddl) => StoredStateChange::None,
-            // `ALTER TABLE ... COMPACT` is Go's separate `CompactTableStmt`
-            // (a `DDLNode` only in the parser's spelling): it validates the
-            // table and partition names and, without a TiFlash replica,
-            // answers a warning. It never writes the catalog.
-            Stmt::Ddl(ddl) if is_compact_table(ddl) => StoredStateChange::None,
-            Stmt::Ddl(_) => StoredStateChange::Schema,
-            // `ADMIN CLEANUP TABLE LOCK` is a DDL job (`ActionUnlockTable`).
-            Stmt::Admin(admin)
-                if matches!(admin.as_ref(), tidb_ast::AdminStmt::CleanupTableLock(_)) =>
-            {
-                StoredStateChange::Schema
-            }
-            // The privilege/role statements: everything under `Admin` that
-            // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
-            // GRANTS` and the other inspections read and are left alone.
-            Stmt::Admin(admin)
-                if matches!(
-                    admin.as_ref(),
-                    tidb_ast::AdminStmt::Grant(_)
-                        | tidb_ast::AdminStmt::GrantProxy(_)
-                        | tidb_ast::AdminStmt::GrantRole(_)
-                        | tidb_ast::AdminStmt::Revoke(_)
-                        | tidb_ast::AdminStmt::RevokeRole(_)
-                ) =>
-            {
-                StoredStateChange::Accounts
-            }
-            // `SET PASSWORD` and `SET DEFAULT ROLE` write `mysql.user` and
-            // `mysql.default_roles`; every other `SET` is session- or
-            // process-local.
-            Stmt::Session(session)
-                if matches!(
-                    session.as_ref(),
-                    tidb_ast::SessionStmt::SetPassword(_)
-                        | tidb_ast::SessionStmt::SetDefaultRole(_)
-                ) =>
-            {
-                StoredStateChange::Accounts
-            }
-            // `SET GLOBAL x = v` (alone or mixed with SESSION assignments in
-            // the same statement) writes `mysql.global_variables`. A `SET`
-            // with no GLOBAL-scoped assignment at all changes only this
-            // session's own copies, so it takes the ordinary path.
-            Stmt::Session(session) if has_global_assignment(session) => {
-                StoredStateChange::GlobalVars
-            }
-            // `ANALYZE TABLE` writes `mysql.stats_*`, which every node in the
-            // cluster reads. A front end whose tables live in the cluster must
-            // route it to a node that can write them; answering it from this
-            // process's own catalog would tell the client its histograms moved
-            // when no other node would ever see them.
-            //
-            // This says nothing about an IN-PROCESS session, whose catalog is
-            // the whole world: there `crate::analyze_arm` runs the statement
-            // and publishes the result, because there is no other node to tell.
-            // The two are not in tension -- this classification answers "would
-            // this change state outside the process", and in-process the answer
-            // is no.
-            // `LOAD STATS` writes the same `mysql.stats_*` tables an
-            // `ANALYZE` does (Go's `loadStatsFromJSON` ends in
-            // `SaveColOrIdxStatsToStorage` + `SaveMetaToStorage`), so it
-            // classifies with it and is routed to the cluster statistics
-            // writer.
-            Stmt::Admin(admin)
-                if matches!(
-                    admin.as_ref(),
-                    tidb_ast::AdminStmt::AnalyzeTable(_)
-                        | tidb_ast::AdminStmt::AnalyzeIncremental(_)
-                        | tidb_ast::AdminStmt::LoadStats(_)
-                        | tidb_ast::AdminStmt::DropStats(_)
-                ) || matches!(
-                    admin.as_ref(),
-                    tidb_ast::AdminStmt::Flush(flush)
-                        if matches!(flush.target, tidb_ast::FlushTarget::StatsDelta { .. })
-                ) =>
-            {
-                StoredStateChange::Statistics
-            }
-            Stmt::Admin(admin)
-                if matches!(
-                    admin.as_ref(),
-                    tidb_ast::AdminStmt::LockStats(_) | tidb_ast::AdminStmt::UnlockStats(_)
-                ) =>
-            {
-                StoredStateChange::StatsLock
-            }
-            Stmt::Admin(admin)
-                if matches!(
-                    admin.as_ref(),
-                    tidb_ast::AdminStmt::SetBdrRole(_)
-                        | tidb_ast::AdminStmt::UnsetBdrRole
-                        | tidb_ast::AdminStmt::ShowBdrRole
-                ) =>
-            {
-                StoredStateChange::BdrRole
-            }
-            Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
-                StoredStateChange::None
-            }
+            Stmt::Admin(admin) => matches!(
+                admin.as_ref(),
+                tidb_ast::AdminStmt::CreateUser { .. }
+                    | tidb_ast::AdminStmt::CreateRole { .. }
+                    | tidb_ast::AdminStmt::AlterUser(_)
+                    | tidb_ast::AdminStmt::DropUser { .. }
+                    | tidb_ast::AdminStmt::RenameUser { .. }
+                    | tidb_ast::AdminStmt::Grant(_)
+                    | tidb_ast::AdminStmt::GrantProxy(_)
+                    | tidb_ast::AdminStmt::GrantRole(_)
+                    | tidb_ast::AdminStmt::Revoke(_)
+                    | tidb_ast::AdminStmt::RevokeRole(_)
+            ),
+            Stmt::Session(session) => matches!(
+                session.as_ref(),
+                tidb_ast::SessionStmt::SetPassword(_) | tidb_ast::SessionStmt::SetDefaultRole(_)
+            ),
+            Stmt::Ddl(_) | Stmt::Query(_) | Stmt::Dml(_) => false,
         }
-    }
-}
-
-/// Go's `CompactTableStmt`, which the parser spells as a lone
-/// `ALTER TABLE ... COMPACT` action.
-pub(crate) fn is_compact_table(ddl: &tidb_ast::DdlStmt) -> bool {
-    matches!(
-        ddl,
-        tidb_ast::DdlStmt::AlterTable(alter)
-            if matches!(
-                alter.actions.as_slice(),
-                [tidb_ast::AlterTableAction::Compact { .. }]
-            )
-    )
-}
-
-/// The statements Go answers from `SessionVars` alone: `CREATE INDEX ... TYPE
-/// HYPO`, `DROP HYPO INDEX` and a lone `ALTER TABLE ... SET HYPO TIFLASH
-/// REPLICA`.
-pub(crate) fn is_hypo_ddl(ddl: &tidb_ast::DdlStmt) -> bool {
-    match ddl {
-        tidb_ast::DdlStmt::CreateIndex(create) => {
-            create.options.index_type == Some(tidb_ast::IndexType::HYPO)
-        }
-        tidb_ast::DdlStmt::DropIndex(drop) => drop.is_hypo,
-        tidb_ast::DdlStmt::AlterTable(alter) => matches!(
-            alter.actions.as_slice(),
-            [tidb_ast::AlterTableAction::SetTiFlashReplica { hypo: true, .. }]
-        ),
-        _ => false,
     }
 }

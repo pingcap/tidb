@@ -75,7 +75,7 @@ impl Parser {
                         &format!("Unknown character set: '{raw}'"),
                     )
                 })?;
-                Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
+                Some(TableOption::CharacterSet(charset.to_owned()))
             }
             "CHARSET" => {
                 self.bump();
@@ -87,7 +87,7 @@ impl Parser {
                         &format!("Unknown character set: '{raw}'"),
                     )
                 })?;
-                Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
+                Some(TableOption::CharacterSet(charset.to_owned()))
             }
             "COLLATE" => {
                 self.bump();
@@ -99,7 +99,7 @@ impl Parser {
                         &format!("Unknown collation: '{raw}'"),
                     )
                 })?;
-                Some(TableOption::Collate(collation.to_ascii_uppercase()))
+                Some(TableOption::Collate(collation.to_owned()))
             }
             "ENCRYPTION" => {
                 self.bump();

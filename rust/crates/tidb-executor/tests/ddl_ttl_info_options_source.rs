@@ -36,14 +36,14 @@ use tidb_executor::{run_create_table_on, Catalog, TableEntry};
 /// time-typed column keeps the create accepted by both implementations) and
 /// returns the `TTLInfo` the table settled with.
 fn ttl_info_of(options_sql: &str) -> Option<tidb_model::TTLInfo> {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         &format!("create table ttl_t (test_column datetime) {options_sql}"),
         &mut catalog,
     )
     .expect("create table succeeds, like Go's err == nil rows");
     match catalog.table_in("test", "ttl_t") {
-        Some(TableEntry::Kv(table)) => table.ttl_info().cloned(),
+        Some(TableEntry::Kv(table)) => table.ttl_info(),
         _ => panic!("ttl_t should exist"),
     }
 }

@@ -541,7 +541,10 @@ pub(crate) fn eval_binary_full(
                 Ok(ordering) if reversed => ordering.reverse(),
                 Ok(ordering) => ordering,
                 Err(_) => {
-                    ctx.append_warning(1292, &format!("Incorrect time value: '{text}'"));
+                    ctx.append_go_warning(
+                        &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                        &format!("Incorrect time value: '{text}'"),
+                    );
                     return Ok(if op == NullEq {
                         Datum::Int(0)
                     } else {
@@ -802,7 +805,12 @@ pub(crate) fn eval_binary_full(
             return Err(EvalError::DecimalOverflow);
         }
         if warning == Some(tidb_datatype::DecimalCodecWarning::Truncated) {
-            ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{quotient}'"))?;
+            // Go `builtinArithmeticDivideDecimalSig`: the expression
+            // package's `errTruncatedWrongValue`.
+            ctx.handle_truncate_error(
+                tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE
+                    .generate(format!("Truncated incorrect DECIMAL value: '{quotient}'")),
+            )?;
         }
         let (precision, fraction) = quotient.precision_and_frac();
         // Go MyDecimal has nine base-1e9 words. Fractional words may be
@@ -1004,7 +1012,12 @@ pub(crate) fn decimal_integer_division(
         quotient
     };
     if warning.is_some() {
-        ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{quotient}'"))?;
+        // Go `builtinArithmeticIntDivideDecimalSig`: the expression
+        // package's `errTruncatedWrongValue`.
+        ctx.handle_truncate_error(
+            tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE
+                .generate(format!("Truncated incorrect DECIMAL value: '{quotient}'")),
+        )?;
     }
     if unsigned {
         let (value, warning) = quotient.to_u64_trunc();
@@ -1240,7 +1253,10 @@ fn time_compare_ordering(
     ) {
         Ok(ordering) => Ok(Some(ordering)),
         Err(_) => {
-            ctx.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+            ctx.append_go_warning(
+                &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                &format!("Incorrect datetime value: '{text}'"),
+            );
             Ok(None)
         }
     }

@@ -1145,8 +1145,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let cte = &mut self.outer_ctes[index];
         if cte.recur_lp.is_some() {
             if cte.force_inline_by_hint_or_var {
-                self.ctx.append_warning(
-                    1815,
+                self.ctx.append_go_warning(
+                    &tidb_error::plannererrors::ERR_INTERNAL,
                     &format!(
                         "Recursive CTE {} can not be inlined by merge() or tidb_opt_force_inline_cte.",
                         cte.name_original
@@ -1156,8 +1156,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             cte.is_inline = false;
         } else if cte.contain_recursive_forbidden_operator && building_recursive {
             if cte.force_inline_by_hint_or_var {
-                self.ctx.append_warning(
-                    3575,
+                self.ctx.append_go_warning(
+                    &tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION,
                     &format!(
                         "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
                         cte.name_original

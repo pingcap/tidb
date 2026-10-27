@@ -169,7 +169,7 @@ impl ReadRequestBuilder {
 
 const fn kv_priority(priority: Priority) -> KvPriority {
     match priority {
-        Priority::NoPriority | Priority::Delayed => KvPriority::Normal,
+        Priority::None | Priority::Delayed => KvPriority::Normal,
         Priority::Low => KvPriority::Low,
         Priority::High => KvPriority::High,
     }

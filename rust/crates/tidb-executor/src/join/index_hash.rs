@@ -379,7 +379,7 @@ impl IndexHashState {
         let bytes = bytes as i64 + self.scratch.memory_usage();
         self.tracker.consume(bytes - self.bytes);
         self.bytes = bytes;
-        memory.check()
+        memory.check().map_err(ExecError::from)
     }
 
     pub fn begin_inner_window(&mut self, done: bool) {
@@ -745,7 +745,7 @@ pub(super) fn send_prepared_with_hash<C: Columns>(
             if buffer.is_full() || hash.done && buffer.num_rows() > 0 {
                 let mut chunk = IndexHashChunk::new(buffer, &shared.tracker);
                 chunk.recycle = Some(recycle.clone());
-                shared.memory.check()?;
+                shared.memory.check().map_err(ExecError::from)?;
                 if sender.send(IndexTaskOutcome::HashChunk(chunk)).is_err() {
                     return Ok(None);
                 }

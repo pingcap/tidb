@@ -20,7 +20,7 @@ use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString};
-use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_cluster::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
@@ -261,6 +261,20 @@ pub(super) struct MockNode {
     pub(super) ddl: Arc<MockDdl>,
     pub(super) accounts: Arc<MockAccountWriter>,
     pub(super) sysvars: Arc<MockSysvarWriter>,
+    /// The session factories its connections came from, alive as long as
+    /// the node: Go's domain owns the internal-session pool its restricted
+    /// SQL draws from for its whole life.
+    pub(super) factories: std::sync::Mutex<Vec<Arc<ClusterSessionFactory>>>,
+}
+
+impl MockNode {
+    /// Keeps `factory` alive for the node's lifetime.
+    pub(super) fn keep(&self, factory: &Arc<ClusterSessionFactory>) {
+        self.factories
+            .lock()
+            .expect("factories")
+            .push(Arc::clone(factory));
+    }
 }
 
 /// A detached copy of one registry's rows, since
@@ -289,6 +303,7 @@ impl MockNode {
             accounts: Arc::new(MockAccountWriter::new()),
             sysvars: Arc::new(MockSysvarWriter::new()),
             catalog,
+            factories: std::sync::Mutex::default(),
         }
     }
 }
@@ -491,7 +506,9 @@ fn open_session_on_with_context_and_seams_and_usage(
                 .expect("statistics cache"),
         ),
         Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
-    );
+    )
+    .shared();
+    node.keep(&factory);
     let usage = Arc::clone(&factory.stats_usage);
     let session = factory
         .open_session(context)
@@ -516,7 +533,7 @@ pub(super) fn session_context_with_identity(
     let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
     SessionContext {
         connection_id,
-        peer_addr,
+        peer_addr: peer_addr.into(),
         identity,
         client_found_rows: false,
         secure_transport: false,

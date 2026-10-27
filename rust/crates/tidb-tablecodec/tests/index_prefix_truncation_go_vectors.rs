@@ -24,7 +24,9 @@
 //! Fixture: `generate_index_prefix_truncation.go` beside the `.tsv`.
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
-use tidb_tablecodec::{truncate_index_value, IndexColumn, TableColumn};
+use tidb_tablecodec::{
+    cut_datum_by_prefix_len, reach_prefix_len, truncate_index_value, IndexColumn, TableColumn,
+};
 
 const FIXTURE: &str = include_str!(
     "../../../difftests/transaction-tests/fixtures/index_prefix_truncation.tsv"
@@ -120,4 +122,49 @@ fn truncate_index_value_go_vectors() {
         rows += 1;
     }
     assert_eq!(rows, 469, "fixture row count");
+}
+
+/// Go `ranger.CutDatumByPrefixLen` is `TruncateIndexValue`'s body over the
+/// column's field type, so the same Go capture pins it: the same value, and
+/// a cut reported exactly when the value changed.
+#[test]
+fn ranger_cut_matches_the_go_truncation_vectors() {
+    for line in FIXTURE.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split('\t');
+        let label = fields.next().expect("label");
+        let want_kind = fields.next().expect("kind");
+        let want_bytes = fields.next().unwrap_or("");
+        let mut parts = label.split('/');
+        let datum_tag = parts.next().expect("datum kind");
+        let case = parts.next().expect("case");
+        let charset_tag = parts.next().expect("charset");
+        let length: i64 = parts.next().expect("length").parse().expect("length");
+        let raw = case_bytes(case);
+        let original = match datum_tag {
+            "string" => Datum::new_collation_string(raw, Collation::Utf8Mb4Bin),
+            "bytes" => Datum::new_bytes(raw),
+            "int" => Datum::Int(7),
+            other => panic!("unknown datum tag {other}"),
+        };
+        let mut value = original.clone();
+        let cut = cut_datum_by_prefix_len(&mut value, length, &column_for(charset_tag).field_type);
+        assert_eq!(kind_name(&value), want_kind, "{label}: datum kind");
+        assert_eq!(
+            hex(value.as_raw_bytes().unwrap_or(&[])),
+            want_bytes,
+            "{label}: cut bytes"
+        );
+        assert_eq!(cut, value != original, "{label}: reported cut");
+    }
+}
+
+/// Go `ReachPrefixLen` counts `utf8.RuneCount`, where every invalid byte is
+/// one rune: `F0 9F` is two runes long, which a lossy decode (one
+/// replacement character) miscounted as one.
+#[test]
+fn reach_prefix_len_counts_invalid_bytes_as_go_runes() {
+    let utf8 = column_for("utf8mb4").field_type;
+    let value = Datum::new_bytes(vec![0xF0, 0x9F]);
+    assert!(reach_prefix_len(&value, 2, &utf8));
+    assert!(!reach_prefix_len(&value, 1, &utf8));
 }

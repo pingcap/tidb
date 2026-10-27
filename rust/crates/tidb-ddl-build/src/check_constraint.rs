@@ -1,0 +1,472 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Shared Go `pkg/ddl` CHECK-constraint metadata construction.
+//!
+//! Both runnable local DDL and cluster DDL build the same `ConstraintInfo`.
+//! Keeping validation, naming, expression restoration, dependency discovery,
+//! and ID allocation here prevents the two catalog paths from accepting
+//! different SQL or persisting different metadata.
+
+use std::collections::HashSet;
+
+use tidb_ast::{CheckConstraintDefinition, CiString, ColumnOption, Expr, RestoreFlags};
+use tidb_datatype::FieldTypeFlags;
+use tidb_hack::GoCaseCompare;
+use tidb_model::table::ConstraintInfo;
+use tidb_model::{ColumnInfo, SchemaState};
+
+use tidb_hack::GoToLower;
+
+const MAX_CONSTRAINT_IDENTIFIER_LEN: usize = 64;
+
+/// One CHECK declaration plus whether it was written inline on a column.
+#[derive(Clone, Debug)]
+pub struct CheckConstraintInput {
+    /// The parsed CHECK payload.
+    pub definition: CheckConstraintDefinition,
+    /// The declaring column for an inline CHECK; `None` for a table CHECK.
+    pub in_column: Option<String>,
+}
+
+/// The part of an existing foreign key relevant to CHECK validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckConstraintForeignKey {
+    /// Referencing column names.
+    pub columns: Vec<String>,
+    /// Whether ON DELETE or ON UPDATE names any referential action.
+    pub has_referential_action: bool,
+}
+
+/// A Go-coded CHECK DDL error shared by both catalog paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckConstraintError {
+    /// The Go definition the CHECK validation raises (class and code).
+    pub proto: &'static tidb_error::terror::TerrorError,
+    /// Client-visible message.
+    pub message: String,
+}
+
+impl CheckConstraintError {
+    fn new(proto: &'static tidb_error::terror::TerrorError, message: impl Into<String>) -> Self {
+        Self {
+            proto,
+            message: message.into(),
+        }
+    }
+}
+
+/// Whether one persisted CHECK constraint depends on `column_name`.
+#[must_use]
+pub fn uses_column(info: &ConstraintInfo, column_name: &str) -> bool {
+    info.constraint_cols
+        .iter()
+        .any(|column| column.original().go_lower_eq(column_name))
+}
+
+/// Go `ErrCantDropColWithCheckConstraint` (3959).
+#[must_use]
+pub fn column_dependency_error(constraint_name: &str, column_name: &str) -> CheckConstraintError {
+    CheckConstraintError::new(
+        &tidb_util::dbterror::ERR_CANT_DROP_COL_WITH_CHECK_CONSTRAINT,
+        format!(
+            "Check constraint '{}' uses column '{}', hence column cannot be dropped or renamed.",
+            constraint_name, column_name
+        ),
+    )
+}
+
+/// Collects CHECK declarations in Go `buildColumnsAndConstraints` order:
+/// table constraints first, then inline column constraints.
+#[must_use]
+pub fn create_inputs(create: &tidb_ast::CreateTableStmt) -> Vec<CheckConstraintInput> {
+    let mut checks = create
+        .table_constraints
+        .iter()
+        .filter_map(|constraint| {
+            let tidb_ast::TableConstraint::Check(definition) = constraint else {
+                return None;
+            };
+            Some(CheckConstraintInput {
+                definition: definition.clone(),
+                in_column: None,
+            })
+        })
+        .collect::<Vec<_>>();
+    for column in &create.columns {
+        checks.extend(column.options.iter().filter_map(|option| {
+            let ColumnOption::Check(definition) = option else {
+                return None;
+            };
+            Some(CheckConstraintInput {
+                definition: definition.clone(),
+                in_column: Some(column.name.clone()),
+            })
+        }));
+    }
+    checks
+}
+
+/// Go uses different name scopes and missing-column diagnostics for CREATE
+/// and ALTER CHECK admission, while sharing expression and metadata validation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CheckConstraintBuildMode {
+    /// CREATE TABLE also reserves ordinary index names.
+    Create,
+    /// ALTER CHECK resolves only existing CHECK names and reports ErrBadField.
+    Alter,
+}
+
+/// Builds Go `ConstraintInfo` values and advances `max_constraint_id` once
+/// for each result.
+#[allow(clippy::too_many_arguments)]
+pub fn build_constraint_infos(
+    table_name: &CiString,
+    columns: &[ColumnInfo],
+    non_fk_constraint_names: impl IntoIterator<Item = String>,
+    foreign_keys: &[CheckConstraintForeignKey],
+    checks: &[CheckConstraintInput],
+    max_constraint_id: &mut i64,
+    state: SchemaState,
+    mode: CheckConstraintBuildMode,
+    context: &tidb_expr::metabuild::Context,
+) -> Result<Vec<ConstraintInfo>, CheckConstraintError> {
+    if checks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut used_names = non_fk_constraint_names
+        .into_iter()
+        .map(|name| name.go_to_lower())
+        .collect::<HashSet<_>>();
+
+    // Go validates every explicit name before assigning generated names. An
+    // unnamed first CHECK therefore skips a later explicit `t_chk_1`.
+    for check in checks {
+        let Some(name) = check
+            .definition
+            .name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if !used_names.insert(name.go_to_lower()) {
+            return Err(CheckConstraintError::new(
+                &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
+                format!("Duplicate check constraint name '{name}'."),
+            ));
+        }
+    }
+
+    let column_names = columns
+        .iter()
+        .map(|column| column.name.original().to_owned())
+        .collect::<Vec<_>>();
+    let column_types = columns
+        .iter()
+        .map(|column| column.field_type.clone())
+        .collect::<Vec<_>>();
+    let mut generated = 1usize;
+    let mut infos = Vec::with_capacity(checks.len());
+
+    for check in checks {
+        let name = match check
+            .definition
+            .name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        {
+            Some(name) => name.to_owned(),
+            None => loop {
+                let candidate = format!("{}_chk_{generated}", table_name.lowercase());
+                generated += 1;
+                if used_names.insert(candidate.clone()) {
+                    break candidate;
+                }
+            },
+        };
+        if name.len() > MAX_CONSTRAINT_IDENTIFIER_LEN {
+            return Err(CheckConstraintError::new(
+                &tidb_util::dbterror::ERR_TOO_LONG_IDENT,
+                format!("Identifier name '{name}' is too long"),
+            ));
+        }
+        validate_expression_ast(&name, &check.definition.expression)?;
+
+        let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+            &column_names,
+            &column_types,
+            context.get_expr_ctx().get_eval_ctx().time_zone(),
+            context.get_expr_ctx().get_eval_ctx().like_default_escape(),
+        );
+        let built = match tidb_expr::rewriter::rewrite_expr_resolved(
+            &check.definition.expression,
+            &resolver,
+        ) {
+            Ok(built) => built,
+            Err(error) => {
+                if let Some(missing) = resolver.missing_name() {
+                    column_constraint_references_other(&name, check)?;
+                    return Err(unknown_column(&name, &missing, mode));
+                }
+                return Err(CheckConstraintError::new(
+                    &tidb_error::plannererrors::ERR_UNKNOWN,
+                    format!("{error:?}"),
+                ));
+            }
+        };
+        if let Some(missing) = resolver.missing_name() {
+            column_constraint_references_other(&name, check)?;
+            return Err(unknown_column(&name, &missing, mode));
+        }
+        let dependencies = resolver.dependency_names();
+        column_constraint_references_other(&name, check)?;
+        if dependencies.iter().any(|dependency| {
+            columns.iter().any(|column| {
+                column.name.original().go_lower_eq(dependency)
+                    && column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
+            })
+        }) {
+            return Err(CheckConstraintError::new(
+                &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_REFERS_AUTO_INCREMENT_COLUMN,
+                format!("Check constraint '{name}' cannot refer to an auto-increment column."),
+            ));
+        }
+        for foreign_key in foreign_keys {
+            if foreign_key.has_referential_action {
+                if let Some(dependency) = dependencies.iter().find(|dependency| {
+                    foreign_key
+                        .columns
+                        .iter()
+                        .any(|column| column.go_lower_eq(dependency))
+                }) {
+                    return Err(CheckConstraintError::new(
+                        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_USING_FK_REFER_ACTION_COLUMN,
+                        format!(
+                            "Column '{dependency}' cannot be used in a check constraint '{name}': needed in a foreign key constraint referential action."
+                        ),
+                    ));
+                }
+            }
+        }
+        if !built
+            .static_type()
+            .is_some_and(|field_type| field_type.has_flag(FieldTypeFlags::IS_BOOLEAN))
+        {
+            return Err(CheckConstraintError::new(
+                &tidb_util::dbterror::ERR_NON_BOOLEAN_EXPR_FOR_CHECK_CONSTRAINT,
+                format!(
+                    "An expression of non-boolean type specified to a check constraint '{name}'."
+                ),
+            ));
+        }
+
+        let flags = RestoreFlags::STRING_SINGLE_QUOTES
+            | RestoreFlags::KEYWORD_LOWERCASE
+            | RestoreFlags::NAME_BACK_QUOTES
+            | RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+            | RestoreFlags::WITHOUT_SCHEMA_NAME
+            | RestoreFlags::WITHOUT_TABLE_NAME;
+        *max_constraint_id += 1;
+        infos.push(ConstraintInfo {
+            id: *max_constraint_id,
+            name: CiString::new(name),
+            table: table_name.clone(),
+            constraint_cols: dependencies
+                .into_iter()
+                .map(CiString::new)
+                .collect::<Vec<_>>()
+                .into(),
+            enforced: check.definition.enforced,
+            in_column: check.in_column.is_some(),
+            // Go `buildConstraintInfo` restores the AST the session parsed,
+            // whose plain string literals carry `character_set_connection`.
+            expr_string: check
+                .definition
+                .expression
+                .restore_with_flags_and_string_charset(flags, context.get_expr_ctx().get_charset_info().0),
+            state,
+        });
+    }
+    Ok(infos)
+}
+
+/// Go `createTableInfo`'s column-type check dependency test, which reads the
+/// column names off the AST: a constraint written inside a column definition
+/// may name that column only, whether or not the other names resolve.
+fn column_constraint_references_other(
+    name: &str,
+    check: &CheckConstraintInput,
+) -> Result<(), CheckConstraintError> {
+    struct Names(std::collections::BTreeSet<String>);
+    impl tidb_ast::Visitor for Names {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(Expr::Column(path)) = node.downcast_ref::<Expr>() {
+                if let Some(column) = path.last() {
+                    self.0.insert(column.go_to_lower());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let Some(in_column) = &check.in_column else {
+        return Ok(());
+    };
+    let mut expression = check.definition.expression.clone();
+    let mut names = Names(std::collections::BTreeSet::new());
+    let _ = tidb_ast::Visitable::accept(&mut expression, &mut names);
+    // Go `dependedColsMap[constr.InColumnName]`: the map is keyed by each
+    // name's `.L` while `InColumnName` is the column's `.O`
+    // (`add_column.go:589`), so a column spelled with uppercase fails to
+    // find itself and its CHECK is refused as referring to another column.
+    if names.0.len() > 1 || (names.0.len() == 1 && !names.0.contains(in_column)) {
+        return Err(CheckConstraintError::new(
+            &tidb_util::dbterror::ERR_COLUMN_CHECK_CONSTRAINT_REFER_OTHER,
+            format!("Column check constraint '{name}' references other column."),
+        ));
+    }
+    Ok(())
+}
+
+fn unknown_column(
+    name: &str,
+    missing: &str,
+    mode: CheckConstraintBuildMode,
+) -> CheckConstraintError {
+    if mode == CheckConstraintBuildMode::Alter {
+        return CheckConstraintError::new(
+            &tidb_util::dbterror::ERR_BAD_FIELD,
+            format!(
+                "Unknown column '{}' in 'check constraint {name} expression'",
+                missing.go_to_lower()
+            ),
+        );
+    }
+    CheckConstraintError::new(
+        &tidb_util::dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN,
+        format!("Check constraint '{name}' refers to non-existing column '{missing}'."),
+    )
+}
+
+fn validate_expression_ast(name: &str, expression: &Expr) -> Result<(), CheckConstraintError> {
+    struct Checker<'a> {
+        name: &'a str,
+        error: Option<CheckConstraintError>,
+    }
+
+    impl tidb_ast::Visitor for Checker<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            let Some(expression) = node.downcast_ref::<Expr>() else {
+                return false;
+            };
+            let error = match expression {
+                Expr::UserVar(_) | Expr::SysVar { .. } | Expr::Assign { .. } => {
+                    Some(CheckConstraintError::new(
+                        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_VARIABLES,
+                        format!(
+                            "An expression of a check constraint '{}' cannot refer to a user or system variable.",
+                            self.name
+                        ),
+                    ))
+                }
+                Expr::Subquery(_)
+                | Expr::Exists { .. }
+                | Expr::InSubquery { .. }
+                | Expr::CompareSubquery { .. } => Some(CheckConstraintError::new(
+                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_FUNC_IS_NOT_ALLOWED,
+                    format!(
+                        "An expression of a check constraint '{}' contains disallowed function.",
+                        self.name
+                    ),
+                )),
+                Expr::Default(_) => Some(disallowed_named_function(self.name, "default")),
+                Expr::Func { name, .. } if is_disallowed_function(name) => {
+                    Some(disallowed_named_function(self.name, &name.go_to_lower()))
+                }
+                _ => None,
+            };
+            if let Some(error) = error {
+                self.error = Some(error);
+                true
+            } else {
+                false
+            }
+        }
+
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            self.error.is_none()
+        }
+    }
+
+    let mut expression = expression.clone();
+    let mut checker = Checker { name, error: None };
+    let _ = tidb_ast::Visitable::accept(&mut expression, &mut checker);
+    checker.error.map_or(Ok(()), Err)
+}
+
+fn disallowed_named_function(name: &str, function: &str) -> CheckConstraintError {
+    CheckConstraintError::new(
+        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_NAMED_FUNC_IS_NOT_ALLOWED,
+        format!(
+            "An expression of a check constraint '{name}' contains disallowed function: {function}."
+        ),
+    )
+}
+
+fn is_disallowed_function(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "now"
+            | "current_timestamp"
+            | "curdate"
+            | "current_date"
+            | "curtime"
+            | "current_time"
+            | "localtime"
+            | "localtimestamp"
+            | "unix_timestamp"
+            | "utc_date"
+            | "utc_timestamp"
+            | "utc_time"
+            | "connection_id"
+            | "current_user"
+            | "session_user"
+            | "version"
+            | "found_rows"
+            | "last_insert_id"
+            | "system_user"
+            | "user"
+            | "rand"
+            | "row_count"
+            | "get_lock"
+            | "is_free_lock"
+            | "is_used_lock"
+            | "release_lock"
+            | "release_all_locks"
+            | "load_file"
+            | "uuid"
+            | "uuid_v4"
+            | "uuid_v7"
+            | "uuid_short"
+            | "sleep"
+    )
+}

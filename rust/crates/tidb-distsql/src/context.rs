@@ -20,20 +20,8 @@ use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
 /// TiDB's default `tidb_distsql_scan_concurrency` used by the Go test helper.
 pub const DEFAULT_DIST_SQL_CONCURRENCY: u64 = 15;
-/// Statement priority values copied from `pkg/parser/mysql.PriorityEnum`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Priority {
-    /// No explicit priority.
-    #[default]
-    NoPriority = 0,
-    /// `LOW_PRIORITY`.
-    Low = 1,
-    /// `HIGH_PRIORITY`.
-    High = 2,
-    /// `DELAYED`.
-    Delayed = 3,
-}
+/// Go `DistSQLContext.Priority`: the statement's `mysql.PriorityEnum`.
+pub use tidb_mysql::Priority;
 
 /// Paging controls copied from `kv.Request.Paging`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

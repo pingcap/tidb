@@ -248,7 +248,7 @@ impl SamplingSchema {
             .columns
             .iter()
             .map(|column| {
-                crate::cop_scan::scan_column(column)
+                tidb_executor::cop_reader::scan_column(column)
                     .map(|column| crate::dag_request::column_to_pb(&column))
                     .ok_or_else(|| {
                         AnalyzeError::unsupported(format!(

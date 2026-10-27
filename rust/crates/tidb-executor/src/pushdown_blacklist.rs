@@ -93,7 +93,7 @@ const ENUM_TYPE_NAME: &str = "enum";
 /// `PushDownExprs` walks this tree; it does not rewrite the SQL again.
 pub(crate) fn compiled_blacklist_admits(
     condition: &Expression,
-    ctx: &crate::StmtContext,
+    ctx: &dyn tidb_expr::pushdown_catalog::PbConverterContext,
     store: PushDownStore,
 ) -> bool {
     let blacklist = ctx.expr_pushdown_blacklist();

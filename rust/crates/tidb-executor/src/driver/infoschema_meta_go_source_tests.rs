@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::{InfoColumn, SERVED_TABLES, UNSPECIFIED_LENGTH};
+use super::{Deflt, InfoColumn, SERVED_TABLES, UNSPECIFIED_LENGTH};
 use tidb_datatype::FieldTypeCode;
 
 fn go_root() -> std::path::PathBuf {
@@ -245,12 +245,25 @@ fn go_flag(expression: Option<&String>) -> u32 {
     })
 }
 
+/// Go's `deflt` expression as the dynamic value it holds: a quoted literal
+/// or a string constant is a Go `string`, a bare number a Go `int`.
 fn go_default(expression: Option<&String>) -> Option<String> {
     let expression = expression?.trim();
     Some(match expression {
-        "mysql.DefaultCollationName" => tidb_mysql::charset::DefaultCollationName.to_owned(),
-        _ => expression.trim_matches('"').to_owned(),
+        "mysql.DefaultCollationName" => {
+            format!("string {}", tidb_mysql::charset::DefaultCollationName)
+        }
+        quoted if quoted.starts_with('"') => format!("string {}", quoted.trim_matches('"')),
+        number => format!("int {number}"),
     })
+}
+
+/// [`go_default`]'s spelling of a served column's default.
+fn served_default(deflt: Deflt) -> String {
+    match deflt {
+        Deflt::Int(value) => format!("int {value}"),
+        Deflt::Str(text) => format!("string {text}"),
+    }
 }
 
 #[test]
@@ -309,7 +322,7 @@ fn served_information_schema_columns_are_go_tables_go() {
                 *size,
                 *decimal,
                 *flag,
-                deflt.map(str::to_owned),
+                deflt.map(served_default),
                 comment.map(str::to_owned),
             );
             if expected != actual {

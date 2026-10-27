@@ -209,7 +209,7 @@ impl ClusterPeerClient {
         let columns_pb = selected
             .iter()
             .map(|(offset, field_type)| {
-                crate::cop_scan::scan_column(&PushdownScanColumn {
+                tidb_executor::cop_reader::scan_column(&PushdownScanColumn {
                     id: (*offset + 1) as i64,
                     field_type: (*field_type).clone(),
                     is_handle: false,
@@ -239,7 +239,7 @@ impl ClusterPeerClient {
                 .enumerate()
                 .find(|(_, (original, _))| columns[*original].0.eq_ignore_ascii_case("DIGEST"))
                 .ok_or_else(|| DriverError::unsupported("digest predicate needs DIGEST column"))?;
-            let column = crate::cop_scan::scan_column(&PushdownScanColumn {
+            let column = tidb_executor::cop_reader::scan_column(&PushdownScanColumn {
                 id: (offset + 1) as i64,
                 field_type: (*field).clone(),
                 is_handle: false,

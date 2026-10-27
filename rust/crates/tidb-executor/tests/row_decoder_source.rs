@@ -14,6 +14,8 @@
 
 //! Material contracts from `pkg/util/rowDecoder`.
 
+use tidb_executor::KvTableDdl;
+use tidb_executor::KvTableReader;
 use tidb_datatype::{
     CoreTime, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration,
     SessionTimeZone, Time, TimeType,
@@ -878,8 +880,8 @@ fn generated_read_policy_preserves_query_warnings_before_forced_suppression() {
             "caller {class}: {warnings:?}"
         );
         if class == 0 {
-            assert_eq!(warnings[0].1, 1292);
-            assert_eq!(warnings[0].2, "Truncated incorrect DOUBLE value: '12x'");
+            assert_eq!(warnings[0].code(), 1292);
+            assert_eq!(warnings[0].message(), "Truncated incorrect DOUBLE value: '12x'");
         }
     }
 }

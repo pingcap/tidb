@@ -14,6 +14,7 @@
 
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
+pub use tidb_kv::keys_read::KeysReadBudget;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -21,6 +22,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
 use tidb_distsql::{ReplicaReadType, WarningCollector, WarningLevel};
+use tidb_util::context::SqlWarn;
 use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
@@ -37,58 +39,7 @@ use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// The session values Go reads when it builds a reorganizing job's
-/// `ReorgMeta` (`NewDDLReorgMeta`, `initJobReorgMetaFromVariables`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DdlReorgVars {
-    /// `tidb_ddl_reorg_worker_cnt`.
-    pub worker_count: i64,
-    /// `tidb_ddl_reorg_batch_size`.
-    pub batch_size: i64,
-    /// `tidb_ddl_reorg_max_write_speed`, in bytes per second.
-    pub max_write_speed: i64,
-    /// `tidb_max_dist_task_nodes` (-1 means automatic).
-    pub max_dist_task_nodes: i64,
-    /// `tidb_enable_dist_task`.
-    pub enable_dist_task: bool,
-    /// `tidb_ddl_enable_fast_reorg`.
-    pub enable_fast_reorg: bool,
-    /// `tidb_service_scope` (Go `dxfhandle.GetTargetScope`).
-    pub target_scope: String,
-    /// The statement's resource group.
-    pub resource_group_name: String,
-    /// `tidb_stats_update_during_ddl`, as the job's session variable.
-    pub enable_ddl_analyze: String,
-    /// `tidb_analyze_version`, as the job's session variable.
-    pub analyze_version: String,
-    /// `tidb_scatter_region` (Go `getScatterScopeFromSessionctx`), as the
-    /// job's session variable.
-    pub scatter_region: String,
-    /// Go `ddlutil.GetTimeZone`: the session zone's name and offset.
-    pub time_zone_name: String,
-    /// See [`Self::time_zone_name`].
-    pub time_zone_offset: i64,
-}
-
-impl Default for DdlReorgVars {
-    fn default() -> Self {
-        Self {
-            worker_count: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-            batch_size: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
-            max_write_speed: 0,
-            max_dist_task_nodes: tidb_vardef::defaults::DEF_TIDB_MAX_DIST_TASK_NODES,
-            enable_dist_task: true,
-            enable_fast_reorg: tidb_vardef::defaults::DEF_TIDB_ENABLE_FAST_REORG,
-            target_scope: String::new(),
-            resource_group_name: String::new(),
-            enable_ddl_analyze: "OFF".to_owned(),
-            analyze_version: "2".to_owned(),
-            scatter_region: tidb_vardef::defaults::DEF_TIDB_SCATTER_REGION.to_owned(),
-            time_zone_name: "UTC".to_owned(),
-            time_zone_offset: 0,
-        }
-    }
-}
+pub use tidb_ddl_build::session_context::DdlReorgVars;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -373,7 +324,7 @@ struct StatementRangeFallback {
 }
 
 struct PlannerWarningAppender {
-    warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    warnings: Arc<Mutex<Vec<SqlWarn>>>,
 }
 
 impl tidb_util::context::WarnAppender for PlannerWarningAppender {
@@ -388,71 +339,10 @@ impl tidb_util::context::WarnAppender for PlannerWarningAppender {
 
 impl PlannerWarningAppender {
     fn append(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
-        let code = match &err {
-            tidb_util::context::WarnErr::Terror(error) => error.code().value() as u16,
-            tidb_util::context::WarnErr::Message(_) => 1105,
-        };
         self.warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((level, code, err.to_string()));
-    }
-}
-
-/// Go `kv.Request.MaxKeysRead` with its statement-wide `MaxKeysReadCounter`:
-/// every coprocessor read of one statement adds the keys its scans processed
-/// (`ScanDetail.ProcessedKeys`, which unistore reports as its scans' row
-/// count) to one counter, and a read that takes the total past a nonzero
-/// limit fails with `ErrMaxKeysReadExceeded` (8274). The same counter is the
-/// statement's share of `tidb_keys_examined`.
-#[derive(Clone, Debug, Default)]
-pub struct KeysReadBudget {
-    read: Arc<AtomicU64>,
-    max: u64,
-}
-
-impl KeysReadBudget {
-    /// A budget over the statement's shared counter; `max` 0 is unlimited.
-    #[must_use]
-    pub fn new(read: Arc<AtomicU64>, max: u64) -> Self {
-        Self { read, max }
-    }
-
-    /// Go `DistSQLContext.MaxKeysRead`; 0 is unlimited.
-    #[must_use]
-    pub fn max(&self) -> u64 {
-        self.max
-    }
-
-    /// Go `DistSQLContext.MaxKeysReadCounter`: the statement-wide accumulator
-    /// every coprocessor iterator of the statement adds to.
-    #[must_use]
-    pub fn counter(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.read)
-    }
-
-    /// The keys this statement's reads have processed so far.
-    #[must_use]
-    pub fn read(&self) -> u64 {
-        self.read.load(Ordering::Relaxed)
-    }
-
-    /// Adds processed keys and checks the limit, as `copIterator.Next` does
-    /// once each response's scan detail arrives.
-    pub fn add(&self, keys: u64) -> Result<(), crate::storage::StorageError> {
-        let total = self
-            .read
-            .fetch_add(keys, Ordering::Relaxed)
-            .saturating_add(keys);
-        if self.max > 0 && total > self.max {
-            return Err(crate::storage::StorageError::Sql(
-                crate::MysqlError::terror(
-                    &tidb_util::dbterror::exeerrors::ERR_MAX_KEYS_READ_EXCEEDED,
-                    "tidb_max_keys_read limit exceeded",
-                ),
-            ));
-        }
-        Ok(())
+            .push(SqlWarn::new(level, err));
     }
 }
 
@@ -563,6 +453,9 @@ pub struct StmtContextSessionState {
     pub fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
     /// Complete typed SQL mode used by DDL.
     pub ddl_sql_mode: i64,
+    /// The session's store's regions (Go `sctx.GetStore()` as
+    /// `kv.SplittableStore` and `helper.Storage`'s region cache).
+    pub regions: Arc<dyn crate::region_map::RegionStore>,
 }
 
 impl Default for StmtContextSessionState {
@@ -597,6 +490,8 @@ impl Default for StmtContextSessionState {
             fk_cascade_table_lock: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
+            // A context with no store behind it: one in-process region map.
+            regions: Arc::new(crate::region_map::LocalRegionStore::default()),
         }
     }
 }
@@ -654,10 +549,10 @@ pub struct StmtContextData {
     /// `IF EXISTS` that swallowed an error files it as a `Note`, which
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
-    warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    warnings: Arc<Mutex<Vec<SqlWarn>>>,
     /// Go `StmtCtx.ExtraWarnHandler`: diagnostics retained for slow-log
     /// output, but deliberately excluded from SHOW WARNINGS and OK counts.
-    extra_warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    extra_warnings: Arc<Mutex<Vec<SqlWarn>>>,
     /// Go's `StatementContext.LastMessage`, which UPDATE publishes for the
     /// OK packet's length-encoded info field.
     message: Arc<Mutex<String>>,
@@ -688,7 +583,7 @@ pub struct StmtContextData {
     /// the same reporting contract lives here: while the cop depth is open,
     /// warnings accumulate deduplicated in this buffer instead of the row
     /// buffer, and [`StmtContext::take_warnings`] appends them once.
-    cop_batch_warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    cop_batch_warnings: Arc<Mutex<Vec<SqlWarn>>>,
     /// How many coprocessor-equivalent evaluations are open on this thread.
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
@@ -719,7 +614,6 @@ pub struct StmtContextData {
     /// strict write fails, and both statement classes build this struct.
     truncate: ErrorLevel,
     strict: bool,
-    strict_sql_mode: bool,
     /// Go `ast.InsertStmt/UpdateStmt/DeleteStmt.IgnoreErr`, the statement's
     /// own `IGNORE` modifier.
     ///
@@ -731,11 +625,6 @@ pub struct StmtContextData {
     /// promotes a SINGLE-ROW insert to an error even without a strict mode,
     /// and `IGNORE` overrides that promotion too.
     ignore_err: bool,
-    /// Go `SessionVars.SQLMode`'s three temporal bits; see
-    /// [`crate::zero_date`]. They ride the context rather than being derived
-    /// from `strict` because each answers a different question and TiDB's
-    /// default mode happens to set two of them at once.
-    date_modes: crate::zero_date::DateModes,
     /// Session charset-validation bits, captured once for this statement.
     string_type_flags: tidb_datatype::ConversionFlags,
     /// DDL workers use reorganization flags independently of statement class.
@@ -795,6 +684,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `SessionVars.SelectLimit`; `u64::MAX` is the unlimited sentinel.
     select_limit: u64,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
@@ -899,19 +790,13 @@ pub struct StmtContextData {
     /// and `@@auto_increment_offset`, which put the allocated ids on an
     /// arithmetic progression. See [`StmtContext::auto_increment_step`].
     auto_increment_step: (u64, u64),
-    /// Go `SessionVars.SQLMode.HasNoAutoValueOnZeroMode()`: whether an
-    /// explicit `0` in an AUTO_INCREMENT column is a value rather than a
-    /// request for the next id. A statement that would have to honour it is
-    /// refused; see [`StmtContext::auto_increment_zero_is_explicit`].
-    auto_increment_zero_is_explicit: bool,
     allow_auto_random_explicit_insert: bool,
     shard_allocate_step: u64,
-    /// Go `SessionVars.SQLMode.HasOnlyFullGroupBy()`: whether a grouped query
-    /// must justify every non-aggregated value it reports. `ONLY_FULL_GROUP_BY`
-    /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
-    /// with no session behind it (a test, a DDL-time fold) is permissive.
-    only_full_group_by: bool,
     auto_increment_in_generated: bool,
+    /// Go `!SessionVars.InRestrictedSQL && SessionVars.PrimaryKeyRequired`
+    /// (`@@sql_require_primary_key`), which `NewMetaBuildContextWithSctx`
+    /// hands to DDL as `WithPrimaryKeyRequired`.
+    primary_key_required: bool,
     /// Go `SessionVars.TMPTableSize` (`@@tidb_tmp_table_max_size`).
     tmp_table_max_size: i64,
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`
@@ -1174,28 +1059,18 @@ pub struct StmtContextData {
     executor_chunk_sizes: ExecutorChunkSizes,
     /// Go `SessionVars.EnableVectorizedExpression`, captured for executor workers.
     enable_vectorized_expression: bool,
-    /// The scanner flags of `@@sql_mode` -- Go's `Parser.SetSQLMode` input.
-    ///
-    /// Go parses a statement once, in `session.ParseSQL`, and hands the AST
-    /// down; this tier hands the raw text down and RE-PARSES it in the DML and
-    /// DDL entry points, so the mode has to arrive with the statement. It
-    /// rides here rather than as a parameter on every entry because every
-    /// entry already takes this context: one channel, no call site that can
-    /// forget.
-    ///
-    /// The all-false default is TiDB's default `sql_mode` for these flags, so
-    /// a context with no session behind it lexes exactly as before.
-    sql_mode: tidb_parser::SqlMode,
     /// The scanner's client and connection encodings (Go `GetParseParams`)
     /// for a re-parse of the CLIENT's statement text, which arrives in the
     /// client's character set. The default (utf8mb4) is right for text this
     /// tier wrote itself, which Go parses without the client's settings.
     parser_config: tidb_parser::ParserConfig,
-    /// The complete numeric `SessionVars.SQLMode` captured for DDL jobs.
-    ///
-    /// The lexer projection above intentionally contains only six scanning
-    /// flags. Go persists the complete bitset in `model.Job.SQLMode`, so the
-    /// submission path must not reconstruct it from that lossy projection.
+    /// See [`StmtContextSessionState::regions`].
+    regions: crate::region_map::StoreRegions,
+    /// Go `SessionVars.SQLMode`, the one source of every mode bit this
+    /// statement reads: the zero-date and invalid-date modes, strictness,
+    /// `ONLY_FULL_GROUP_BY`, `NO_UNSIGNED_SUBTRACTION`,
+    /// `NO_AUTO_VALUE_ON_ZERO`, the scanner's flags, and the bitset a DDL job
+    /// persists (`model.Job.SQLMode`).
     ddl_sql_mode: i64,
     /// Original DDL text persisted in Go `model.Job.Query` before submission.
     ddl_query: String,
@@ -1204,6 +1079,16 @@ pub struct StmtContextData {
     /// replacement. Shared by every copy of this statement's context, so a
     /// production DDL plan reads what its shared helpers recorded.
     ddl_query_rewrite: Arc<std::sync::Mutex<Option<(String, String)>>>,
+    /// Go `setHypoTiFlashReplica`'s writes to `SessionVars.HypoTiFlashReplicas`
+    /// in statement order (schema, table, add), which the session applies
+    /// whether or not the statement then fails.
+    hypo_tiflash_replica_writes: Arc<std::sync::Mutex<Vec<(String, String, bool)>>>,
+    /// `SessionVars.HypoIndexes` as this statement's DDL left it (Go's
+    /// `addHypoIndexIntoCtx` / `dropHypoIndexFromCtx` write the session's
+    /// map directly): `None` until the statement touches it, then the
+    /// session's map with every write applied, which the session takes back
+    /// whether or not the statement then fails.
+    hypo_index_writes: Arc<std::sync::Mutex<Option<crate::ddl::HypoIndexes>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
@@ -1213,13 +1098,6 @@ pub struct StmtContextData {
     /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
     ddl_trace_id: Vec<u8>,
     ddl_reorg_vars: DdlReorgVars,
-    /// Where this statement's DDL submits its jobs (Go `doDDLJob2`), for the
-    /// session to finish into history; `None` for a statement whose jobs no
-    /// history records (an internal or test context).
-    ddl_job_sink: Option<crate::ddl::job_history::DdlJobSink>,
-    /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
-    /// not scanning, so it is kept beside the lexer's compact mode.
-    no_unsigned_subtraction: bool,
     /// The implicit escape byte `LIKE` receives when the syntax omitted an
     /// `ESCAPE` clause. Go derives this from both `sql_mode` and
     /// `tidb_enable_no_backslash_escapes_in_like` while building expressions.
@@ -1356,6 +1234,33 @@ pub struct StmtContextData {
 
 // Define owned and borrowed configuration setters together. Session setup
 // borrows the configuration once; standalone with_* calls retain copy-on-write.
+impl StmtContextData {
+    /// The session's `SQLMode` this statement runs under.
+    #[must_use]
+    pub fn session_sql_mode(&self) -> tidb_mysql::SqlMode {
+        tidb_mysql::SqlMode(self.ddl_sql_mode)
+    }
+
+    /// Turns `bits` of the session `SQLMode` on or off.
+    fn set_sql_mode_bits(&mut self, bits: tidb_mysql::SqlMode, on: bool) {
+        let mode = self.session_sql_mode();
+        self.ddl_sql_mode = if on { (mode | bits).0 } else { (mode & !bits).0 };
+    }
+
+    /// Makes `SQLMode.HasStrictMode()` answer `strict`, keeping whichever
+    /// strict bit is already set.
+    fn set_strict_sql_mode(&mut self, strict: bool) {
+        use tidb_mysql::consts as m;
+        if strict != self.session_sql_mode().has_strict_mode() {
+            if strict {
+                self.set_sql_mode_bits(m::ModeStrictTransTables, true);
+            } else {
+                self.set_sql_mode_bits(m::ModeStrictTransTables | m::ModeStrictAllTables, false);
+            }
+        }
+    }
+}
+
 macro_rules! context_configuration {
     ($(
         $(#[$attr:meta])*
@@ -1415,22 +1320,23 @@ context_configuration! {
     /// this statement performs must lex under.
     #[must_use]
     pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
-        self.sql_mode = sql_mode;
+        use tidb_mysql::consts as m;
+        self.set_sql_mode_bits(m::ModeRealAsFloat, sql_mode.real_as_float);
+        self.set_sql_mode_bits(m::ModeNoBackslashEscapes, sql_mode.no_backslash_escapes);
+        self.set_sql_mode_bits(m::ModeANSIQuotes, sql_mode.ansi_quotes);
+        self.set_sql_mode_bits(m::ModeHighNotPrecedence, sql_mode.high_not_precedence);
+        self.set_sql_mode_bits(m::ModeIgnoreSpace, sql_mode.ignore_space);
+        self.set_sql_mode_bits(m::ModePipesAsConcat, sql_mode.pipes_as_concat);
+        self.set_strict_sql_mode(sql_mode.strict_mode);
         self
     }
+
 
     /// Attaches the session's parser configuration, for a statement whose
     /// re-parse reads the client's own text.
     #[must_use]
     pub fn with_parser_config(mut self, config: tidb_parser::ParserConfig) -> Self {
         self.parser_config = config;
-        self
-    }
-
-    /// Attaches the session's job sink for this statement.
-    #[must_use]
-    pub fn with_ddl_job_sink(mut self, sink: crate::ddl::job_history::DdlJobSink) -> Self {
-        self.ddl_job_sink = Some(sink);
         self
     }
 
@@ -1453,7 +1359,7 @@ context_configuration! {
     /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
     #[must_use]
     pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
-        self.no_unsigned_subtraction = enabled;
+        self.set_sql_mode_bits(tidb_mysql::consts::ModeNoUnsignedSubtraction, enabled);
         self
     }
 
@@ -1654,7 +1560,7 @@ context_configuration! {
     #[must_use]
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.strict = strict;
-        self.strict_sql_mode = strict;
+        self.set_strict_sql_mode(strict);
         self
     }
 
@@ -2087,12 +1993,11 @@ context_configuration! {
         self
     }
 
-
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
     /// off its `sql_mode`.
     #[must_use]
     pub fn with_only_full_group_by(mut self, only_full_group_by: bool) -> Self {
-        self.only_full_group_by = only_full_group_by;
+        self.set_sql_mode_bits(tidb_mysql::consts::ModeOnlyFullGroupBy, only_full_group_by);
         self
     }
 
@@ -2100,6 +2005,14 @@ context_configuration! {
     #[must_use]
     pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
         self.auto_increment_in_generated = enabled;
+        self
+    }
+
+    /// Sets whether DDL must refuse a table without a primary key: Go
+    /// `!InRestrictedSQL && PrimaryKeyRequired` (`@@sql_require_primary_key`).
+    #[must_use]
+    pub fn with_primary_key_required(mut self, required: bool) -> Self {
+        self.primary_key_required = required;
         self
     }
 
@@ -2370,7 +2283,10 @@ context_configuration! {
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
     #[must_use]
     pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
-        self.date_modes = date_modes;
+        use tidb_mysql::consts as m;
+        self.set_sql_mode_bits(m::ModeNoZeroDate, date_modes.no_zero_date);
+        self.set_sql_mode_bits(m::ModeNoZeroInDate, date_modes.no_zero_in_date);
+        self.set_sql_mode_bits(m::ModeAllowInvalidDates, date_modes.allow_invalid_dates);
         self
     }
 
@@ -2433,7 +2349,7 @@ context_configuration! {
     /// `sql_mode`.
     #[must_use]
     pub fn with_auto_increment_zero_explicit(mut self, is_explicit: bool) -> Self {
-        self.auto_increment_zero_is_explicit = is_explicit;
+        self.set_sql_mode_bits(tidb_mysql::consts::ModeNoAutoValueOnZero, is_explicit);
         self
     }
 }
@@ -2535,9 +2451,7 @@ impl StmtContext {
             strict_not_null_check: true,
             truncate,
             strict,
-            strict_sql_mode: strict,
             ignore_err,
-            date_modes: crate::zero_date::DateModes::default(),
             string_type_flags: tidb_datatype::ConversionFlags::default(),
             reorg: false,
             current_db: None,
@@ -2567,6 +2481,7 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_TIFLASH_REPLICA_READ,
             ),
             isolation_read_engines: session.isolation_read_engines,
+            tiflash_engine_removed_due_to_strict_sql_mode: false,
             select_limit: session.select_limit,
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
@@ -2595,11 +2510,10 @@ impl StmtContext {
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
             auto_increment_step: (1, 1),
-            auto_increment_zero_is_explicit: false,
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
-            only_full_group_by: false,
             auto_increment_in_generated: false,
+            primary_key_required: false,
             // Go `DefTiDBTmpTableMaxSize`.
             tmp_table_max_size: 64 << 20,
             new_only_full_group_by_check: false,
@@ -2690,19 +2604,19 @@ impl StmtContext {
             memory,
             executor_chunk_sizes: ExecutorChunkSizes::default(),
             enable_vectorized_expression: true,
-            sql_mode: tidb_parser::SqlMode::default(),
             parser_config: tidb_parser::ParserConfig::default(),
             ddl_sql_mode: session.ddl_sql_mode,
+            regions: crate::region_map::StoreRegions(session.regions),
             ddl_query: String::new(),
             ddl_query_rewrite: Arc::default(),
+            hypo_tiflash_replica_writes: Arc::default(),
+            hypo_index_writes: Arc::default(),
             ddl_cdc_write_source: 0,
             // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
             ddl_reorg_priority: 1,
             ddl_session_alias: String::new(),
             ddl_trace_id: Vec::new(),
             ddl_reorg_vars: DdlReorgVars::default(),
-            ddl_job_sink: None,
-            no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
             selectivity_factor: tidb_planner::selectivity_greedy::DEF_OPT_SELECTIVITY_FACTOR,
@@ -2880,7 +2794,7 @@ impl StmtContext {
         is_single_insert: bool,
         enable_strict_not_null_check: bool,
     ) -> Self {
-        let error = (self.strict_sql_mode || is_single_insert)
+        let error = (self.session_sql_mode().has_strict_mode() || is_single_insert)
             && enable_strict_not_null_check
             && !self.ignore_err;
         self.bad_null = if error {
@@ -2981,14 +2895,14 @@ impl StmtContext {
     ///
     /// A `SELECT` gets the literal `true` its `ResetContextOfStmt` arm
     /// writes; every other class gets `GetTypeFlagsForInsert`'s mode rule,
-    /// which [`crate::zero_date::write_date_flags`] already owns.
+    /// which [`tidb_util::misc::write_date_flags`] already owns.
     fn ignore_zero_in_date(&self) -> bool {
         if self.statement_class == StatementClass::Select {
             return true;
         }
-        crate::zero_date::write_date_flags(
+        tidb_util::misc::write_date_flags(
             tidb_datatype::ConversionFlags::default(),
-            self.date_modes,
+            self.date_modes(),
             self.strict,
         )
         .ignore_zero_in_date_err()
@@ -3103,10 +3017,72 @@ impl StmtContext {
             .ddl_query_rewrite
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((original.clone(), replacement.clone()));
-        if let Some(sink) = &self.ddl_job_sink {
-            sink.rewrite_query(original, replacement);
-        }
+            Some((original, replacement));
+    }
+
+    /// Records Go `setHypoTiFlashReplica` for the session to apply.
+    pub fn set_hypo_tiflash_replica(&self, schema: &str, table: &str, add: bool) {
+        self.hypo_tiflash_replica_writes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((schema.to_owned(), table.to_owned(), add));
+    }
+
+    /// Go `addHypoIndexIntoCtx`.
+    pub fn add_hypo_index(
+        &self,
+        schema: &str,
+        table: &str,
+        index: tidb_model::index::IndexInfo,
+    ) -> Result<(), tidb_error::mysql::MysqlError> {
+        self.with_hypo_index_writes(|indexes| indexes.add(schema, table, index))
+    }
+
+    /// Go `dropHypoIndexFromCtx`.
+    pub fn drop_hypo_index(
+        &self,
+        schema: &str,
+        table: &str,
+        index: &str,
+        if_exists: bool,
+    ) -> Result<(), tidb_error::mysql::MysqlError> {
+        self.with_hypo_index_writes(|indexes| indexes.remove(schema, table, index, if_exists))
+    }
+
+    fn with_hypo_index_writes<T>(
+        &self,
+        write: impl FnOnce(&mut crate::ddl::HypoIndexes) -> T,
+    ) -> T {
+        let mut writes = self
+            .hypo_index_writes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let indexes = writes.get_or_insert_with(|| {
+            self.hypo_indexes
+                .as_deref()
+                .cloned()
+                .unwrap_or_default()
+        });
+        write(indexes)
+    }
+
+    /// `SessionVars.HypoIndexes` as this statement's DDL left it, when the
+    /// statement wrote it.
+    pub fn take_hypo_indexes(&self) -> Option<crate::ddl::HypoIndexes> {
+        self.hypo_index_writes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// The hypothetical TiFlash replica changes this statement's DDL made.
+    pub fn take_hypo_tiflash_replicas(&self) -> Vec<(String, String, bool)> {
+        std::mem::take(
+            &mut *self
+                .hypo_tiflash_replica_writes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     /// The query rewrite this statement's DDL recorded, if any.
@@ -3118,21 +3094,6 @@ impl StmtContext {
             .clone()
     }
 
-    /// Rows the running DDL job processed (Go `Job.RowCount`).
-    pub fn add_ddl_job_row_count(&self, rows: i64) {
-        if let Some(sink) = &self.ddl_job_sink {
-            sink.add_row_count(rows);
-        }
-    }
-
-    /// Go `doDDLJob2`'s submission of `job`, recorded for the session to
-    /// finish into history when the statement completes.
-    pub fn submit_ddl_job(&self, job: crate::ddl::job_history::SubmittedDdlJob) {
-        if let Some(sink) = &self.ddl_job_sink {
-            sink.submit(job);
-        }
-    }
-
     /// Go `SessionVars.RangeMaxSize`.
     #[must_use]
     pub fn range_max_size(&self) -> i64 {
@@ -3142,13 +3103,20 @@ impl StmtContext {
     /// The scanner `sql_mode` flags for this statement's re-parses.
     #[must_use]
     pub fn sql_mode(&self) -> tidb_parser::SqlMode {
-        self.sql_mode
+        scanner_sql_mode(self.session_sql_mode())
     }
 
     /// The parser configuration for this statement's re-parses.
     #[must_use]
     pub fn parser_config(&self) -> tidb_parser::ParserConfig {
         self.parser_config
+    }
+
+    /// Go `sctx.GetStore()`'s regions: `SPLIT`, `SHOW TABLE REGIONS` and
+    /// `TABLESAMPLE` read and cut them.
+    #[must_use]
+    pub fn region_store(&self) -> &Arc<dyn crate::region_map::RegionStore> {
+        &self.regions.0
     }
 
     /// The complete numeric SQL mode captured for a persisted DDL job.
@@ -3215,7 +3183,7 @@ impl StmtContext {
     /// Whether subtraction must use a signed result domain.
     #[must_use]
     pub fn no_unsigned_subtraction(&self) -> bool {
-        self.no_unsigned_subtraction
+        self.session_sql_mode().has_no_unsigned_subtraction_mode()
     }
 
     /// The statement snapshot of `div_precision_increment`.
@@ -3722,7 +3690,7 @@ impl StmtContext {
     /// point that takes SQL text as a string goes through here, so a scanner
     /// flag cannot be honored by one tier and dropped by the next.
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, crate::DriverError> {
-        tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode, self.parser_config)
+        tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode(), self.parser_config)
             .map_err(|e| crate::DriverError::Parse(format!("{e:?}")))
     }
 
@@ -4239,12 +4207,17 @@ impl StmtContext {
     /// Whether `ONLY_FULL_GROUP_BY` is in effect for this statement.
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
-        self.only_full_group_by
+        self.session_sql_mode().has_only_full_group_by()
     }
 
     /// Whether generated expressions may reference AUTO_INCREMENT columns.
     pub fn auto_increment_in_generated(&self) -> bool {
         self.auto_increment_in_generated
+    }
+
+    /// Go `!InRestrictedSQL && PrimaryKeyRequired` for this statement.
+    pub fn primary_key_required(&self) -> bool {
+        self.primary_key_required
     }
 
     /// `@@tidb_tmp_table_max_size`: the bytes a temporary table may hold.
@@ -4375,6 +4348,23 @@ impl StmtContext {
     pub fn with_isolation_read_engines(mut self, engines: String) -> Self {
         self.isolation_read_engines = engines;
         self
+    }
+
+    /// Go `Optimize`: a statement that is not read-only, under a strict
+    /// `sql_mode`, plans without TiFlash
+    /// (`StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`). The variable's
+    /// value is unchanged; only the engines the planner may read lose
+    /// TiFlash.
+    #[must_use]
+    pub fn with_tiflash_engine_removed_due_to_strict_sql_mode(mut self) -> Self {
+        self.tiflash_engine_removed_due_to_strict_sql_mode = true;
+        self
+    }
+
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    #[must_use]
+    pub fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool {
+        self.tiflash_engine_removed_due_to_strict_sql_mode
     }
 
     /// Returns the statement snapshot of `tidb_isolation_read_engines`.
@@ -4698,7 +4688,7 @@ impl StmtContext {
             ErrorLevel::Warn
         };
         let mut context = Self::new(level, truncate, strict, ignore_err, memory, session);
-        context.strict_sql_mode = strict_sql_mode;
+        Arc::make_mut(&mut context.0).set_strict_sql_mode(strict_sql_mode);
         context
     }
 
@@ -4759,7 +4749,12 @@ impl StmtContext {
     /// The SQL mode's temporal bits; see [`crate::zero_date`].
     #[must_use]
     pub fn date_modes(&self) -> crate::zero_date::DateModes {
-        self.date_modes
+        let mode = self.session_sql_mode();
+        crate::zero_date::DateModes {
+            no_zero_date: mode.has_no_zero_date_mode(),
+            no_zero_in_date: mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
+        }
     }
 
     /// `base` with this statement's string-validation bits: Go's
@@ -4794,12 +4789,12 @@ impl StmtContext {
     /// `handleZeroDatetime`, which decides from `NO_ZERO_DATE` alone.
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        crate::zero_date::write_date_flags(
+        tidb_util::misc::write_date_flags(
             self.statement_string_flags(tidb_datatype::DEFAULT_STATEMENT_FLAGS)
                 .with_allow_negative_to_unsigned(false)
                 .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
                 .with_truncate_as_warning(self.truncate == ErrorLevel::Warn),
-            self.date_modes,
+            self.date_modes(),
             self.strict,
         )
     }
@@ -4814,13 +4809,13 @@ impl StmtContext {
             .with_ignore_truncate_err(false)
             .with_truncate_as_warning(false)
             .with_allow_negative_to_unsigned(false)
-            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
             .with_ignore_zero_in_date_err(
-                !self.date_modes.no_zero_in_date
+                !self.date_modes().no_zero_in_date
                     || !self.strict
-                    || self.date_modes.allow_invalid_dates,
+                    || self.date_modes().allow_invalid_dates,
             )
-            .with_ignore_zero_date_err(!self.date_modes.no_zero_date || !self.strict)
+            .with_ignore_zero_date_err(!self.date_modes().no_zero_date || !self.strict)
     }
 
     /// Go `newReorgExprCtxWithReorgMeta`: row evaluation during index creation
@@ -4832,7 +4827,6 @@ impl StmtContext {
         let mode = tidb_mysql::SqlMode(self.ddl_sql_mode);
         let strict = mode.has_strict_mode();
         context.strict = strict;
-        context.strict_sql_mode = strict;
         context.ignore_err = false;
         context.truncate = if strict {
             ErrorLevel::Error
@@ -4844,11 +4838,6 @@ impl StmtContext {
             ErrorLevel::Ignore
         } else {
             context.truncate
-        };
-        context.date_modes = crate::zero_date::DateModes {
-            no_zero_date: mode.has_no_zero_date_mode(),
-            no_zero_in_date: mode.has_no_zero_in_date_mode(),
-            allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
         };
         context
     }
@@ -4866,8 +4855,8 @@ impl StmtContext {
     pub fn reorg_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
         tidb_datatype::STRICT_FLAGS
             .with_truncate_as_warning(!self.strict)
-            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
-            .with_ignore_zero_in_date_err(!self.strict || self.date_modes.allow_invalid_dates)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
+            .with_ignore_zero_in_date_err(!self.strict || self.date_modes().allow_invalid_dates)
             .with_cast_time_to_year_through_concat(true)
     }
 
@@ -4877,7 +4866,7 @@ impl StmtContext {
         tidb_datatype::DEFAULT_STATEMENT_FLAGS
             .with_truncate_as_warning(true)
             .with_ignore_zero_in_date_err(true)
-            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
     }
 
     /// Go `ResetContextOfStmt`'s `SHOW` flags for reading a stored default.
@@ -4886,7 +4875,7 @@ impl StmtContext {
         tidb_datatype::DEFAULT_STATEMENT_FLAGS
             .with_ignore_truncate_err(true)
             .with_ignore_zero_in_date_err(true)
-            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
     }
 
     /// Records a warning the driver rendered itself.
@@ -4913,8 +4902,8 @@ impl StmtContext {
     /// datetime value: 'abc'`), and the OK packet's count and `SHOW
     /// WARNINGS` both read them.
     pub fn drain_fold_warnings(&self) {
-        for (code, message) in tidb_expr::constant_fold::take_fold_warnings() {
-            self.append_warning_parts(code, &message);
+        for warning in tidb_expr::constant_fold::take_fold_warnings() {
+            self.append_sql_warn(warning);
         }
     }
 
@@ -4954,7 +4943,7 @@ impl StmtContext {
     /// Drains Go's extra-warning handler without exposing entries through the
     /// ordinary statement warning path.
     #[must_use]
-    pub fn take_extra_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+    pub fn take_extra_warnings(&self) -> Vec<SqlWarn> {
         std::mem::take(
             &mut *self
                 .extra_warnings
@@ -4971,9 +4960,7 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .any(|(_, warning_code, warning_message)| {
-                *warning_code == code && warning_message == message
-            })
+            .any(|warning| warning.code() == code && warning.message() == message)
         {
             return;
         }
@@ -5148,7 +5135,7 @@ impl StmtContext {
     /// STORED as zero, which is what `NO_AUTO_VALUE_ON_ZERO` asks for.
     #[must_use]
     pub fn auto_increment_zero_is_explicit(&self) -> bool {
-        self.auto_increment_zero_is_explicit
+        self.session_sql_mode().has_no_auto_value_on_zero_mode()
     }
 
     /// `@@auto_increment_increment` and `@@auto_increment_offset` as the
@@ -5195,7 +5182,7 @@ impl StmtContext {
     }
 
     /// Removes and returns the warnings recorded after the first `start`.
-    pub fn split_off_warnings(&self, start: usize) -> Vec<(WarningLevel, u16, String)> {
+    pub fn split_off_warnings(&self, start: usize) -> Vec<SqlWarn> {
         let mut warnings = self
             .warnings
             .lock()
@@ -5205,7 +5192,7 @@ impl StmtContext {
     }
 
     /// Appends warnings taken off with [`Self::split_off_warnings`].
-    pub fn extend_warnings(&self, extra: Vec<(WarningLevel, u16, String)>) {
+    pub fn extend_warnings(&self, extra: Vec<SqlWarn>) {
         self.warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -5247,7 +5234,7 @@ impl StmtContext {
 
     /// Drains local diagnostics without consuming the shared coprocessor sinks.
     #[must_use]
-    pub(crate) fn take_local_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+    pub(crate) fn take_local_warnings(&self) -> Vec<SqlWarn> {
         std::mem::take(
             &mut *self
                 .warnings
@@ -5258,12 +5245,12 @@ impl StmtContext {
 
     /// Drains local and coprocessor warnings for statement delivery.
     #[must_use]
-    pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+    pub fn take_warnings(&self) -> Vec<SqlWarn> {
         let mut warnings = self.take_local_warnings();
         // The coprocessor-equivalent batch next: these are the warnings a
         // pushed filter raised inside a source, reported TiKV-style (one entry
         // per DISTINCT message; see the field's doc).
-        for (level, code, message) in std::mem::take(
+        for warning in std::mem::take(
             &mut *self
                 .cop_batch_warnings
                 .lock()
@@ -5272,7 +5259,7 @@ impl StmtContext {
             if warnings.len() >= MAX_WARNING_COUNT {
                 break;
             }
-            warnings.push((level, code, message));
+            warnings.push(warning);
         }
         for warning in self.cop_warnings.take() {
             if warnings.len() >= MAX_WARNING_COUNT {
@@ -5281,7 +5268,22 @@ impl StmtContext {
             // A TiKV warning without a code is one the region could not name;
             // 1105 (`ErrUnknown`) is what TiDB reports for exactly that.
             let code = u16::try_from(warning.code.unwrap_or(1105)).unwrap_or(1105);
-            warnings.push((warning.level, code, warning.message));
+            warnings.push(match warning.class {
+                // Go `selectResult`: `dbterror.ClassTiKV.Synthesize(code, msg)`.
+                tidb_util::context::WarningClass::TiKv => SqlWarn::new(
+                    warning.level,
+                    tidb_util::context::WarnErr::Terror(
+                        tidb_error::terror::TerrorError::synthesize(
+                            tidb_error::terror::TerrorClass::TiKv,
+                            tidb_error::terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
+                            warning.message,
+                        ),
+                    ),
+                ),
+                tidb_util::context::WarningClass::Statement => {
+                    SqlWarn::with_code(warning.level, code, warning.message)
+                }
+            });
         }
         warnings
     }
@@ -5308,13 +5310,34 @@ impl StmtContext {
     /// `AppendNote` the very `ErrBadTable` it would otherwise have returned --
     /// so the two can never drift.
     pub(crate) fn append_suppressed(&self, error: &DriverError) {
-        let reported = error.clone().to_mysql_error();
-        self.append_leveled(WarningLevel::Note, reported.code, &reported.message);
+        self.append_mysql_error(WarningLevel::Note, &error.clone().to_mysql_error());
+    }
+
+    /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of the error
+    /// `error`, which keeps its identity.
+    pub fn append_mysql_error(&self, level: WarningLevel, error: &tidb_error::mysql::MysqlError) {
+        self.push_warning(sql_warn_of(level, error));
+    }
+
+    /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of `err`.
+    pub fn append_warn_err(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
+        self.push_warning(SqlWarn::new(level, err));
+    }
+
+    /// Puts back a warning taken off this context, error and all.
+    pub fn append_sql_warn(&self, warning: SqlWarn) {
+        self.push_warning(warning);
+    }
+
+    /// A warning known by its code and text only (see
+    /// [`SqlWarn::with_code`]).
+    pub(crate) fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+        self.push_warning(SqlWarn::with_code(level, code, message));
     }
 
     /// The one push onto the buffer, so its retention limit lives in one
     /// place regardless of which level came through.
-    pub(crate) fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+    fn push_warning(&self, warning: SqlWarn) {
         if self.cop_eval_depth.load(Ordering::Relaxed) > 0 {
             let mut batch = self
                 .cop_batch_warnings
@@ -5324,11 +5347,11 @@ impl StmtContext {
             // message) pair and drops the rest, so a cast that fails once per
             // row of a whole scan reports once.
             if batch.len() < MAX_WARNING_COUNT
-                && !batch.iter().any(|(_, seen_code, seen_message)| {
-                    *seen_code == code && seen_message == message
+                && !batch.iter().any(|seen| {
+                    seen.code() == warning.code() && seen.message() == warning.message()
                 })
             {
-                batch.push((level, code, message.to_owned()));
+                batch.push(warning);
             }
             return;
         }
@@ -5342,16 +5365,16 @@ impl StmtContext {
             .warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (fold_code, fold_message) in folded {
+        for fold_warning in folded {
             if warnings.len() >= MAX_WARNING_COUNT {
                 break;
             }
-            warnings.push((WarningLevel::Warning, fold_code, fold_message));
+            warnings.push(fold_warning);
         }
         if warnings.len() >= MAX_WARNING_COUNT {
             return;
         }
-        warnings.push((level, code, message.to_owned()));
+        warnings.push(warning);
     }
 
     fn append_extra_leveled(&self, level: WarningLevel, code: u16, message: &str) {
@@ -5360,7 +5383,7 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if warnings.len() < MAX_WARNING_COUNT {
-            warnings.push((level, code, message.to_owned()));
+            warnings.push(SqlWarn::with_code(level, code, message));
         }
     }
 }
@@ -5385,39 +5408,181 @@ impl Drop for CopEvalGuard<'_> {
     }
 }
 
-fn resolve_statement_clock(
-    timestamp: Option<f64>,
-    zone: &tidb_expr::SessionTimeZone,
-) -> (i64, u32, i32) {
-    use chrono::TimeZone;
-    use tidb_expr::SessionTimeZone;
+use tidb_table::context::resolve_statement_clock;
 
-    let utc = chrono::Utc::now();
-    let (seconds, nanos) = match timestamp {
-        #[expect(clippy::cast_possible_truncation, reason = "Go's int64(seconds)")]
-        #[expect(clippy::cast_sign_loss, reason = "@@timestamp's MinValue is 0")]
-        Some(timestamp) => (
-            timestamp.trunc() as i64,
-            (timestamp.fract() * 1e9) as u32 % 1_000_000_000,
-        ),
-        None => (utc.timestamp(), utc.timestamp_subsec_nanos()),
-    };
-    let offset = match zone {
-        SessionTimeZone::Local => {
-            let at = chrono::DateTime::from_timestamp(seconds, nanos)
-                .unwrap_or(utc)
-                .naive_utc();
-            chrono::Offset::fix(&chrono::Local.offset_from_utc_datetime(&at)).local_minus_utc()
-        }
-        SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
-        SessionTimeZone::Named(zone) => {
-            let at = chrono::DateTime::from_timestamp(seconds, nanos)
-                .unwrap_or(utc)
-                .naive_utc();
-            chrono::Offset::fix(&zone.offset_from_utc_datetime(&at)).local_minus_utc()
-        }
-    };
-    (seconds, nanos, offset)
+/// The executor's statement context behind a table-layer context the
+/// executor built (Go asserts its own context type back the same way).
+#[must_use]
+pub fn stmt_context_of(ctx: &dyn tidb_table::context::MutateContext) -> &StmtContext {
+    ctx.as_any()
+        .downcast_ref::<StmtContext>()
+        .expect("the table layer's context is the executor's statement context")
+}
+
+/// Go `table.MutateContext` over this statement.
+impl tidb_table::context::MutateContext for StmtContext {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn query_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        StmtContext::query_default_conversion_flags(self)
+    }
+
+    fn show_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        StmtContext::show_default_conversion_flags(self)
+    }
+
+    fn keys_read(&self) -> &KeysReadBudget {
+        StmtContext::keys_read(self)
+    }
+
+    fn for_reorg(&self) -> Arc<dyn tidb_table::context::MutateContext> {
+        Arc::new(StmtContext::for_reorg(self))
+    }
+
+    fn with_new_collation_enabled(&self, enabled: bool) -> Arc<dyn tidb_table::context::MutateContext> {
+        Arc::new(self.clone().with_new_collation_enabled(enabled))
+    }
+
+    fn to_shared(&self) -> Arc<dyn tidb_table::context::MutateContext> {
+        Arc::new(self.clone())
+    }
+
+    fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        StmtContext::write_conversion_flags(self)
+    }
+
+    fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
+        StmtContext::update_table_delta(self, physical_table_id, delta, count);
+    }
+
+    fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
+        StmtContext::staged_writes(self)
+    }
+
+    fn staged_writes_handle(&self) -> std::sync::Arc<tidb_kv::staged_writes::StagedWrites> {
+        StmtContext::staged_writes_handle(self)
+    }
+
+    fn pessimistic_transaction(&self) -> bool {
+        StmtContext::pessimistic_transaction(self)
+    }
+
+    fn pessimistic_check_in_prewrite(&self) -> bool {
+        StmtContext::pessimistic_check_in_prewrite(self)
+    }
+
+    fn optimistic_transaction(&self) -> bool {
+        StmtContext::optimistic_transaction(self)
+    }
+
+    fn writes_untouched_indices(&self) -> bool {
+        StmtContext::writes_untouched_indices(self)
+    }
+
+    fn next_row_id_shard(&self, count: u64) -> u64 {
+        StmtContext::next_row_id_shard(self, count)
+    }
+
+    fn tmp_table_max_size(&self) -> i64 {
+        StmtContext::tmp_table_max_size(self)
+    }
+
+    fn statement_memory(&self) -> tidb_kv::mem_quota::StatementMemory {
+        StmtContext::statement_memory(self)
+    }
+
+    fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions {
+        StmtContext::snapshot_read_options(self, avg_row_bytes)
+    }
+
+    fn reorg_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        StmtContext::reorg_default_conversion_flags(self)
+    }
+
+    fn take_warnings(&self) -> Vec<SqlWarn> {
+        StmtContext::take_warnings(self)
+    }
+
+    fn append_leveled(&self, level: tidb_distsql::WarningLevel, code: u16, message: &str) {
+        StmtContext::append_leveled(self, level, code, message);
+    }
+
+
+    fn strict(&self) -> bool {
+        StmtContext::strict(self)
+    }
+
+    fn ignore_err(&self) -> bool {
+        StmtContext::ignore_err(self)
+    }
+
+    fn new_collation_enabled(&self) -> bool {
+        StmtContext::new_collation_enabled(self)
+    }
+
+    fn append_warning_parts(&self, code: u16, message: &str) {
+        StmtContext::append_warning_parts(self, code, message);
+    }
+
+    fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+        StmtContext::session_zone(self)
+    }
+}
+
+impl tidb_expr::pushdown_catalog::PbConverterContext for StmtContext {
+    fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
+        StmtContext::expr_pushdown_blacklist(self)
+    }
+}
+
+/// Go `sctx.GetExprCtx()` as `metabuild.WithExprCtx` receives it
+/// (`pkg/ddl/metabuild.go`): the session's expression context.
+impl tidb_expr::metabuild::ExprContext for StmtContext {
+    fn get_eval_ctx(&self) -> &dyn tidb_expr::metabuild::EvalContext {
+        self
+    }
+
+    fn get_default_collation_for_utf8mb4(&self) -> &str {
+        StmtContext::default_collation_for_utf8mb4(self)
+    }
+
+    fn get_charset_info(&self) -> (&str, &str) {
+        StmtContext::connection_charset_info(self)
+    }
+}
+
+/// Go `sctx.GetExprCtx().GetEvalCtx()`: the session's evaluation context.
+impl tidb_expr::metabuild::EvalContext for StmtContext {
+    /// Go `SessionVars.SQLMode`, which this context carries whole as the
+    /// mode a DDL job persists.
+    fn sql_mode(&self) -> tidb_mysql::SqlMode {
+        tidb_mysql::SqlMode(self.ddl_sql_mode)
+    }
+
+    /// Go `TypeCtx().Flags()` of a statement `ResetContextOfStmt` set up as
+    /// CREATE/ALTER: the only statements that build a metabuild context.
+    fn type_ctx_flags(&self) -> tidb_datatype::ConversionFlags {
+        self.ddl_default_conversion_flags()
+    }
+
+    /// Go `StmtCtx.AppendWarning`; `SHOW WARNINGS` renders the error through
+    /// `terror.ToSQLError`, and a plain error as `ErrUnknown`.
+    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+        self.append_warn_err(WarningLevel::Warning, err);
+    }
+
+    /// Go `StmtCtx.AppendNote`.
+    fn append_note(&self, note: tidb_util::context::WarnErr) {
+        self.append_warn_err(WarningLevel::Note, note);
+    }
+}
+
+/// The `(code, message)` pair `SHOW WARNINGS` reports for one warning.
+/// The warning Go's `StmtCtx` keeps for `error`.
+pub fn sql_warn_of(level: WarningLevel, error: &tidb_error::mysql::MysqlError) -> SqlWarn {
+    SqlWarn::from_error(level, error.code, error.message.clone(), error.identity)
 }
 
 impl Columns for StmtContext {
@@ -5513,7 +5678,7 @@ impl Columns for StmtContext {
     }
 
     fn no_unsigned_subtraction(&self) -> bool {
-        self.no_unsigned_subtraction
+        StmtContext::no_unsigned_subtraction(self)
     }
 
     fn now(&self) -> Option<(i64, u32, i32)> {
@@ -5750,7 +5915,9 @@ impl Columns for StmtContext {
         match self.bad_null {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
-                self.append_warning(1210, message);
+                self.append_error_warning(
+                    &tidb_expr::EvalError::IncorrectArguments(message.to_owned()).to_sql_error(),
+                );
                 Ok(())
             }
             ErrorLevel::Error => Err(tidb_expr::EvalError::IncorrectArguments(message.to_owned())),
@@ -5769,7 +5936,7 @@ impl Columns for StmtContext {
     }
 
     fn strict_sql_mode(&self) -> bool {
-        self.strict_sql_mode
+        self.session_sql_mode().has_strict_mode()
     }
 
     fn type_flags(&self) -> tidb_datatype::ConversionFlags {
@@ -5783,7 +5950,7 @@ impl Columns for StmtContext {
             .with_ignore_zero_date_err(true)
             .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
             .with_truncate_as_warning(self.truncate == ErrorLevel::Warn)
-            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
             .with_ignore_zero_in_date_err(self.ignore_zero_in_date())
             .with_allow_negative_to_unsigned(matches!(
                 self.statement_class,
@@ -5795,8 +5962,30 @@ impl Columns for StmtContext {
         self.append_leveled(WarningLevel::Warning, code, message);
     }
 
+    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+        self.push_warning(SqlWarn::from_error(
+            WarningLevel::Warning,
+            error.code,
+            error.message.clone(),
+            error.identity,
+        ));
+    }
+
     fn append_note(&self, code: u16, message: &str) {
         self.append_leveled(WarningLevel::Note, code, message);
+    }
+
+    fn append_sql_warn(&self, warning: SqlWarn) {
+        self.push_warning(warning);
+    }
+
+    fn append_error_note(&self, error: &tidb_error::mysql::SqlError) {
+        self.push_warning(SqlWarn::from_error(
+            WarningLevel::Note,
+            error.code,
+            error.message.clone(),
+            error.identity,
+        ));
     }
 
     fn warning_count(&self) -> usize {
@@ -5810,15 +5999,12 @@ impl Columns for StmtContext {
             .truncate(bookmark);
     }
 
-    fn take_warnings_since(&self, bookmark: usize) -> Vec<(u16, String)> {
+    fn take_warnings_since(&self, bookmark: usize) -> Vec<SqlWarn> {
         let mut warnings = self
             .warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let taken = warnings
-            .drain(bookmark..)
-            .map(|(_, code, message)| (code, message))
-            .collect();
+        let taken = warnings.drain(bookmark..).collect();
         taken
     }
 
@@ -5826,7 +6012,7 @@ impl Columns for StmtContext {
     /// [`Self::write_conversion_flags`], handed to expression evaluation so a
     /// `CAST` to a temporal type answers under the session's SQL mode.
     fn date_modes(&self) -> tidb_datatype::DateModes {
-        self.date_modes
+        StmtContext::date_modes(self)
     }
 
     fn row_count(&self) -> Option<i64> {
@@ -5955,7 +6141,7 @@ mod tests {
             .with_in_explain_stmt(true);
         explain.append_mpp_warning("explain refusal");
         assert_eq!(
-            explain.take_warnings(),
+            explain.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
                 tidb_distsql::WarningLevel::Warning,
                 1105,
@@ -5968,7 +6154,7 @@ mod tests {
         ordinary.append_mpp_warning("ordinary refusal");
         assert!(ordinary.take_warnings().is_empty());
         assert_eq!(
-            ordinary.take_extra_warnings(),
+            ordinary.take_extra_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
                 tidb_distsql::WarningLevel::Warning,
                 1105,
@@ -6103,7 +6289,7 @@ mod tests {
         assert_eq!(space_2000(&narrow), Datum::Null);
         let warnings = narrow.take_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].1, 1301);
+        assert_eq!(warnings[0].code(), 1301);
     }
 
     /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go:88-96`)
@@ -6139,7 +6325,7 @@ mod tests {
             .expect("a non-strict write warns");
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].1, 1301);
+        assert_eq!(warnings[0].code(), 1301);
     }
 
     #[test]
@@ -6197,8 +6383,8 @@ mod tests {
         assert_eq!(warnings.len(), MAX_WARNING_COUNT);
         // The entries kept are the FIRST ones: Go appends until the limit and
         // then drops, rather than evicting the oldest.
-        assert_eq!(warnings[0].2, "value 0");
-        assert_eq!(warnings[MAX_WARNING_COUNT - 1].2, "value 65534");
+        assert_eq!(warnings[0].message(), "value 0");
+        assert_eq!(warnings[MAX_WARNING_COUNT - 1].message(), "value 65534");
     }
 
     #[test]
@@ -6313,5 +6499,20 @@ mod tests {
         let with_strings = query.clone().with_string_type_flags(strings);
         assert_eq!(with_strings.type_flags().bits(), 30 | 64 | 128 | 256);
         assert_eq!(query.type_flags().bits(), 30);
+    }
+}
+
+/// The scanner's view of a session `SQLMode` (Go's lexer reads these bits
+/// from the same mode).
+#[must_use]
+pub const fn scanner_sql_mode(mode: tidb_mysql::SqlMode) -> tidb_parser::SqlMode {
+    tidb_parser::SqlMode {
+        real_as_float: mode.has_real_as_float_mode(),
+        no_backslash_escapes: mode.has_no_backslash_escapes_mode(),
+        ansi_quotes: mode.has_ansi_quotes_mode(),
+        high_not_precedence: mode.has_high_not_precedence_mode(),
+        ignore_space: mode.has_ignore_space_mode(),
+        pipes_as_concat: mode.has_pipes_as_concat_mode(),
+        strict_mode: mode.has_strict_mode(),
     }
 }

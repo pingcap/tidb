@@ -45,6 +45,8 @@ const COLLATION: &str = "utf8mb4_bin";
 const NOT_NULL_FLAG: u32 = 1;
 /// Go `mysql.UnsignedFlag`.
 const UNSIGNED_FLAG: u32 = 32;
+/// Go `mysql.PriKeyFlag`.
+const PRI_KEY_FLAG: u32 = 2;
 /// Go `resourcegroup.MaxGroupNameLength`.
 const RESOURCE_GROUP_NAME_LENGTH: i64 = 32;
 
@@ -70,17 +72,24 @@ struct InfoColumn {
     decimal: i32,
     /// Go `columnInfo.flag`.
     flag: u32,
-    /// Go `columnInfo.deflt`, rendered as the text `SHOW CREATE TABLE`
-    /// prints. Go stores `any`, but every default in the tables this tier
-    /// serves is a string or a small integer, and both print the same way.
-    deflt: Option<&'static str>,
+    /// Go `columnInfo.deflt`, an `any` holding a Go `int` or `string`.
+    deflt: Option<Deflt>,
     /// Go `columnInfo.comment`, which `SHOW CREATE TABLE` prints after the
     /// column.
     comment: Option<&'static str>,
 }
 
+/// The dynamic types Go's `columnInfo.deflt` holds in these tables.
+#[derive(Clone, Copy, Debug)]
+enum Deflt {
+    /// A Go `int` literal (`deflt: 0`).
+    Int(i64),
+    /// A Go `string`.
+    Str(&'static str),
+}
+
 impl InfoColumn {
-    /// Go `infoschema.buildColumnInfo`.
+    /// Go `infoschema.buildColumnInfo`'s field type.
     fn field_type(&self) -> FieldType {
         let mut field_type = FieldType::new(self.tp);
         // Go gives the string-ish types utf8mb4 and every other type the
@@ -740,7 +749,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 32,
         decimal: 0,
         flag: 0,
-        deflt: Some(COLLATION),
+        deflt: Some(Deflt::Str(COLLATION)),
         comment: None,
     },
     InfoColumn {
@@ -2022,7 +2031,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         decimal: 0,
         flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -2031,7 +2040,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 16,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2040,7 +2049,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2058,7 +2067,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 16,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2067,7 +2076,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 7,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -2094,7 +2103,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: 0,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2148,7 +2157,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2157,7 +2166,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: RESOURCE_GROUP_NAME_LENGTH,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2166,7 +2175,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -2184,7 +2193,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -2193,7 +2202,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
 ];
@@ -3543,7 +3552,7 @@ const OPTIMIZER_TRACE_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -3552,7 +3561,7 @@ const OPTIMIZER_TRACE_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -3561,7 +3570,7 @@ const OPTIMIZER_TRACE_COLUMNS: &[InfoColumn] = &[
         size: 20,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -3570,7 +3579,7 @@ const OPTIMIZER_TRACE_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
 ];
@@ -4747,7 +4756,7 @@ const TABLESPACES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -4756,7 +4765,7 @@ const TABLESPACES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some(""),
+        deflt: Some(Deflt::Str("")),
         comment: None,
     },
     InfoColumn {
@@ -5007,7 +5016,7 @@ const TIDB_HOT_REGIONS_HISTORY_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5016,7 +5025,7 @@ const TIDB_HOT_REGIONS_HISTORY_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5379,7 +5388,7 @@ const TIKV_REGION_PEERS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5388,7 +5397,7 @@ const TIKV_REGION_PEERS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5397,7 +5406,7 @@ const TIKV_REGION_PEERS_COLUMNS: &[InfoColumn] = &[
         size: 10,
         decimal: 0,
         flag: 0,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5406,7 +5415,7 @@ const TIKV_REGION_PEERS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         decimal: 0,
         flag: 0,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
 ];
@@ -5473,7 +5482,7 @@ const TIKV_REGION_STATUS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -5500,7 +5509,7 @@ const TIKV_REGION_STATUS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -6447,7 +6456,7 @@ const ROUTINES_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0000-00-00 00:00:00"),
+        deflt: Some(Deflt::Str("0000-00-00 00:00:00")),
         comment: None,
     },
     InfoColumn {
@@ -6456,7 +6465,7 @@ const ROUTINES_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0000-00-00 00:00:00"),
+        deflt: Some(Deflt::Str("0000-00-00 00:00:00")),
         comment: None,
     },
     InfoColumn {
@@ -6666,7 +6675,7 @@ const EVENTS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0000-00-00 00:00:00"),
+        deflt: Some(Deflt::Str("0000-00-00 00:00:00")),
         comment: None,
     },
     InfoColumn {
@@ -6675,7 +6684,7 @@ const EVENTS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0000-00-00 00:00:00"),
+        deflt: Some(Deflt::Str("0000-00-00 00:00:00")),
         comment: None,
     },
     InfoColumn {
@@ -6702,7 +6711,7 @@ const EVENTS_COLUMNS: &[InfoColumn] = &[
         size: 10,
         decimal: 0,
         flag: NOT_NULL_FLAG,
-        deflt: Some("0"),
+        deflt: Some(Deflt::Int(0)),
         comment: None,
     },
     InfoColumn {
@@ -8757,34 +8766,120 @@ fn table_columns(name: &str) -> Option<Vec<&'static InfoColumn>> {
 /// those statements knowing that the rows are computed. This does the same:
 /// the object carries the schema, and the rows still come from
 /// [`table_rows`] at query time.
-pub fn register_tables(catalog: &mut Catalog) {
+pub(crate) fn tables(
+) -> std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>> {
+    static TABLES_BUILT: std::sync::OnceLock<
+        std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>>,
+    > = std::sync::OnceLock::new();
+    TABLES_BUILT
+        .get_or_init(|| {
+            let mut scratch = Catalog::memory_schema_scratch();
+            register_tables(&mut scratch);
+            let tables = scratch
+                .tables_of("information_schema")
+                .map(|(name, entry)| (name.to_owned(), std::sync::Arc::clone(entry)))
+                .collect();
+            Catalog::register_virtual_schema(
+                INFORMATION_SCHEMA_DB_ID,
+                "INFORMATION_SCHEMA",
+                &tables,
+            );
+            tables
+        })
+        .clone()
+}
+
+/// [`tables`]' builder: Go `infoschema.init` into `catalog`.
+fn register_tables(catalog: &mut Catalog) {
     for name in served_table_names() {
         let columns = table_columns(name).expect("registered memory table");
-        let kv_columns = columns
-            .iter()
-            .enumerate()
-            .map(|(offset, column)| KvColumn {
-                name: column.name.to_owned(),
-                id: i64::try_from(offset).unwrap_or(0),
-                field_type: column.field_type(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                comment: column.comment.unwrap_or_default().to_owned(),
-                default_value: column
-                    .deflt
-                    .map(|text| ColumnDefault::Value(Datum::Bytes(text.as_bytes().to_vec()))),
-                origin_default: column
-                    .deflt
-                    .map(|text| Datum::Bytes(text.as_bytes().to_vec())),
-                generated: None,
-            })
-            .collect();
-        let mut table = KvTable::new(0, kv_columns);
-        table.name = name.to_owned();
+        let mut info = build_table_meta(name, &columns);
+        // Go `infoschema.init`: the schema's id, the table's `tableIDMap`
+        // id, and column ids numbered from 1.
+        info.db_id = INFORMATION_SCHEMA_DB_ID;
+        info.id = memory_table_id(name).unwrap_or_default();
+        for (offset, column) in info.columns.iter_deref().enumerate() {
+            column.write().id = i64::try_from(offset).unwrap_or(0) + 1;
+        }
+        info.max_column_id = i64::try_from(info.columns.len()).unwrap_or(0);
+        info.max_index_id = i64::try_from(info.indices.len()).unwrap_or(0);
+        let table = tidb_table::table_from_meta::cluster_table(
+            &info,
+            &crate::storage::MemTableStorage::new(),
+            &tidb_table::table_from_meta::AutoIdSource::Unavailable,
+        )
+        .unwrap_or_else(|error| panic!("information_schema.{name} cannot load: {error}"));
         // The schema exists in every catalog this is called on (see
         // `Catalog::default`), so the only error `register_kv_in` reports
         // cannot happen here.
         let _ = catalog.register_kv_in(INFORMATION_SCHEMA, name, table);
     }
+}
+
+/// Go `autoid.InformationSchemaDBID`.
+const INFORMATION_SCHEMA_DB_ID: i64 = (1 << 62) | 1;
+
+/// Go `infoschema.buildColumnInfo`.
+fn build_column_info(col_id: i64, column: &InfoColumn) -> tidb_model::ColumnInfo {
+    let mut info = tidb_model::ColumnInfo::new(col_id, column.name, column.field_type());
+    info.default_value = match column.deflt {
+        None => tidb_model::GoAny::nil(),
+        Some(Deflt::Int(value)) => tidb_model::ColumnDefaultValue::Int(value).into(),
+        Some(Deflt::Str(text)) => tidb_model::ColumnDefaultValue::str(text).into(),
+    };
+    info.comment = column.comment.unwrap_or_default().to_owned();
+    info
+}
+
+/// Go `infoschema.buildTableMeta`: the memory table's `TableInfo`, with
+/// `CLUSTER_SLOW_QUERY`'s key column as its handle.
+fn build_table_meta(table_name: &str, columns: &[&InfoColumn]) -> tidb_model::TableInfo {
+    let mut info = tidb_model::TableInfo {
+        name: tidb_ast::CiString::new(table_name),
+        state: tidb_model::SchemaState::PUBLIC,
+        charset: CHARSET.to_owned(),
+        collate: COLLATION.to_owned(),
+        ..tidb_model::TableInfo::default()
+    };
+    let mut built = Vec::with_capacity(columns.len());
+    for (offset, column) in columns.iter().enumerate() {
+        if table_name == "CLUSTER_SLOW_QUERY" && column.flag & PRI_KEY_FLAG != 0 {
+            if matches!(
+                column.tp,
+                FieldTypeCode::Long
+                    | FieldTypeCode::LongLong
+                    | FieldTypeCode::Tiny
+                    | FieldTypeCode::Short
+                    | FieldTypeCode::Int24
+            ) {
+                info.pk_is_handle = true;
+            } else {
+                info.is_common_handle = true;
+                info.common_handle_version = 1;
+                let mut index = tidb_model::index::IndexInfo {
+                    name: tidb_ast::CiString::new("primary"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    primary: true,
+                    unique: true,
+                    ..tidb_model::index::IndexInfo::default()
+                };
+                index.columns = vec![tidb_model::index::IndexColumn {
+                    name: tidb_ast::CiString::new(column.name),
+                    offset: i64::try_from(offset).unwrap_or(0),
+                    length: UNSPECIFIED_LENGTH,
+                    ..tidb_model::index::IndexColumn::default()
+                }]
+                .into();
+                info.indices = vec![index].into();
+            }
+        }
+        built.push(build_column_info(i64::try_from(offset).unwrap_or(0), column));
+    }
+    for (offset, column) in built.iter_mut().enumerate() {
+        column.offset = i64::try_from(offset).unwrap_or(0);
+    }
+    info.columns = built.into();
+    info
 }
 
 /// The `(name, type)` pairs one served table reports, or `None` when the name

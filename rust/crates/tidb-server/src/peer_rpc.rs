@@ -454,9 +454,9 @@ fn drain_peer_executor(
     warnings.extend(
         ctx.take_warnings()
             .into_iter()
-            .map(|(_, code, message)| tipb::Error {
-                code: Some(i32::from(code)),
-                msg: Some(message),
+            .map(|warning| tipb::Error {
+                code: Some(i32::from(warning.code())),
+                msg: Some(warning.message().to_owned()),
                 ..Default::default()
             }),
     );
@@ -1878,9 +1878,25 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("PROCESS"));
-        assert!(
-            read("CLUSTER_TIDB_INDEX_USAGE").unwrap().1.is_empty(),
-            "ungranted tables must stay hidden"
+        // Go `setDataFromIndexUsage` checks `RequestVerification` with
+        // `AllPrivMask`: `information_schema` is every user's, so only its
+        // `CLUSTER_SLOW_QUERY` (whose timestamp primary key Go's
+        // `buildTableMeta` makes a common handle) is listed; the ungranted
+        // table stays hidden (gorun).
+        let visible = read("CLUSTER_TIDB_INDEX_USAGE")
+            .unwrap()
+            .1
+            .iter()
+            .map(|row| {
+                row[1..4]
+                    .iter()
+                    .map(|datum| String::from_utf8(datum.as_raw_bytes().unwrap().to_vec()).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            visible,
+            vec![vec!["INFORMATION_SCHEMA", "CLUSTER_SLOW_QUERY", "primary"]]
         );
         producer
             .run("GRANT PROCESS, SELECT ON *.* TO diagnostic_alice")

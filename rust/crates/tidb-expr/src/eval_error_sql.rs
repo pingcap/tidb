@@ -19,7 +19,7 @@
 //! executor and the coprocessor (`toPBError`) both answer through it.
 
 use tidb_error::catalog::{charset, collate, expression, types};
-use tidb_error::mysql::SqlError;
+use tidb_error::mysql::{MysqlError, SqlError};
 use tidb_error::terror::TerrorError;
 use tidb_hack::GoToLower;
 
@@ -199,6 +199,28 @@ impl EvalError {
             }
         }
     }
+
+    /// The statement error an evaluation failure reaches the client as: the
+    /// [`Self::to_sql_error`] triple with its Go identity, marked as raised by
+    /// expression evaluation -- the class go's statement warning buffer never
+    /// records as its own row (`driver_tidb.go` `StmtCtx.AppendError` sees
+    /// parse/plan/executor failures only).
+    ///
+    /// One exception keeps the statement-level shape: go's
+    /// `charFunctionClass.getFunction` BUILD failure (`Unknown charset ...`)
+    /// is a build error, not an evaluation event, so the warning buffer
+    /// records its 1105 row beside the argument casts' truncation warnings
+    /// (oracle: `CHAR('中文测试', 'ünïcödé')`). Every json-class error is
+    /// evaluation-origin whatever its text.
+    #[must_use]
+    pub fn to_mysql_error(&self) -> MysqlError {
+        let error = MysqlError::from_sql_error(self.to_sql_error());
+        if !matches!(self, EvalError::Json(_)) && error.message.starts_with("Unknown charset ") {
+            error
+        } else {
+            error.from_evaluation()
+        }
+    }
 }
 
 /// A `SqlError` whose SQLSTATE is the one the code carries (Go `NewErr`'s
@@ -247,4 +269,35 @@ fn out_of_range(class: &str) -> SqlError {
         &types::ERR_OVERFLOW,
         format!("{class} value is out of range"),
     )
+}
+
+#[cfg(test)]
+mod mysql_error_tests {
+    use super::*;
+    use crate::JsonError;
+
+    /// `to_mysql_error` is the `to_sql_error` triple and identity, flagged as
+    /// evaluation-origin; only the `Unknown charset` build failure is not.
+    #[test]
+    fn to_mysql_error_keeps_the_sql_error_and_flags_evaluation() {
+        for error in [
+            EvalError::IntOverflow,
+            EvalError::DivisionByZero,
+            EvalError::Json(JsonError::InvalidText),
+            EvalError::Unsupported("a window frame in RANGE units"),
+            EvalError::Vector("vectors have different dimensions: 1 and 2".to_owned()),
+        ] {
+            let sql = error.to_sql_error();
+            let mysql = error.to_mysql_error();
+            assert_eq!(mysql.code, sql.code, "{error:?}");
+            assert_eq!(&mysql.state, sql.state.as_bytes(), "{error:?}");
+            assert_eq!(mysql.message, sql.message, "{error:?}");
+            assert_eq!(mysql.identity, sql.identity, "{error:?}");
+            assert!(mysql.is_from_evaluation(), "{error:?}");
+        }
+        let charset = EvalError::Unsupported("Unknown charset ünïcödé");
+        let mysql = charset.to_mysql_error();
+        assert_eq!(mysql, MysqlError::unknown("Unknown charset ünïcödé"));
+        assert!(!mysql.is_from_evaluation());
+    }
 }

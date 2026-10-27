@@ -27,6 +27,7 @@
 //! its own reader perfectly and still hands a Go reader -- an index-only
 //! scan, `ADMIN CHECK INDEX`, a DDL backfill -- corrupted data.
 
+use tidb_executor::KvTableReader;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 

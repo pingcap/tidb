@@ -768,7 +768,7 @@ pub struct PreparedSelectExecution {
     cache_hit: bool,
     cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
     generation: u64,
-    planning_warnings: std::sync::Mutex<Vec<(crate::WarnLevel, u16, String)>>,
+    planning_warnings: std::sync::Mutex<Vec<tidb_util::context::SqlWarn>>,
 }
 
 impl PreparedSelectPlan {
@@ -1153,7 +1153,7 @@ impl PreparedSelectExecution {
         Arc::clone(&self.parameters)
     }
     /// Takes warnings produced by this execution's cache-miss planning once.
-    pub fn take_planning_warnings(&self) -> Vec<(crate::WarnLevel, u16, String)> {
+    pub fn take_planning_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
         std::mem::take(
             &mut *self
                 .planning_warnings
@@ -2673,7 +2673,7 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
     FastPointOutput {
         offsets,
         columns,
-        table_alias: table.name.clone(),
+        table_alias: table.name(),
     }
 }
 
@@ -3777,7 +3777,7 @@ pub(crate) fn try_point_get(
     let prefix_common_handle = table
         .common_handle_prefix_lengths()
         .iter()
-        .any(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+        .any(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH);
     if !common_offsets.is_empty() && !prefix_common_handle {
         let mut values = Vec::with_capacity(common_offsets.len());
         let mut markers = Vec::with_capacity(common_offsets.len());

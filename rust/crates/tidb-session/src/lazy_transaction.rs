@@ -36,8 +36,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use tidb_exec::cluster_table_storage::LockKeysOutcome;
-use tidb_exec::session_commit_protocol::SessionTransactionOptions;
+use tidb_cluster::cluster_table_storage::LockKeysOutcome;
+use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
@@ -46,7 +46,7 @@ use tidb_txnkv::transaction::{LockWaitTime, SchemaLeaseChecker};
 use tidb_txnkv::Key;
 
 use crate::cluster_transactions::{CommittedTxnInfo, OpenClusterTransaction};
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::sql_query_error::SqlQueryError;
 
 /// Opens the store transaction from the options in force at the activation
 /// (Go `SetOptionsOnTxnActive`), and publishes its start timestamp.
@@ -358,7 +358,7 @@ impl OpenClusterTransaction for LazyClusterTransaction {
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_exec::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_cluster::cluster_table_storage::StatementLockFailure> {
         self.shared
             .state()
             .open

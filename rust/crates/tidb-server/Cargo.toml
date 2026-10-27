@@ -32,7 +32,7 @@ ctrlc.workspace = true
 signal-hook.workspace = true
 openssl = "0.10.81"
 rcgen.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["net"] }
 rustls.workspace = true
 rustls-pemfile.workspace = true
 x509-parser = { version = "=0.18.1", default-features = false }
@@ -50,6 +50,7 @@ tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-dxf = { path = "../tidb-dxf" }
+tidb-cluster = { path = "../tidb-cluster" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-planner = { path = "../tidb-planner" }
@@ -111,6 +112,9 @@ rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
+# The session-token login presents a token this process signs.
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+tempfile.workspace = true
 # The integration corpus's script parser and comparison, driven over the
 # embedded store by `cluster_session_node::tests::corpus_unistore`.
 difftest-result-tests = { path = "../../difftests/result-tests" }

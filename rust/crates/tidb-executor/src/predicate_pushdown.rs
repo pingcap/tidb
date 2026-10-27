@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
+use tidb_expr::pushdown_catalog::PbConverterContext;
 use tidb_expr::{truthy_of, Columns};
 
 use crate::executor::ExecError;
@@ -412,7 +413,7 @@ impl PushedScanFilter {
 /// the scan's column descriptors and keeps none of it.
 pub fn describe_request_condition(
     expression: &Expression,
-    context: Option<&crate::StmtContext>,
+    context: Option<&dyn PbConverterContext>,
 ) -> Result<ScanPredicate, ExecError> {
     match context {
         Some(context) => describe_execution_condition(expression, context),
@@ -453,7 +454,7 @@ fn describe_compiled_condition(expression: &Expression) -> Option<ScanPredicate>
 /// expression directly; do not rewrite a clone to replace its leaves.
 pub(crate) fn describe_execution_condition(
     expression: &Expression,
-    context: &crate::StmtContext,
+    context: &dyn PbConverterContext,
 ) -> Result<ScanPredicate, ExecError> {
     if !crate::pushdown_blacklist::compiled_blacklist_admits(
         expression,
@@ -467,7 +468,7 @@ pub(crate) fn describe_execution_condition(
 
 fn describe_condition(
     expression: &Expression,
-    context: Option<&crate::StmtContext>,
+    context: Option<&dyn PbConverterContext>,
 ) -> Result<ScanPredicate, ExecError> {
     use tidb_expr::pushdown_catalog::{from_expression, from_expression_in, PbScalar};
 
@@ -477,7 +478,7 @@ fn describe_condition(
 
     fn scalar(
         expression: &Expression,
-        context: Option<&crate::StmtContext>,
+        context: Option<&dyn PbConverterContext>,
     ) -> Result<PbScalar, ExecError> {
         match context {
             Some(context) => from_expression_in(expression, context)?,
@@ -495,7 +496,7 @@ fn describe_condition(
     }
     fn literal(
         expression: &Expression,
-        context: Option<&crate::StmtContext>,
+        context: Option<&dyn PbConverterContext>,
     ) -> Result<(Datum, FieldType), ExecError> {
         let (value, field_type) = match expression {
             Expression::Constant(constant) => {
@@ -1140,7 +1141,7 @@ mod tests {
             .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
@@ -1224,7 +1225,7 @@ mod tests {
                 .insert_row(&[Datum::Int(a), Datum::Int(b)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let cases: [(&str, Vec<Vec<Datum>>); 5] = [
@@ -1280,7 +1281,7 @@ mod tests {
         ] {
             table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let int = |value: i64| vec![Datum::Int(value)];
@@ -1345,7 +1346,7 @@ mod tests {
         ] {
             table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let int = |value: i64| vec![Datum::Int(value)];
@@ -1408,7 +1409,7 @@ mod tests {
                 .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         // `TAN` is deliberately absent from Go's TiKV whitelist (the comment

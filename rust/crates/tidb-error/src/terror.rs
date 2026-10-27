@@ -75,10 +75,21 @@ impl Registry {
             .into_iter()
             .map(|(code, description)| (TerrorClass::from_value(code), description.to_owned()))
             .collect::<HashMap<_, _>>();
+        // Go registers every error at package `init`, so `ToSQLError` and
+        // the RFC-code lookups never depend on which errors were used first.
+        let mut classes_by_description = HashMap::new();
+        let mut codes: HashMap<TerrorClass, HashSet<TerrorCode>> = HashMap::new();
+        for &(class, code) in crate::go_error_codes::GO_ERROR_CODES {
+            let class = TerrorClass::from_value(class);
+            if let Some(description) = descriptions.get(&class) {
+                classes_by_description.insert(description.clone(), class);
+            }
+            codes.entry(class).or_default().insert(TerrorCode::new(code));
+        }
         Self {
             descriptions,
-            classes_by_description: HashMap::new(),
-            codes: HashMap::new(),
+            classes_by_description,
+            codes,
             frozen: false,
         }
     }

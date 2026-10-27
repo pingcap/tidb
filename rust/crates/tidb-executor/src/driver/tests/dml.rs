@@ -17,7 +17,7 @@ use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorag
 
 #[test]
 fn insert_set_operation_source_uses_the_common_query_plan() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -52,21 +52,11 @@ struct BatchReadCountingStorage {
     inner: MemTableStorage,
     gets: Arc<AtomicUsize>,
     batch_gets: Arc<AtomicUsize>,
-    index_fault: Arc<std::sync::Mutex<Option<(usize, StorageError)>>>,
 }
 
 impl TableStorage for BatchReadCountingStorage {
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.gets.fetch_add(1, Ordering::Relaxed);
-        if tidb_tablecodec::is_index_key(key.as_bytes()) {
-            let mut fault = self.index_fault.lock().unwrap();
-            if let Some((skip, _)) = fault.as_mut() {
-                if *skip == 0 {
-                    return Err(fault.take().unwrap().1);
-                }
-                *skip -= 1;
-            }
-        }
         self.inner.get(key)
     }
 
@@ -114,7 +104,7 @@ impl TableStorage for BatchReadCountingStorage {
 
 #[test]
 fn batch_point_delete_reads_records_with_one_batch_get() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE batch_delete (id BIGINT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -155,66 +145,8 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
 }
 
 #[test]
-fn failed_in_process_backfill_restores_its_storage_image() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE backfill_error (id INT PRIMARY KEY, v INT)",
-        &mut catalog,
-    )
-    .unwrap();
-    let index_fault = Arc::new(std::sync::Mutex::new(None));
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
-        panic!("expected KV table")
-    };
-    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
-        index_fault: index_fault.clone(),
-        ..Default::default()
-    }));
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO backfill_error VALUES (1, 10), (2, 20)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-    *index_fault.lock().unwrap() = Some((
-        1,
-        StorageError::Sql(crate::MysqlError::terror(
-            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
-            "backfill read failed",
-        )),
-    ));
-    let sql = "CREATE UNIQUE INDEX unique_v ON backfill_error(v)";
-    let error = crate::run_create_index_in(sql, &mut catalog, "test", &ctx).unwrap_err();
-    assert_eq!(
-        error.to_mysql_error(),
-        crate::MysqlError::terror(
-            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
-            "backfill read failed"
-        )
-    );
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
-        unreachable!()
-    };
-    assert!(!table.indexes().iter().any(|index| index.name == "unique_v"));
-    // The first attempted entry must be gone or this retry sees a duplicate.
-    crate::run_create_index_in(sql, &mut catalog, "test", &ctx).unwrap();
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
-        unreachable!()
-    };
-    let table = Arc::make_mut(table);
-    let index_id = table
-        .indexes()
-        .iter()
-        .find(|index| index.name == "unique_v")
-        .unwrap()
-        .id;
-    assert_eq!(table.index_entries_for_check(index_id).unwrap().len(), 2);
-}
-
-#[test]
 fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE conflict_identity (id INT PRIMARY KEY, v INT, UNIQUE KEY unique_v(v))",
         &mut catalog,
@@ -252,9 +184,9 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
     );
     let warnings = ctx.take_warnings();
     assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].1, 1062);
+    assert_eq!(warnings[0].code(), 1062);
     assert_eq!(
-        warnings[0].2,
+        warnings[0].message(),
         "Duplicate entry '20' for key 'conflict_identity.unique_v'"
     );
 
@@ -267,7 +199,7 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
     let warnings = ctx.take_warnings();
     assert_eq!(warnings.len(), 1);
     assert_eq!(
-        warnings[0].2,
+        warnings[0].message(),
         "Duplicate entry '20' for key 'conflict_identity.unique_v'"
     );
     assert_eq!(
@@ -345,7 +277,7 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 /// branch in `all_clustered_insert_keys_absent`.
 #[test]
 fn clustered_batch_insert_keeps_primary_duplicate_errors() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -365,7 +297,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
     )
     .expect_err("an existing clustered key must not be overwritten");
     assert!(matches!(existing, DriverError::DuplicateEntry { .. }));
-    let mut repeated_catalog = Catalog::default();
+    let mut repeated_catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
         &mut repeated_catalog,
@@ -387,7 +319,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
 fn a_consumed_handle_range_update_keeps_its_table_reader() {
     use crate::explain::{explain_update_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE target (id INT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -429,7 +361,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
 fn a_delete_on_a_secondary_index_reads_through_it() {
     use crate::explain::{explain_delete_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
         &mut catalog,
@@ -498,7 +430,7 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
 /// declared columns instead. Do not "fix" this back to a constant.
 #[test]
 fn dml_positional_order_by_resolves_to_column() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
@@ -569,7 +501,7 @@ fn dml_positional_order_by_resolves_to_column() {
 /// instead of silently touching nothing.
 #[test]
 fn limit_zero_dml_still_validates_the_statement() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE lz (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx).unwrap();
@@ -695,7 +627,7 @@ fn matrix_tables_are_read_only() {
 
 #[test]
 fn update_and_delete_rows() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
@@ -859,7 +791,7 @@ fn update_and_delete_rows() {
 
 #[test]
 fn write_diagnostics_batch_single_update_reports_source_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
         &mut catalog,
@@ -876,7 +808,7 @@ fn write_diagnostics_batch_single_update_reports_source_row() {
 
 #[test]
 fn write_diagnostics_batch_join_update_reports_source_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
         &mut catalog,

@@ -103,12 +103,12 @@ fn configured_sem_v2_policy_child() {
         )
         .unwrap();
     nobody.run("GRANT FILE ON *.* TO 'recipient'@'%'").unwrap();
-    assert!(privileges.has_global_priv("recipient", "%", privilege::GlobalPriv::File));
+    assert!(privileges.has_global_priv("recipient", "%", tidb_mysql::FilePriv));
     nobody.run("SET autocommit=0").unwrap();
 
     nobody.run("SELECT /*+ HASH_AGG() */ SUM(1)").unwrap();
     assert!(nobody.warnings().iter().any(|warning| {
-        warning.message
+        warning.message()
             == "the HASH_AGG() optimizer hint is restricted under the current security policy and is ignored"
     }));
 }

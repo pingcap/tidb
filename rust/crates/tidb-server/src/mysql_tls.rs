@@ -34,13 +34,14 @@
 
 use std::fs;
 use std::io::{self, BufReader, IoSlice, Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
+
+use tidb_session::domain::client_socket::ClientSocket;
 
 /// Why the MySQL port could not obtain server TLS material.
 #[derive(Debug)]
@@ -227,7 +228,10 @@ impl MysqlServerTls {
         self.origin
     }
 
-    fn accept(&self, stream: TcpStream) -> io::Result<StreamOwned<ServerConnection, TcpStream>> {
+    fn accept(
+        &self,
+        stream: ClientSocket,
+    ) -> io::Result<StreamOwned<ServerConnection, ClientSocket>> {
         let connection = ServerConnection::new(Arc::clone(&self.config))
             .map_err(|error| io::Error::other(error.to_string()))?;
         let mut stream = StreamOwned::new(connection, stream);
@@ -612,8 +616,8 @@ pub struct ClientStream {
 }
 
 enum ClientStreamInner {
-    Plain(TcpStream),
-    Tls(Box<StreamOwned<ServerConnection, TcpStream>>, bool),
+    Plain(ClientSocket),
+    Tls(Box<StreamOwned<ServerConnection, ClientSocket>>, bool),
     /// Momentary state while the socket is moved out for the upgrade.
     Upgrading,
 }
@@ -645,9 +649,9 @@ fn x509_name_value(attr: &x509_parser::x509::AttributeTypeAndValue<'_>) -> Optio
 impl ClientStream {
     /// Wraps an accepted plaintext socket.
     #[must_use]
-    pub fn plain(stream: TcpStream) -> Self {
+    pub fn plain(stream: impl Into<ClientSocket>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(ClientStreamInner::Plain(stream))),
+            inner: Arc::new(Mutex::new(ClientStreamInner::Plain(stream.into()))),
         }
     }
 
@@ -783,7 +787,7 @@ impl ClientStream {
     /// Applies the session's command read timeout to the underlying socket.
     ///
     /// TLS changes the byte codec, not the socket authority. Updating the
-    /// `TcpStream` inside `StreamOwned` keeps `SET wait_timeout` effective on
+    /// socket inside `StreamOwned` keeps `SET wait_timeout` effective on
     /// the next command in both transport modes.
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         match &*self.inner.lock().expect("client stream lock") {
@@ -842,7 +846,7 @@ mod tiflash_cluster_http_tests {
     use std::io::BufRead;
     use std::net::TcpListener;
     use std::sync::mpsc;
-    use tidb_exec::tiflash_replica_manager::{TiFlashReplicaControl, TiFlashReplicaManager};
+    use tidb_ddl::tiflash_replica_manager::{TiFlashReplicaControl, TiFlashReplicaManager};
 
     struct Owner;
     impl TiFlashReplicaControl for Owner {
@@ -894,7 +898,7 @@ mod tiflash_cluster_http_tests {
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            match tls.accept(socket) {
+            match tls.accept(socket.into()) {
                 Ok(mut stream) => {
                     let mut request = String::new();
                     let mut reader = BufReader::new(&mut stream);
@@ -926,8 +930,8 @@ mod tiflash_cluster_http_tests {
             String::new(),
             vec![],
         );
-        let catalog = Arc::new(tidb_exec::catalog_watch::SharedCatalog::new(
-            tidb_exec::cluster_catalog::ClusterCatalog {
+        let catalog = Arc::new(tidb_cluster::catalog_watch::SharedCatalog::new(
+            tidb_cluster::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
@@ -1229,7 +1233,7 @@ mod account_tls_batch_handshake_tests {
             registry.set_ssl_type("root", "%", SslType::X509);
             if let Some(policy) = policy {
                 registry.load_global_priv(vec![
-                    tidb_exec::cluster_privilege_load::LoadedGlobalPriv {
+                    tidb_cluster::cluster_privilege_load::LoadedGlobalPriv {
                         user: "root".into(),
                         host: "%".into(),
                         priv_json: policy,
@@ -1243,7 +1247,14 @@ mod account_tls_batch_handshake_tests {
                 .with_verified_client_certificate(verified)
                 .with_tls_peer(stream.verified_tls_peer());
             let authenticated = users
-                .authenticate_admitted("root", "127.0.0.1", &[0; 20], &[], admission)
+                .authenticate_admitted(
+                    "root",
+                    "127.0.0.1",
+                    &[0; 20],
+                    &[],
+                    tidb_mysql::consts::AuthNativePassword,
+                    admission,
+                )
                 .is_ok();
             stream.write_all(&[42]).unwrap();
             stream.flush().unwrap();
@@ -1298,7 +1309,7 @@ mod account_tls_batch_handshake_tests {
             rustls::pki_types::ServerName::try_from("localhost").unwrap(),
         )
         .unwrap();
-        let socket = TcpStream::connect(address).unwrap();
+        let socket = std::net::TcpStream::connect(address).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();

@@ -50,7 +50,7 @@ fn expect_duplicate(catalog: &mut Catalog, sql: &str, value: &str, key: &str) {
 /// * `bigint unsigned` primary key at `18446744073709551615` (:499-503).
 #[test]
 fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
 
     // :444-449 unique char under general_ci, case-insensitive dup.
     run_create_table_on(
@@ -177,7 +177,7 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
     .unwrap();
     let warnings = ignore.take_warnings();
     assert!(
-        warnings.iter().any(|(_, code, message)| *code == 1062
+        warnings.iter().map(tidb_util::context::SqlWarn::parts).any(|(_, code, message)| code == 1062
             && message == "Duplicate entry '$-C-10' for key 't7.PRIMARY'"),
         "expected the 1062 duplicate warning, got {warnings:?}"
     );

@@ -2201,8 +2201,8 @@ impl ScalarFunction {
                     )?;
                     let mut timeout = crate::arg_eval_type::eval_int(&int_timeout)?.unwrap_or(0);
                     if !(0..=MAX_ADVISORY_LOCK_TIMEOUT_SECS).contains(&timeout) {
-                        ctx.append_warning(
-                            1292,
+                        ctx.append_go_warning(
+                            &tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE,
                             &format!("Truncated incorrect get_lock value: '{timeout}'"),
                         );
                         timeout = MAX_ADVISORY_LOCK_TIMEOUT_SECS;
@@ -4214,7 +4214,12 @@ fn cast_string_numeric_argument(
                 crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
                 crate::ErrorLevel::Warn => {
                     let warning = error.to_sql_error();
-                    ctx.append_warning(warning.code, &warning.message);
+                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
                 }
                 crate::ErrorLevel::Ignore => {}
             }

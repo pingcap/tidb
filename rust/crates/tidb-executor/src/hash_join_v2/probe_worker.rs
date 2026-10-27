@@ -84,6 +84,12 @@ impl From<ExecError> for Stop {
     }
 }
 
+impl From<tidb_kv::mem_quota::KillStop> for Stop {
+    fn from(stop: tidb_kv::mem_quota::KillStop) -> Self {
+        Self::Error(stop.into())
+    }
+}
+
 impl From<ProbeError> for Stop {
     fn from(error: ProbeError) -> Self {
         Self::Error(match error {

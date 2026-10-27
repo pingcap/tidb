@@ -165,7 +165,7 @@ impl CursorState {
                 self.rows
                     .add(std::mem::replace(chunk, next))
                     .map_err(cursor_disk_error)?;
-                self.memory.check().map_err(cursor_exec_error)?;
+                self.memory.check().map_err(|stop| cursor_exec_error(stop.into()))?;
                 continue;
             }
             let batch = result
@@ -195,7 +195,7 @@ impl CursorState {
             }
             self.total_rows = self.total_rows.saturating_add(chunk.num_rows());
             self.rows.add(chunk).map_err(cursor_disk_error)?;
-            self.memory.check().map_err(cursor_exec_error)?;
+            self.memory.check().map_err(|stop| cursor_exec_error(stop.into()))?;
         }
         self.columns = result.source().columns().map_err(|error| {
             SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)

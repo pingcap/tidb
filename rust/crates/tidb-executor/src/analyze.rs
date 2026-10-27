@@ -881,7 +881,7 @@ impl AnalyzePlan {
             .enumerate()
             .map(|(key_position, column_position)| {
                 let mut value = sampled[*column_position].clone();
-                crate::index_prefix_cut::cut_index_value(
+                tidb_tablecodec::cut_datum_by_prefix_len(
                     &mut value,
                     index.prefix_length(key_position),
                     &self.columns[*column_position].field_type,
@@ -922,13 +922,13 @@ impl AnalyzedIndex {
         self.prefix_lengths
             .get(position)
             .copied()
-            .unwrap_or(crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+            .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH)
     }
 
     fn has_prefix(&self) -> bool {
         self.prefix_lengths
             .iter()
-            .any(|length| *length != crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+            .any(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
     }
 
     /// Whether this index needs distinct collector facts rather than its column slot.

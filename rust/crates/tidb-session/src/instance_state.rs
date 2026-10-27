@@ -66,9 +66,8 @@ pub(crate) struct ViewerState {
     pub(crate) restricted_sql: crate::restricted_sql::RestrictedSql,
     /// `@@tidb_slow_query_file`.
     pub(crate) slow_query_file: String,
-    /// The DDL job store a node installs, else the shared catalog's history.
+    /// The DDL job store a node installs (Go reads the store's meta).
     pub(crate) ddl_job_history_store: Option<Arc<dyn crate::DdlJobHistoryStore>>,
-    pub(crate) shared_catalog: crate::SharedCatalog,
     /// The analyze-job reader, absent for a session with no statistics.
     pub(crate) analyze_status: Option<Arc<dyn crate::AnalyzeStatusProvider>>,
     /// Go's SQL-digest text retriever over this node and its peers.
@@ -191,22 +190,15 @@ impl ViewerState {
     }
 
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta history
-    /// newest first, from the cluster's store when one is installed, else the
-    /// shared catalog's own history.
+    /// newest first, read from the session's store.
     fn all_ddl_jobs(
         &self,
     ) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError> {
-        if let Some(store) = &self.ddl_job_history_store {
-            return store
-                .all_ddl_jobs()
-                .map_err(|message| DriverError::unsupported(message));
-        }
-        let history = self
-            .shared_catalog
-            .lock()
-            .map_err(|_| DriverError::CatalogPoisoned)?
-            .last_history_ddl_jobs()?;
-        Ok((Vec::new(), history))
+        self.ddl_job_history_store
+            .as_ref()
+            .ok_or_else(|| DriverError::unsupported("this session has no store to read DDL jobs from"))?
+            .all_ddl_jobs()
+            .map_err(|message| DriverError::unsupported(message))
     }
 
     /// Go `stmtSummaryRetriever`: the statement summary tables for this
@@ -364,12 +356,7 @@ impl MemTableRetriever for InstanceStateRetriever {
         // Go's retrievers query the metrics tables through the restricted SQL
         // executor.
         let query_metrics = |sql: &str| {
-            crate::restricted_sql::exec_restricted_sql_over(
-                self.viewer.restricted_sql.as_deref(),
-                sql,
-                catalog,
-                ctx,
-            )
+            crate::restricted_sql::exec_restricted_sql_over(self.viewer.restricted_sql.as_deref(), sql)
         };
         if table.go_lower_eq("INSPECTION_SUMMARY") {
             let Some(Extractor::InspectionSummaryTable(extractor)) = &read.extractor else {

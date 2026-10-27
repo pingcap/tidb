@@ -174,7 +174,7 @@ impl NestedLoopApplyExec {
                     }
                 }),
         );
-        self.memory.check()
+        self.memory.check().map_err(ExecError::from)
     }
     fn load_inner(&mut self, index: usize) -> Result<(), ExecError> {
         let row = self.outer_chunk.get_row(index);
@@ -275,7 +275,7 @@ impl NestedLoopApplyExec {
                             }
                         }),
                 );
-                self.memory.check()?;
+                self.memory.check().map_err(ExecError::from)?;
             }
         });
         if let Err(error) = crate::sort_util::recover_executor_panic(|| self.inner.close()) {

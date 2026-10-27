@@ -190,7 +190,7 @@ impl CteStorage {
         data.rows
             .add(chunk)
             .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
-        data.memory.check()
+        data.memory.check().map_err(ExecError::from)
     }
 
     /// Replaces the row container with a fresh empty one while retaining the

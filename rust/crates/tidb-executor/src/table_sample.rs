@@ -14,6 +14,7 @@
 
 //! Go `TableSampleExecutor`: one record from each storage range.
 
+use crate::KvTableReader;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::kv_table::{KvTable, RowDecodeContext, TableHandle};
 use tidb_chunk::chunk::Chunk;

@@ -494,9 +494,26 @@ pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
     escaped
 }
 
+/// Go `encoding/json`'s `float64`: the shortest decimal that round-trips,
+/// in exponent form (with `e-7`, not `e-07`) below 1e-6 and from 1e21.
+pub fn go_json_float(value: f64) -> String {
+    let abs = value.abs();
+    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
+        let formatted = tidb_datatype::go_strconv::format_float(value, b'e', -1, 64);
+        // Go cleans `e-07` to `e-7`.
+        if let Some(index) = formatted.find("e-0") {
+            let mut cleaned = formatted.clone();
+            cleaned.replace_range(index..index + 3, "e-");
+            return cleaned;
+        }
+        return formatted;
+    }
+    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+}
+
 /// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
 /// U+2028/U+2029 separators inside strings.
-pub fn go_json_marshal(value: &serde_json::Value) -> String {
+pub fn go_json_marshal<T: serde::Serialize + ?Sized>(value: &T) -> String {
     serde_json::to_string(value)
         .unwrap_or_default()
         .replace('<', "\\u003c")

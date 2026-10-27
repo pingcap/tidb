@@ -26,7 +26,7 @@ use std::time::Duration;
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
 use tikv_client::proto::metapb;
 
-pub use tidb_exec::ddl_delete_range::DelRangeTask;
+pub use tidb_ddl::ddl_delete_range::DelRangeTask;
 
 /// An error from the GC worker or one of its collaborators, carrying the
 /// message Go's `errors.Trace` would have carried.
@@ -206,7 +206,7 @@ pub trait GcRuleClient: Send + Sync {
     fn get_label_rules(
         &self,
         rule_ids: &[String],
-    ) -> GcResult<std::collections::HashMap<String, tidb_executor::ddl_label::Rule>>;
+    ) -> GcResult<std::collections::HashMap<String, tidb_ddl_label::Rule>>;
     /// Go `infosync.UpdateLabelRules(label.NewRulePatch([], rule_ids))`.
     fn delete_label_rules(&self, rule_ids: Vec<String>) -> GcResult<()>;
 }

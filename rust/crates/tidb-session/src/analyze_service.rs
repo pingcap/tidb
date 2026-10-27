@@ -24,7 +24,6 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeReport;
 use tidb_util::stringutil::go_to_lower;
 
-use crate::privilege::GlobalPriv;
 use crate::*;
 
 /// Samples and persists the statistics an `ANALYZE` builds.
@@ -54,8 +53,9 @@ pub trait AnalyzeService {
 }
 
 impl Session {
-    /// Runs `ANALYZE TABLE` over `tables` through `service`. The caller has
-    /// committed any open transaction first, as Go's implicit commit does.
+    /// Go `AnalyzeExec.Next`: runs `ANALYZE TABLE` over `tables` through
+    /// `service`, after `Compile` checked their privileges. The user's
+    /// transaction is left alone, as Go's executor leaves it.
     pub fn run_analyze_statements(
         &mut self,
         tables: &[AnalyzeStatement],
@@ -64,13 +64,8 @@ impl Session {
         // Go plans against the domain's latest schema; a node session's
         // catalog catches up with its node first (a no-op inside the node).
         self.refresh_node_catalog()?;
-        // Go checks the privileges of EVERY named table before running any
-        // of them: `buildAnalyze` appends the visitInfo for each and
-        // `CheckPrivilege` runs over the whole plan, so `ANALYZE TABLE ok, no`
-        // stores nothing at all.
-        for statement in tables {
-            self.require_insert_and_select_privileges(&statement.schema, &statement.table)?;
-        }
+        // `Compile` already checked every named table (`buildAnalyze`'s visit
+        // infos), so `ANALYZE TABLE ok, no` stores nothing at all.
         // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
         // sampling; this session's pending deltas are published first.
         self.publish_table_delta();
@@ -151,34 +146,6 @@ impl Session {
             }
         }
         ids
-    }
-
-    /// Go's privilege gate on `ANALYZE TABLE` and `LOCK/UNLOCK STATS`:
-    /// INSERT *and* SELECT on the table, INSERT first
-    /// (`requireInsertAndSelectPriv`), each with its own 1142 naming the
-    /// table as written (`tbl.Name.O`). `RequestVerification` answers the
-    /// memory databases before any grant is read.
-    pub fn require_insert_and_select_privileges(
-        &self,
-        schema: &str,
-        table: &str,
-    ) -> Result<(), DriverError> {
-        let Some((_, user, host)) = self.privilege_context() else {
-            return Ok(());
-        };
-        for required in [GlobalPriv::Insert, GlobalPriv::Select] {
-            let granted = crate::table_privilege::mem_db_verdict_mask(schema, required.bit())
-                .unwrap_or_else(|| self.has_scoped_privilege(schema, table, required));
-            if !granted {
-                return Err(DriverError::TableAccessDenied {
-                    privilege: required.print_name(),
-                    user: user.to_owned(),
-                    host: host.to_owned(),
-                    table: table.to_owned(),
-                });
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn historical_stats_enabled(&self) -> bool {

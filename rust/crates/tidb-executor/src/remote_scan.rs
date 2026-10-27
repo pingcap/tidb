@@ -12,1053 +12,193 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The seam a storage backend uses to serve a base-table scan *remotely*:
-//! Go's coprocessor request, described here without naming distsql, tipb, or
-//! a transport.
-//!
-//! # What this seam is for
-//!
-//! [`crate::storage::TableStorage`] speaks keys and bytes, so a scan through
-//! it always moves the range's packed bytes to the client and decodes them
-//! there. A cluster backend can do better: TiKV evaluates the predicate, the
-//! row cap and the column projection at the region, and only the surviving
-//! rows cross the network. That is not expressible as a key/value iterator --
-//! the answer is *rows*, not pairs -- so it is a second, optional method of
-//! the storage seam rather than a widening of `iter`.
-//!
-//! A backend that does not have a coprocessor (the in-process store) returns
-//! `None` and the caller keeps its existing byte-level cursor. Nothing above
-//! the seam changes shape.
-//!
-//! # The staged-buffer rule, made structural
-//!
-//! A coprocessor answers from the **snapshot** only. Inside an explicit
-//! transaction the session's staged mutations are client-side (Go's
-//! `MemBuffer` in front of `kv.Snapshot`, and Go's `UnionScan` on top of a
-//! coprocessor reader), so a remote scan that returned only what TiKV saw
-//! would lose every uncommitted row -- and would wrongly keep rows the
-//! transaction has already deleted or changed out of the predicate.
-//!
-//! This seam therefore cannot hand back a row stream alone. [`PushdownScan`]
-//! carries the stream *and* the session's staged writes for the same range,
-//! so a caller physically cannot consume the remote rows without being handed
-//! the overlay it has to merge. The caller re-applies the full pushed
-//! predicate to the staged rows, exactly as Go's `UnionScan` filters its
-//! membuffer rows through the same conditions.
-//!
-//! # Why the pushed predicate is best-effort and the answer is still exact
-//!
-//! The conjuncts in [`PushdownScanRequest::predicates`] are a *request*. A
-//! backend may lower all of them, some of them, or none -- whatever its
-//! coprocessor lowering accepts -- because the caller keeps evaluating every
-//! pushed conjunct itself on every row it emits, remote or staged. The remote
-//! filter can therefore only ever return a superset of the answer, which the
-//! local test narrows. The same holds for [`PushdownScanRequest::limit`]: it
-//! is an early-stop hint, and the caller still enforces the cap.
+//! The executor's side of the coprocessor seam: the request types are
+//! `tidb_kv::remote_scan`'s; a request's statement context is built here from
+//! the executor's statement context, and a pushed partial aggregation is bound
+//! and inspected here.
 
-use std::fmt;
+#[allow(unused_imports)]
+use crate::RowDecodeContextExt;
 use std::sync::Arc;
 
-use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tidb_distsql::WarningCollector;
-use tidb_expr::expression::Expression;
-use tidb_txnkv::Key;
+mod request;
+pub use request::*;
 
-/// Go `kv.StoreType` narrowed to the engines a pushdown scan names.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PushdownReadEngine {
-    /// Go `kv.TiKV`: the row storage (the only engine the TiKV lowering
-    /// serves).
-    #[default]
-    TiKv,
-    /// Go `kv.TiFlash`: the columnar replica, served through MPP dispatch.
-    TiFlash,
-}
-use crate::storage::StorageError;
-
-/// One column a remote scan must return, in the order the caller wants it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PushdownScanColumn {
-    /// The table column's stable id, or [`EXTRA_HANDLE_COLUMN_ID`] for the
-    /// synthetic handle column of a table whose handle is no column of its
-    /// own.
-    pub id: i64,
-    /// The column's declared type, which decides how its bytes decode.
-    pub field_type: FieldType,
-    /// Whether the row handle *is* this column's value, so the backend reads
-    /// it from the record key rather than from the row value (Go's
-    /// `ColumnInfo.PkHandle`).
-    pub is_handle: bool,
-    /// Go `ColumnInfo.OriginDefaultValue` as the datum a row written before
-    /// this column existed reads back — carried so the coprocessor's
-    /// `ColumnInfo.default_val` names it (Go `util.ColumnToProto`), because
-    /// only the region sees which rows lack the column's bytes.
-    pub origin_default: Option<Datum>,
-}
-
-/// Go `model.ExtraHandleID`: the column id of the implicit `_tidb_rowid`
-/// handle a table without an integer primary key carries.
-pub const EXTRA_HANDLE_COLUMN_ID: i64 = -1;
-
-/// One function in a grouped partial aggregation pushed below a reader.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PushdownAggregateKind {
-    /// `COUNT(expr)`; a missing input offset means Go's `COUNT(1)` lowering
-    /// of `COUNT(*)`.
-    Count,
-    /// `SUM(expr)`.
-    Sum,
-    /// `MIN(expr)`.
-    Min,
-    /// `MAX(expr)`.
-    Max,
-    /// `MIN_COUNT(expr)`: count rows tied at the minimum argument.
-    MinCount,
-    /// `MAX_COUNT(expr)`: count rows tied at the maximum argument.
-    MaxCount,
-}
-
-/// A pushed aggregate function and the scan-row expression it reads.
-#[derive(Clone, Debug)]
-pub struct PushdownAggregateFunction {
-    /// The aggregate function implemented by TiKV.
-    pub kind: PushdownAggregateKind,
-    /// Expression evaluated for each qualifying scan row, or `None` for
-    /// `COUNT(1)`/`COUNT(*)`.
-    pub input: Option<Expression>,
-    /// The partial result column returned by TiKV.
-    pub output_type: FieldType,
-}
-
-/// The collation a MIN/MAX partial orders under: its ARGUMENT expression's
-/// derived one.
-///
-/// Go builds `collate.GetCollator(RetTp.GetCollate())` for every MIN/MAX
-/// signature (`aggfuncs/builder.go:460-468`), and `RetTp` is the aggregate
-/// ARGUMENT's type -- so a `utf8mb4_general_ci` column orders
-/// case-insensitively and a computed argument such as `UPPER(s)` orders under
-/// whatever IT derived. A partial aggregate computed at the scan has to use
-/// the same collation as the root one or the two disagree: over 'a', 'B', 'A'
-/// in `utf8mb4_general_ci`, a binary comparison answers max='a' min='A' where
-/// TiDB answers max='B' min='a'.
+/// The coprocessor seam of one statement, taken from its context.
 #[must_use]
-pub fn extreme_collation(input: Option<&Expression>) -> tidb_datatype::Collation {
-    input.map_or(tidb_datatype::Collation::DEFAULT, |expression| {
-        tidb_expr::collation_derive::collation_of_node(expression)
-    })
-}
-
-/// The MIN/MAX ordering of `candidate` against `current`. An ENUM or SET
-/// orders by its NAME under the collator -- Go `maxMin4Enum`/`maxMin4Set`,
-/// and the cop's `Datum.Compare` (`compareMysqlEnum`) -- so MIN over
-/// enum('a','B','c') under general_ci is 'a', where the binary bytes would
-/// pick 'B'.
-///
-/// # Errors
-///
-/// An unordered scalar pair, as [`tidb_expr::compare_datums_with_collation`].
-pub fn compare_extreme(
-    candidate: &tidb_datatype::Datum,
-    current: &tidb_datatype::Datum,
-    collation: tidb_datatype::Collation,
-) -> Result<std::cmp::Ordering, tidb_expr::EvalError> {
-    fn name(datum: &tidb_datatype::Datum) -> Option<&[u8]> {
-        match datum {
-            tidb_datatype::Datum::Enum(value, _) => Some(value.name_bytes()),
-            tidb_datatype::Datum::Set(value, _) => Some(value.name_bytes()),
-            _ => None,
-        }
-    }
-    if let (Some(left), Some(right)) = (name(candidate), name(current)) {
-        return Ok(collation.compare(left, right));
-    }
-    tidb_expr::compare_datums_with_collation(candidate, current, collation)
-}
-
-/// Whether `candidate` becomes the new MIN/MAX, under [`extreme_collation`].
-#[must_use]
-pub fn extreme_replaces(
-    candidate: &tidb_datatype::Datum,
-    current: &tidb_datatype::Datum,
-    is_max: bool,
-    collation: tidb_datatype::Collation,
-) -> bool {
-    compare_extreme(candidate, current, collation).is_ok_and(|ordering| {
-        if is_max {
-            ordering.is_gt()
-        } else {
-            ordering.is_lt()
-        }
-    })
-}
-
-/// One aggregation the base scan may execute inside TiKV before rows cross
-/// the network. This deliberately covers only partial stages with a typed
-/// planner representation and a corresponding TiKV DAG lowering.
-#[derive(Clone, Debug)]
-pub enum PushdownPartialAggregate {
-    /// A grouped partial aggregation. TiKV returns aggregate results first
-    /// and group keys last, matching its aggregation-schema contract.
-    Grouped {
-        /// Group-key offsets in [`PushdownScanRequest::columns`].
-        group_offsets: Vec<usize>,
-        /// Group-key result types, index-parallel with `group_offsets`.
-        group_types: Vec<FieldType>,
-        /// Aggregate functions, in physical output order.
-        functions: Vec<PushdownAggregateFunction>,
-        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
-        streamed: bool,
-    },
-    /// A global partial aggregation. TiKV returns exactly one row containing
-    /// the function states, including for empty input.
-    Global {
-        /// Aggregate functions in physical output order.
-        functions: Vec<PushdownAggregateFunction>,
-        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
-        streamed: bool,
-    },
-}
-
-impl PushdownPartialAggregate {
-    /// Go `PbConverter.conOrCorColToPBExpr`: resolve mutable leaves in the
-    /// request-owned description, leaving the retained aggregate definition
-    /// untouched for the next Open. No session state crosses the storage seam.
-    pub fn bind_in(&mut self, context: &crate::StmtContext) -> Result<(), tidb_expr::EvalError> {
-        fn bind(
-            expression: &mut Expression,
-            context: &crate::StmtContext,
-        ) -> Result<(), tidb_expr::EvalError> {
-            use tidb_expr::constant::Constant;
-            match expression {
-                Expression::Constant(constant) if constant.literal_value().is_none() => {
-                    let value = constant.eval_in(context)?;
-                    let field_type = if constant.param_marker.is_some() {
-                        tidb_datatype::infer_param_type_from_datum(&value)
-                    } else {
-                        constant
-                            .ret_type
-                            .clone()
-                            .ok_or(tidb_expr::EvalError::Unsupported(
-                                "deferred aggregate constant has no result type",
-                            ))?
-                    };
-                    *constant = Constant::new(value, field_type);
-                }
-                Expression::CorrelatedColumn(column) => {
-                    let field_type =
-                        column
-                            .column
-                            .ret_type
-                            .clone()
-                            .ok_or(tidb_expr::EvalError::Unsupported(
-                                "correlated aggregate column has no result type",
-                            ))?;
-                    *expression = Expression::Constant(Constant::new(column.eval(), field_type));
-                }
-                Expression::ScalarFunction(function) => {
-                    for argument in &mut function.args {
-                        bind(argument, context)?;
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        match self {
-            Self::Grouped { functions, .. } => {
-                for input in functions
-                    .iter_mut()
-                    .filter_map(|function| function.input.as_mut())
-                {
-                    bind(input, context)?;
-                }
-            }
-            Self::Global { functions, .. } => {
-                for input in functions
-                    .iter_mut()
-                    .filter_map(|function| function.input.as_mut())
-                {
-                    bind(input, context)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// The aggregate input's scan-column offset.
-    #[must_use]
-    pub fn input_offset(&self) -> usize {
-        match self {
-            Self::Grouped {
-                group_offsets,
-                functions,
-                ..
-            } => group_offsets
-                .first()
-                .copied()
-                .or_else(|| {
-                    functions
-                        .iter()
-                        .flat_map(|function| {
-                            function.input.iter().flat_map(expression_column_offsets)
-                        })
-                        .next()
-                })
-                .unwrap_or(0),
-            Self::Global { functions, .. } => functions
-                .iter()
-                .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
-                .next()
-                .unwrap_or(0),
-        }
-    }
-
-    /// The columns the partial stage returns, in TiKV aggregation-schema
-    /// order (aggregate functions followed by group keys).
-    #[must_use]
-    pub fn output_types(&self) -> Vec<FieldType> {
-        match self {
-            Self::Grouped {
-                group_types,
-                functions,
-                ..
-            } => functions
-                .iter()
-                .map(|function| function.output_type.clone())
-                .chain(group_types.iter().cloned())
-                .collect(),
-            Self::Global { functions, .. } => functions
-                .iter()
-                .map(|function| function.output_type.clone())
-                .collect(),
-        }
-    }
-
-    /// Every scan-column offset read by the partial stage.
-    #[must_use]
-    pub fn input_offsets(&self) -> Vec<usize> {
-        match self {
-            Self::Grouped {
-                group_offsets,
-                functions,
-                ..
-            } => {
-                let mut offsets = group_offsets
-                    .iter()
-                    .copied()
-                    .chain(functions.iter().flat_map(|function| {
-                        function.input.iter().flat_map(expression_column_offsets)
-                    }))
-                    .collect::<Vec<_>>();
-                offsets.sort_unstable();
-                offsets.dedup();
-                offsets
-            }
-            Self::Global { functions, .. } => {
-                let mut offsets = functions
-                    .iter()
-                    .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
-                    .collect::<Vec<_>>();
-                offsets.sort_unstable();
-                offsets.dedup();
-                offsets
-            }
-        }
-    }
-}
-
-fn expression_column_offsets(expression: &Expression) -> Vec<usize> {
-    fn collect(expression: &Expression, offsets: &mut Vec<usize>) {
-        match expression {
-            Expression::Column(column) => {
-                if let Ok(offset) = usize::try_from(column.index) {
-                    offsets.push(offset);
-                }
-            }
-            Expression::ScalarFunction(function) => {
-                for argument in &function.args {
-                    collect(argument, offsets);
-                }
-            }
-            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
-        }
-    }
-
-    let mut offsets = Vec::new();
-    collect(expression, &mut offsets);
-    offsets
-}
-
-/// Index-scan identity for a partial aggregation request. `None` on
-/// [`PushdownScanRequest`] means the existing table-scan path.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PushdownIndexScan {
-    /// Stable schema index id.
-    pub index_id: i64,
-    /// Whether the schema declares the index unique.
-    pub declared_unique: bool,
-    /// Number of indexed key columns.
-    pub index_column_count: usize,
-    /// Whether the index keys are scanned from high to low.
-    pub desc: bool,
-}
-
-/// One column order in a coprocessor TopN.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PushdownTopNOrder {
-    /// Offset in [`PushdownScanRequest::columns`].
-    pub offset: usize,
-    /// Whether larger values sort first.
-    pub desc: bool,
-}
-
-/// A bounded sort executed after the scan's complete Selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PushdownTopN {
-    /// Ordered comparison keys, in SQL by-item order.
-    pub order_by: Vec<PushdownTopNOrder>,
-    /// Rows retained from offset zero. The root TopN applies the SQL offset.
-    pub limit: u64,
-}
-
-/// Go's coprocessor Limit over an already-truncated index column.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PushdownPrefixLimit {
-    /// Read at least this many rows and retain the final row's entire prefix group.
-    pub count: u64,
-    /// Position of the prefix column in the index scan's input schema.
-    pub column_offset: usize,
-}
-
-/// The executor kind of a pushed plan node, which decides the DAG executor
-/// it becomes (Go lowers the pushed plan in order, so the nth plan node is
-/// the nth executor).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CopPlanKind {
-    /// `PhysicalTableScan` (also a `TableRowIDScan`).
-    TableScan,
-    /// `PhysicalIndexScan`.
-    IndexScan,
-    /// `PhysicalSelection`.
-    Selection,
-    /// `PhysicalLimit`.
-    Limit,
-    /// `PhysicalTopN`.
-    TopN,
-    /// `PhysicalHashAgg` or `PhysicalStreamAgg`.
-    Aggregation,
-    /// Any other pushed node: it matches no executor this request builds.
-    Other,
-}
-
-/// One pushed plan node of a reader: Go's `copPlanIDs` entry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CopPlanId {
-    /// What the node lowers to.
-    pub kind: CopPlanKind,
-    /// `PhysicalPlan.ID()`.
-    pub id: isize,
-}
-
-/// One base-table scan a backend may serve remotely.
-#[derive(Clone, Debug)]
-pub struct PushdownScanRequest {
-    /// The table whose record range is scanned.
-    pub table_id: i64,
-    /// An index source for this request; `None` means a table scan.
-    pub index: Option<PushdownIndexScan>,
-    /// The columns to return, in output order.
-    pub columns: Vec<PushdownScanColumn>,
-    /// Which of `columns` carries the integer row handle used to merge a
-    /// staged overlay. `None` is a common-handle scan, whose reader derives
-    /// identity from the complete primary-key columns instead.
-    pub handle_index: Option<usize>,
-    /// Stable column IDs forming a common row handle, in handle order.
-    pub primary_column_ids: Vec<i64>,
-    /// Common-handle columns stored as prefixes rather than whole values.
-    pub primary_prefix_column_ids: Vec<i64>,
-    /// The scan's complete Selection, as the planner's own physical
-    /// conditions: the backend converts all of them to TiPB (Go `ExprToPB`)
-    /// or none of them, and reports which through
-    /// [`PushdownRowStream::predicates_applied`]. Never a subset: an operator
-    /// above the Selection (a limit, a TopN, an aggregate, a narrowed output)
-    /// is only sent when the whole list was.
-    pub conditions: Vec<Expression>,
-    /// Final output offsets into `columns`, after every predicate has been
-    /// evaluated. `None` returns every requested scan column.
-    ///
-    /// A backend must refuse this shape unless it can lower every predicate:
-    /// once the narrower row crosses the wire, the caller no longer has the
-    /// columns needed to repeat a residual filter locally.
-    pub output_offsets: Option<Vec<usize>>,
-    /// A bounded sort after the complete remote Selection. Best-effort; the
-    /// caller retains an equivalent local TopN when the backend refuses it.
-    pub topn: Option<PushdownTopN>,
-    /// A row cap the backend may stop at. Best-effort: see the module doc.
-    pub limit: Option<u64>,
-    /// A prefix-aware limit. Kept separate from the ordinary cap so a backend
-    /// that does not apply it cannot truncate the final prefix group.
-    pub prefix_limit: Option<PushdownPrefixLimit>,
-    /// Go's IndexLookUp worker seeds the index coprocessor request's row
-    /// paging window from its calculated handle batch size. `None` retains
-    /// the session default used by ordinary table/covering scans.
-    pub paging_min_size: Option<u64>,
-    /// A partial aggregation above the scan/Selection. When present, every
-    /// predicate must be lowered and no staged write may be merged locally.
-    pub aggregate: Option<PushdownPartialAggregate>,
-    /// Read the ranges BACKWARDS -- Go's `desc` on the `TableScan`
-    /// executor. The ranges themselves stay in ascending key order; the
-    /// backend walks them last-to-first, each reversed, and the caller's
-    /// staged-write merge runs in the same descending key order.
-    pub desc: bool,
-    /// Whether the coprocessor must preserve record-key order.
-    ///
-    /// Go's `PhysicalTableScan.KeepOrder` is false for ordinary full scans
-    /// such as TPC-H hash-join inputs. Cluster storage raises this only for
-    /// order-sensitive staged overlays and streamed partial aggregation.
-    pub keep_order: bool,
-    /// Whether region responses may arrive in any order. Only sound when the
-    /// caller re-orders (or ignores) row order itself -- go's rolling
-    /// `fetchHandles` keeps up to `2 x DistSQLConcurrency` region requests in
-    /// flight for exactly such unordered double reads, while an ordered
-    /// stream is consumed two regions at a time.
-    pub allow_unordered_response: bool,
-    /// The timestamp the remote scan must read at: the statement's own
-    /// snapshot, filled in by the storage that owns it.
-    pub snapshot_ts: u64,
-    /// Go `PhysicalTableScan.StoreType`: which engine serves this scan.
-    /// TiFlash requests are lowered by the MPP dispatch source when the node
-    /// has one; the TiKV lowering must refuse them by name instead of
-    /// silently serving the table from row storage.
-    pub read_engine: PushdownReadEngine,
-    /// Go `MPPDispatchRequest.SchemaVar` (`is.SchemaMetaVersion()`): the
-    /// schema generation the request's table was resolved against. TiFlash
-    /// refuses a dispatch whose version cannot resolve the table, so this
-    /// must be nonzero for a TiFlash read; zero names no schema.
-    pub schema_version: u64,
-    /// The scanned record ranges, as half-open `[start, end)` pairs in
-    /// ascending key order.
-    ///
-    /// A whole-table scan is one range. A `TableRangeScan` over a clustered
-    /// handle is one per handle range, which is what a coprocessor request
-    /// carries natively (`Request.Ranges` is a list), so the narrowing
-    /// reaches the region rather than being re-applied after the rows have
-    /// already crossed the network.
-    pub ranges: Vec<(Key, Key)>,
-    /// Go's `RequestBuilder.SetTableHandles` carries one row-count hint per
-    /// grouped handle range so DistSQL can schedule region tasks with the
-    /// same cardinality estimate. Empty for ordinary scans.
-    pub range_hints: Vec<usize>,
-    /// The statement's coprocessor seam: `DAGRequest.flags` and the sink the
-    /// warnings TiKV reports must land in. See [`PushdownStatementContext`].
-    pub statement: PushdownStatementContext,
-}
-
-/// The statement context a request converts its conditions under.
-#[derive(Clone)]
-pub struct StatementEval(pub crate::StmtContext);
-
-impl fmt::Debug for StatementEval {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("StatementEval")
-    }
-}
-
-/// What a coprocessor request must be told about the STATEMENT that issued it,
-/// as opposed to the relation it reads.
-///
-/// The two halves are one type because they are one bug: `flags` decides
-/// whether TiKV degrades a truncation to a warning or fails the request, and
-/// `warnings` decides whether that warning is ever seen. Sending the flags
-/// without the sink turns a failing query into a silently truncating one --
-/// strictly worse than the failure it replaced -- so no call site may thread
-/// one and forget the other.
-#[derive(Clone, Debug)]
-pub struct PushdownStatementContext {
-    /// Statement KV execution counter shared with point readers.
-    pub kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
-    /// Go's statement ctx values every DistSQL request carries: its
-    /// `RUDetails` (`util.RUDetailsCtxKey`) and, through `SetFromSessionVars`,
-    /// `StmtCtx.GetResourceGroupTagger`.
-    pub kv_context: Option<tidb_txnkv::StatementKvContextCell>,
-    /// Shared statement quota and SQL killer for remote response ownership.
-    pub memory: crate::StatementMemory,
-    /// One query identity and allocation state for every MPP gather in this statement.
-    pub mpp_query_info: Arc<crate::MppQueryInfo>,
-    /// Domain/server-info ID, never the operating system process ID.
-    pub mpp_server_id: u64,
-    /// Validated session compute placement policy.
-    pub tiflash_compute_dispatch_policy: String,
-    /// Go AllowFallbackToTiKV[TiFlash], retained for safe MPP recovery.
-    pub allow_tiflash_fallback: bool,
-    /// Go's TryCopLiteWorker permits only one inline reader per statement.
-    pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
-    /// Physical scan plan ID used by Go `RuntimeStatsColl`.
-    pub plan_id: isize,
-    /// Go `copPlanIDs`' source: the reader's pushed plan nodes, leaf first
-    /// (`getPhysicalPlanIDs`), which the request's executors are matched
-    /// against by kind when the DAG is built.
-    pub cop_plan_chain: Vec<CopPlanId>,
-    /// Go `rootPlanID` of `SelectWithRuntimeStats`: the plan whose runtime
-    /// stats the select result registers. `0` means the scan (`plan_id`).
-    pub cop_root_plan_id: isize,
-    /// The table side of an index lookup: a batch of handles is read by a
-    /// request that carries this chain and root instead of the index
-    /// side's (Go's table reader executor owns `tblPlans`).
-    pub lookup_cop_plan_chain: Option<(Vec<CopPlanId>, isize)>,
-    /// Go `StatementContext.PushDownFlags()`; see
-    /// [`crate::StmtContext::push_down_flags`].
-    ///
-    /// The `Default` is `0`, TiKV's strictest branch, which is correct for a
-    /// caller with no statement behind it (a fixture, a synthetic request):
-    /// such a caller has no session to warn either.
-    pub push_down_flags: u64,
-    /// Go `DistSQLContext.WarnHandler`: the statement's own warning buffer.
-    pub warnings: WarningCollector,
-    /// Go `ConstructDAGReq`'s `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
-    /// timeutil.Zone(ctx.GetSessionVars().Location())`: the zone the REGION
-    /// evaluates this request's conditions in.
-    ///
-    /// It rides the STATEMENT rather than the scanner because Go reads it
-    /// fresh from `SessionVars` for every request, while the scanner is one
-    /// object shared by every connection of a node: a zone held there would be
-    /// a process-wide constant no `SET time_zone` could correct, and a setter
-    /// on it would let one connection re-zone another connection's reads.
-    ///
-    /// The `Default` is UTC, which is the zone a caller with no session behind
-    /// it evaluates in.
-    pub time_zone: SessionTimeZone,
-    /// The statement's evaluation context, which `ExprToPB` reads constants,
-    /// parameters and correlated bindings from and the expression pushdown
-    /// blacklist is consulted under. `None` for a caller with no statement
-    /// behind it: conditions then convert from their strict literals alone.
-    pub eval_context: Option<StatementEval>,
-    /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
-    pub resource_group_name: String,
-    /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
-    pub replica_read: tidb_distsql::ReplicaReadType,
-    /// Scope and stale mode selected by the transaction provider.
-    pub read_replica_scope: String,
-    /// Go StmtCtx.IsStaleness; not inferred from the request timestamp.
-    pub is_staleness: bool,
-    /// Retained settings, independent of later SET statements.
-    pub read_policy: CoprocessorReadPolicy,
-    /// Go reader GetNetDataSize; supplied by the retained physical plan.
-    pub estimated_net_bytes: f64,
-    /// Go table reader average row size for a later index lookup batch.
-    pub lookup_avg_row_bytes: Option<f64>,
-    /// Effective statement deadline, including MAX_EXECUTION_TIME hints.
-    pub max_execution_time_ms: u64,
-    /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`: the statement's
-    /// own priority modifier projected onto KV's three values.
-    pub priority: tidb_distsql::Priority,
-    /// Go `StmtCtx.NotFillCache`, set by a SELECT's `SQL_NO_CACHE`.
-    pub not_fill_cache: bool,
-    /// Go `SessionVars.DistSQLScanConcurrency()`, the request concurrency
-    /// `SetFromSessionVars` gives every DistSQL request.
-    pub dist_sql_scan_concurrency: u64,
-    /// Go `SessionVars.StoreBatchSize`, which `SetFromSessionVars` copies to
-    /// every coprocessor request.
-    pub store_batch_size: u64,
-    /// Go `SessionVars.TiFlashReplicaRead`, which places MPP tasks.
-    pub tiflash_replica_read: tidb_txnkv::ReplicaRead,
-    /// Go's query-scoped per-store coprocessor limiter, shared by every
-    /// remote scan in this statement.
-    pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
-    /// Go `SessionVars.DivPrecisionIncrement`, copied to every DAG request's
-    /// `DivPrecisionIncrement` when it differs from the default.
-    pub div_precision_increment: u32,
-    /// The current transaction's (or, in autocommit, current statement's)
-    /// staged-write tracker. See [`crate::kv_table::StagedWrites`].
-    pub staged_writes: std::sync::Arc<crate::kv_table::StagedWrites>,
-    /// Go `DistSQLContext.MaxKeysRead`/`MaxKeysReadCounter`: the statement's
-    /// `tidb_max_keys_read` budget and the counter `tidb_keys_examined` sums.
-    pub keys_read: crate::KeysReadBudget,
-    /// Go `selectResult`'s `ctx.ExecDetails`/`RuntimeStatsColl`: where each
-    /// response's `CopRuntimeStats` goes; `None` when the statement does not
-    /// collect execution info.
-    pub cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
-}
-
-impl Default for PushdownStatementContext {
-    fn default() -> Self {
-        Self {
-            memory: crate::StatementMemory::default(),
-            kv_exec_counter: Default::default(),
-            kv_context: None,
-            mpp_query_info: Arc::default(),
-            mpp_server_id: 0,
-            tiflash_compute_dispatch_policy: "consistent_hash".into(),
-            allow_tiflash_fallback: false,
-            plan_id: 0,
-            cop_plan_chain: Vec::new(),
-            cop_root_plan_id: 0,
-            lookup_cop_plan_chain: None,
-            push_down_flags: 0,
-            cop_lite_worker: Arc::default(),
-            warnings: WarningCollector::default(),
-            time_zone: SessionTimeZone::default(),
-            eval_context: None,
-            resource_group_name: "default".to_owned(),
-            replica_read: tidb_distsql::ReplicaReadType::Leader,
-            read_replica_scope: "global".into(),
-            is_staleness: false,
-            read_policy: CoprocessorReadPolicy::default(),
-            estimated_net_bytes: 0.0,
-            lookup_avg_row_bytes: None,
-            max_execution_time_ms: 0,
-            priority: tidb_distsql::Priority::NoPriority,
-            not_fill_cache: false,
-            dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
-            store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
-            tiflash_replica_read: tidb_txnkv::ReplicaRead::AllReplicas,
-            query_cop_store_limiter: None,
-            // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
-            // behind it has no session value to send.
-            div_precision_increment: 4,
-            staged_writes: Arc::default(),
-            keys_read: crate::KeysReadBudget::default(),
-            cop_response_sink: None,
-        }
-    }
-}
-
-impl PushdownStatementContext {
-    /// The coprocessor seam of one statement, taken from its context.
-    #[must_use]
-    pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
-        Self {
-            memory: ctx.statement_memory(),
-            kv_exec_counter: ctx.kv_exec_counter(),
-            kv_context: ctx.statement_kv_context(),
-            mpp_query_info: ctx.mpp_query_info(),
-            mpp_server_id: ctx.mpp_server_id(),
-            tiflash_compute_dispatch_policy: ctx.tiflash_compute_dispatch_policy().into(),
-            allow_tiflash_fallback: ctx.allow_tiflash_fallback(),
-            plan_id: 0,
-            cop_plan_chain: Vec::new(),
-            cop_root_plan_id: 0,
-            lookup_cop_plan_chain: None,
-            push_down_flags: ctx.push_down_flags(),
-            cop_lite_worker: ctx.cop_lite_worker(),
-            warnings: ctx.cop_warning_sink(),
-            time_zone: ctx.session_zone(),
-            eval_context: Some(StatementEval(ctx.clone())),
-            resource_group_name: ctx.resource_group_name().to_owned(),
-            replica_read: ctx.replica_read(),
-            read_replica_scope: ctx.read_replica_scope(),
-            is_staleness: ctx.is_staleness(),
-            read_policy: ctx.coprocessor_read_policy().clone(),
-            estimated_net_bytes: 0.0,
-            lookup_avg_row_bytes: None,
-            max_execution_time_ms: ctx.max_execution_time_ms(),
-            priority: kv_priority(ctx.statement_priority()),
-            not_fill_cache: ctx.not_fill_cache(),
-            dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
-            store_batch_size: ctx.store_batch_size(),
-            tiflash_replica_read: ctx.tiflash_replica_read(),
-            query_cop_store_limiter: ctx.query_cop_store_limiter(),
-            div_precision_increment: ctx.div_precision_increment(),
-            staged_writes: ctx.staged_writes_handle(),
-            keys_read: ctx.keys_read().clone(),
-            cop_response_sink: ctx.cop_response_sink(),
-        }
-    }
-
-    /// A reader whose storage holds no buffered writes to merge -- Go's
-    /// reader executors read the statement's snapshot alone, and a union
-    /// scan's mem reader the buffered entries alone -- keeps no staged-write
-    /// tracker, so nothing in it routes rows as dirty.
-    #[must_use]
-    pub fn without_staged_writes(mut self) -> Self {
-        self.staged_writes = Arc::default();
-        self
-    }
-
-    /// Retain the response estimate computed from the physical reader subtree.
-    #[must_use]
-    pub fn with_estimated_net_bytes(mut self, bytes: f64) -> Self {
-        self.estimated_net_bytes = bytes;
-        self
-    }
-
-    /// Derive the table request estimate from this batch's actual handle count.
-    #[must_use]
-    pub fn for_lookup_batch(&self, count: usize) -> Self {
-        let mut statement = self.clone();
-        if let Some(avg) = self.lookup_avg_row_bytes {
-            statement.estimated_net_bytes = avg * count as f64;
-        }
-        if let Some((chain, root)) = &self.lookup_cop_plan_chain {
-            statement.cop_plan_chain = chain.clone();
-            statement.cop_root_plan_id = *root;
-        }
-        statement
-    }
-
-    /// Binds the pushed plan nodes (leaf first) and the plan whose select
-    /// result stats this read registers (Go `getPhysicalPlanIDs` and
-    /// `rootPlanID`).
-    #[must_use]
-    pub fn with_cop_plan_chain(mut self, chain: Vec<CopPlanId>, root_plan_id: i64) -> Self {
-        self.cop_plan_chain = chain;
-        self.cop_root_plan_id = root_plan_id as isize;
-        self
-    }
-
-    /// Binds the table side of an index lookup (see
-    /// [`Self::lookup_cop_plan_chain`]).
-    #[must_use]
-    pub fn with_lookup_cop_plan_chain(mut self, chain: Vec<CopPlanId>, root_plan_id: i64) -> Self {
-        self.lookup_cop_plan_chain = Some((chain, root_plan_id as isize));
-        self
-    }
-
-    /// Binds the physical scan whose TiKV execution summary owns this read.
-    #[must_use]
-    pub fn with_plan_id(mut self, plan_id: i64) -> Self {
-        self.plan_id = plan_id as isize;
-        self
+pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatementContext {
+    PushdownStatementContext {
+        memory: ctx.statement_memory(),
+        kv_exec_counter: ctx.kv_exec_counter(),
+        kv_context: ctx.statement_kv_context(),
+        mpp_query_info: ctx.mpp_query_info(),
+        mpp_server_id: ctx.mpp_server_id(),
+        tiflash_compute_dispatch_policy: ctx.tiflash_compute_dispatch_policy().into(),
+        allow_tiflash_fallback: ctx.allow_tiflash_fallback(),
+        plan_id: 0,
+        cop_plan_chain: Vec::new(),
+        cop_root_plan_id: 0,
+        lookup_cop_plan_chain: None,
+        push_down_flags: ctx.push_down_flags(),
+        cop_lite_worker: ctx.cop_lite_worker(),
+        warnings: ctx.cop_warning_sink(),
+        time_zone: ctx.session_zone(),
+        eval_context: Some(StatementEval(Arc::new(ctx.clone()))),
+        resource_group_name: ctx.resource_group_name().to_owned(),
+        replica_read: ctx.replica_read(),
+        read_replica_scope: ctx.read_replica_scope(),
+        is_staleness: ctx.is_staleness(),
+        read_policy: ctx.coprocessor_read_policy().clone(),
+        estimated_net_bytes: 0.0,
+        lookup_avg_row_bytes: None,
+        max_execution_time_ms: ctx.max_execution_time_ms(),
+        priority: kv_priority(ctx.statement_priority()),
+        not_fill_cache: ctx.not_fill_cache(),
+        dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
+        store_batch_size: ctx.store_batch_size(),
+        tiflash_replica_read: ctx.tiflash_replica_read(),
+        query_cop_store_limiter: ctx.query_cop_store_limiter(),
+        div_precision_increment: ctx.div_precision_increment(),
+        staged_writes: ctx.staged_writes_handle(),
+        keys_read: ctx.keys_read().clone(),
+        cop_response_sink: ctx.cop_response_sink(),
     }
 }
 
 /// Go `RequestBuilder.getKVPriority`: the AST priority enum projected onto
-/// DistSQL's own copy of the same enum. `Delayed` maps to `NoPriority` only
-/// later, at the KV boundary, so the DistSQL context keeps the spelling the
-/// statement used.
-const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_distsql::Priority {
+/// the `mysql.PriorityEnum` the DistSQL context carries. `Delayed` maps to
+/// `NoPriority` only later, at the KV boundary, so the DistSQL context keeps
+/// the spelling the statement used.
+pub const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_mysql::Priority {
     match priority {
-        tidb_ast::StatementPriority::None => tidb_distsql::Priority::NoPriority,
-        tidb_ast::StatementPriority::Low => tidb_distsql::Priority::Low,
-        tidb_ast::StatementPriority::High => tidb_distsql::Priority::High,
-        tidb_ast::StatementPriority::Delayed => tidb_distsql::Priority::Delayed,
+        tidb_ast::StatementPriority::None => tidb_mysql::Priority::None,
+        tidb_ast::StatementPriority::Low => tidb_mysql::Priority::Low,
+        tidb_ast::StatementPriority::High => tidb_mysql::Priority::High,
+        tidb_ast::StatementPriority::Delayed => tidb_mysql::Priority::Delayed,
     }
 }
 
-/// Session policy consumed by Go's DistSQL request builder and read adjuster.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CoprocessorReadPolicy {
-    /// Minimum estimated response bytes per region for closest-adaptive reads.
-    pub closest_read_threshold: i64,
-    /// Go duration converted to nanoseconds; converted only when a TiKV task is built.
-    pub busy_threshold_ns: i64,
-    /// Session `tikv_client_read_timeout`, in milliseconds; zero uses the client default.
-    pub read_timeout_ms: u64,
-}
-
-impl Default for CoprocessorReadPolicy {
-    fn default() -> Self {
-        Self {
-            closest_read_threshold: tidb_vardef::defaults::DEF_ADAPTIVE_CLOSEST_READ_THRESHOLD,
-            busy_threshold_ns: 1_000_000_000,
-            read_timeout_ms: 0,
-        }
+/// Go `PbConverter.conOrCorColToPBExpr` over a partial aggregation's inputs:
+/// resolve mutable leaves in the request-owned description, leaving the
+/// retained aggregate definition untouched for the next Open. No session state
+/// crosses the storage seam.
+pub fn bind_partial_aggregate(
+    aggregate: &mut PushdownPartialAggregate,
+    context: &dyn tidb_expr::Columns,
+) -> Result<(), tidb_expr::EvalError> {
+    let (PushdownPartialAggregate::Grouped { functions, .. }
+    | PushdownPartialAggregate::Global { functions, .. }) = aggregate;
+    for input in functions
+        .iter_mut()
+        .filter_map(|function| function.input.as_mut())
+    {
+        tidb_expr::pushdown_catalog::bind_deferred_leaves(input, context)?;
     }
+    Ok(())
 }
 
-/// A lazily pulled stream of snapshot rows a backend served remotely.
+/// Every scan-column offset a partial aggregation reads, ascending and
+/// distinct: its group keys and the columns under its function inputs.
+#[must_use]
+pub fn partial_aggregate_input_offsets(aggregate: &PushdownPartialAggregate) -> Vec<usize> {
+    let (group_offsets, functions) = match aggregate {
+        PushdownPartialAggregate::Grouped {
+            group_offsets,
+            functions,
+            ..
+        } => (group_offsets.as_slice(), functions),
+        PushdownPartialAggregate::Global { functions, .. } => (&[][..], functions),
+    };
+    let mut offsets = group_offsets.to_vec();
+    for input in functions.iter().filter_map(|function| function.input.as_ref()) {
+        offsets.extend(crate::access_path::expression_column_offsets(
+            std::slice::from_ref(input),
+        ));
+    }
+    offsets.sort_unstable();
+    offsets.dedup();
+    offsets
+}
+
+/// Go's reader over the store's coprocessor: opens `request` through
+/// `store`'s `kv.Client` (or, for a TiFlash read, its `kv.MPPClient`) at the
+/// statement's snapshot, beside the transaction's staged writes in the same
+/// ranges (what Go's `UnionScanExec` above the reader adds).
 ///
-/// `Send` so a prefetched index-join lookup can hand its remote cursor to a
-/// pool worker (Go's inner workers drain their readers off the caller).
-pub trait PushdownRowStream: Send {
-    /// Go `RuntimeStatsColl.GetCopCountAndRows` for the scan executor.
-    fn cop_count_and_rows(&self) -> (u64, u64) {
-        (0, 0)
-    }
-    /// The next row in record-key order, as the requested columns, or `None`
-    /// at the end of the answer.
-    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
-
-    /// Whether this stream can transfer decoded columnar batches without
-    /// first materializing every row as `Vec<Datum>`.
-    fn supports_chunks(&self) -> bool {
-        false
-    }
-
-    /// The next decoded columnar batch using the executor's current Go
-    /// `Chunk.RequiredRows` demand. Callers use this only after
-    /// [`Self::supports_chunks`] returns true; row-only backends keep the
-    /// existing [`Self::next_row`] contract.
-    fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
-        Ok(None)
-    }
-
-    /// How many rows have crossed the network so far. This is the wire
-    /// receipt: with a lowered predicate it is smaller than the table holds.
-    fn rows_returned(&self) -> u64;
-
-    /// Whether the backend lowered every predicate in the request. A caller
-    /// may skip duplicate client-side evaluation only for a clean stream;
-    /// staged rows still require the normal local test.
-    fn predicates_applied(&self) -> bool {
-        false
-    }
-
-    /// Releases the request, which an abandoned stream (an early-stopping
-    /// `LIMIT`) must still do.
-    fn close(&mut self);
-}
-
-/// Two (or more) remote scans serving ONE ordered read whose unsigned-handle
-/// halves cannot form a single ascending range list. Go opens
-/// `firstPartGroupedRanges then `secondPartGroupedRanges as separate results
-/// and reads them one after the other through
-/// `resultHandler.open(firstResult, secondResult); this is that sequence at
-/// the stream seam. Rows from part N+1 begin only after part N returns `None.
-///
-/// Chunks are deliberately NOT supported: a columnar batch cannot span a part
-/// boundary, and the row path keeps the boundary invisible to callers.
-pub struct ChainedPushdownStream {
-    /// Every part in read order; drained by index.
-    parts: Vec<Box<dyn PushdownRowStream>>,
-    /// Index of the part currently serving [`PushdownRowStream::next_row].
-    current: usize,
-    /// Whether a part has returned `None AND no later part exists -- after
-    /// which every call answers `None without touching the parts.
-    finished: bool,
-}
-
-impl ChainedPushdownStream {
-    /// Chains the parts in READ order: part 0's rows all precede part 1's.
-    #[must_use]
-    pub fn new(parts: Vec<Box<dyn PushdownRowStream>>) -> Box<dyn PushdownRowStream> {
-        assert!(
-            !parts.is_empty(),
-            "a chained stream needs at least one part"
-        );
-        Box::new(ChainedPushdownStream {
-            parts,
-            current: 0,
-            finished: false,
+/// `None` -- a store with no coprocessor, or a request the lowering refused
+/// -- sends the caller to the byte-level cursor, which answers the same
+/// question from the same snapshot.
+pub fn open_remote_scan(
+    store: &dyn crate::storage::TableStorage,
+    request: &PushdownScanRequest,
+) -> Option<Result<PushdownScan, crate::storage::StorageError>> {
+    let client = store.client()?;
+    // One staged slice per requested range, concatenated. The ranges are
+    // ascending; equal point ranges are allowed by Go's table-handle lookup
+    // and deliberately repeat the same staged row. Thus the concatenation
+    // remains nondecreasing, which is the order the merge relies on. A staged
+    // row outside every range is dropped for the same reason a snapshot row
+    // there is: the ranges bound the `WHERE`'s access conditions, so no row
+    // outside them can satisfy the statement. An empty buffered value is
+    // Go's tombstone, a staged delete.
+    let buffer = store.mem_buffer_snapshot(&request.ranges);
+    let mut staged: Vec<_> = buffer
+        .iter()
+        .flat_map(|buffer| {
+            request
+                .ranges
+                .iter()
+                .flat_map(|(start, end)| buffer.entries(start, end, false))
         })
+        .map(|(key, value)| (key, (!value.is_empty()).then_some(value)))
+        .collect();
+    // A `desc` request's remote stream arrives in DESCENDING key order; the
+    // staged slice reverses to match, so the caller's one-pass merge walks
+    // both sides the same way.
+    if request.desc {
+        staged.reverse();
+    }
+    let mut request = request.clone();
+    request.snapshot_ts = store.start_ts();
+    request.keep_order |= (!staged.is_empty() && !request.allow_unordered_response)
+        || request.aggregate.as_ref().is_some_and(|aggregate| {
+            matches!(
+                aggregate,
+                PushdownPartialAggregate::Grouped { streamed: true, .. }
+            )
+        });
+    if !staged.is_empty() {
+        request.limit = None;
+    }
+    // Go's `TableReaderExecutor` picks the MPP client when the plan reads the
+    // columnar replica; a store without it refuses rather than silently
+    // answering from row storage.
+    let opened = match request.read_engine {
+        PushdownReadEngine::TiKv => crate::cop_reader::open_cop_scan(client.as_ref(), &request),
+        PushdownReadEngine::TiFlash => match store.mpp_client() {
+            Some(mpp) => crate::mpp_coordinator::open_mpp_scan(&mpp, &request),
+            None => Err(PushdownScannerError::Backend(crate::storage::StorageError::Backend(
+                "tiflash mpp: this node has no TiFlash dispatch seam; \
+                 the read cannot be served from the columnar replica"
+                    .to_owned(),
+            ))),
+        },
+    };
+    match opened {
+        Ok(stream) => Some(Ok(PushdownScan { stream, staged })),
+        Err(PushdownScannerError::Unsupported(_reason)) => None,
+        Err(PushdownScannerError::Backend(error)) => Some(Err(error)),
     }
 }
-
-impl PushdownRowStream for ChainedPushdownStream {
-    fn cop_count_and_rows(&self) -> (u64, u64) {
-        self.parts.iter().fold((0, 0), |total, part| {
-            let part = part.cop_count_and_rows();
-            (total.0.wrapping_add(part.0), total.1.wrapping_add(part.1))
-        })
-    }
-    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-        if self.finished {
-            return Ok(None);
-        }
-        loop {
-            let Some(part) = self.parts.get_mut(self.current) else {
-                self.finished = true;
-                return Ok(None);
-            };
-            match part.next_row()? {
-                Some(row) => return Ok(Some(row)),
-                None => self.current += 1,
-            }
-        }
-    }
-
-    // A batch cannot span the part boundary, so the chain always serves rows.
-
-    fn rows_returned(&self) -> u64 {
-        self.parts.iter().map(|part| part.rows_returned()).sum()
-    }
-
-    fn predicates_applied(&self) -> bool {
-        self.parts.iter().all(|part| part.predicates_applied())
-    }
-
-    fn close(&mut self) {
-        for part in &mut self.parts {
-            part.close();
-        }
-    }
-}
-
-/// A remote scan plus the client-side overlay it must be merged with.
-pub struct PushdownScan {
-    /// The snapshot rows, filtered and capped at the backend.
-    pub stream: Box<dyn PushdownRowStream>,
-    /// The session's staged writes inside the scanned range, in key order and
-    /// still encoded: the caller owns decoding them, because row layout is
-    /// not this seam's business. `None` is a staged delete.
-    pub staged: Vec<(Key, Option<Vec<u8>>)>,
-}
-
-impl fmt::Debug for PushdownScan {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PushdownScan")
-            .field("rows_returned", &self.stream.rows_returned())
-            .field("staged", &self.staged.len())
-            .finish()
-    }
-}
-
-/// The capability a cluster backend is given so it can serve
-/// [`PushdownScanRequest`]s: one coprocessor round trip per open scan.
-///
-/// It is a separate trait from the storage itself because the storage lives
-/// in this crate while the transport does not: the production implementation
-/// is injected from the crate that owns distsql.
-pub trait PushdownScanner: fmt::Debug + Send + Sync {
-    /// Opens one remote scan. An `Err` is a backend failure, not a refusal:
-    /// a backend that cannot serve this request shape must say so by
-    /// returning [`PushdownScannerError::Unsupported`], which makes the caller
-    /// fall back to the byte-level cursor with no change in answer.
-    fn open(
-        &self,
-        request: &PushdownScanRequest,
-    ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError>;
-
-    /// Go `distsql.Checksum` (`pkg/distsql/distsql.go`): sends one built
-    /// `kv.ReqTypeChecksum` request through this node's coprocessor client
-    /// and returns its raw region responses, which
-    /// `ChecksumTableExec.handleChecksumRequest` reads with `NextRaw`.
-    fn checksum(
-        &self,
-        _request: &tidb_distsql::TransportRequest,
-    ) -> Result<Box<dyn RawResponseStream>, PushdownScannerError> {
-        Err(PushdownScannerError::Unsupported(
-            "this backend sends no checksum requests".to_owned(),
-        ))
-    }
-}
-
-/// Go `distsql.SelectResult` read through `NextRaw`: one encoded response
-/// per region, `None` once every region answered. Dropping it closes the
-/// result.
-pub trait RawResponseStream: Send {
-    /// Go `SelectResult.NextRaw`.
-    fn next_raw(&mut self) -> Result<Option<Vec<u8>>, StorageError>;
-}
-
-/// Why a remote scan did not open.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PushdownScannerError {
-    /// The backend declines this request shape; the caller must use the
-    /// byte-level cursor instead. Never a wrong answer, only a slower one.
-    Unsupported(String),
-    /// The backend tried and failed.
-    Backend(StorageError),
-}
-
-impl fmt::Display for PushdownScannerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unsupported(reason) => write!(formatter, "remote scan is unsupported: {reason}"),
-            Self::Backend(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for PushdownScannerError {}
 
 #[cfg(test)]
 mod tests {
+    use crate::KvTableReader;
+    use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+    use tidb_expr::expression::Expression;
+    use tidb_kv::storage::StorageError;
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     use tidb_ast::CiString;
@@ -1081,9 +221,8 @@ mod tests {
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
     use crate::mem_table::MemTableSourceExec;
-    use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::run_prepared_select_for_test;
-    use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
+    use crate::storage::capture_storage_ops;
 
     #[test]
     fn cop_read_lookup_batches_use_their_table_width_and_handle_count() {
@@ -1105,6 +244,12 @@ mod tests {
     }
 
     impl ClusterSnapshot for MockSnapshot {
+        /// The statement's snapshot, above the one transaction the fake
+        /// region commits the committed half in (at ts 2).
+        fn start_ts(&self) -> u64 {
+            100
+        }
+
         fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
             Ok(self.data.get(key.as_bytes()).cloned())
         }
@@ -1124,523 +269,149 @@ mod tests {
         }
     }
 
-    /// A coprocessor standing in for TiKV: it reads the committed half only,
-    /// evaluates the requested comparisons and cap there, and returns rows.
+    /// The store behind the node's `kv.Client`, standing in for TiKV: the
+    /// executor's encoded DAG runs on unistore's coprocessor over the
+    /// committed half only, as Go's executor tests run on mockstore's
+    /// unistore.
     ///
     /// It is deliberately blind to the session's staged writes -- that is
     /// precisely the property the merge has to repair, and a fake that quietly
     /// saw the buffer would prove nothing.
     #[derive(Debug)]
-    struct FakeCoprocessor {
+    struct FakeRegion {
         snapshot: Arc<Mutex<MockSnapshot>>,
-        columns: Vec<KvColumn>,
-        /// The column a clustered integer primary key lives in, which the
-        /// region's own decode needs: those bytes are in the record KEY, not
-        /// the value.
-        pk_handle_offset: Option<usize>,
-        /// Rows that crossed the wire, across every scan.
+        /// Rows the scan matched -- what its last executor below any
+        /// aggregation produced -- across every request.
         returned: Arc<AtomicU64>,
         /// Rows the coprocessor read before its own filter.
         scanned: Arc<AtomicU64>,
-        /// Whether this backend evaluates the requested conjuncts at all.
-        ///
-        /// Turning it off is the MUTATION PROBE
-        /// (`neutering_the_lowering_is_still_correct_and_the_receipt_notices`):
-        /// a backend is allowed to lower none of the predicate, and the answer
-        /// must be unchanged because the caller re-applies every conjunct. So
-        /// the value assertions stay green and only the receipt moves, which
-        /// is precisely why value assertions alone cannot see a lost pushdown.
-        lower_predicates: std::sync::atomic::AtomicBool,
-        /// When set, the backend accepts the request and then refuses on the
-        /// first read, as the embedded coprocessor does for a scalar
-        /// signature its evaluator has not grown yet.
-        refuse_on_read: std::sync::atomic::AtomicBool,
-        /// Every `DAGRequest.flags` value this backend was told, in request
-        /// order. A region acts on these bits; a fake that ignored them would
-        /// let the literal `0` back in unnoticed.
-        requested_flags: Arc<Mutex<Vec<u64>>>,
-        requested_read_estimates: Arc<Mutex<Vec<(bool, f64, Option<f64>)>>>,
-        /// Whether each remote scan was required to preserve key order.
-        requested_keep_orders: Arc<Mutex<Vec<bool>>>,
+        /// When set, the region answers every request with an other error,
+        /// as unistore does for a DAG shape it cannot run.
+        refuse: AtomicBool,
+        /// Every request this region was sent, decoded.
+        sent: Mutex<Vec<crate::test_region::SentRequest>>,
         /// Simulate region completion order only for explicitly unordered reads.
-        reverse_unordered: std::sync::atomic::AtomicBool,
-        /// The reader-local output projection each request asked TiKV to
-        /// apply after its predicates.
-        requested_output_offsets: Arc<Mutex<Vec<Option<Vec<usize>>>>>,
+        reverse_unordered: AtomicBool,
         /// A warning the region reports on each request, standing in for
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
-        opened: Arc<AtomicUsize>,
     }
 
-    impl PushdownScanner for FakeCoprocessor {
-        fn open(
+    impl FakeRegion {
+        fn sent(&self) -> Vec<crate::test_region::SentRequest> {
+            self.sent.lock().unwrap().clone()
+        }
+
+        /// How many requests were sent.
+        fn opened(&self) -> usize {
+            self.sent.lock().unwrap().len()
+        }
+
+        /// Every `DAGRequest.flags` value this region was sent, in request
+        /// order. A region acts on these bits; a fake that ignored them would
+        /// let the literal `0` back in unnoticed.
+        fn requested_flags(&self) -> Vec<u64> {
+            self.sent().iter().map(|sent| sent.dag.flags()).collect()
+        }
+
+        /// Whether each request was required to preserve key order.
+        fn requested_keep_orders(&self) -> Vec<bool> {
+            self.sent().iter().map(|sent| sent.keep_order).collect()
+        }
+
+        /// Each request's reader-local projection TiKV applies after its
+        /// predicates (`DAGRequest.output_offsets`).
+        fn requested_output_offsets(&self) -> Vec<Vec<u32>> {
+            self.sent()
+                .iter()
+                .map(|sent| sent.dag.output_offsets.clone())
+                .collect()
+        }
+
+        /// Each request's `(reads an index, network bytes)` as the
+        /// closest-replica adjuster carries it (Go `newClosestReadAdjuster`),
+        /// for a statement read under [`adaptive_read_ctx`].
+        fn read_estimates(&self) -> Vec<(bool, u64)> {
+            self.sent()
+                .iter()
+                .filter_map(|sent| Some((sent.is_index(), sent.estimated_net_bytes?)))
+                .collect()
+        }
+    }
+
+    /// A query context reading `closest-adaptive` with a one-byte threshold,
+    /// so every request carries the adjuster a reader's network estimate
+    /// reaches the wire through.
+    fn adaptive_read_ctx() -> crate::StmtContext {
+        crate::StmtContext::for_query()
+            .with_replica_read(crate::ReplicaReadType::ClosestAdaptive)
+            .with_coprocessor_read_policy(CoprocessorReadPolicy {
+                closest_read_threshold: 1,
+                ..CoprocessorReadPolicy::default()
+            })
+    }
+
+    impl tidb_txnkv::Client for FakeRegion {
+        fn send(
             &self,
-            request: &PushdownScanRequest,
-        ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
-            self.requested_read_estimates.lock().unwrap().push((
-                request.index.is_some(),
-                request.statement.estimated_net_bytes,
-                request.statement.lookup_avg_row_bytes,
-            ));
-            // This fake decodes record values, not secondary-index entries.
-            // Decline that capability instead of reporting an empty table
-            // when handed index keys; live TiKV covers the remote index side.
-            if request.index.is_some() {
-                return Err(PushdownScannerError::Unsupported("index scan".to_owned()));
-            }
-            // The real transport refuses a request with no ranges before it
-            // reaches a store: `metadata_region_ranges` in
-            // `tidb_distsql::cop_paging` answers `missing_ranges`, because the
-            // range list is what it turns into region tasks. A fake that
-            // quietly returned no rows would hide exactly that.
-            self.requested_flags
-                .lock()
-                .unwrap()
-                .push(request.statement.push_down_flags);
-            self.requested_keep_orders
-                .lock()
-                .unwrap()
-                .push(request.keep_order);
-            self.requested_output_offsets
-                .lock()
-                .unwrap()
-                .push(request.output_offsets.clone());
-            if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
-                // Exactly what `tidb_distsql`'s `response_channel` does with
-                // `SelectResponse.warnings`, into whatever collector it was
-                // handed.
-                request
-                    .statement
-                    .warnings
-                    .append_tikv_warning(code, message);
-            }
-            if request.ranges.is_empty() {
-                return Err(PushdownScannerError::Backend(StorageError::Backend(
-                    "missing_ranges".to_owned(),
-                )));
-            }
-            // The region's committed bytes for the requested key range.
-            let mut store = MemTableStorage::new();
-            {
-                let mut snapshot = self.snapshot.lock().unwrap();
-                for (start, end) in &request.ranges {
-                    for (key, value) in snapshot.scan(start, end, None).unwrap() {
-                        store.set(Key::from_bytes(key), value).unwrap();
-                    }
-                }
-            }
-            // A TiKV TableScan decodes stored cells; it does not evaluate
-            // TiDB's virtual expressions. The table reader owns that step.
-            let mut physical_columns = self.columns.clone();
-            for column in &mut physical_columns {
-                column.generated = None;
-            }
-            let mut table =
-                KvTable::with_storage(request.table_id, physical_columns, Box::new(store));
-            if let Some(offset) = self.pk_handle_offset {
-                table.set_pk_handle_offset(offset);
-            }
-            if !request.primary_column_ids.is_empty() {
-                let offsets = request
-                    .primary_column_ids
-                    .iter()
-                    .map(|id| {
-                        self.columns
-                            .iter()
-                            .position(|column| column.id == *id)
-                            .expect("a primary column belongs to the table")
-                    })
-                    .collect();
-                table.set_common_handle_offsets(offsets);
-            }
-            if self.refuse_on_read.load(Ordering::Relaxed) {
-                return Ok(Box::new(RefusingStream {
-                    message: "coprocessor other error: scalar signature EqString \
-                              waits on its distsql_builtin.go course"
-                        .to_owned(),
-                }));
-            }
-            // Every requested column that is one of the table's own; the
-            // appended handle column is not, and is filled from the key.
-            let appended_handle = request
-                .handle_index
-                .and_then(|index| request.columns.get(index))
-                .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID);
-            let projected = if appended_handle {
-                &request.columns[..request.columns.len() - 1]
-            } else {
-                &request.columns[..]
-            };
-            let keep: Vec<usize> = projected
-                .iter()
-                .map(|column| {
-                    self.columns
-                        .iter()
-                        .position(|candidate| candidate.id == column.id)
-                        .expect("a requested column belongs to the table")
-                })
-                .collect();
-            let mut cursor = table
-                .row_cursor_projected_directed_with_context(
-                    Some(&keep),
+            request: &tidb_txnkv::TransportRequest,
+        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+            use prost::Message;
+            let sent = crate::test_region::SentRequest::decode(request);
+            self.sent.lock().unwrap().push(sent.clone());
+            if self.refuse.load(Ordering::Relaxed) {
+                return Ok(crate::test_region::Subsets::new(
+                    vec![Err(tidb_txnkv::QueryResponseError::Source(
+                        "coprocessor other error: this closure-executor shape is a later \
+                         course of this port"
+                            .to_owned(),
+                    ))],
                     None,
-                    request.desc,
-                    false,
-                    &crate::RowDecodeContext::for_test_query_utc(),
-                )
-                .unwrap();
-            // The Selection converts whole or not at all, as the real backend's
-            // `ExprToPB` does.
-            let described: Option<Vec<ScanPredicate>> = request
-                .conditions
-                .iter()
-                .flat_map(tidb_expr::expr_util::split_cnf_items)
-                .map(|condition| {
-                    crate::predicate_pushdown::describe_request_condition(
-                        &condition,
-                        request.statement.eval_context.as_ref().map(|eval| &eval.0),
-                    )
-                    .ok()
+                ));
+            }
+            let mut store = crate::test_region::committed_store(
+                self.snapshot.lock().unwrap().data.clone(),
+            );
+            // One answer per range when the reader accepts any completion
+            // order, so the order the regions finish in can be reversed;
+            // otherwise one answer in key order, as an ordered read gets.
+            let unordered = !sent.keep_order && self.reverse_unordered.load(Ordering::Relaxed);
+            let tasks: Vec<&[(Vec<u8>, Vec<u8>)]> = if unordered {
+                sent.ranges.iter().rev().map(std::slice::from_ref).collect()
+            } else {
+                vec![&sent.ranges[..]]
+            };
+            let subsets = tasks
+                .into_iter()
+                .map(|task| {
+                    let answer = crate::test_region::run_dag(&mut store, &sent.dag, task, 100)
+                        .map_err(|message| {
+                            tidb_txnkv::QueryResponseError::Source(format!(
+                                "coprocessor other error: {message}"
+                            ))
+                        })?;
+                    self.scanned.fetch_add(answer.scanned, Ordering::Relaxed);
+                    self.returned.fetch_add(answer.matched, Ordering::Relaxed);
+                    let mut select = answer.select;
+                    if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
+                        select.warnings.push(tidb_proto::tipb::Error {
+                            code: Some(code),
+                            msg: Some(message),
+                        });
+                        select.warning_count = Some(select.warning_count.unwrap_or(0) + 1);
+                    }
+                    Ok(tidb_txnkv::QueryResultSubset {
+                        data: select.encode_to_vec().into(),
+                        runtime: None,
+                    })
                 })
                 .collect();
-            let lowerable = self.lower_predicates.load(Ordering::Relaxed) && described.is_some();
-            let predicates = described.unwrap_or_default();
-            // Whether every pushed predicate was actually evaluated, not just
-            // syntactically accepted: `admits` answers "did not filter" for a
-            // shape outside its domain regardless of the row, so that check
-            // is per-predicate rather than per-row.
-            let predicates_confidently_applied = lowerable
-                && !predicates.iter().any(|predicate| {
-                    matches!(
-                        predicate,
-                        ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. }
-                    )
-                });
-            let mut rows = Vec::new();
-            while let Some((handle, mut row)) = cursor.next_row().unwrap() {
-                self.scanned.fetch_add(1, Ordering::Relaxed);
-                if lowerable
-                    && !predicates
-                        .iter()
-                        .all(|predicate| admits(predicate, &row) == Some(true))
-                {
-                    continue;
-                }
-                if appended_handle {
-                    row.push(Datum::Int(handle.int_value().unwrap()));
-                }
-                if let Some(offsets) = &request.output_offsets {
-                    row = offsets.iter().map(|offset| row[*offset].clone()).collect();
-                }
-                rows.push(row);
-                if request.limit.is_some_and(|cap| rows.len() as u64 >= cap) {
-                    break;
-                }
-            }
-            if !request.keep_order && self.reverse_unordered.load(Ordering::Relaxed) {
-                rows.reverse();
-            }
-            // The wire receipt counts what the scan actually matched, not the
-            // aggregate's own output rows -- Go's `CopRuntimeStats` counts the
-            // same way, since the aggregate runs ON TOP of the scanned rows
-            // rather than replacing what crossed the network.
-            let matched = rows.len() as u64;
-            self.returned.fetch_add(matched, Ordering::Relaxed);
-            self.opened.fetch_add(1, Ordering::SeqCst);
-            let (rows, matched, predicates_applied) = match &request.aggregate {
-                Some(aggregate) => (
-                    compute_partial_aggregate(aggregate, rows),
-                    Some(matched),
-                    predicates_confidently_applied,
-                ),
-                None => (rows, None, false),
-            };
-            Ok(Box::new(FakeStream {
-                rows: rows.into_iter(),
-                returned: 0,
-                matched,
-                predicates_applied,
-                opened: Arc::clone(&self.opened),
-            }))
-        }
-    }
-
-    /// Reduces the matched, projected scan rows to the shape TiKV's partial
-    /// aggregation returns: functions first, then group keys (see
-    /// [`PushdownPartialAggregate::output_types`]), with exactly one row for
-    /// [`PushdownPartialAggregate::Global`] even over zero input rows.
-    fn compute_partial_aggregate(
-        aggregate: &PushdownPartialAggregate,
-        rows: Vec<Vec<Datum>>,
-    ) -> Vec<Vec<Datum>> {
-        match aggregate {
-            PushdownPartialAggregate::Global { functions, .. } => {
-                vec![aggregate_group(functions, &rows)]
-            }
-            PushdownPartialAggregate::Grouped {
-                group_offsets,
-                functions,
-                ..
-            } => {
-                let mut groups: Vec<(Vec<Datum>, Vec<Vec<Datum>>)> = Vec::new();
-                for row in rows {
-                    let key: Vec<Datum> = group_offsets
-                        .iter()
-                        .map(|offset| row[*offset].clone())
-                        .collect();
-                    match groups.iter_mut().find(|(existing, _)| *existing == key) {
-                        Some((_, members)) => members.push(row),
-                        None => groups.push((key, vec![row])),
-                    }
-                }
-                groups
-                    .into_iter()
-                    .map(|(key, members)| {
-                        let mut result = aggregate_group(functions, &members);
-                        result.extend(key);
-                        result
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    fn aggregate_group(functions: &[PushdownAggregateFunction], rows: &[Vec<Datum>]) -> Vec<Datum> {
-        functions
-            .iter()
-            .map(|function| aggregate_function(function, rows))
-            .collect()
-    }
-
-    /// The one function kinds this fake emulates: `COUNT` and integer `SUM`,
-    /// the only kinds any test here pushes down. A kind or an input shape
-    /// outside that panics rather than silently answering wrong, so a future
-    /// test that needs one grows this instead of trusting a guess.
-    fn aggregate_function(function: &PushdownAggregateFunction, rows: &[Vec<Datum>]) -> Datum {
-        let offset = function.input.as_ref().map(|expr| {
-            expression_column_offsets(expr)
-                .first()
-                .copied()
-                .unwrap_or_else(|| panic!("fake aggregate input is not a plain column: {expr:?}"))
-        });
-        match function.kind {
-            PushdownAggregateKind::Count => {
-                let count = match offset {
-                    Some(offset) => rows.iter().filter(|row| row[offset] != Datum::Null).count(),
-                    None => rows.len(),
-                };
-                Datum::Int(i64::try_from(count).expect("fixture row counts fit in i64"))
-            }
-            PushdownAggregateKind::Sum => {
-                let offset = offset.expect("SUM always reads a column");
-                let mut total: i128 = 0;
-                let mut seen = false;
-                for row in rows {
-                    match &row[offset] {
-                        Datum::Int(value) => {
-                            seen = true;
-                            total += i128::from(*value);
-                        }
-                        Datum::Null => {}
-                        other => panic!("fake SUM does not emulate {other:?}"),
-                    }
-                }
-                if seen {
-                    Datum::Decimal(tidb_datatype::Decimal::from_literal(&total.to_string()))
-                } else {
-                    Datum::Null
-                }
-            }
-            other => panic!("fake aggregate does not emulate {other:?}"),
-        }
-    }
-
-    /// Evaluates one description the way the coprocessor would, over the
-    /// integer domain the lowering accepts, in MySQL's three-valued logic.
-    /// `None` is SQL `UNKNOWN`; a shape outside the integer domain answers
-    /// `Some(true)`, the "did not filter" answer a backend is allowed to give.
-    fn admits(predicate: &ScanPredicate, row: &[Datum]) -> Option<bool> {
-        match predicate {
-            // A builtin call is outside this fake's integer domain, so it gives
-            // the "did not filter" answer a backend is always allowed to give.
-            ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. } => Some(true),
-            ScanPredicate::Like {
-                column_offset,
-                pattern,
-                escape,
-                collation,
-                ..
-            } => {
-                let value = row.get(*column_offset as usize)?;
-                if *value == Datum::Null {
-                    return None;
-                }
-                let bytes = value.as_raw_bytes()?;
-                // The comparison's collation, which the description carries;
-                // re-deriving it from `column_type` here answered a `LIKE`
-                // with an explicit `COLLATE` in the wrong one.
-                let collation = *collation;
-                Some(tidb_expr::like_match_with_collation(
-                    bytes,
-                    pattern,
-                    Some(*escape),
-                    collation,
-                ))
-            }
-            ScanPredicate::Compare(comparison) => {
-                let (Some(value), Datum::Int(literal)) = (
-                    row.get(comparison.column_offset as usize),
-                    comparison.literal.clone(),
-                ) else {
-                    return Some(true);
-                };
-                let value = match value {
-                    Datum::Int(value) => *value,
-                    Datum::Null => return None,
-                    _ => return Some(true),
-                };
-                let (left, right) = if comparison.column_on_left {
-                    (value, literal)
-                } else {
-                    (literal, value)
-                };
-                Some(match comparison.op {
-                    ScanComparisonOp::Eq => left == right,
-                    ScanComparisonOp::Ne => left != right,
-                    ScanComparisonOp::Lt => left < right,
-                    ScanComparisonOp::Le => left <= right,
-                    ScanComparisonOp::Gt => left > right,
-                    ScanComparisonOp::Ge => left >= right,
-                })
-            }
-            ScanPredicate::ColumnCompare(comparison) => {
-                let (Some(left), Some(right)) = (
-                    row.get(comparison.left_offset as usize),
-                    row.get(comparison.right_offset as usize),
-                ) else {
-                    return Some(true);
-                };
-                if *left == Datum::Null || *right == Datum::Null {
-                    return None;
-                }
-                let ordering = tidb_expr::compare_datums(left, right).ok()?;
-                Some(match comparison.op {
-                    ScanComparisonOp::Eq => ordering.is_eq(),
-                    ScanComparisonOp::Ne => !ordering.is_eq(),
-                    ScanComparisonOp::Lt => ordering.is_lt(),
-                    ScanComparisonOp::Le => ordering.is_le(),
-                    ScanComparisonOp::Gt => ordering.is_gt(),
-                    ScanComparisonOp::Ge => ordering.is_ge(),
-                })
-            }
-            ScanPredicate::IsNull {
-                column_offset,
-                negated,
-                ..
-            } => {
-                let is_null = row.get(*column_offset as usize) == Some(&Datum::Null);
-                Some(is_null != *negated)
-            }
-            ScanPredicate::In {
-                column_offset,
-                literals,
-                negated,
-                ..
-            } => {
-                let Some(value) = row.get(*column_offset as usize) else {
-                    return Some(true);
-                };
-                if *value == Datum::Null {
-                    return None;
-                }
-                let found = literals.iter().any(|literal| literal == value);
-                Some(found != *negated)
-            }
-            // MySQL's `AND`: FALSE dominates UNKNOWN, which dominates TRUE.
-            ScanPredicate::And(branches) => {
-                let mut unknown = false;
-                for branch in branches {
-                    match admits(branch, row) {
-                        Some(false) => return Some(false),
-                        Some(true) => {}
-                        None => unknown = true,
-                    }
-                }
-                (!unknown).then_some(true)
-            }
-            // MySQL's `OR`: TRUE dominates UNKNOWN, which dominates FALSE.
-            ScanPredicate::Or(branches) => {
-                let mut unknown = false;
-                for branch in branches {
-                    match admits(branch, row) {
-                        Some(true) => return Some(true),
-                        Some(false) => {}
-                        None => unknown = true,
-                    }
-                }
-                (!unknown).then_some(false)
-            }
-            ScanPredicate::Not(inner) => admits(inner, row).map(|value| !value),
-        }
-    }
-
-    /// A backend that accepts the request and then REFUSES on the first
-    /// read, which is how the embedded coprocessor reports a scalar
-    /// signature it cannot evaluate: nothing is evaluated until a batch is
-    /// asked for.
-    struct RefusingStream {
-        message: String,
-    }
-
-    impl PushdownRowStream for RefusingStream {
-        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-            Err(StorageError::Backend(self.message.clone()))
+            Ok(crate::test_region::Subsets::new(subsets, None))
         }
 
-        fn rows_returned(&self) -> u64 {
-            0
+        fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+            true
         }
-
-        fn close(&mut self) {}
-    }
-
-    struct FakeStream {
-        rows: std::vec::IntoIter<Vec<Datum>>,
-        returned: u64,
-        /// The scan's own matched-row count, for a stream whose yielded rows
-        /// are an aggregate's OUTPUT rather than the scan rows themselves --
-        /// Go's `cop_task` rows stat counts what reached the coprocessor's
-        /// Selection, not what an aggregate above it reduced that to.
-        /// `None` keeps the ordinary per-row wire count below.
-        matched: Option<u64>,
-        /// Whether THIS request's predicates were genuinely applied before
-        /// `rows` was built. An ordinary row scan always re-verifies
-        /// locally regardless (its rows keep every column), so this stays
-        /// `false` there and only reflects reality for an aggregate, which
-        /// has no residual re-check once its rows are reduced.
-        predicates_applied: bool,
-        opened: Arc<AtomicUsize>,
-    }
-
-    impl PushdownRowStream for FakeStream {
-        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-            let row = self.rows.next();
-            if row.is_some() {
-                self.returned += 1;
-            }
-            Ok(row)
-        }
-
-        fn rows_returned(&self) -> u64 {
-            self.matched.unwrap_or(self.returned)
-        }
-
-        fn predicates_applied(&self) -> bool {
-            self.predicates_applied
-        }
-
-        fn close(&mut self) {}
     }
 
     fn column(name: &str, id: i64) -> KvColumn {
@@ -1673,7 +444,7 @@ mod tests {
         snapshot: Arc<Mutex<MockSnapshot>>,
         returned: Arc<AtomicU64>,
         scanned: Arc<AtomicU64>,
-        scanner: Arc<FakeCoprocessor>,
+        region: Arc<FakeRegion>,
     }
 
     /// A cluster-backed `t(a, b)` whose scans go through the coprocessor.
@@ -1698,7 +469,7 @@ mod tests {
                 comment: String::new(),
                 unique: true,
                 column_offsets: vec![0, 1],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
                 visible: true,
                 global: false,
                 global_index_version: 0,
@@ -1731,24 +502,17 @@ mod tests {
         let buffer = MutationBuffer::new();
         let returned = Arc::new(AtomicU64::new(0));
         let scanned = Arc::new(AtomicU64::new(0));
-        let scanner = Arc::new(FakeCoprocessor {
+        let region = Arc::new(FakeRegion {
             snapshot: Arc::clone(&snapshot),
-            columns: columns.clone(),
             returned: Arc::clone(&returned),
             scanned: Arc::clone(&scanned),
-            pk_handle_offset,
-            lower_predicates: std::sync::atomic::AtomicBool::new(true),
-            refuse_on_read: std::sync::atomic::AtomicBool::new(false),
-            requested_flags: Arc::default(),
-            requested_read_estimates: Arc::default(),
-            requested_keep_orders: Arc::default(),
-            reverse_unordered: std::sync::atomic::AtomicBool::new(false),
-            requested_output_offsets: Arc::default(),
+            refuse: AtomicBool::new(false),
+            sent: Mutex::default(),
+            reverse_unordered: AtomicBool::new(false),
             region_warning: Mutex::new(None),
-            opened: Arc::default(),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
-            .with_remote_scanner(Arc::clone(&scanner) as Arc<dyn PushdownScanner>);
+            .with_client(Arc::clone(&region) as Arc<dyn tidb_txnkv::Client>);
         let mut table = KvTable::with_storage(91, columns, Box::new(storage));
         if let Some(offset) = pk_handle_offset {
             table.set_pk_handle_offset(offset);
@@ -1759,7 +523,7 @@ mod tests {
             snapshot,
             returned,
             scanned,
-            scanner,
+            region,
         }
     }
 
@@ -1820,7 +584,7 @@ mod tests {
     fn write_range_reader_preserves_record_identity_and_staged_rows() {
         for mut fixture in [fixture(), clustered_fixture(), common_handle_fixture()] {
             fixture
-                .scanner
+                .region
                 .reverse_unordered
                 .store(true, Ordering::Relaxed);
             for row in [[1, 10], [2, 20], [3, 30], [4, 40]] {
@@ -1975,7 +739,7 @@ mod tests {
             .add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
         let mut fixture = fixture_with_columns(Some(0), columns);
         fixture
-            .scanner
+            .region
             .reverse_unordered
             .store(true, Ordering::Relaxed);
         for (a, b) in [(0, 10), (1, 20), (1_u64 << 63, 30), (u64::MAX, 40)] {
@@ -2053,7 +817,7 @@ mod tests {
     #[test]
     fn virtual_dependency_expansion_preserves_reader_output() {
         for primary in ["PRIMARY KEY", ""] {
-            let mut catalog = Catalog::default();
+            let mut catalog = Catalog::mock();
             let ctx = crate::StmtContext::for_query();
             crate::run_create_table_on(
                 &format!(
@@ -2137,7 +901,7 @@ mod tests {
                     comment: String::new(),
                     unique: false,
                     column_offsets: vec![2],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -2166,7 +930,7 @@ mod tests {
                     &[1],
                     &[],
                     &crate::RowDecodeContext::legacy_default(&ctx.session_zone()),
-                    &PushdownStatementContext::from_stmt(&ctx),
+                    &crate::remote_scan::pushdown_statement_context(&ctx),
                     2,
                 )
                 .unwrap()
@@ -2283,7 +1047,7 @@ mod tests {
             columns[0].field_type = key_type;
             let mut fixture = fixture_with_columns(None, columns);
             fixture
-                .scanner
+                .region
                 .reverse_unordered
                 .store(true, Ordering::Relaxed);
             fixture.table.set_common_handle_offsets(vec![0, 1]);
@@ -2368,12 +1132,7 @@ mod tests {
                 );
             }
             let sql = format!("SELECT SUM(c) FROM t WHERE {predicate}");
-            fixture
-                .scanner
-                .requested_keep_orders
-                .lock()
-                .unwrap()
-                .clear();
+            fixture.region.sent.lock().unwrap().clear();
             let (rows, ops) = capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
             assert_eq!(
                 rows,
@@ -2384,7 +1143,7 @@ mod tests {
                 "the dirty aggregate must reuse the merged reader"
             );
             assert_eq!(
-                *fixture.scanner.requested_keep_orders.lock().unwrap(),
+                fixture.region.requested_keep_orders(),
                 vec![false],
                 "an unordered aggregate must not acquire ordered-scan concurrency"
             );
@@ -2641,11 +1400,11 @@ mod tests {
         }
         join.close().unwrap();
         assert_eq!(rows, 1025);
-        assert_eq!(fixture.scanner.opened.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.region.opened(), 2);
     }
 
     fn catalog_of(table: KvTable) -> Catalog {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         catalog
     }
@@ -2668,7 +1427,7 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
 
@@ -2681,7 +1440,7 @@ mod tests {
 
         assert_eq!(rows.len(), 3);
         assert_eq!(
-            *scanner.requested_keep_orders.lock().unwrap(),
+            region.requested_keep_orders(),
             vec![true, true],
             "both MergeJoin children must ask DistSQL to preserve record-key order",
         );
@@ -2717,16 +1476,16 @@ mod tests {
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            let scanner = Arc::clone(&fixture.scanner);
+            let region = Arc::clone(&fixture.region);
             let catalog = catalog_of(fixture.table);
-            let ctx = crate::StmtContext::for_query();
+            let ctx = adaptive_read_ctx();
             for (hint, output) in [
                 ("INL_JOIN", "i.b"),
                 ("INL_HASH_JOIN", "i.b"),
                 ("INL_JOIN", "i.a"),
                 ("INL_HASH_JOIN", "i.a"),
             ] {
-                scanner.requested_read_estimates.lock().unwrap().clear();
+                region.sent.lock().unwrap().clear();
                 let rows = run_select_on(
                     &format!("SELECT /*+ {hint}(i) */ o.a, {output} FROM t o JOIN t i ON o.a=i.a"),
                     &catalog,
@@ -2734,24 +1493,18 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(rows.len(), 2);
-                let estimates = scanner.requested_read_estimates.lock().unwrap();
+                let estimates = region.read_estimates();
                 assert!(
                     estimates.len() >= 2,
                     "outer and inner requests: {estimates:?}"
                 );
+                // The handle-count arithmetic itself is
+                // `cop_read_lookup_batches_use_their_table_width_and_handle_count`;
+                // here every rebuilt reader must reach the wire with one.
                 assert!(
-                    estimates.iter().all(|(_, bytes, _)| *bytes > 0.0),
+                    estimates.iter().all(|(_, bytes)| *bytes >= 1),
                     "each rebuilt inner reader must carry its plan estimate: {estimates:?}"
                 );
-                for (index, bytes, average) in estimates.iter() {
-                    if let Some(average) = average {
-                        assert_eq!(
-                            *bytes,
-                            *average * if *index { 1.0 } else { 2.0 },
-                            "double reads retain Go's index estimate and actual handle count"
-                        );
-                    }
-                }
             }
         }
     }
@@ -2773,7 +1526,7 @@ mod tests {
             }
             commit(&fixture.buffer, &fixture.snapshot);
             fixture
-                .scanner
+                .region
                 .reverse_unordered
                 .store(true, Ordering::SeqCst);
             for keep in [vec![1], vec![1, 0], vec![]] {
@@ -2785,7 +1538,7 @@ mod tests {
                         &keep,
                         &[],
                         &crate::RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
-                        &PushdownStatementContext::from_stmt(&crate::StmtContext::for_query()),
+                        &crate::remote_scan::pushdown_statement_context(&crate::StmtContext::for_query()),
                         2,
                     )
                     .unwrap()
@@ -2839,8 +1592,8 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
-        scanner.reverse_unordered.store(true, Ordering::SeqCst);
+        let region = Arc::clone(&fixture.region);
+        region.reverse_unordered.store(true, Ordering::SeqCst);
         let catalog = catalog_of(fixture.table);
         for (sql, expected) in [
             (
@@ -2856,15 +1609,14 @@ mod tests {
                 vec![vec![Datum::Int(100)], vec![Datum::Int(200)]],
             ),
         ] {
-            scanner.requested_read_estimates.lock().unwrap().clear();
+            region.sent.lock().unwrap().clear();
             assert_eq!(
-                run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+                run_select_on(sql, &catalog, &adaptive_read_ctx()).unwrap(),
                 expected
             );
-            let requests = scanner.requested_read_estimates.lock().unwrap();
+            let requests = region.read_estimates();
             assert!(
-                requests.iter().any(|(index, bytes, avg)| !*index
-                    && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+                requests.iter().any(|(index, bytes)| !*index && *bytes >= 1),
                 "common table task must carry Go estimates: {sql}; {requests:?}"
             );
         }
@@ -2872,7 +1624,7 @@ mod tests {
 
     #[test]
     fn common_reader_partition_order_retains_pruned_identity() {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT, PRIMARY KEY(a,b) CLUSTERED) PARTITION BY HASH(a) PARTITIONS 2", &mut catalog).unwrap();
         let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
             panic!("KV table");
@@ -2928,7 +1680,7 @@ mod tests {
     }
 
     fn partition_reader_fixture() -> Fixture {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on(
             "CREATE TABLE t(a BIGINT,b BIGINT,c BIGINT) PARTITION BY HASH(a) PARTITIONS 2",
             &mut catalog,
@@ -2968,7 +1720,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture
-            .scanner
+            .region
             .reverse_unordered
             .store(true, Ordering::SeqCst);
         fixture
@@ -2977,18 +1729,18 @@ mod tests {
     #[test]
     fn partition_readers_retain_remote_policy() {
         let fixture = partition_reader_fixture();
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
         for (sql, values) in [
             ("SELECT c FROM t FORCE INDEX(ib) WHERE b<40 ORDER BY b", vec![300, 200, 100]),
             ("SELECT /*+ INL_JOIN(r) */ r.c FROM t l JOIN t r USE INDEX(ib) ON r.b=l.b WHERE l.a<3 ORDER BY l.a", vec![100, 200]),
             ("SELECT /*+ USE_INDEX_MERGE(t,ia,ib) */ c FROM t WHERE a<3 OR b<20 ORDER BY c", vec![100, 200, 300]),
         ] {
-            scanner.requested_read_estimates.lock().unwrap().clear();
+            region.sent.lock().unwrap().clear();
             let expected = values.into_iter().map(|value| vec![Datum::Int(value)]).collect::<Vec<_>>();
-            assert_eq!(run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(), expected);
-            let requests = scanner.requested_read_estimates.lock().unwrap();
-            assert!(requests.iter().any(|(index, bytes, avg)| !index && avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+            assert_eq!(run_select_on(sql, &catalog, &adaptive_read_ctx()).unwrap(), expected);
+            let requests = region.read_estimates();
+            assert!(requests.iter().any(|(index, bytes)| !index && *bytes >= 1),
                 "partition table tasks must use shared request policy: {sql}; {requests:?}");
         }
     }
@@ -3019,29 +1771,32 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
         let rows = run_select_on(
             "SELECT b FROM t USE INDEX(ia) WHERE a < 3 ORDER BY a",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &adaptive_read_ctx(),
         )
         .unwrap();
         assert_eq!(rows, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
-        let estimates = scanner.requested_read_estimates.lock().unwrap();
+        let estimates = region.read_estimates();
+        // Go `buildNoRangeIndexLookUpReader` estimates the index side with
+        // the TABLE's average row width, and each table task with that width
+        // times its handle count (two here). The adjuster carries whole
+        // bytes, so the table side is twice the index side up to rounding.
         let index = estimates
             .iter()
-            .find(|(index, _, _)| *index)
-            .expect("index request");
-        let average = index.2.expect("double-read table width");
-        assert!(average > 0.0);
-        assert_eq!(
-            index.1, average,
-            "Go buildNoRangeIndexLookUpReader uses table average"
+            .find(|(index, _)| *index)
+            .expect("index request")
+            .1;
+        assert!(index >= 1, "the index side carries the table width");
+        assert!(
+            estimates
+                .iter()
+                .any(|(is_index, bytes)| !is_index && (*bytes == 2 * index || *bytes == 2 * index + 1)),
+            "the table task is two handles of the table width: {estimates:?}"
         );
-        assert!(estimates
-            .iter()
-            .any(|(index, bytes, avg)| !index && *avg == Some(average) && *bytes == 2.0 * average));
     }
 
     #[test]
@@ -3076,10 +1831,10 @@ mod tests {
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            let scanner = Arc::clone(&fixture.scanner);
-            scanner.reverse_unordered.store(true, Ordering::SeqCst);
+            let region = Arc::clone(&fixture.region);
+            region.reverse_unordered.store(true, Ordering::SeqCst);
             let catalog = catalog_of(fixture.table);
-            let ctx = crate::StmtContext::for_query();
+            let ctx = adaptive_read_ctx();
             let rows = run_select_on("SELECT /*+ USE_INDEX_MERGE(t, ia, ib) */ a,b FROM t WHERE a < 3 OR b < 20 ORDER BY a",
                 &catalog, &ctx).unwrap();
             assert_eq!(
@@ -3090,29 +1845,25 @@ mod tests {
                     vec![Datum::Int(3), Datum::Int(10)]
                 ]
             );
-            let estimates = scanner.requested_read_estimates.lock().unwrap();
+            let estimates = region.read_estimates();
             assert!(
-                estimates.iter().filter(|(index, _, _)| *index).count() >= 2,
+                estimates.iter().filter(|(index, _)| *index).count() >= 2,
                 "both partial paths: {estimates:?}"
             );
             let table = estimates
                 .iter()
-                .filter(|(index, _, _)| !index)
+                .filter(|(index, _)| !index)
                 .collect::<Vec<_>>();
             assert!(
                 !table.is_empty(),
                 "index merge must build table requests: {estimates:?}"
             );
             assert!(
-                table
-                    .iter()
-                    .all(|(_, bytes, avg)| avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
+                table.iter().all(|(_, bytes)| *bytes >= 1),
                 "per-task handle estimates: {table:?}"
             );
-            assert!(scanner
-                .requested_flags
-                .lock()
-                .unwrap()
+            assert!(region
+                .requested_flags()
                 .iter()
                 .all(|flags| *flags == ctx.push_down_flags()));
         }
@@ -3138,13 +1889,13 @@ mod tests {
             .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
 
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
-        let flags = scanner.requested_flags.lock().unwrap().clone();
+        let flags = region.requested_flags();
         assert_eq!(flags, vec![ctx.push_down_flags()]);
         assert_ne!(
             flags[0], 0,
@@ -3174,7 +1925,7 @@ mod tests {
             .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
 
         let catalog = catalog_of(fixture.table);
         // `for_dml(error_for_division_by_zero, strict, ignore_err)` with the INSERT arm's
@@ -3191,7 +1942,7 @@ mod tests {
             .with_statement_class(crate::StatementClass::Insert);
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
-        let flags = scanner.requested_flags.lock().unwrap().clone();
+        let flags = region.requested_flags();
         assert_eq!(flags, vec![ctx.push_down_flags()]);
         assert_eq!(
             flags[0],
@@ -3226,8 +1977,8 @@ mod tests {
             .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
-        *scanner.region_warning.lock().unwrap() =
+        let region = Arc::clone(&fixture.region);
+        *region.region_warning.lock().unwrap() =
             Some((1292, "Truncated incorrect DOUBLE value: '12abc'".to_owned()));
 
         let catalog = catalog_of(fixture.table);
@@ -3235,7 +1986,7 @@ mod tests {
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
         assert_eq!(
-            ctx.take_warnings(),
+            ctx.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
                 tidb_distsql::WarningLevel::Warning,
                 1292u16,
@@ -3384,7 +2135,7 @@ mod tests {
     fn staged_rows_survive_the_remote_scan_and_are_filtered_by_the_same_predicate() {
         let mut fixture = fixture();
         fixture
-            .scanner
+            .region
             .reverse_unordered
             .store(true, Ordering::Relaxed);
         let committed_low = fixture
@@ -3540,6 +2291,7 @@ mod tests {
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(rows, vec![vec![Datum::Int(3), Datum::Int(0), Datum::Null]]);
         assert_eq!(wire, 3);
@@ -3548,6 +2300,7 @@ mod tests {
             "SELECT a, COUNT(*), SUM(b) FROM t WHERE a > 97 GROUP BY a ORDER BY a",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(
             rows,
@@ -3577,7 +2330,12 @@ mod tests {
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
 
-        let (rows, wire) = run_counting("SELECT COUNT(*), COUNT(b), SUM(b) FROM t", &catalog, &ctx);
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t",
+            &catalog,
+            &ctx,
+            &fixture.returned,
+        );
         assert_eq!(
             rows,
             vec![vec![Datum::Int(100), Datum::Int(0), Datum::Null]]
@@ -3588,6 +2346,7 @@ mod tests {
             "SELECT a, COUNT(*), SUM(b) FROM t GROUP BY a ORDER BY a",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(rows.len(), 100);
         assert!(rows
@@ -3607,6 +2366,7 @@ mod tests {
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 10000",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(rows, vec![vec![Datum::Int(0), Datum::Int(0), Datum::Null]]);
         assert_eq!(wire, 0);
@@ -3632,14 +2392,19 @@ mod tests {
         fixture
     }
 
-    /// One statement's answer and the rows its coprocessor scans sent.
+    /// One statement's answer and the rows its coprocessor scans matched at
+    /// the region (`matched`, the fixture's counter): what the scan's
+    /// Selection let through, which a partial aggregate above it then
+    /// reduces before anything crosses the wire.
     fn run_counting(
         sql: &str,
         catalog: &Catalog,
         ctx: &crate::StmtContext,
+        matched: &AtomicU64,
     ) -> (Vec<Vec<Datum>>, u64) {
-        let (rows, ops) = capture_storage_ops(|| run_select_on(sql, catalog, ctx).unwrap());
-        (rows, ops.cop_rows)
+        matched.store(0, Ordering::Relaxed);
+        let rows = run_select_on(sql, catalog, ctx).unwrap();
+        (rows, matched.load(Ordering::Relaxed))
     }
 
     /// An aggregate over a filtered table must not forfeit the pushed
@@ -3661,7 +2426,12 @@ mod tests {
         // The control: the same predicate WITHOUT an aggregate has always
         // narrowed the wire, so a difference below is the aggregate's doing
         // and not the predicate's pushability.
-        let (rows, wire) = run_counting("SELECT a FROM t WHERE a > 97", &catalog, &ctx);
+        let (rows, wire) = run_counting(
+            "SELECT a FROM t WHERE a > 97",
+            &catalog,
+            &ctx,
+            &fixture.returned,
+        );
         assert_eq!(rows.len(), 3);
         assert_eq!(wire, 3);
 
@@ -3669,6 +2439,7 @@ mod tests {
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(
             rows,
@@ -3682,6 +2453,7 @@ mod tests {
             "SELECT a, COUNT(*) FROM t WHERE a > 97 GROUP BY a ORDER BY a",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(
             rows,
@@ -3708,6 +2480,7 @@ mod tests {
             "SELECT SUM(b), COUNT(*), COUNT(b), AVG(b) FROM t WHERE a > 1000",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(
             rows,
@@ -3720,13 +2493,19 @@ mod tests {
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE b IS NULL",
             &catalog,
             &ctx,
+            &fixture.returned,
         );
         assert_eq!(rows, vec![vec![Datum::Int(4), Datum::Int(0), Datum::Null]]);
         assert_eq!(wire, 4, "IS NULL is lowered, so only the NULL rows crossed");
 
         // And the whole relation, as the reference the narrowed answers must
         // agree with.
-        let (rows, wire) = run_counting("SELECT COUNT(*), COUNT(b), SUM(b) FROM t", &catalog, &ctx);
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t",
+            &catalog,
+            &ctx,
+            &fixture.returned,
+        );
         assert_eq!(
             rows,
             vec![vec![
@@ -3844,7 +2623,7 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
 
@@ -3860,8 +2639,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            *scanner.requested_output_offsets.lock().unwrap(),
-            vec![Some(vec![1])],
+            region.requested_output_offsets(),
+            vec![vec![1]],
             "the selected cop projection must reach DAGRequest.output_offsets",
         );
     }
@@ -3880,7 +2659,7 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         let statement = tidb_parser::parse("SELECT b FROM t WHERE a BETWEEN ? AND ?").unwrap();
@@ -3922,71 +2701,27 @@ mod tests {
             assert_eq!(rows, expected);
         }
         assert_eq!(
-            *scanner.requested_output_offsets.lock().unwrap(),
-            vec![Some(vec![1]), Some(vec![1])],
+            region.requested_output_offsets(),
+            vec![vec![1], vec![1]],
             "both the first build and recursive cache rebuild keep the cop projection",
         );
     }
 
-    /// MUTATION PROBE, with its control. A backend that lowers NONE of the
-    /// predicate is still exactly correct -- the caller re-applies every
-    /// conjunct -- so the value assertions stay green while the wire count
-    /// jumps back to the relation. That asymmetry is the reason the receipt
-    /// has to exist: value tests structurally cannot see a lost pushdown.
+    /// Go `copr`'s other error (`coprocessor.go`'s `handleCopResponse`) is
+    /// the read's error: a region that cannot run the DAG it was sent --
+    /// unistore refusing an executor shape by name -- fails the statement
+    /// with that message rather than being answered from somewhere else.
     #[test]
-    fn neutering_the_lowering_is_still_correct_and_the_receipt_notices() {
+    fn a_region_other_error_is_the_statements_error() {
         let fixture = aggregate_fixture();
-        let scanner = Arc::clone(&fixture.scanner);
+        let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
-        let sql = "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97";
-
-        let (lowered, lowered_wire) = run_counting(sql, &catalog, &ctx);
-        assert_eq!(lowered_wire, 3);
-
-        scanner
-            .lower_predicates
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let (neutered, neutered_wire) = run_counting(sql, &catalog, &ctx);
-        assert_eq!(
-            neutered, lowered,
-            "a backend that lowered nothing answers identically"
-        );
-        assert_eq!(
-            neutered_wire, 100,
-            "but the receipt sees the relation cross the network"
-        );
-    }
-
-    /// A backend that REFUSES the pushed-down shape must not fail the
-    /// query. `PushdownScannerError::Unsupported` states the contract --
-    /// "never a wrong answer, only a slower one" -- and the embedded
-    /// coprocessor exercises it for real by refusing a scalar signature its
-    /// evaluator has not grown yet (a string comparison, until
-    /// distsql_builtin lands). The refusal reaches the caller on the FIRST
-    /// READ rather than at open, because nothing is evaluated until a batch
-    /// is asked for, so the scan falls back to the byte-level cursor there.
-    #[test]
-    fn a_refused_pushdown_falls_back_to_the_local_scan() {
-        let fixture = aggregate_fixture();
-        let scanner = Arc::clone(&fixture.scanner);
-        let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
-        let sql = "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97";
-
-        let (pushed, _) = run_counting(sql, &catalog, &ctx);
-
-        scanner
-            .refuse_on_read
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let (refused, refused_wire) = run_counting(sql, &catalog, &ctx);
-        assert_eq!(
-            refused, pushed,
-            "a refused pushdown answers exactly what the accepted one did"
-        );
-        assert_eq!(
-            refused_wire, 0,
-            "and nothing crossed the wire, because the local cursor served it"
+        region.refuse.store(true, Ordering::Relaxed);
+        let error = run_select_on("SELECT a FROM t WHERE a > 97", &catalog, &ctx).unwrap_err();
+        assert!(
+            format!("{error:?}").contains("this closure-executor shape is a later course"),
+            "{error:?}"
         );
     }
 

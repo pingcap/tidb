@@ -37,18 +37,17 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_table_storage::{
+use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_cluster::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
-use tidb_exec::cop_scan::CopScanSource;
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
-use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
+use tidb_exec::cop_client::CopClient;
+use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_cluster::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_exec::stats_watch::StatsSnapshot;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
-use tidb_executor::remote_scan::PushdownScanner;
 use tidb_server::cluster_session::{session_with_cluster_storage, LocalTableAutoIds};
 use tidb_session::StmtResult;
 
@@ -64,8 +63,18 @@ fn main() -> ExitCode {
     }
 }
 
-/// The node's coprocessor capability.
-type CopScans = Arc<CopScanSource<ProductionReadSessionFactory>>;
+/// The node's coprocessor capability: the store's client (Go
+/// `kv.Storage.GetClient()`).
+struct CopScans {
+    client: Arc<CopClient<ProductionReadSessionFactory>>,
+}
+
+impl CopScans {
+    /// Attaches it to one statement's storage.
+    fn attach(&self, storage: ClusterTableStorage) -> ClusterTableStorage {
+        storage.with_client(Arc::clone(&self.client) as _)
+    }
+}
 
 struct Arguments {
     pd: String,
@@ -129,9 +138,9 @@ fn run() -> Result<(), String> {
 
     let opener = Arc::new(authority.transaction_opener());
     let buffer = MutationBuffer::new();
-    let cop_scans: Option<CopScans> = arguments
-        .cop
-        .then(|| Arc::new(CopScanSource::new(authority.transport_factory())));
+    let cop_scans: Option<CopScans> = arguments.cop.then(|| CopScans {
+        client: Arc::new(CopClient::new(authority.transport_factory())),
+    });
     let failure = if arguments.transaction {
         run_explicit_transaction(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     } else {
@@ -157,7 +166,7 @@ fn run() -> Result<(), String> {
 /// overwrite. A run whose statements read nothing has no timestamp and takes a
 /// fresh one.
 fn run_autocommit(
-    opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -177,7 +186,7 @@ fn run_autocommit(
         opener,
         buffer,
         read_ts,
-        tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
         None,
         |_| {},
     ) {
@@ -196,7 +205,7 @@ fn run_autocommit(
 /// The explicit shape: one transaction for the whole run, every statement read
 /// at its `start_ts`, and the commit prewritten at that same timestamp.
 fn run_explicit_transaction(
-    opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -205,7 +214,7 @@ fn run_explicit_transaction(
     let transaction = match SessionTransaction::begin(
         Arc::clone(opener),
         TIMEOUT,
-        tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
     ) {
         Ok(transaction) => transaction,
         Err(error) => return Some(error.to_string()),
@@ -216,7 +225,7 @@ fn run_explicit_transaction(
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
     let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
     if let Some(scans) = cop_scans {
-        storage = storage.with_remote_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+        storage = scans.attach(storage);
     }
     for sql in &arguments.statements {
         let snapshot = match transaction.snapshot() {
@@ -285,7 +294,7 @@ fn run_in_transaction(
 /// Runs one statement at its own snapshot, over the session's staged writes,
 /// and answers with the timestamp that snapshot read at.
 fn run_statement(
-    opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     schema: &str,
@@ -293,12 +302,12 @@ fn run_statement(
     cop_scans: Option<&CopScans>,
 ) -> Result<u64, String> {
     if cop_scans.is_some() {
-        tidb_exec::cop_scan::scan_receipt::reset();
+        tidb_executor::cop_reader::scan_receipt::reset();
     }
     let (mut storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
         .map_err(|error| error.to_string())?;
     if let Some(scans) = cop_scans {
-        storage = storage.with_remote_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+        storage = scans.attach(storage);
     }
     let start_ts = snapshot
         .lock()
@@ -342,9 +351,9 @@ fn run_statement(
 /// The wire receipt the RealTiKV harness greps: how many rows the
 /// coprocessor actually sent for this statement, and which executors the
 /// admitted DAG carried. Emitted only when the statement ran with the
-/// coprocessor scanner attached.
+/// coprocessor client attached.
 fn print_wire_receipt() {
-    let (wire_rows, shape) = tidb_exec::cop_scan::scan_receipt::snapshot();
+    let (wire_rows, shape) = tidb_executor::cop_reader::scan_receipt::snapshot();
     println!("coprocessor request: {shape}");
     println!("rows across the wire {wire_rows}");
 }

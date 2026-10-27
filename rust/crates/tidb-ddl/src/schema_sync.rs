@@ -38,13 +38,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tidb_exec::catalog_watch::{
+use tidb_cluster::catalog_watch::{
     CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
 };
-use tidb_exec::ddl_systable::MinJobIdRefresher;
-use tidb_exec::mdl_info_load::{load_mdl_jobs, MdlJob};
-use tidb_exec::mysql_system_tables::SystemTableError;
-use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
+use crate::ddl_systable::MinJobIdRefresher;
+use tidb_cluster::mdl_info_load::{load_mdl_jobs, MdlJob};
+use tidb_cluster::mysql_system_tables::SystemTableError;
+use tidb_cluster::schema_validator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
@@ -513,7 +513,7 @@ fn run_ack_loop<S>(
                             // the same fresh snapshot before retrying.
                             let _reload = catalog.lock_reload();
                             let current = catalog.load();
-                            match tidb_exec::real_tikv_catalog::load_catalog_from_cluster(
+                            match tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(
                                 opener, timeout,
                             ) {
                                 Ok(refreshed)
@@ -695,8 +695,8 @@ fn sleep_sliced(total: Duration, stop: &AtomicBool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_exec::catalog_watch::{CatalogReloadPass, CatalogReloader};
-    use tidb_exec::cluster_catalog::ClusterCatalog;
+    use tidb_cluster::catalog_watch::{CatalogReloadPass, CatalogReloader};
+    use tidb_cluster::cluster_catalog::ClusterCatalog;
     use tidb_schemaver::mem_syncer::MemSyncer;
 
     #[test]
@@ -928,7 +928,7 @@ mod tests {
         if crate::isolate_process_globals() {
             return;
         }
-        use tidb_exec::cluster_ddl::MdlInfoUpdate;
+        use crate::cluster_ddl::MdlInfoUpdate;
         use tidb_schemaver::{AllServerInfo, Context, DoneCh, GlobalVerRx, SyncSummary};
         struct Reporter {
             inner: tidb_schemaver::mem_syncer::MemSyncer,
@@ -983,10 +983,10 @@ mod tests {
         }
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let timeout = Duration::from_secs(5);
-        crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         tidb_vardef::set_enable_mdl(false);
         let mut loaded =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         let (_, table) = loaded.find_table("mysql", "tidb_mdl_info").unwrap();
         let info = MdlInfoUpdate {
             table: Box::new(table.clone_like_go()),

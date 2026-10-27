@@ -84,7 +84,7 @@ fn warning_texts(session: &Session) -> Vec<String> {
     session
         .warnings()
         .iter()
-        .map(|w| format!("{} {}", w.code, w.message))
+        .map(|w| format!("{} {}", w.code(), w.message()))
         .collect()
 }
 

@@ -537,7 +537,14 @@ impl ConfiguredUserStore {
         let admission = self
             .admit_transport(transport)
             .map_err(|_| AuthenticationFailure::SecureTransportRequired)?;
-        self.authenticate_admitted(username, remote_host, salt, response, admission)
+        self.authenticate_admitted(
+            username,
+            remote_host,
+            salt,
+            response,
+            tidb_mysql::consts::AuthNativePassword,
+            admission,
+        )
     }
 
     /// Applies the process-wide transport gate before any auth-plugin
@@ -564,15 +571,21 @@ impl ConfiguredUserStore {
     ///
     /// The opaque token prevents the wire owner from accidentally reaching
     /// password/account policy while skipping the earlier process-wide gate.
+    ///
+    /// `auth_plugin` is the plugin the client authenticated with (Go
+    /// `UserIdentity.AuthPlugin`): a `tidb_session_token` login presents a
+    /// token another TiDB signed instead of a password.
     pub fn authenticate_admitted(
         &self,
         username: &str,
         remote_host: &str,
         salt: &[u8],
         response: &[u8],
+        auth_plugin: &str,
         admission: TransportAdmission,
     ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
         let is_tls = admission.secure_for_account_policy;
+        let session_token = auth_plugin == tidb_mysql::consts::AuthTiDBSessionToken;
         let request = IdentityLookupRequest::new(username, remote_host, true);
         if let IdentityLookupResult::Bypassed(identity) =
             IdentityCatalog::default().resolve_with_policy(self.identity_policy, &request, &[])
@@ -665,6 +678,21 @@ impl ConfiguredUserStore {
                 if !valid_primary {
                     return Err(AuthenticationFailure::AccessDenied);
                 }
+                // Go skips the account's own plugin for a session token, and a
+                // token that does not verify is no wrong password.
+                if session_token {
+                    if let Err(error) = tidb_sessionstates::validate_session_token(response, username)
+                    {
+                        tidb_log::warn(
+                            "verify session token failed",
+                            &[
+                                tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
+                                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                            ],
+                        );
+                        return Err(AuthenticationFailure::AccessDenied);
+                    }
+                }
                 let check = |encoded: &str| {
                     if encoded.is_empty() {
                         return false;
@@ -682,6 +710,7 @@ impl ConfiguredUserStore {
                     }
                 };
                 match verification {
+                    _ if session_token => true,
                     LoginPluginVerification::Deny => false,
                     LoginPluginVerification::PasswordlessOnly => {
                         primary.is_empty() && response.is_empty()
@@ -722,14 +751,17 @@ impl ConfiguredUserStore {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(0);
-        let in_sandbox_mode = self
-            .accounts
-            .check_password_expired(
-                identity.username(),
-                identity.host(),
-                default_password_lifetime,
-            )
-            .map_err(|_| AuthenticationFailure::PasswordExpired)?;
+        // A session migrated from another TiDB skips the expiration check,
+        // or it could neither log in nor run statements after migration.
+        let in_sandbox_mode = !session_token
+            && self
+                .accounts
+                .check_password_expired(
+                    identity.username(),
+                    identity.host(),
+                    default_password_lifetime,
+                )
+                .map_err(|_| AuthenticationFailure::PasswordExpired)?;
         self.apply_login_policy(
             identity.username(),
             identity.host(),

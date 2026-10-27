@@ -480,7 +480,7 @@ fn cluster_metadata_composes_retrievers_and_retains_warnings_on_failure() {
     assert!(session
         .warnings()
         .iter()
-        .any(|warning| warning.message == "one PD member unavailable"));
+        .any(|warning| warning.message() == "one PD member unavailable"));
     assert_eq!(
         row_text(
             session
@@ -499,7 +499,7 @@ fn cluster_metadata_composes_retrievers_and_retains_warnings_on_failure() {
     assert!(session
         .warnings()
         .iter()
-        .any(|warning| warning.message == "one PD member unavailable"));
+        .any(|warning| warning.message() == "one PD member unavailable"));
     *discovery.error.lock().unwrap() = None;
     put_str(&fake, "/topology/tiproxy/broken/info", "bad json");
     assert!(session

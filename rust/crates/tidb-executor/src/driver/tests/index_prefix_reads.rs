@@ -17,6 +17,8 @@
 //! `pkg/util/ranger`'s `cutPrefixForPoints`, and the covering / ordering /
 //! point-get rules in `pkg/planner/core`.
 
+#[allow(unused_imports)]
+use crate::RowDecodeContextExt;
 use super::*;
 
 /// `t(a varchar(20), b int, key idx(a(3)))` holding the captured fixture.
@@ -25,7 +27,7 @@ use super::*;
 /// after it; `'zzz'` is shorter than nothing else and lands in its own
 /// entry.
 fn prefix_table() -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))",
         &mut catalog,
@@ -121,7 +123,7 @@ fn inequalities_over_a_cut_endpoint_still_read_every_qualifying_row() {
 /// (`TruncateIndexValues` then `genIndexKeyStrs` in `pkg/table/tables`).
 #[test]
 fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), UNIQUE KEY uidx (a(3)))",
         &mut catalog,
@@ -152,7 +154,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
 /// point get would answer `'abcdef'` for a query about `'abcxyz'`.
 #[test]
 fn a_unique_prefix_index_does_not_answer_a_point_get() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), b INT, UNIQUE KEY uidx (a(3)))",
         &mut catalog,
@@ -186,7 +188,7 @@ fn a_unique_prefix_index_does_not_answer_a_point_get() {
 /// answers whichever rows those were.
 #[test]
 fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE o (a VARCHAR(20), KEY idx (a(3)))",
         &mut catalog,
@@ -226,7 +228,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
 /// rejecting the property at the first key part with a length.
 #[test]
 fn a_leading_whole_key_part_still_orders_by_itself() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b VARCHAR(20), KEY idx (a, b(3)))",
         &mut catalog,
@@ -314,7 +316,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
 /// the whole value and `admin check table c` passes.
 #[test]
 fn a_multi_byte_column_is_cut_by_characters() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE c (a VARCHAR(20), KEY idx (a(3)))",
         &mut catalog,
@@ -343,141 +345,11 @@ fn a_multi_byte_column_is_cut_by_characters() {
     );
 }
 
-/// `CREATE INDEX` backfills the cut entries from the rows that already exist,
-/// and the reads that follow are the same reads a table created with the
-/// index would give.
-#[test]
-fn create_index_backfills_cut_entries() {
-    let mut catalog = Catalog::default();
-    let ctx = crate::StmtContext::for_query();
-    crate::run_create_table_on("CREATE TABLE b (a VARCHAR(20), c INT)", &mut catalog).unwrap();
-    run_insert_on(
-        "INSERT INTO b VALUES ('abcdef', 1), ('abcxyz', 2)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-    crate::ddl::run_create_index_in("CREATE INDEX idx ON b (a(3))", &mut catalog, "test", &ctx)
-        .unwrap();
-    assert_eq!(
-        strings("SELECT a FROM b WHERE a = 'abcxyz'", &catalog),
-        vec!["abcxyz".to_owned()]
-    );
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "b") else {
-        panic!("the table is not storage-backed");
-    };
-    assert_eq!(
-        crate::admin_check::check_table(
-            std::sync::Arc::make_mut(table),
-            None,
-            &crate::RowDecodeContext::for_test_query_utc(), true)
-        .unwrap(),
-        1
-    );
-}
-
-/// `MODIFY COLUMN` off a prefixable type -- or onto one no wider than the
-/// prefix -- clears the key part's declared length, and the entries are
-/// rewritten to match. Go `ddl.UpdateIndexCol` (`pkg/ddl/column.go`).
-///
-/// Captured from real TiDB's `SHOW CREATE TABLE` after each of these:
-/// `UNIQUE KEY idx (a)` in all three, with no `(n)`.
-#[test]
-fn modify_column_clears_a_prefix_the_new_type_cannot_carry() {
-    for (create, modify) in [
-        ("CREATE TABLE t (a TEXT, UNIQUE INDEX idx (a(2)))", "a INT"),
-        (
-            "CREATE TABLE t (a CHAR(255), UNIQUE INDEX idx (a(2)))",
-            "a FLOAT",
-        ),
-        // The new width is no wider than the prefix, so the key part covers
-        // the whole column even though the type is still prefixable.
-        (
-            "CREATE TABLE t (a CHAR(250), UNIQUE KEY idx (a(10)))",
-            "a CHAR(9)",
-        ),
-    ] {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on(create, &mut catalog).expect(create);
-        crate::ddl::run_alter_table_in(
-            &format!("ALTER TABLE t MODIFY COLUMN {modify}"),
-            &mut catalog,
-            "test",
-            &crate::StmtContext::for_query(),
-        )
-        .expect(modify);
-        let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
-            panic!("{create}: the table is not storage-backed");
-        };
-        assert!(
-            !table.indexes()[0].has_prefix(),
-            "{create} -> {modify}: the key part still declares a prefix"
-        );
-        // The entries were rebuilt under the new (absent) length, so the
-        // index still agrees with the rows.
-        crate::admin_check::check_table(
-            std::sync::Arc::make_mut(table),
-            None,
-            &crate::RowDecodeContext::for_test_query_utc(), true)
-        .expect("the rebuilt entries match the rows");
-    }
-}
-
-/// A prefix the new type CAN still carry survives, and the entries stay cut.
-/// Go keeps `ic.Length` when the type is prefixable and wider than it, which
-/// is why the refusal below is about the LENGTH and not about the type:
-/// `TEXT` with a `(2)` key part is legal, and `TEXT` with none is 1170.
-#[test]
-fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
-    let mut catalog = Catalog::default();
-    let ctx = crate::StmtContext::for_query();
-    crate::run_create_table_on(
-        "CREATE TABLE t (a VARCHAR(255), KEY idx (a(2)))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on("INSERT INTO t VALUES ('abcdef')", &mut catalog, &ctx).unwrap();
-    crate::ddl::run_alter_table_in(
-        "ALTER TABLE t MODIFY COLUMN a TEXT",
-        &mut catalog,
-        "test",
-        &ctx,
-    )
-    .unwrap();
-    assert_eq!(
-        strings("SELECT a FROM t WHERE a = 'abcdef'", &catalog),
-        vec!["abcdef".to_owned()]
-    );
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
-        panic!("the table is not storage-backed");
-    };
-    assert_eq!(table.indexes()[0].prefix_lengths, vec![2]);
-    crate::admin_check::check_table(
-        std::sync::Arc::make_mut(table),
-        None,
-        &crate::RowDecodeContext::for_test_query_utc(), true)
-    .expect("the cut entries match the rows");
-
-    // The same column with NO surviving prefix is Go's 1170.
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on("CREATE TABLE u (a VARCHAR(255), KEY idx (a))", &mut catalog)
-        .unwrap();
-    assert!(matches!(
-        crate::ddl::run_alter_table_in(
-            "ALTER TABLE u MODIFY COLUMN a TEXT",
-            &mut catalog,
-            "test",
-            &ctx
-        ),
-        Err(DriverError::BlobKeyWithoutLength(ref column)) if column == "a"
-    ));
-}
-
 #[test]
 fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
     crate::run_create_table_on(
         "CREATE TABLE p (a VARCHAR(20), KEY idx(a(3)))",
@@ -548,7 +420,7 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
 
 #[test]
 fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
     for (table, ddl, insert, sql, expected, gets) in [
         (
@@ -662,7 +534,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
 #[test]
 fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE pn (a VARCHAR(20), b INT, KEY idx(a(2), b))",
         &mut catalog,
@@ -731,7 +603,7 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
 #[test]
 fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     for ddl in [
         "CREATE TABLE o (k INT)",

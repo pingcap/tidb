@@ -188,8 +188,14 @@ impl TableOption {
                 out.push_str("AUTO_INCREMENT = ");
                 out.push_str(v);
             }
-            Self::CharacterSet(v) => push_table_option_bare(out, "DEFAULT CHARACTER SET", v),
-            Self::Collate(v) => push_table_option_bare(out, "DEFAULT COLLATE", v),
+            // Go `ctx.WriteKeyWord(n.StrValue)`: the canonical (lowercase)
+            // name, written as a keyword.
+            Self::CharacterSet(v) => {
+                push_table_option_bare(out, "DEFAULT CHARACTER SET", &v.to_ascii_uppercase())
+            }
+            Self::Collate(v) => {
+                push_table_option_bare(out, "DEFAULT COLLATE", &v.to_ascii_uppercase())
+            }
             Self::Comment(v) => push_table_option_string(out, "COMMENT", v),
             Self::RowFormat(v) => push_table_option_bare(out, "ROW_FORMAT", v),
             Self::KeyBlockSize(v) => push_table_option_bare(out, "KEY_BLOCK_SIZE", v),

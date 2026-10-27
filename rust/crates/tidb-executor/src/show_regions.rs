@@ -24,7 +24,7 @@
 use std::collections::HashSet;
 
 use crate::kv_table::KvTable;
-use crate::region_map::RegionMeta;
+use crate::region_map::{RegionMeta, RegionStore};
 use crate::{Catalog, DriverError, MysqlError, SchemaErrorKind, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::Datum;
@@ -62,8 +62,8 @@ fn resolve<'a>(
     let target = match entry {
         TableEntry::Kv(table) => Target {
             name: match table.name() {
-                "" => table_name.to_owned(),
-                name => name.to_owned(),
+                name if name.is_empty() => table_name.to_owned(),
+                name => name,
             },
             id: table.table_id,
             table: Some(table),
@@ -211,14 +211,14 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Go `getRegionMeta`: the regions not seen yet, with their keys decoded.
 fn collect(
-    catalog: &Catalog,
+    store: &dyn RegionStore,
     range: (Vec<u8>, Vec<u8>),
     decoder: &KeyDecoder,
     seen: &mut HashSet<u64>,
     rows: &mut Vec<Row>,
 ) -> Result<(), DriverError> {
-    let regions = catalog
-        .region_metas_in(&range.0, &range.1)
+    let regions = store
+        .load_regions_in_key_range(&range.0, &range.1)
         .map_err(|error| DriverError::Mysql(MysqlError::unknown(error)))?;
     for region in regions {
         if !seen.insert(region.id) {
@@ -236,7 +236,7 @@ fn collect(
 
 /// Go `getPhysicalTableRegions`: the record range, then every index range.
 fn table_regions(
-    catalog: &Catalog,
+    store: &dyn RegionStore,
     target: &Target<'_>,
     physical_id: i64,
     seen: &mut HashSet<u64>,
@@ -251,7 +251,7 @@ fn table_regions(
         unsigned_int_handle: target.table.is_some_and(KvTable::unsigned_pk_handle),
     };
     collect(
-        catalog,
+        store,
         tidb_codec::table_key::get_table_handle_key_range(physical_id),
         &decoder(Vec::new(), 0),
         seen,
@@ -259,7 +259,7 @@ fn table_regions(
     )?;
     for index in target.table.map_or(&[][..], KvTable::indexes) {
         collect(
-            catalog,
+            store,
             tidb_tablecodec::get_table_index_key_range(physical_id, index.id),
             &decoder(
                 tidb_codec::table_key::encode_table_index_prefix(physical_id, index.id),
@@ -274,7 +274,7 @@ fn table_regions(
 
 /// Go `getPhysicalIndexRegions`.
 fn index_regions(
-    catalog: &Catalog,
+    store: &dyn RegionStore,
     index_id: i64,
     physical_id: i64,
     seen: &mut HashSet<u64>,
@@ -290,7 +290,7 @@ fn index_regions(
         unsigned_int_handle: false,
     };
     collect(
-        catalog,
+        store,
         tidb_tablecodec::get_table_index_key_range(physical_id, index_id),
         &decoder,
         seen,
@@ -325,7 +325,7 @@ fn scheduling(
     target: &Target<'_>,
 ) -> Result<std::collections::HashMap<i64, PlacementSettings>, DriverError> {
     let table_placement =
-        policy_placement(catalog, target.table.and_then(KvTable::placement_policy))?;
+        policy_placement(catalog, target.table.and_then(KvTable::placement_policy).as_ref())?;
     let mut by_id = std::collections::HashMap::new();
     match target.table.and_then(KvTable::partition) {
         Some(partitioning) => {
@@ -352,6 +352,7 @@ fn scheduling(
 /// resolved against `current_database` as Go's planner does.
 pub fn show_table_regions(
     catalog: &Catalog,
+    store: &dyn RegionStore,
     database: &str,
     table_name: &str,
     partitions: &[String],
@@ -380,7 +381,7 @@ pub fn show_table_regions(
                 physical_ids = vec![target.id];
             }
             for physical_id in physical_ids {
-                index_regions(catalog, found.id, physical_id, &mut seen, &mut rows)?;
+                index_regions(store, found.id, physical_id, &mut seen, &mut rows)?;
             }
         }
         None => {
@@ -388,12 +389,11 @@ pub fn show_table_regions(
                 physical_ids.insert(0, target.id);
             }
             for physical_id in physical_ids {
-                table_regions(catalog, &target, physical_id, &mut seen, &mut rows)?;
+                table_regions(store, &target, physical_id, &mut seen, &mut rows)?;
             }
         }
     }
     // Go `checkRegionsStatus`: whether PD is scattering each region.
-    let store = catalog.region_store();
     for row in &mut rows {
         row.region.scattering = store
             .check_region_in_scattering(row.region.id)

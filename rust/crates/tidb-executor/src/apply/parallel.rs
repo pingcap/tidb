@@ -163,7 +163,7 @@ impl Queue {
         }
         if let Event::Rows(chunk) = &event {
             self.tracker.replace_bytes_used(chunk.memory_usage());
-            if let Err(error) = self.memory.check() {
+            if let Err(error) = self.memory.check().map_err(ExecError::from) {
                 self.tracker.replace_bytes_used(0);
                 return Err(error);
             }
@@ -282,7 +282,7 @@ impl ParallelNestedLoopApplyExec {
                     .as_ref()
                     .map_or(0, |cache| cache.key_memory_consumed()),
         );
-        self.memory.check()
+        self.memory.check().map_err(ExecError::from)
     }
     fn start_round(&mut self) -> Result<(), ExecError> {
         self.pool.as_ref().expect("opened Apply pool").wait();
@@ -389,7 +389,7 @@ impl ParallelNestedLoopApplyExec {
             if self.remaining == 0 {
                 return Ok(None);
             }
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
             guard = self
                 .wake
                 .1

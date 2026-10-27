@@ -14,10 +14,10 @@
 
 //! Sessions over the REAL embedded store with the coprocessor wired.
 //!
-//! Every other module in this directory serves `cop_scans: None`, so a plan
+//! Every other module in this directory serves `kv_client: None`, so a plan
 //! that only misbehaves when base-table scans are answered by the pushdown
-//! coprocessor -- `CopScanSource` over the in-process unistore transport --
-//! never fails in-tree. This module builds the same stack `--store unistore`
+//! coprocessor -- the executor's DAG sent through the in-process unistore
+//! client -- never fails in-tree. This module builds the same stack `--store unistore`
 //! boots and pins those plans.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -45,7 +45,7 @@ use crate::domain::session_api::QuerySessionFactory;
 
 mod go_executor_protocol;
 
-fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
+pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)
 }
 
@@ -76,7 +76,7 @@ fn cop_backed_stack_with_stats_lease(
     (stack, users)
 }
 
-fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
+pub(super) fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
@@ -125,7 +125,7 @@ fn a_node_serves_a_store_of_either_layout_by_name() {
         (BootstrapLayout::Classic, "117"),
         (BootstrapLayout::NextGen, "8"),
     ] {
-        tidb_ddl::bootstrap_publish::override_layout_on_this_thread(Some(layout));
+        tidb_exec::bootstrap_publish::override_layout_on_this_thread(Some(layout));
         let (stack, _users) = cop_backed_stack();
         let mut session = stack.factory.open_session(session_context(130)).unwrap();
         assert_eq!(
@@ -187,7 +187,7 @@ fn a_node_serves_a_store_of_either_layout_by_name() {
         rows(&mut session, "drop user layout_u");
         rows(&mut session, "set global max_connections = default");
     }
-    tidb_ddl::bootstrap_publish::override_layout_on_this_thread(None);
+    tidb_exec::bootstrap_publish::override_layout_on_this_thread(None);
 }
 
 #[test]
@@ -2747,12 +2747,13 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
         pool.as_ref(),
         |context| {
             context.with_session(|session| {
-                session.analyze = Arc::new(KillingSystemAnalyze {
+                let analyze = Arc::new(KillingSystemAnalyze {
                     inner: Arc::clone(&session.analyze),
                     processes: factory.processes(),
                     factory: Arc::downgrade(&factory),
                     process_id: Arc::clone(&process_id),
                 });
+                session.set_analyzer(&factory, analyze);
                 Ok(())
             })
         },
@@ -2848,7 +2849,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
         |context| {
             context
                 .with_session(|session| {
-                    session.analyze = Arc::new(ObservedSystemAnalyze {
+                    let analyze = Arc::new(ObservedSystemAnalyze {
                         inner: Arc::clone(&session.analyze),
                         processes: factory.processes(),
                         kill,
@@ -2857,6 +2858,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
                         observed: Arc::clone(&observed),
                         interrupted: Arc::clone(&interrupted),
                     });
+                    session.set_analyzer(&factory, analyze);
                     Ok(())
                 })
                 .unwrap();
@@ -5098,7 +5100,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     let mut job_id = 0;
     handle
@@ -5191,7 +5193,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         transactions: Arc::clone(&factory.transactions),
         catalog: Arc::clone(&factory.catalog),
         global_vars: factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&factory.auto_ids),
     };
     let mut job_id = 0;
     handle
@@ -5280,7 +5282,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     for (process_id, instance, created_at) in [
         (1, local_instance, old),
@@ -6035,7 +6037,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
         .historical_stats_worker
@@ -6113,7 +6115,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
         .historical_stats_worker
@@ -6706,7 +6708,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
-        auto_ids: None,
+        auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     for table_id in queued {
         session
@@ -9500,7 +9502,7 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
 ///
 /// This is the path `--store unistore --cluster-session` actually serves, and
 /// it had NO coverage: the mock-seam modules in this directory serve
-/// `cop_scans: None`, and the pipeline session's own `CREATE VIEW` wire test
+/// `kv_client: None`, and the pipeline session's own `CREATE VIEW` wire test
 /// exercises a different session. That blind spot is how seven commits landed
 /// on a working feature and broke it in silence.
 ///
@@ -14170,7 +14172,8 @@ fn autocommit_off_transaction_is_pending_until_a_statement_activates_it() {
     for statement in [
         "SELECT 1",
         "SET @a = 1",
-        "SHOW TABLES",
+        // Go `buildShow` refuses SHOW TABLES with no current database.
+        "SHOW TABLES FROM test",
         "EXPLAIN SELECT 1",
         "SELECT now()",
     ] {
@@ -14607,7 +14610,7 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
     assert_eq!(attributes(&mut session).len(), 2);
     session.execute_write("DROP DATABASE d2").unwrap();
     assert_eq!(
-        tidb_executor::label_manager::label_rule_manager()
+        tidb_domain::label_manager::label_rule_manager()
             .get_label_rules(&["schema/d2/x".to_owned()])
             .unwrap()
             .len(),
@@ -16794,10 +16797,11 @@ fn failed_stats_cache_update_fails_the_analyze_statement() {
     rows(&mut session, "INSERT INTO analyze_update_a VALUES (1), (2)");
     rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
     let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
-    session.analyze = Arc::new(FailingStatsCacheUpdate {
+    let analyze = Arc::new(FailingStatsCacheUpdate {
         inner: Arc::clone(&session.analyze),
         updated: Arc::clone(&updated),
     });
+    session.set_analyzer(&stack.factory, analyze);
     let error = session
         .execute("ANALYZE TABLE analyze_update_a, analyze_update_b")
         .err()
@@ -19627,8 +19631,7 @@ fn a_failed_commit_publishes_nothing_later() {
         // transaction is open, as a schema or statistics reload does.
         let shared = session.store.session.shared_catalog();
         let mut catalog = shared.lock().unwrap();
-        let charset = catalog.database_charset("failed_commit").unwrap();
-        assert!(catalog.set_database_charset("failed_commit", charset));
+        assert!(catalog.set_database_placement_policy("failed_commit", None));
     }
     session.control_transaction("COMMIT").unwrap();
     assert_eq!(
@@ -19974,7 +19977,7 @@ fn prepare_shows_only_the_plan_cache_note() {
             .store.session
             .warnings()
             .iter()
-            .map(|warning| warning.code)
+            .map(|warning| warning.code())
             .collect::<Vec<_>>(),
         vec![1105]
     );
@@ -22239,6 +22242,16 @@ fn table_locks_run_as_persisted_jobs_like_go() {
 /// that already holds queues nothing.
 #[test]
 fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
+    struct FailpointGuard;
+    impl Drop for FailpointGuard {
+        fn drop(&mut self) {
+            fail::remove("mockTiFlashStoreCount");
+        }
+    }
+    // Go `TestSetTableFlashReplica` enables `mockTiFlashStoreCount` so the
+    // replica count passes `checkTiFlashReplicaCount` without TiFlash stores.
+    fail::cfg("mockTiFlashStoreCount", "return(true)").expect("enable failpoint");
+    let _guard = FailpointGuard;
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1949)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
@@ -22260,7 +22273,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
     };
     let update = |available: bool| {
         stack.factory.ddl.execute(
-            &tidb_exec::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
+            &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
                 table_id,
                 available,
             },
@@ -22284,7 +22297,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
         "the status already holds: no job"
     );
     let missing = stack.factory.ddl.execute(
-        &tidb_exec::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
+        &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
             table_id: table_id + 1000,
             available: true,
         },
@@ -24157,4 +24170,26 @@ fn a_conjunct_the_cop_description_cannot_express_never_changes_an_answer() {
             .collect();
         assert_eq!(topn, expected_topn, "`{predicate}`: the pushed TopN");
     }
+}
+
+/// Go `kv.Storage.GetClient()`: a storage session's tables reach the node's
+/// coprocessor client, which `ADMIN CHECKSUM TABLE` sends through. A session
+/// opened without it answers unistore's in-process stub instead of
+/// checksumming the regions.
+#[test]
+fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
+    let (stack, _users) = cop_backed_stack();
+    let mut opened = stack
+        .factory
+        .open_storage_session(141)
+        .expect("storage session");
+    let has_client = opened
+        .store
+        .session
+        .with_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
+            Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store.client().is_some()),
+            _ => Ok(false),
+        })
+        .expect("catalog");
+    assert!(has_client);
 }

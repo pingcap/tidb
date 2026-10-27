@@ -43,7 +43,7 @@ use super::*;
 /// chose an IndexJoin driving 800k lookups.
 #[test]
 fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     for table in [
         "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
          s_nationkey BIGINT NOT NULL, s_acctbal DECIMAL(15,2) NOT NULL)",
@@ -144,7 +144,7 @@ fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
 /// preserved DataSource together with its ordinary local predicates.
 #[test]
 fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE customer (c_custkey BIGINT PRIMARY KEY CLUSTERED, \
          c_phone VARCHAR(16), c_acctbal DECIMAL(15,2))",
@@ -309,7 +309,7 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
 /// predicate. The non-evaluating behavior is an opt-in session variable.
 #[test]
 fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE balances (v DECIMAL(10,2))", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -508,7 +508,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
             .collect()
     }
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE outer_t (k BIGINT PRIMARY KEY CLUSTERED)",
         &mut catalog,
@@ -782,7 +782,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
 fn correlated_avg_predicate_decorrelates_to_grouped_join() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY, p_brand VARCHAR(16), \
          p_container VARCHAR(16))",
@@ -850,7 +850,7 @@ fn correlated_avg_predicate_decorrelates_to_grouped_join() {
 fn correlated_sum_predicate_pulls_above_unique_outer_join() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY, p_name VARCHAR(32))",
         &mut catalog,
@@ -1207,7 +1207,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
 /// NestedLoopApplyExec loop.
 #[test]
 fn correlated_subqueries() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE o (id BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE i (id BIGINT, w BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -1362,7 +1362,7 @@ fn correlated_subqueries() {
 /// [`grouped_correlated_subqueries`] doubled.
 #[test]
 fn correlated_exists_apply_answers_once_per_outer_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (g BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE s (k BIGINT, x BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -1423,7 +1423,7 @@ fn correlated_exists_apply_answers_once_per_outer_row() {
 /// ```
 #[test]
 fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
     run_insert_on(
@@ -1495,7 +1495,7 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
 /// for the group keys and the aggregate arguments alike.
 #[test]
 fn an_aggregate_over_a_correlated_exists_decorrelates() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on("CREATE TABLE w (g VARCHAR(5), v INT)", &mut catalog).unwrap();
     run_insert_on(

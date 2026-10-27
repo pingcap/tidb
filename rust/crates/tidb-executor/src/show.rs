@@ -333,3 +333,61 @@ impl ShowRetrieval {
             .cloned()
     }
 }
+
+/// What follows `DEFAULT ` in `SHOW CREATE TABLE`, quoting included.
+///
+/// Go `pkg/executor/show.go`: the `CURRENT_TIMESTAMP` marker prints bare
+/// with the column's fsp appended, while `CURRENT_DATE` and a
+/// `DefaultIsExpr` default print parenthesised and unquoted; a literal
+/// prints single-quoted.
+#[must_use]
+pub fn show_create_default_clause(
+    default: &tidb_table::column_default::ColumnDefault,
+    field_type: &tidb_datatype::FieldType,
+    literal_text: &str,
+) -> String {
+    use tidb_datatype::FieldTypeCode;
+    use tidb_table::column_default::{ColumnDefault, ComputedDefaultKind};
+
+    match default {
+        // Go's `if col.GetType() == mysql.TypeBit` arm: a BIT column's
+        // default is already a `b'...'` literal and is NOT quoted again.
+        ColumnDefault::Value(_) if field_type.code() == FieldTypeCode::Bit => {
+            literal_text.to_owned()
+        }
+        // Go quotes the stored text through `format.OutputFormat`, which
+        // doubles quotes and backslashes and escapes NUL/CR/LF -- without
+        // it a default holding any of them prints a body that does not
+        // re-parse.
+        ColumnDefault::Value(_) => {
+            format!("'{}'", tidb_util::format::output_format(literal_text))
+        }
+        ColumnDefault::Computed(computed)
+            if computed.kind == ComputedDefaultKind::CurrentTimestamp =>
+        {
+            let fsp = field_type.decimal();
+            if fsp > 0 {
+                format!("{}({fsp})", computed.text)
+            } else {
+                computed.text.clone()
+            }
+        }
+        ColumnDefault::Computed(computed) => format!("({})", computed.text),
+    }
+}
+
+#[cfg(test)]
+mod show_create_default_tests {
+    use super::*;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_table::column_default::ColumnDefault;
+
+    #[test]
+    fn literal_show_create_clause_uses_util_output_format() {
+        let default = ColumnDefault::Value(Datum::new_string("unused"));
+        let field_type = FieldType::new(FieldTypeCode::Varchar);
+        let clause = show_create_default_clause(&default, &field_type, "slash\\quote'\0nul\nline\rcarriage");
+
+        assert_eq!(clause, "'slash\\\\quote''\\0nul\\nline\\rcarriage'");
+    }
+}

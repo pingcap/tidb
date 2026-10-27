@@ -62,7 +62,7 @@ fn warnings(session: &Session) -> Vec<(u16, String)> {
     session
         .warnings()
         .iter()
-        .map(|w| (w.code, w.message.clone()))
+        .map(|w| (w.code(), w.message().to_owned()))
         .collect()
 }
 
@@ -280,7 +280,7 @@ fn a_strict_write_fails_on_the_same_cast_a_read_only_warns_about() {
         warnings(&strict),
         [(1292, "Truncated incorrect INTEGER value: 'x'".to_owned())]
     );
-    assert_eq!(strict.warnings()[0].level, crate::WarningLevel::Error);
+    assert_eq!(strict.warnings()[0].warning_level(), crate::WarningLevel::Error);
     // The row never landed, so the refusal is real rather than cosmetic.
     assert_eq!(
         row_text(strict.run("SELECT a FROM t")),
@@ -297,7 +297,7 @@ fn a_strict_write_fails_on_the_same_cast_a_read_only_warns_about() {
         warnings(&permissive),
         [(1292, "Truncated incorrect INTEGER value: 'x'".to_owned())]
     );
-    assert_eq!(permissive.warnings()[0].level, crate::WarningLevel::Warning);
+    assert_eq!(permissive.warnings()[0].warning_level(), crate::WarningLevel::Warning);
     // The best-effort prefix is what Go stores, so the row IS there as 0.
     assert_eq!(row_text(permissive.run("SELECT a FROM t")), [["0"]]);
 }

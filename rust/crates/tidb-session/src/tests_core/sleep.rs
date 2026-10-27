@@ -11,9 +11,9 @@ fn sleep_uses_statement_conversion_and_waiting_semantics() {
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Truncated incorrect DOUBLE value: 'a'"
     );
 
@@ -38,7 +38,7 @@ fn sleep_uses_statement_conversion_and_waiting_semantics() {
         .run("INSERT INTO sleep_out SELECT SLEEP('a')")
         .unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(
         session.run("SELECT v FROM sleep_out").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
@@ -56,7 +56,7 @@ fn sleep_uses_statement_conversion_and_waiting_semantics() {
         .run("INSERT INTO sleep_out VALUES (SLEEP(-1))")
         .unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1210);
+    assert_eq!(session.warnings()[0].code(), 1210);
 
     // Go's explicit duration-overflow guard is a hard incorrect-arguments
     // error, not the bad-NULL alias and therefore not downgraded by IGNORE.

@@ -64,7 +64,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
 /// not require prepared-protocol metadata or a pessimistic transaction.
 #[test]
 fn union_issue_data_type_and_null_arms() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     assert_eq!(
         rows_text(&select(
             &catalog,
@@ -108,7 +108,7 @@ fn union_issue_data_type_and_null_arms() {
 /// prefix bytes is found by a LIKE pattern built from another blob.
 #[test]
 fn issue50393_blob_like_prefix() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t1 (a blob)");
     create(&mut catalog, "create table t2 (a blob)");
     insert(&mut catalog, "insert into t1 values (0xC2A0)");
@@ -126,7 +126,7 @@ fn issue50393_blob_like_prefix() {
 /// precision argument keeps the constant result through MIN.
 #[test]
 fn issue52978_truncate_double_constant() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (a int)");
     insert(
         &mut catalog,

@@ -23,7 +23,7 @@ use crate::domain::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChang
 use crate::domain::session_api::{QuerySession, QuerySessionFactory};
 use std::sync::Arc;
 use tidb_datatype::Datum;
-use crate::vars::GlobalSysvars;
+use crate::GlobalSysvars;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,

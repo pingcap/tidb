@@ -1,0 +1,22 @@
+[package]
+name = "tidb-ddl-label"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/label (placement label rules) for the TiDB Rust rewrite."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tikv-client = { workspace = true }
+
+[lints]
+workspace = true

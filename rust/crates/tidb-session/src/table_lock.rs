@@ -26,14 +26,14 @@ use std::collections::{BTreeMap, HashSet};
 
 use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
-use tidb_executor::ddl::table_lock;
+use tidb_ddl_build::table_lock;
 use tidb_executor::{Catalog, DriverError, KvTable, SchemaErrorKind, TableEntry};
 use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_util::stringutil::go_to_lower;
 
-use crate::privilege::GlobalPriv;
+use crate::privilege::PrivilegeType;
 use crate::table_privilege::TablePrivilegeRequest;
-use crate::{Session, StmtOutput};
+use crate::Session;
 
 /// Go `ddl.checkTableLocked` over an in-process table.
 fn check_table_locked(
@@ -41,32 +41,8 @@ fn check_table_locked(
     tp: TableLockType,
     info: &SessionInfo,
 ) -> Result<(), DriverError> {
-    table_lock::check_table_locked(&go_to_lower(&table.name), table.lock(), tp, info)
-}
-
-/// Go `ddl.unlockTable` over an in-process table.
-fn unlock_table(table: &mut KvTable, info: &SessionInfo, is_cleanup: bool) {
-    if let Some(next) = table_lock::unlock_table(table.lock(), info, is_cleanup) {
-        table.set_lock(next);
-    }
-}
-
-/// Go `ddl.unlockTables` over the job's `UnlockTables`: a table dropped since
-/// it was locked is skipped.
-fn unlock_tables(
-    catalog: &mut Catalog,
-    unlock: &[TableLockTpInfo],
-    info: &SessionInfo,
-    is_cleanup: bool,
-) {
-    for entry in unlock {
-        let Some((schema, name)) = catalog.table_names_by_id(entry.table_id) else {
-            continue;
-        };
-        if let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&schema, &name) {
-            unlock_table(std::sync::Arc::make_mut(table), info, is_cleanup);
-        }
-    }
+    table_lock::check_table_locked(&go_to_lower(&table.name()), table.lock().as_ref(), tp, info)
+        .map_err(DriverError::from)
 }
 
 /// Go `lock.ErrLockedTableDropped`: the session dropped a table it holds a
@@ -100,10 +76,10 @@ impl Checker<'_> {
         &self,
         db: &str,
         table: &str,
-        privilege: GlobalPriv,
+        privilege: PrivilegeType,
         alter_writable: bool,
     ) -> Result<(), LockCheckError> {
-        if (db.is_empty() && table.is_empty()) || privilege == GlobalPriv::LockTables {
+        if (db.is_empty() && table.is_empty()) || privilege == tidb_mysql::LockTablesPriv {
             return Ok(());
         }
         // System and memory schemas take no table lock.
@@ -114,8 +90,8 @@ impl Checker<'_> {
             return self.check_lock_in_db(db, privilege);
         }
         match privilege {
-            GlobalPriv::ShowDatabases => return Ok(()),
-            GlobalPriv::Create | GlobalPriv::CreateView => {
+            tidb_mysql::ShowDBPriv => return Ok(()),
+            tidb_mysql::CreatePriv | tidb_mysql::CreateViewPriv => {
                 if self.has_locked_tables() {
                     return Err(DriverError::TableNotLocked(table.to_owned()).into());
                 }
@@ -130,7 +106,7 @@ impl Checker<'_> {
         let Some(lock) = tb.lock() else {
             return Ok(());
         };
-        if privilege == GlobalPriv::Drop && tb.name == table && self.has_locked_tables() {
+        if privilege == tidb_mysql::DropPriv && tb.name() == table && self.has_locked_tables() {
             if self.locked_tables.contains_key(&tb.table_id) {
                 if lock.tp == TableLockType::WRITE {
                     return Err(LockCheckError::LockedTableDropped);
@@ -139,7 +115,7 @@ impl Checker<'_> {
                     lock.tp,
                     TableLockType::READ | TableLockType::WRITE_LOCAL | TableLockType::READ_ONLY
                 ) {
-                    return Err(DriverError::TableNotLockedForWrite(tb.name.clone()).into());
+                    return Err(DriverError::TableNotLockedForWrite(tb.name()).into());
                 }
             }
         }
@@ -148,11 +124,11 @@ impl Checker<'_> {
                 if check_lock_tp_meet_privilege(held.tp, privilege) {
                     return Ok(());
                 }
-                return Err(DriverError::TableNotLockedForWrite(tb.name.clone()).into());
+                return Err(DriverError::TableNotLockedForWrite(tb.name()).into());
             }
-            return Err(DriverError::TableNotLocked(tb.name.clone()).into());
+            return Err(DriverError::TableNotLocked(tb.name()).into());
         }
-        if privilege == GlobalPriv::Select
+        if privilege == tidb_mysql::SelectPriv
             && matches!(
                 lock.tp,
                 TableLockType::READ | TableLockType::WRITE_LOCAL | TableLockType::READ_ONLY
@@ -163,39 +139,39 @@ impl Checker<'_> {
         if alter_writable && lock.tp == TableLockType::READ_ONLY {
             return Ok(());
         }
-        Err(table_lock::table_locked_error(&go_to_lower(&tb.name), lock).into())
+        Err(DriverError::from(table_lock::table_locked_error(&go_to_lower(&tb.name()), &lock)).into())
     }
 
     /// Go `Checker.CheckLockInDB`.
-    fn check_lock_in_db(&self, db: &str, privilege: GlobalPriv) -> Result<(), LockCheckError> {
+    fn check_lock_in_db(&self, db: &str, privilege: PrivilegeType) -> Result<(), LockCheckError> {
         if self.has_locked_tables()
             && matches!(
                 privilege,
-                GlobalPriv::Create | GlobalPriv::Drop | GlobalPriv::Alter
+                tidb_mysql::CreatePriv | tidb_mysql::DropPriv | tidb_mysql::AlterPriv
             )
         {
             return Err(DriverError::LockOrActiveTransaction.into());
         }
-        if privilege == GlobalPriv::Create {
+        if privilege == tidb_mysql::CreatePriv {
             return Ok(());
         }
         // Go checks every locked table's NAME in `db`, whichever schema the
         // locked table itself lives in.
         for (_, table) in self.catalog.locked_tables() {
-            self.check_table_lock(db, &go_to_lower(&table.name), privilege, false)?;
+            self.check_table_lock(db, &go_to_lower(&table.name()), privilege, false)?;
         }
         Ok(())
     }
 }
 
 /// Go `lock.checkLockTpMeetPrivilege`.
-fn check_lock_tp_meet_privilege(tp: TableLockType, privilege: GlobalPriv) -> bool {
+fn check_lock_tp_meet_privilege(tp: TableLockType, privilege: PrivilegeType) -> bool {
     // READ ONLY is session-unrelated and never reaches here.
     match tp {
         TableLockType::WRITE | TableLockType::WRITE_LOCAL => true,
         // ShowDB, Create and CreateView were answered before; a READ lock
         // admits nothing else but SELECT.
-        TableLockType::READ => privilege == GlobalPriv::Select,
+        TableLockType::READ => privilege == tidb_mysql::SelectPriv,
         _ => false,
     }
 }
@@ -203,7 +179,7 @@ fn check_lock_tp_meet_privilege(tp: TableLockType, privilege: GlobalPriv) -> boo
 /// Go `core.CheckTableLock`'s loop over the visit infos.
 fn check_visits(
     checker: &Checker<'_>,
-    visits: &[(&str, &str, GlobalPriv)],
+    visits: &[(&str, &str, PrivilegeType)],
 ) -> Result<(), DriverError> {
     for (db, table, privilege) in visits {
         // `alterWritable` is set only by `ALTER TABLE ... READ ONLY`'s
@@ -317,7 +293,7 @@ impl Session {
         if !self.table_lock_check_needed(catalog) {
             return Ok(());
         }
-        let visits: Vec<(&str, &str, GlobalPriv)> = requests
+        let visits: Vec<(&str, &str, PrivilegeType)> = requests
             .iter()
             .filter(|request| request.dynamic_privileges.is_empty())
             .map(|request| {
@@ -353,16 +329,16 @@ impl Session {
             // The cascade's `DELETE`/`UPDATE` reads the child table and then
             // writes it, in `buildDelete`/`buildUpdate`'s visit order.
             let write = if delete {
-                GlobalPriv::Delete
+                tidb_mysql::DeletePriv
             } else {
-                GlobalPriv::Update
+                tidb_mysql::UpdatePriv
             };
             check_visits(
                 &Checker {
                     locked_tables: &locked_tables,
                     catalog,
                 },
-                &[(db, table, GlobalPriv::Select), (db, table, write)],
+                &[(db, table, tidb_mysql::SelectPriv), (db, table, write)],
             )
         }))
     }
@@ -409,7 +385,7 @@ impl Session {
             };
             check_table_locked(table, lock.lock_type, &info)?;
             if !unique_table_id.insert(table.table_id) {
-                return Err(DriverError::NonuniqTable(table.name.clone()));
+                return Err(DriverError::NonuniqTable(table.name()));
             }
             lock_tables.push(TableLockTpInfo {
                 schema_id,
@@ -428,10 +404,10 @@ impl Session {
     pub fn cluster_lock_tables_statement(
         &mut self,
         locks: &[tidb_ast::TableLock],
-    ) -> Result<tidb_exec::cluster_ddl::DdlStatement, DriverError> {
+    ) -> Result<tidb_ddl::cluster_ddl::DdlStatement, DriverError> {
         let unlock_tables = self.get_all_table_locks();
         let (session, lock_tables, _) = self.lock_tables_args(locks)?;
-        Ok(tidb_exec::cluster_ddl::DdlStatement::LockTables {
+        Ok(tidb_ddl::cluster_ddl::DdlStatement::LockTables {
             lock_tables,
             unlock_tables,
             session,
@@ -441,12 +417,12 @@ impl Session {
     /// The cluster lock job that releases every lock this session holds
     /// (`UNLOCK TABLES`, and `session.Close`); `None` with none held, where Go's
     /// `UnlockTables` submits nothing.
-    pub fn cluster_unlock_tables_statement(&self) -> Option<tidb_exec::cluster_ddl::DdlStatement> {
+    pub fn cluster_unlock_tables_statement(&self) -> Option<tidb_ddl::cluster_ddl::DdlStatement> {
         let unlock_tables = self.get_all_table_locks();
         if unlock_tables.is_empty() {
             return None;
         }
-        Some(tidb_exec::cluster_ddl::DdlStatement::UnlockTables {
+        Some(tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
             unlock_tables,
             session: self.table_lock_session_info(),
             is_cleanup: false,
@@ -455,8 +431,8 @@ impl Session {
 
     /// Go `executor.LockTables`' `AddTableLock` before the job, once the
     /// statement passed its privilege check.
-    pub fn begin_cluster_lock_job(&mut self, statement: &tidb_exec::cluster_ddl::DdlStatement) {
-        if let tidb_exec::cluster_ddl::DdlStatement::LockTables { lock_tables, .. } = statement {
+    pub fn begin_cluster_lock_job(&mut self, statement: &tidb_ddl::cluster_ddl::DdlStatement) {
+        if let tidb_ddl::cluster_ddl::DdlStatement::LockTables { lock_tables, .. } = statement {
             self.add_table_lock(lock_tables);
         }
     }
@@ -467,9 +443,9 @@ impl Session {
     /// `HandleLockTablesOnFinish`).
     pub fn cluster_ddl_lock_effect(
         &self,
-        statement: &tidb_exec::cluster_ddl::DdlStatement,
+        statement: &tidb_ddl::cluster_ddl::DdlStatement,
     ) -> ClusterDdlLockEffect {
-        use tidb_exec::cluster_ddl::DdlStatement;
+        use tidb_ddl::cluster_ddl::DdlStatement;
         if !table_lock_enabled() || !self.has_locked_tables() {
             return ClusterDdlLockEffect::None;
         }
@@ -533,9 +509,9 @@ impl Session {
 
     /// Go `executor.LockTables`/`UnlockTables` after a successful cluster
     /// lock job: the released locks leave the session, the new ones stay.
-    pub fn finish_cluster_lock_job(&mut self, statement: &tidb_exec::cluster_ddl::DdlStatement) {
+    pub fn finish_cluster_lock_job(&mut self, statement: &tidb_ddl::cluster_ddl::DdlStatement) {
         match statement {
-            tidb_exec::cluster_ddl::DdlStatement::LockTables {
+            tidb_ddl::cluster_ddl::DdlStatement::LockTables {
                 lock_tables,
                 unlock_tables,
                 ..
@@ -543,13 +519,13 @@ impl Session {
                 self.release_table_locks(unlock_tables);
                 self.add_table_lock(lock_tables);
             }
-            tidb_exec::cluster_ddl::DdlStatement::UnlockTables {
+            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
                 is_cleanup: false, ..
             } => {
                 self.release_all_table_locks();
             }
             // Go `CleanupTableLock` releases only the tables it cleaned.
-            tidb_exec::cluster_ddl::DdlStatement::UnlockTables { unlock_tables, .. } => {
+            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables { unlock_tables, .. } => {
                 self.release_table_locks(unlock_tables);
             }
             _ => {}
@@ -601,7 +577,7 @@ impl Session {
                 unlocked += 1;
             }
             if !unique_table_id.insert(table.table_id) {
-                return Err(DriverError::NonuniqTable(table.name.clone()));
+                return Err(DriverError::NonuniqTable(table.name()));
             }
             cleanup.push(TableLockTpInfo {
                 schema_id,
@@ -615,99 +591,19 @@ impl Session {
         Ok(Some(cleanup))
     }
 
-    /// Go `DDLExec.executeCleanupTableLock` and `executor.CleanupTableLock`,
-    /// with the `IsCleanup` job `onUnlockTables` runs; the session then lets
-    /// go of the cleaned tables.
-    pub(crate) fn execute_cleanup_table_lock(
-        &mut self,
-        tables: &[Vec<String>],
-    ) -> Result<StmtOutput, DriverError> {
-        let Some(cleanup) = self.cleanup_table_lock_args(tables)? else {
-            return Ok(StmtOutput::Done(false));
-        };
-        let context = self.ddl_statement_context();
-        let info = self.table_lock_session_info();
-        self.with_persistent_catalog_mut(|catalog| {
-            let schema = catalog
-                .table_names_by_id(cleanup[0].table_id)
-                .map(|(schema, _)| schema)
-                .unwrap_or_default();
-            tidb_executor::ddl::submit_ddl_job(
-                catalog,
-                &context,
-                &schema,
-                "",
-                tidb_model::ActionType::ACTION_UNLOCK_TABLE,
-            )?;
-            unlock_tables(catalog, &cleanup, &info, true);
-            Ok(())
-        })?;
-        self.release_table_locks(&cleanup);
-        Ok(StmtOutput::Done(false))
-    }
-
     /// The cluster `IsCleanup` unlock job for `ADMIN CLEANUP TABLE LOCK`,
     /// `None` when no named table is locked.
     pub fn cluster_cleanup_table_lock_statement(
         &self,
         tables: &[Vec<String>],
-    ) -> Result<Option<tidb_exec::cluster_ddl::DdlStatement>, DriverError> {
+    ) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, DriverError> {
         Ok(self.cleanup_table_lock_args(tables)?.map(|unlock_tables| {
-            tidb_exec::cluster_ddl::DdlStatement::UnlockTables {
+            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
                 unlock_tables,
                 session: self.table_lock_session_info(),
                 is_cleanup: true,
             }
         }))
-    }
-
-    /// Go `executor.UnlockTables`.
-    fn unlock_tables(&mut self, unlock: Vec<TableLockTpInfo>) -> Result<(), DriverError> {
-        if unlock.is_empty() {
-            return Ok(());
-        }
-        let context = self.ddl_statement_context();
-        let info = self.table_lock_session_info();
-        self.with_persistent_catalog_mut(|catalog| {
-            let schema = catalog
-                .table_names_by_id(unlock[0].table_id)
-                .map(|(schema, _)| schema)
-                .unwrap_or_default();
-            tidb_executor::ddl::submit_ddl_job(
-                catalog,
-                &context,
-                &schema,
-                "",
-                tidb_model::ActionType::ACTION_UNLOCK_TABLE,
-            )?;
-            unlock_tables(catalog, &unlock, &info, false);
-            Ok(())
-        })?;
-        self.release_all_table_locks();
-        Ok(())
-    }
-
-    /// Go `session.Close`: a session's table locks are released when it ends.
-    pub(crate) fn release_table_locks_on_close(&mut self) {
-        if self.has_locked_tables() && table_lock_enabled() {
-            // Go logs and moves on when the release fails.
-            let _ = self.unlock_tables(self.get_all_table_locks());
-        }
-    }
-
-    /// Go's DDL executors release the session's lock on a table they drop
-    /// (`dropTableObject`) or on every table of a dropped schema
-    /// (`DropSchema`).
-    pub(crate) fn release_dropped_table_locks(&mut self, table_ids: &[i64]) {
-        if !table_lock_enabled() {
-            return;
-        }
-        let held: Vec<i64> = table_ids
-            .iter()
-            .copied()
-            .filter(|table_id| self.check_table_locked(*table_id).0)
-            .collect();
-        self.release_table_lock_by_table_ids(&held);
     }
 
     /// Go `HandleLockTablesOnSuccessSubmit`/`HandleLockTablesOnFinish` for a

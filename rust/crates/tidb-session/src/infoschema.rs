@@ -29,6 +29,7 @@
 use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
 };
+use crate::privilege::PrivilegeTypeExt;
 use tidb_executor::{Catalog, KvTable, TableEntry};
 
 pub use tidb_executor::infoschema_meta::{
@@ -120,7 +121,7 @@ impl SchemaVisibility {
             match mask {
                 PrivMask::Any => crate::privilege::any_priv_mask(),
                 PrivMask::Column => crate::privilege::column_privs_mask(),
-                PrivMask::Select => crate::privilege::GlobalPriv::Select.bit(),
+                PrivMask::Select => tidb_mysql::SelectPriv.bit(),
             },
         )
     }
@@ -129,15 +130,14 @@ impl SchemaVisibility {
     /// the session holds on the table, joined lower-case as `PrivToString`
     /// prints them. A session with no privilege checker sees all four.
     fn column_privileges(&self, database: &str, table: &str) -> String {
-        use crate::privilege::GlobalPriv;
         if self.context.is_none() {
             return PRIVILEGES.to_owned();
         }
         [
-            (GlobalPriv::Select, "select"),
-            (GlobalPriv::Insert, "insert"),
-            (GlobalPriv::Update, "update"),
-            (GlobalPriv::References, "references"),
+            (tidb_mysql::SelectPriv, "select"),
+            (tidb_mysql::InsertPriv, "insert"),
+            (tidb_mysql::UpdatePriv, "update"),
+            (tidb_mysql::ReferencesPriv, "references"),
         ]
         .iter()
         .filter(|(privilege, _)| self.allows_bits(database, table, privilege.bit()))
@@ -268,7 +268,7 @@ pub(crate) fn tidb_index_usage_rows(
         if table.pk_handle_offset().is_some() {
             rows.push(usage_row(
                 &schema,
-                &table.name,
+                &table.name(),
                 "primary",
                 collector.get_index_usage(table.table_id, 0),
             ));
@@ -276,7 +276,7 @@ pub(crate) fn tidb_index_usage_rows(
         for index in table.indexes() {
             rows.push(usage_row(
                 &schema,
-                &table.name,
+                &table.name(),
                 &index.name.go_to_lower(),
                 collector.get_index_usage(table.table_id, index.id),
             ));
@@ -466,14 +466,14 @@ fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec
             } else {
                 ids.iter()
                     .map(|id| {
-                        tidb_exec::tiflash_replica_manager::cached_replica_progress(*id)
+                        tidb_ddl::tiflash_replica_manager::cached_replica_progress(*id)
                             .unwrap_or(fallback)
                     })
                     .sum::<f64>()
                     / ids.len() as f64
             }
         } else {
-            tidb_exec::tiflash_replica_manager::cached_replica_progress(table.table_id)
+            tidb_ddl::tiflash_replica_manager::cached_replica_progress(table.table_id)
                 .unwrap_or(fallback)
         };
         let progress = tidb_datatype::truncate(progress, 2);
@@ -1998,11 +1998,13 @@ pub(crate) fn attributes_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, tidb_executor::DriverError> {
-    use tidb_executor::ddl_label;
-    let rules =
-        catalog
-            .get_all_label_rules()
-            .map_err(|error| tidb_executor::DriverError::unsupported(format!("get the label rules failed: {error}")))?;
+    use tidb_ddl_label as ddl_label;
+    // Go `infosync.GetAllLabelRules`: the node's label-rule manager.
+    let rules = tidb_domain::label_manager::label_rule_manager()
+        .get_all_label_rules(&ddl_label::CodecV1)
+        .map_err(|error| {
+            tidb_executor::DriverError::unsupported(format!("get the label rules failed: {error}"))
+        })?;
     let mut rows = Vec::with_capacity(rules.len());
     for rule in rules {
         let Ok((db_name, table_name, partition_name)) = check_label_rule(&rule) else {
@@ -2087,9 +2089,9 @@ fn go_sprint_any(value: Option<&serde_json::Value>) -> String {
 /// Go `checkRule`: the schema, table and (possibly empty) partition a rule
 /// ID names, or why the rule is malformed.
 fn check_label_rule(
-    rule: &tidb_executor::ddl_label::Rule,
+    rule: &tidb_ddl_label::Rule,
 ) -> Result<(String, String, String), String> {
-    use tidb_executor::ddl_label::{ID_PREFIX, KEYSPACE_PREFIX};
+    use tidb_ddl_label::{ID_PREFIX, KEYSPACE_PREFIX};
     let parts = rule.id.split('/').collect::<Vec<_>>();
     if parts.len() < 3 {
         return Err(format!("invalid label rule ID: {}", rule.id));
@@ -2126,7 +2128,7 @@ fn check_label_rule(
 
 /// Go `decodeTableIDFromRule`: the table ID the first key range's start key
 /// encodes, or `None` (Go's error) when there is none.
-fn decode_table_id_from_rule(rule: &tidb_executor::ddl_label::Rule) -> Option<i64> {
+fn decode_table_id_from_rule(rule: &tidb_ddl_label::Rule) -> Option<i64> {
     let data = rule.data.as_ref()?;
     let data = data.read();
     let first = data.as_array()?.first()?.as_object()?;
@@ -2361,7 +2363,7 @@ fn tables_rows(
             text(table.charset().collation.name()),
             Datum::Null,
             text(table_create_options(table)),
-            text(table.comment()),
+            text(&table.comment()),
             Datum::Int(table.table_id),
             text(&sharding_info(table)),
             text(&pk_type(table)),

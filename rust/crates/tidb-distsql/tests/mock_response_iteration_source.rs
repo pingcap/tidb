@@ -26,7 +26,7 @@ use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
-use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
     QueryTransport, ResponseChannel, SelectInput, StoreType, TransportRequest, WarningCollector,
@@ -72,7 +72,7 @@ struct MockSelectResponse {
     closed: Arc<AtomicBool>,
 }
 
-impl QueryResponse for MockSelectResponse {
+impl tidb_txnkv::Response for MockSelectResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         if self.closed.load(Ordering::SeqCst) {
             panic!("closed");
@@ -128,6 +128,7 @@ impl QueryResponse for MockSelectResponse {
         self.closed.store(true, Ordering::SeqCst);
     }
 }
+
 
 struct MockSelectTransport(Option<MockSelectResponse>);
 

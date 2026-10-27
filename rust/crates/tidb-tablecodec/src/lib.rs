@@ -36,7 +36,7 @@ pub use table_index::{
     generate_index_value, get_index_key_buffer, get_table_index_key_range,
     index_key_to_temp_index_key, index_kv_is_unique, index_value_version, is_index_key,
     is_record_key, is_table_key, is_temp_index_key, is_untouched_index_kv, split_index_value,
-    temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value,
+    temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value, cut_datum_by_prefix_len, reach_prefix_len,
     truncate_index_values, verify_table_ids_for_ranges, CutIndexValues, HandleStatus, IndexColumn,
     IndexInfo, IndexValueSegments, TableColumn, TableIndexError, TableInfo, TableKeyRange,
     TempIndexValue, TempIndexValueElem, TempIndexValueFlag, COMMON_HANDLE_FLAG, INDEX_ID_MASK,

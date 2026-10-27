@@ -99,15 +99,9 @@ pub struct IndexJoinInfo {
     pub range_bare: bool,
 }
 
-/// Go `context.WarnLevelWarning` / `WarnLevelNote` — the two levels this
-/// file writes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WarnLevel {
-    /// `WarnLevelWarning`.
-    Warning,
-    /// `WarnLevelNote`.
-    Note,
-}
+/// Go `contextutil.WarnLevel*`; this file writes `WarnLevelWarning` and
+/// `WarnLevelNote`.
+pub use tidb_util::context::WarningLevel as WarnLevel;
 
 /// Go `context.SQLWarn`, narrowed: the `error` becomes its rendered message.
 #[derive(Clone, Debug, PartialEq)]
@@ -1403,7 +1397,7 @@ mod tests {
                 ..Default::default()
             };
             let enforced =
-                crate::enforce::enforce_property_in(&property, task, &allocator, &evaluate)
+                crate::enforce::enforce_property_in(&property, task, &allocator, &evaluate, None)
                     .unwrap();
             let filter = &enforced.plan().unwrap().children()[0];
             assert!(matches!(filter, PhysicalPlan::Selection(_)));

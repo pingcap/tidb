@@ -152,8 +152,8 @@ fn procedure_parse_source_rows() {
         assert!(
             matches!(
                 statements.first(),
-                Some(tidb_ast::Stmt::Ddl(ddl))
-                    if matches!(ddl.as_ref(), tidb_ast::DdlStmt::CreateProcedure(_))
+                Some(tidb_ast::Stmt::Admin(admin))
+                    if matches!(admin.as_ref(), tidb_ast::AdminStmt::CreateProcedure(_))
             ),
             "{sql}"
         );

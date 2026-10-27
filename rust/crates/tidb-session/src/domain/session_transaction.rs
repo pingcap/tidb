@@ -29,7 +29,7 @@ pub use crate::txn_manager::transaction_options;
 /// global values a new system session would inherit.
 pub fn restricted_transaction_options(
     globals: &crate::GlobalSysvars,
-) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
     options_from_values(|name| {
         globals
             .get(name)
@@ -39,7 +39,7 @@ pub fn restricted_transaction_options(
 
 fn options_from_values<V: AsRef<str>>(
     get: impl Fn(&str) -> V,
-) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
     use crate::varsutil::{tidb_opt_assertion_level, AssertionLevel};
     use tidb_vardef::tidb_vars::{
         TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,

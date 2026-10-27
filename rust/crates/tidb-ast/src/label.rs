@@ -65,7 +65,6 @@ impl DdlStmt {
             Self::CreateIndex(_) => "CreateIndex",
             Self::CreateTable(_) => "CreateTable",
             Self::CreateView(_) => "CreateView",
-            Self::CreateUser { .. } => "CreateUser",
             Self::DropDatabase { .. } => "DropDatabase",
             Self::DropIndex(_) => "DropIndex",
             Self::DropTable(_) => "DropTable",
@@ -96,10 +95,12 @@ impl SessionStmt {
 impl AdminStmt {
     fn label(&self) -> &'static str {
         match self {
+            Self::CreateUser { .. } => "CreateUser",
             Self::Grant(_) => "Grant",
             Self::Revoke(_) => "Revoke",
             Self::CreateBinding(_) => "CreateBinding",
             Self::DropBinding(_) => "DropBinding",
+            Self::CompactTable(_) => "CompactTable",
             Self::AnalyzeTable(_) | Self::AnalyzeIncremental(_) => "AnalyzeTable",
             Self::Explain(explain) if explain.statement().is_some_and(Stmt::is_show_statement) => {
                 "DescTable"

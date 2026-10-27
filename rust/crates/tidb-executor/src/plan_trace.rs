@@ -238,50 +238,6 @@ fn explain_constant(
     }
 }
 
-/// Formats a range as Go's `ranger.Range.String()` does.
-pub(crate) fn range_text(range: &crate::kv_table::IndexRange) -> String {
-    let low = bound_text(&range.low, "-inf", true);
-    let high = bound_text(&range.high, "+inf", false);
-    let open = if range.low_exclusive { '(' } else { '[' };
-    let close = if range.high_exclusive { ')' } else { ']' };
-    format!("{open}{low},{high}{close}")
-}
-
-fn bound_text(values: &[Datum], infinity: &str, is_left_side: bool) -> String {
-    if values.is_empty() {
-        return infinity.to_owned();
-    }
-    values
-        .iter()
-        .map(|value| datum_go_text(value, is_left_side))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn datum_go_text(value: &Datum, is_left_side: bool) -> String {
-    match value {
-        Datum::Null => "NULL".to_owned(),
-        Datum::MaxValue => "+inf".to_owned(),
-        Datum::MinNotNull => "-inf".to_owned(),
-        Datum::Int(i64::MIN) if is_left_side => "-inf".to_owned(),
-        Datum::Int(i64::MAX) if !is_left_side => "+inf".to_owned(),
-        Datum::Int(value) => value.to_string(),
-        Datum::UInt(u64::MAX) if !is_left_side => "+inf".to_owned(),
-        Datum::UInt(value) => value.to_string(),
-        Datum::Real(value) => value.to_string(),
-        Datum::Decimal(value) => value.to_string(),
-        Datum::String(value) => tidb_error::mysql::go_quote_bytes(value.bytes()),
-        Datum::Bytes(value) => tidb_error::mysql::go_quote_bytes(value),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => format!("\"{value}\""),
-        Datum::Json(value) => format!("\"{value}\""),
-        Datum::Enum(value, _) => format!("\"{value}\""),
-        Datum::Set(value, _) => format!("\"{value}\""),
-        other => other
-            .sql_string()
-            .unwrap_or_else(|_| format!("{other:?}"))
-            .to_owned(),
-    }
-}
 
 /// Splits an AST predicate into Go's CNF item list.
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {

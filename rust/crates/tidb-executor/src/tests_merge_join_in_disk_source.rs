@@ -63,7 +63,7 @@ fn select_sorted(catalog: &Catalog, sql: &str, context: &StmtContext) -> Vec<Vec
 /// run-to-completion-under-overrun contract through the statement driver.
 #[test]
 fn merge_join_in_disk_rows_under_log_quota() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t(c1 int, c2 int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 int, c2 int)", &mut catalog).unwrap();
     run_insert_on("insert into t values (1,1)", &mut catalog, &ctx()).unwrap();
@@ -91,7 +91,7 @@ fn merge_join_in_disk_rows_under_log_quota() {
 /// `merge_join_tracker_and_shuffle_gaps` test below.
 #[test]
 fn shuffle_merge_join_in_disk_rows_under_log_quota() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t(c1 int, c2 int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 int, c2 int)", &mut catalog).unwrap();
     run_insert_on(
@@ -192,7 +192,7 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
     ];
 
     for (index, (t1_sizes, t2_sizes)) in cases.iter().enumerate() {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         let rows_of = |values: &[i64]| -> String {
             values
                 .iter()
@@ -254,7 +254,7 @@ fn vectorized_merge_join_smj_matches_hj_rows() {
 #[test]
 fn join_exec_inner_equi_rows_source() {
     for rows in [3i64, 1024, 4096] {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         run_create_table_on("create table tl(a bigint, b double)", &mut catalog).unwrap();
         run_create_table_on("create table tr(a bigint, b double)", &mut catalog).unwrap();
         let values: String = (0..rows)
@@ -308,7 +308,7 @@ fn join_exec_inner_equi_rows_source() {
 /// and the counts stay consistent.
 #[test]
 fn join_under_apply_repeated_inner_rows() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t_outer(a int)", &mut catalog).unwrap();
     run_create_table_on("create table tl(a bigint, b double)", &mut catalog).unwrap();
     run_create_table_on("create table tr(a bigint, b double)", &mut catalog).unwrap();

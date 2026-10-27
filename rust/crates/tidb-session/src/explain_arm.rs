@@ -374,8 +374,8 @@ impl Session {
         ) else {
             return Ok(None);
         };
-        for (level, code, message) in execution.take_planning_warnings() {
-            self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+        for warning in execution.take_planning_warnings() {
+            self.append_sql_warning(warning);
         }
         // The cached plan's constants are this execute's parameters.
         let ctx = ctx.clone().with_prepared_params(execution.parameters());

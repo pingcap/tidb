@@ -1780,3 +1780,113 @@ mod tests {
         assert!((now.timestamp() - Utc::now().timestamp()).abs() <= 5);
     }
 }
+
+/// Go's `EvalContext` interface over a static context: what the evaluator
+/// reads from it. Go's `exprstatic.EvalContext` implements
+/// `exprctx.EvalContext`, which this crate's evaluator reads as
+/// [`crate::Columns`]; a static context is what Go's
+/// `metabuild.NewNonStrictContext` evaluates DDL defaults in.
+impl crate::Columns for EvalContext {
+    fn get(&self, _path: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        match self.location() {
+            TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
+            TimeZone::Named(zone) => tidb_datatype::SessionTimeZone::Named(*zone),
+            TimeZone::Fixed { name, offset_secs } => tidb_datatype::SessionTimeZone::Fixed {
+                name: name.clone(),
+                offset_secs: *offset_secs,
+            },
+        }
+    }
+
+    fn type_flags(&self) -> ConversionFlags {
+        EvalContext::type_flags(self)
+    }
+
+    fn strict_sql_mode(&self) -> bool {
+        self.sql_mode().has_strict_mode()
+    }
+
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        let mode = self.sql_mode();
+        tidb_datatype::DateModes {
+            no_zero_date: mode.has_no_zero_date_mode(),
+            no_zero_in_date: mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
+        }
+    }
+
+    fn truncate_level(&self) -> crate::ErrorLevel {
+        eval_error_level(self.err_level_map().get(tidb_error::errctx::ErrGroup::Truncate))
+    }
+
+    fn division_by_zero_level(&self) -> crate::ErrorLevel {
+        eval_error_level(self.err_level_map().get(tidb_error::errctx::ErrGroup::DividedByZero))
+    }
+
+    fn append_warning(&self, code: u16, message: &str) {
+        EvalContext::append_warning(self, columns_warning(code, message));
+    }
+
+    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+        let warning = SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            error.code,
+            error.message.clone(),
+            error.identity,
+        );
+        EvalContext::append_warning(self, warning.err);
+    }
+
+    fn append_note(&self, code: u16, message: &str) {
+        EvalContext::append_note(self, columns_warning(code, message));
+    }
+
+    fn warning_count(&self) -> usize {
+        EvalContext::warning_count(self)
+    }
+
+    fn truncate_warnings(&self, bookmark: usize) {
+        let _ = EvalContext::truncate_warnings(self, bookmark);
+    }
+
+    fn take_warnings_since(&self, bookmark: usize) -> Vec<SqlWarn> {
+        EvalContext::truncate_warnings(self, bookmark)
+    }
+
+    fn current_database(&self) -> Option<String> {
+        Some(self.current_db().to_owned()).filter(|db| !db.is_empty())
+    }
+
+    fn max_allowed_packet(&self) -> u64 {
+        self.get_max_allowed_packet()
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        u32::try_from(self.get_div_precision_increment()).unwrap_or_default()
+    }
+
+    fn default_week_format(&self) -> i64 {
+        self.get_default_week_format_mode().parse().unwrap_or_default()
+    }
+}
+
+fn eval_error_level(level: tidb_error::errctx::Level) -> crate::ErrorLevel {
+    match level {
+        tidb_error::errctx::Level::Error => crate::ErrorLevel::Error,
+        tidb_error::errctx::Level::Warn => crate::ErrorLevel::Warn,
+        tidb_error::errctx::Level::Ignore => crate::ErrorLevel::Ignore,
+    }
+}
+
+/// A warning the evaluator raised through [`crate::Columns`], which carries
+/// only its code and text: the `pingcap/errors` compatibility form keeps both
+/// without claiming an error class the evaluator never named. A warning with
+/// its own identity reaches this context through `AppendWarning` directly
+/// (`crate::metabuild::EvalContext`).
+fn columns_warning(code: u16, message: &str) -> WarnErr {
+    SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, code, message).err
+}

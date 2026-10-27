@@ -61,14 +61,24 @@ impl MockStoreDomain {
             None => ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n")
                 .map_err(|error| format!("configured user store: {error:?}"))?,
         });
-        Self::boot(config, users)
+        Self::boot(config, users, 0)
+    }
+
+    /// Go `CreateMockStore(t, mockstore.WithMockTiFlash(nodes))`: [`Self::create`]
+    /// over a store whose PD also lists `nodes` TiFlash stores.
+    pub fn create_with_mock_tiflash(nodes: usize) -> Result<Arc<Self>, String> {
+        let users = Arc::new(
+            ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n")
+                .map_err(|error| format!("configured user store: {error:?}"))?,
+        );
+        Self::boot(testkit_config()?, users, nodes)
     }
 
     /// [`Self::create`] whose node authenticates and keeps its accounts in
     /// `users`, as a server boots over its configured user store: what a
     /// wire-protocol test serves its connections from.
     pub fn create_with_users(users: Arc<ConfiguredUserStore>) -> Result<Arc<Self>, String> {
-        Self::boot(testkit_config()?, users)
+        Self::boot(testkit_config()?, users, 0)
     }
 
     /// The session factory of this domain's node: Go's server, which opens
@@ -81,9 +91,11 @@ impl MockStoreDomain {
     fn boot(
         config: crate::domain::node_config::NodeConfig,
         users: Arc<ConfiguredUserStore>,
+        mock_tiflash: usize,
     ) -> Result<Arc<Self>, String> {
         let image = bootstrap_image(&config.cluster_security)?;
-        let stack = unistore_cluster_session_stack_from(&config, &users, None, None, Some(&image))
+        let stack =
+            unistore_cluster_session_stack_from(&config, &users, None, None, Some(&image), mock_tiflash)
             .map_err(|error| format!("unistore stack: {error:?}"))?;
         let domain = Arc::new(Self {
             stack,
@@ -102,7 +114,7 @@ impl MockStoreDomain {
             .factory
             .create_session_4_test(connection_id)
             .map_err(|error| format!("open session {connection_id}: {}", error.message))?;
-        let mut session = Session::unbootstrapped(crate::SharedCatalog::default());
+        let mut session = Session::unbootstrapped(Arc::new(Mutex::new(tidb_executor::Catalog::new())));
         std::mem::swap(&mut session, connection.driver_session_mut());
         remember_catalog_domain(&session.shared_catalog(), self);
         session.node = Some(Box::new(MockStoreConnection {
@@ -240,6 +252,13 @@ pub(crate) fn domain_of_accounts(
         .iter()
         .filter_map(Weak::upgrade)
         .find(|domain| domain.users.accounts().is_same_table(accounts))
+}
+
+/// Go `domain.GetDomain(sctx)`: the domain `session` is on, if it is a
+/// mock-store session.
+#[must_use]
+pub fn domain_of(session: &Session) -> Option<Arc<MockStoreDomain>> {
+    domain_of_catalog(&session.shared_catalog())
 }
 
 /// The domain a node session's catalog belongs to, if `catalog` is one.

@@ -241,7 +241,7 @@ impl GcSessionFactory for FakeSessions {
 struct FakeRules {
     deleted_tiflash_rules: Mutex<Vec<Vec<i64>>>,
     put_bundles: Mutex<Vec<Vec<String>>>,
-    label_rules: Mutex<HashMap<String, tidb_executor::ddl_label::Rule>>,
+    label_rules: Mutex<HashMap<String, tidb_ddl_label::Rule>>,
     deleted_label_rules: Mutex<Vec<Vec<String>>>,
 }
 
@@ -265,7 +265,7 @@ impl GcRuleClient for FakeRules {
     fn get_label_rules(
         &self,
         rule_ids: &[String],
-    ) -> GcResult<HashMap<String, tidb_executor::ddl_label::Rule>> {
+    ) -> GcResult<HashMap<String, tidb_ddl_label::Rule>> {
         let rules = self.label_rules.lock().unwrap();
         Ok(rule_ids
             .iter()

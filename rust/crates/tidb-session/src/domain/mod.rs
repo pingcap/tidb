@@ -26,6 +26,7 @@ use self::node_config::NodeConfig;
 use self::real_tikv_node::RunConfiguredNodeError;
 use self::session_api::SqlQueryError;
 
+pub mod client_socket;
 pub mod session_api;
 pub mod resultset_source;
 pub mod wire_status;
@@ -155,7 +156,7 @@ pub fn log_mysql_listening(host: &str, port: impl std::fmt::Display) {
 pub fn open_spill_storage(
     config: &NodeConfig,
 ) -> Result<Arc<tidb_util::spill_storage::SpillStorage>, RunConfiguredNodeError> {
-    tidb_exec::configure_deadlock_history(
+    tidb_cluster::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );

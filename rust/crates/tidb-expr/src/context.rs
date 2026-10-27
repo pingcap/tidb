@@ -874,13 +874,28 @@ pub trait Columns {
     /// only whether the statement survives, and whether the client is told,
     /// differ.
     fn handle_truncate(&self, message: &str) -> Result<(), EvalError> {
+        let error = EvalError::TruncatedWrongValue(message.to_owned());
         match self.truncate_level() {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
-                self.append_warning(1292, message);
+                self.append_error_warning(&error.to_sql_error());
                 Ok(())
             }
-            ErrorLevel::Error => Err(EvalError::TruncatedWrongValue(message.to_owned())),
+            ErrorLevel::Error => Err(error),
+        }
+    }
+
+    /// Go `tc.HandleTruncate(err)` of an error other than
+    /// `types.ErrTruncatedWrongVal`, which keeps its own class at either
+    /// level.
+    fn handle_truncate_error(&self, error: tidb_error::terror::TerrorError) -> Result<(), EvalError> {
+        match self.truncate_level() {
+            ErrorLevel::Ignore => Ok(()),
+            ErrorLevel::Warn => {
+                self.append_error_warning(&error.to_sql_error());
+                Ok(())
+            }
+            ErrorLevel::Error => Err(EvalError::Conversion(error)),
         }
     }
 
@@ -890,7 +905,7 @@ pub trait Columns {
         match self.truncate_level() {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
-                self.append_warning(1260, message);
+                self.append_error_warning(&EvalError::GroupConcatCut(message.to_owned()).to_sql_error());
                 Ok(())
             }
             ErrorLevel::Error => Err(EvalError::GroupConcatCut(message.to_owned())),
@@ -916,6 +931,43 @@ pub trait Columns {
         let _ = (code, message);
     }
 
+    /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of a whole
+    /// warning; a context that keeps only codes records its level, code and
+    /// message.
+    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn) {
+        match warning.warning_level() {
+            tidb_util::context::WarningLevel::Note => {
+                self.append_note(warning.code(), warning.message());
+            }
+            _ => self.append_warning(warning.code(), warning.message()),
+        }
+    }
+
+    /// Go `StmtCtx.AppendWarning(err)` of the Go error `error` itself, which
+    /// a context that keeps warnings keeps with it; one that keeps only
+    /// codes records [`Self::append_warning`].
+    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+        self.append_warning(error.code, &error.message);
+    }
+
+    /// Go `AppendWarning(proto.GenWithStackByArgs(...))`: a warning raised
+    /// as the Go error `proto` with `message`.
+    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+        self.append_error_warning(&proto.generate(message.to_owned()).to_sql_error());
+    }
+
+    /// Go `StmtCtx.AppendNote(err)` of the Go error `error` itself (see
+    /// [`Self::append_error_warning`]).
+    fn append_error_note(&self, error: &tidb_error::mysql::SqlError) {
+        self.append_note(error.code, &error.message);
+    }
+
+    /// Go `AppendNote(proto.GenWithStackByArgs(...))`: a note raised as the
+    /// Go error `proto` with `message`.
+    fn append_go_note(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+        self.append_error_note(&proto.generate(message.to_owned()).to_sql_error());
+    }
+
     /// Records a statement note, preserving Go `StmtCtx.AppendNote`'s level.
     fn append_note(&self, code: u16, message: &str) {
         let _ = (code, message);
@@ -938,7 +990,7 @@ pub trait Columns {
     /// stash survives the statement boundary's warning reset, while entries
     /// appended straight into the live list during PLANNING are cleared by
     /// it before execution reads them.
-    fn take_warnings_since(&self, _bookmark: usize) -> Vec<(u16, String)> {
+    fn take_warnings_since(&self, _bookmark: usize) -> Vec<tidb_util::context::SqlWarn> {
         Vec::new()
     }
 
@@ -981,7 +1033,9 @@ pub trait Columns {
             // `IgnoreTruncateErr` is Go's first disjunct, which warns as well
             // -- the source appends unconditionally on that arm.
             ErrorLevel::Ignore | ErrorLevel::Warn => {
-                self.append_warning(1301, &message);
+                self.append_error_warning(
+                    &EvalError::AllowedPacketOverflowed(message.clone()).to_sql_error(),
+                );
                 Ok(())
             }
             ErrorLevel::Error => Err(EvalError::AllowedPacketOverflowed(message)),
@@ -1005,7 +1059,7 @@ pub trait Columns {
         match self.division_by_zero_level() {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
-                self.append_warning(1365, "Division by 0");
+                self.append_error_warning(&EvalError::DivisionByZero.to_sql_error());
                 Ok(())
             }
             ErrorLevel::Error => Err(EvalError::DivisionByZero),

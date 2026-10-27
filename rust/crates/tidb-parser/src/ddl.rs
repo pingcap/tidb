@@ -922,8 +922,7 @@ impl Parser {
     /// {INDEX|KEY} [name] (parts...) [COMMENT|GLOBAL|INVISIBLE|WHERE]`, `ADD [CONSTRAINT [name]] UNIQUE
     /// [INDEX|KEY] [name] (cols)`, or `ADD [CONSTRAINT [name]] CHECK (expr)
     /// [[NOT] ENFORCED]`, `SET [HYPO] TIFLASH REPLICA count [LOCATION LABELS
-    /// 'label', ...]`, `COMPACT [PARTITION name [, name ...]] [TIFLASH|TIKV
-    /// [REPLICA]]`, or `ADD PARTITION [IF NOT EXISTS] [NO_WRITE_TO_BINLOG]
+    /// 'label', ...]`, or `ADD PARTITION [IF NOT EXISTS] [NO_WRITE_TO_BINLOG]
     /// {PARTITIONS count | (typed definitions)}` — the only actions modelled; every other
     /// form (`ADD [CONSTRAINT] FOREIGN KEY`, ...) is an honest
     /// `ParseError`.
@@ -937,6 +936,9 @@ impl Parser {
         let name = self.parse_table_name()?;
         if self.is_kw("ANALYZE") {
             return self.parse_alter_analyze_partition(name);
+        }
+        if self.is_kw("COMPACT") {
+            return self.parse_compact_table_stmt(name);
         }
         Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
             tidb_ast::DdlStmt::AlterTable(Box::new(self.parse_alter_table_after_name(name)?)),
@@ -965,12 +967,55 @@ impl Parser {
         )))
     }
 
+    /// Go `parseCompactTableStmt`: `ALTER TABLE name COMPACT [PARTITION p
+    /// [, p ...]] [TIFLASH | TIKV [REPLICA]]`, its own statement node.
+    fn parse_compact_table_stmt(&mut self, name: Vec<String>) -> PResult<Stmt> {
+        // `COMPACT`.
+        self.bump();
+        let mut partitions = Vec::new();
+        if self.is_kw("PARTITION") {
+            self.bump();
+            partitions.push(self.parse_ident_like_name()?);
+            while self.is_op(",") {
+                self.bump();
+                partitions.push(self.parse_ident_like_name()?);
+            }
+        }
+        let replica_kind = if self.is_kw("TIFLASH") {
+            self.bump();
+            if self.is_kw("REPLICA") {
+                self.bump();
+            }
+            CompactReplicaKind::TiFlash
+        // `TIKV` is an identifier-class token in this lexer (unlike
+        // Go's hand-parser `IsKeyword("TIKV")` abstraction), so match
+        // its token text at this grammar-owned boundary.
+        } else if self.peek().kind == TokenKind::Ident
+            && self.peek().end_offset - self.peek().offset == 4
+            && self.peek().text.eq_ignore_ascii_case("TIKV")
+        {
+            self.bump();
+            if self.is_kw("REPLICA") {
+                self.bump();
+            }
+            CompactReplicaKind::TiKv
+        } else {
+            CompactReplicaKind::All
+        };
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::CompactTable(
+            Box::new(tidb_ast::CompactTableStmt {
+                table: name,
+                partition_names: partitions,
+                replica_kind,
+            }),
+        ))))
+    }
+
     fn parse_alter_table_after_name(&mut self, name: Vec<String>) -> PResult<AlterTableStmt> {
         let mut actions = Vec::new();
         let Some(action) = self.parse_alter_table_action()? else {
             return Ok(AlterTableStmt { name, actions });
         };
-        let compact = matches!(action, AlterTableAction::Compact { .. });
         let terminal = matches!(
             action,
             AlterTableAction::Partition(
@@ -979,10 +1024,7 @@ impl Parser {
         );
         actions.push(action);
 
-        // Go diverts COMPACT to CompactTableStmt immediately after parsing
-        // the common ALTER TABLE name. It can own internal partition-list
-        // commas, but cannot participate in AlterTableStmt.Specs.
-        if compact || terminal {
+        if terminal {
             return Ok(AlterTableStmt { name, actions });
         }
 
@@ -1534,45 +1576,6 @@ impl Parser {
                 hypo,
                 count,
                 labels,
-            }
-        } else if self.is_kw("COMPACT") {
-            // Go's `parseCompactTableStmt` is a separate Go AST node, but
-            // its input starts after the same ALTER TABLE name boundary and
-            // has an entirely self-contained typed payload.
-            self.bump();
-            let mut partitions = Vec::new();
-            if self.is_kw("PARTITION") {
-                self.bump();
-                partitions.push(self.parse_ident_like_name()?);
-                while self.is_op(",") {
-                    self.bump();
-                    partitions.push(self.parse_ident_like_name()?);
-                }
-            }
-            let replica_kind = if self.is_kw("TIFLASH") {
-                self.bump();
-                if self.is_kw("REPLICA") {
-                    self.bump();
-                }
-                CompactReplicaKind::TiFlash
-            // `TIKV` is an identifier-class token in this lexer (unlike
-            // Go's hand-parser `IsKeyword("TIKV")` abstraction), so match
-            // its token text at this grammar-owned boundary.
-            } else if self.peek().kind == TokenKind::Ident
-                && self.peek().end_offset - self.peek().offset == 4
-                && self.peek().text.eq_ignore_ascii_case("TIKV")
-            {
-                self.bump();
-                if self.is_kw("REPLICA") {
-                    self.bump();
-                }
-                CompactReplicaKind::TiKv
-            } else {
-                CompactReplicaKind::All
-            };
-            AlterTableAction::Compact {
-                partitions,
-                replica_kind,
             }
         } else if self.is_kw("SPLIT") {
             // Direct translation of Go's `parseSplitRegionSpec`: ALTER TABLE

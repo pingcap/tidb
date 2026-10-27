@@ -93,7 +93,7 @@ fn index_part_text(
         .filter(|_| table.is_hidden(offset))
     {
         Some(generated) => format!("({})", generated.expr_text),
-        None if prefix_length == tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH => {
+        None if prefix_length == tidb_datatype::UNSPECIFIED_LENGTH => {
             escape_name(&column.name, ansi_quotes)
         }
         None => format!(
@@ -205,7 +205,8 @@ pub(super) fn show_create_table_text(
                 Some(default) => {
                     // Go quotes every non-bit LITERAL default, integers included,
                     // and prints the computed forms unquoted -- see
-                    // `ColumnDefault::show_create_clause` for which is which.
+                    // `tidb_executor::show::show_create_default_clause` for which
+                    // is which.
                     let literal = match default {
                         tidb_executor::column_default::ColumnDefault::Value(value) => {
                             literal_column_default_text(
@@ -221,7 +222,11 @@ pub(super) fn show_create_table_text(
                     };
                     clause.push_str(&format!(
                         " DEFAULT {}",
-                        default.show_create_clause(&column.field_type, &literal)
+                        tidb_executor::show::show_create_default_clause(
+                            default,
+                            &column.field_type,
+                            &literal,
+                        )
                     ));
                 }
                 None if !not_null => {
@@ -296,13 +301,13 @@ pub(super) fn show_create_table_text(
     // hypothetical indexes after the public ones, sorted by name.
     let hypo_indexes = ctx
         .hypo_indexes()
-        .map(|hypo| hypo.table_indexes(database, name))
+        .map(|hypo| hypo.table_kv_indexes(database, table))
         .unwrap_or_default();
     let indexes = table
         .indexes()
         .iter()
         .map(|index| (index, false))
-        .chain(hypo_indexes.into_iter().map(|index| (index, true)));
+        .chain(hypo_indexes.iter().map(|index| (index, true)));
     for (index, is_hypo) in indexes {
         // The PRIMARY is emitted ONCE, and the block above decided which of
         // the two places does it: it prints from the handle offsets only when
@@ -461,14 +466,15 @@ pub(super) fn show_create_table_text(
     out.push_str("\n) ENGINE=InnoDB");
     // Go prints the attribute between ENGINE and the charset, as the
     // `STORAGE_CLASS` sugar when that loses nothing.
-    if !table.engine_attribute().is_empty() {
+    let engine_attribute = table.engine_attribute();
+    if !engine_attribute.is_empty() {
         match tidb_executor::ddl::storage_class::simple_table_storage_class_for_show_create(
-            table.engine_attribute(),
+            &engine_attribute,
         )? {
             Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),
             None => out.push_str(&format!(
                 " ENGINE_ATTRIBUTE='{}'",
-                tidb_util::format::output_format(table.engine_attribute())
+                tidb_util::format::output_format(&engine_attribute)
             )),
         }
     }
@@ -561,7 +567,7 @@ pub(super) fn show_create_table_text(
     // `/*T![placement] ... */` feature gate a partition's uses -- so a dump
     // carrying placement still loads on a parser that does not know it.
     out.push_str(&tidb_executor::partition_placement_text(
-        table.placement_policy(),
+        table.placement_policy().as_ref(),
         ansi_quotes,
     ));
     if table.is_cached() {
@@ -599,7 +605,7 @@ fn region_split_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> Strin
     }
     let mut text = String::new();
     if let Some(policy) = table.table_split_policy() {
-        text.push_str(&format!("\n/*T![region_split] SPLIT {} */", bounds(policy)));
+        text.push_str(&format!("\n/*T![region_split] SPLIT {} */", bounds(&policy)));
     }
     for index in table.indexes() {
         let Some(policy) = table.index_split_policy(index.id) else {
@@ -613,7 +619,7 @@ fn region_split_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> Strin
         text.push_str(&format!(
             "\n/*T![region_split] SPLIT {target} {} {} */",
             escape_name(&index.name, ansi_quotes),
-            bounds(policy),
+            bounds(&policy),
         ));
     }
     text

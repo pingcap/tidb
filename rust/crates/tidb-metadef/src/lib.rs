@@ -20,6 +20,7 @@ pub mod db;
 pub mod metric_table_def;
 pub mod system;
 pub mod system_tables_def;
+pub mod virtual_tables;
 
 pub use bootstrap_tables::{
     BootstrapTable, VersionedDdlTables, BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES,

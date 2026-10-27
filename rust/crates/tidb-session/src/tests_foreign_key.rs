@@ -274,7 +274,7 @@ fn update_ignore_skips_a_child_foreign_key_violation() {
         StmtResult::Affected(0)
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1452);
+    assert_eq!(session.warnings()[0].code(), 1452);
     assert_eq!(
         rows(&mut session, "SELECT id,pid FROM c"),
         vec![vec!["10", "1"]]

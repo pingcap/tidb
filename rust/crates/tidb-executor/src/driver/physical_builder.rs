@@ -669,9 +669,9 @@ impl Executor for SqlKillerCheckExec {
         }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| {
-            self.memory.check()?;
+            self.memory.check().map_err(crate::ExecError::from)?;
             self.child.next(req)?;
-            self.memory.check()
+            self.memory.check().map_err(crate::ExecError::from)
         });
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_next(start.elapsed(), req.num_rows() as i64);
@@ -1269,7 +1269,7 @@ fn build_table_scan(
         ReaderStorage::statement(
             separated,
             with_reader_cop_chain(
-                PushdownStatementContext::from_stmt(ctx),
+                crate::remote_scan::pushdown_statement_context(ctx),
                 plan,
                 None,
                 cop_chain,
@@ -1444,8 +1444,9 @@ fn build_table_sample(
         let start = tidb_codec::gen_table_record_prefix(*physical_id);
         let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next();
         ranges.extend(
-            catalog
-                .region_ranges_in(&start, end.as_bytes())
+            ctx.region_store()
+                .load_regions_in_key_range(&start, end.as_bytes())
+                .map(|regions| crate::region_map::clip_regions(&regions, &start, end.as_bytes()))
                 .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?
                 .into_iter()
                 .map(|(start, end)| crate::table_sample::SampleRange {
@@ -2530,7 +2531,7 @@ fn cop_reader_statement(
         .enable_chunk_rpc;
     let average = table_lookup_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
     let mut statement = with_reader_cop_chain(
-        PushdownStatementContext::from_stmt(ctx),
+        crate::remote_scan::pushdown_statement_context(ctx),
         plan,
         table_lookup_plan,
         cop_chain,
@@ -3210,7 +3211,7 @@ fn index_join_probe_key_domains(
             .idx_col_lens
             .get(object_offset)
             .copied()
-            .unwrap_or(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+            .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
         domains[*dynamic_offset] = Some(IndexProbeKeyDomain {
             field_type,
             prefix_length,
@@ -5605,7 +5606,7 @@ fn build_index_merge_reader(
                     RowDecodeContext::for_query(ctx),
                     ReaderStorage::statement(
                         separated,
-                        PushdownStatementContext::from_stmt(ctx)
+                        crate::remote_scan::pushdown_statement_context(ctx)
                             .with_cop_plan_chain(cop_plan_chain(partial), i64::from(partial.id()))
                             .with_plan_id(i64::from(scan.base.base.id()))
                             .with_estimated_net_bytes(
@@ -7925,14 +7926,10 @@ pub(crate) fn execute_dml_source_chunks(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::KvTableDdl;
+use super::*;
     use tidb_datatype::Datum;
-    use tidb_planner::physical::{
-        BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable,
-        PhysicalIndexLookUpReader, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet,
-        PhysicalProjection, PhysicalSelection, PhysicalTableDual, PhysicalTableReader,
-        PhysicalUnionAll,
-    };
+    use tidb_planner::physical::{BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
 
     /// Go `LimitExec.Close`: a close that takes over a millisecond records
     /// `limitExec.Close` from when the close began, under the span the
@@ -8094,7 +8091,7 @@ mod tests {
         let ctx =
             crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);
-        let mut executor = build(&plan, &Catalog::default(), &ctx).unwrap();
+        let mut executor = build(&plan, &Catalog::mock(), &ctx).unwrap();
 
         executor.open().unwrap();
         let mut req = executor.new_chunk();
@@ -8131,7 +8128,7 @@ mod tests {
     fn built_executor_checks_sql_killer_before_next() {
         let memory = crate::StatementMemory::default();
         let ctx = crate::StmtContext::for_query_with_memory(memory.clone());
-        let mut executor = build(&dual(1, 1), &Catalog::default(), &ctx).unwrap();
+        let mut executor = build(&dual(1, 1), &Catalog::mock(), &ctx).unwrap();
         executor.open().unwrap();
         memory
             .sql_killer()
@@ -8409,7 +8406,7 @@ mod tests {
             ids.alloc();
         }
         tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
-        let mut exec = build(&plan, &Catalog::default(), &crate::StmtContext::default()).unwrap();
+        let mut exec = build(&plan, &Catalog::mock(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {
             exec.open().unwrap();
             let mut rows = 0;
@@ -8524,7 +8521,7 @@ mod tests {
             false,
             Some((1, 4)),
         );
-        let executor = build(&plan, &Catalog::default(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &Catalog::mock(), &crate::StmtContext::for_query())
             .expect("build recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run recursive CTE"), 3);
     }
@@ -8532,14 +8529,14 @@ mod tests {
     #[test]
     fn physical_union_distinct_cte_stops_when_its_delta_is_empty() {
         let plan = cte(3, 42, dual(1, 1), Some(cte_table(2, 42)), true, None);
-        let executor = build(&plan, &Catalog::default(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &Catalog::mock(), &crate::StmtContext::for_query())
             .expect("build distinct recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run distinct CTE"), 1);
     }
 
     #[test]
     fn cached_physical_union_and_max_one_row_build_directly() {
-        let catalog = Catalog::default();
+        let catalog = Catalog::mock();
         let ctx = crate::StmtContext::default();
 
         let mut union_executor = build(&union(3, vec![dual(1, 1), dual(2, 1)]), &catalog, &ctx)
@@ -8620,7 +8617,7 @@ mod tests {
     fn index_probe_hash_join_distinguishes_aliases_of_one_table() {
         use tidb_planner::physical::{PhysicalHashJoin, PhysicalIndexJoin};
         for right_table in [40, 41] {
-            let mut catalog = Catalog::default();
+            let mut catalog = Catalog::mock();
             catalog.register_kv(
                 "t",
                 crate::KvTable::new(40, vec![long_column("id", 1), long_column("value", 2)]),
@@ -8692,7 +8689,7 @@ mod tests {
     #[test]
     fn table_reader_build_records_go_stmtctx_table_access() {
         let table_id = 40;
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv(
             "reader",
             crate::KvTable::new(
@@ -8741,7 +8738,7 @@ mod tests {
                 )
                 .expect("seed heap row");
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("heap", table);
 
         let mut handle = Column::new(
@@ -8784,7 +8781,7 @@ mod tests {
                 )
                 .expect("seed clustered row");
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("point", table);
 
         let mut base = BasePhysicalPlan::with_id(10, "PointGet", 0);
@@ -8834,7 +8831,7 @@ mod tests {
                     comment: String::new(),
                     unique: true,
                     column_offsets: vec![1],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -8852,7 +8849,7 @@ mod tests {
                 )
                 .expect("seed common-handle row");
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("unique_point", table);
 
         let mut base = BasePhysicalPlan::with_id(13, "PointGet", 0);
@@ -8900,7 +8897,7 @@ mod tests {
                 )
                 .expect("seed clustered row");
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("batch", table);
 
         let mut base = BasePhysicalPlan::with_id(11, "BatchPointGet", 0);
@@ -8953,7 +8950,7 @@ mod tests {
                     comment: String::new(),
                     unique: true,
                     column_offsets: vec![1],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -8971,7 +8968,7 @@ mod tests {
                 )
                 .expect("seed unique-index row");
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("unique_batch", table);
 
         let mut base = BasePhysicalPlan::with_id(12, "BatchPointGet", 0);
@@ -9080,7 +9077,7 @@ mod tests {
                     comment: String::new(),
                     unique: false,
                     column_offsets: vec![1],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -9090,7 +9087,7 @@ mod tests {
                 &crate::StmtContext::for_query(),
             )
             .unwrap();
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("im", table.clone());
         let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(2, 2);
         for quota in [1, -1] {
@@ -9182,7 +9179,7 @@ mod tests {
                     7,
                     vec![IndexRange::full()],
                     RowDecodeContext::for_query(&ctx),
-                    PushdownStatementContext::from_stmt(&ctx),
+                    crate::remote_scan::pushdown_statement_context(&ctx),
                 ),
                 partition_indexes: vec![0],
                 table: table.clone(),
@@ -9264,7 +9261,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("im", table);
         for (intersection, ordered) in [(false, false), (false, true), (true, false)] {
             let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
@@ -9349,7 +9346,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("im", table);
         let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
         let keys = partials.iter().map(runtime_plan_key).collect::<Vec<_>>();
@@ -9406,7 +9403,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("im", table);
         for batch_size in [3, 20_000] {
             for topn in [false, true] {
@@ -9534,7 +9531,7 @@ mod tests {
                             comment: String::new(),
                             unique: false,
                             column_offsets: vec![1],
-                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                             visible: true,
                             global,
                             global_index_version: 0,
@@ -9556,7 +9553,7 @@ mod tests {
                         )
                         .expect("seed row");
                 }
-                let mut catalog = Catalog::default();
+                let mut catalog = Catalog::mock();
                 catalog.register_kv("im", table);
 
                 for table_partial in [false, true] {

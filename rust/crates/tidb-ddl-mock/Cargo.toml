@@ -11,5 +11,6 @@ description = "Generated-test-double parity for Go pkg/ddl/mock."
 workspace = true
 
 [dependencies]
-tidb-exec = { path = "../tidb-exec" }
+tidb-ddl = { path = "../tidb-ddl" }
+tidb-cluster = { path = "../tidb-cluster" }
 tidb-model = { path = "../tidb-model" }

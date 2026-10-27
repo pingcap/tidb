@@ -81,7 +81,7 @@ fn partition_by_column_checks_create_half_matches_go_per_clause() {
         // Go builds `tt` once and `tt`-copies per clause; the tier's
         // statement names must be unique per catalog, so each clause runs on
         // a fresh catalog with both tables.
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         run_create_table_on(&format!("create table t {COLS}"), &mut catalog)
             .expect("the plain column set builds");
         let sql = format!("create table tt {COLS} partition by {clause}");

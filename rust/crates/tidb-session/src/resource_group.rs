@@ -387,8 +387,8 @@ impl Session {
     pub fn cluster_resource_group_statement(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<tidb_exec::cluster_ddl::DdlStatement>, DriverError> {
-        use tidb_exec::cluster_ddl::DdlStatement;
+    ) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, DriverError> {
+        use tidb_ddl::cluster_ddl::DdlStatement;
         Ok(match ddl {
             tidb_ast::DdlStmt::CreateResourceGroup(create) => self
                 .admit_create_resource_group(create)?

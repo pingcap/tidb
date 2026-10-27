@@ -986,15 +986,22 @@ mod deferred_function_tests {
 /// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
 /// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
 thread_local! {
-    static FOLD_WARNINGS: std::cell::RefCell<Vec<(u16, String)>> =
+    static FOLD_WARNINGS: std::cell::RefCell<Vec<tidb_util::context::SqlWarn>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Records one fold-time warning into this thread's stash.
 pub fn record_fold_warning(code: u16, message: &str) {
-    FOLD_WARNINGS.with(|warnings| {
-        warnings.borrow_mut().push((code, message.to_owned()));
-    });
+    record_fold_sql_warn(tidb_util::context::SqlWarn::with_code(
+        tidb_util::context::WarningLevel::Warning,
+        code,
+        message,
+    ));
+}
+
+/// Records one fold-time warning, error and all, into this thread's stash.
+pub fn record_fold_sql_warn(warning: tidb_util::context::SqlWarn) {
+    FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().push(warning));
 }
 
 /// The current stash depth, so a failed fold attempt can roll its own
@@ -1021,8 +1028,8 @@ pub fn truncate_fold_warnings(len: usize) {
 /// ([`take_fold_warnings`]), which runs after the reset.
 pub fn move_live_warnings_to_stash(ctx: &dyn crate::Columns, bookmark: usize) {
     if ctx.warning_count() > bookmark {
-        for (code, message) in ctx.take_warnings_since(bookmark) {
-            record_fold_warning(code, &message);
+        for warning in ctx.take_warnings_since(bookmark) {
+            record_fold_sql_warn(warning);
         }
     }
 }
@@ -1031,7 +1038,7 @@ pub fn move_live_warnings_to_stash(ctx: &dyn crate::Columns, bookmark: usize) {
 /// after planning, forwarding the pairs into the statement's warning buffer
 /// so `SHOW WARNINGS` and the OK packet's count see them.
 #[must_use]
-pub fn take_fold_warnings() -> Vec<(u16, String)> {
+pub fn take_fold_warnings() -> Vec<tidb_util::context::SqlWarn> {
     let taken = FOLD_WARNINGS.with(std::cell::RefCell::take);
     taken
 }
@@ -1063,6 +1070,15 @@ impl Columns for FoldWarningContext {
 
     fn append_warning(&self, code: u16, message: &str) {
         record_fold_warning(code, message);
+    }
+
+    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+        record_fold_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            error.code,
+            error.message.clone(),
+            error.identity,
+        ));
     }
 
     fn warning_count(&self) -> usize {

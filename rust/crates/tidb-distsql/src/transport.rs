@@ -14,200 +14,54 @@
 
 //! Explicit transport ownership at the `kv.Client.Send` boundary.
 //!
-//! Built requests are bound by the query runtime before client send. The
-//! binding retains request-local cancellation, statement attribution and the
-//! send timestamp. Region routing and wire encoding belong to the concrete
-//! coprocessor transport and request envelope.
-
-use std::{sync::Arc, time::Instant};
+//! The built request and its send binding are Go `pkg/kv`'s and live in
+//! `tidb_txnkv`; splitting one into region tasks is the coprocessor client's
+//! `buildCopTasks`, which stays with the region-task builder here.
 
 use crate::{
-    region_task::build_region_tasks, CancelHandle, KvRequestMetadata, RegionTaskEnvelope,
-    RegionTaskTopology, RequestKeyRange, RequestSource,
+    region_task::build_region_tasks, RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange,
 };
+pub use tidb_txnkv::{TransportBinding, TransportRequest, TransportRequestError};
 
-/// A proof that a caller owns a transport capable of taking this request.
-///
-/// This marker intentionally has no endpoint, region, protobuf, or RPC
-/// fields.  Those belong to the TiKV client owner, not the DistSQL
-/// request metadata leaf.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TransportBinding;
-
-impl TransportBinding {
-    /// Creates an opaque binding marker for a transport owner.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-/// Errors produced while claiming or consuming a transport request.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransportRequestError {
-    /// `bind` was called on a request that already has a transport owner.
-    AlreadyBound,
-    /// A send/consume operation was attempted before a transport owner was
-    /// attached.
-    Unbound,
-    /// Supplied region/bucket topology is malformed or does not cover every
-    /// request range.
-    InvalidRegionTopology,
-}
-
-/// Immutable request metadata plus an explicit transport binding state.
-///
-/// `bind` returns a new snapshot rather than mutating the original request.
-/// This mirrors the source ownership split: request construction is finished
-/// before `kv.Client.Send` receives the request, and a client cannot
-/// accidentally mutate the metadata while claiming transport ownership.
-#[derive(Clone, Debug)]
-pub struct TransportRequest {
-    metadata: KvRequestMetadata,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
-    /// Go's statement ctx values (`util.RUDetailsCtxKey`,
-    /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
-    /// every send.
-    kv_context: tidb_txnkv::StatementKvContext,
-    cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
-    execution_cancellation: Arc<CancelHandle>,
-    request_cancellation: Option<Arc<CancelHandle>>,
-    bound_at: Option<Instant>,
-    binding: Option<TransportBinding>,
-}
-
-impl TransportRequest {
-    /// Creates an unbound transport request from built request metadata.
-    #[must_use]
-    pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
-        Self {
-            metadata,
-            kv_exec_counter: Default::default(),
-            kv_context: tidb_txnkv::StatementKvContext::default(),
-            cop_lite_worker: None,
-            execution_cancellation,
-            request_cancellation: None,
-            bound_at: None,
-            binding: None,
-        }
-    }
-
-    /// Shares Go's statement-scoped TryCopLiteWorker across this statement's
-    /// readers. It is local execution ownership, never serialized to TiKV.
-    #[must_use]
-    pub fn with_cop_lite_worker(mut self, token: Arc<std::sync::atomic::AtomicBool>) -> Self {
-        self.cop_lite_worker = Some(token);
-        self
-    }
-
-    /// Retains the statement interceptor through paging and worker copies.
-    #[must_use]
-    pub fn with_kv_exec_counter(
-        mut self,
-        counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
-    ) -> Self {
-        self.kv_exec_counter = counter;
-        self
-    }
-
-    pub(crate) fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
-        self.kv_exec_counter.clone()
-    }
-
-    /// Carries the statement's ctx values -- its `RUDetails` and
-    /// `ExecDetails` -- to every send of this request (Go `CopClient.Send`'s
-    /// ctx, which `bo.GetCtx()` hands `SendReqCtx`).
-    #[must_use]
-    pub fn with_kv_context(mut self, kv_context: tidb_txnkv::StatementKvContext) -> Self {
-        self.kv_context = kv_context;
-        self
-    }
-
-    pub(crate) fn kv_context(&self) -> tidb_txnkv::StatementKvContext {
-        self.kv_context.clone()
-    }
-
-    pub(crate) fn cop_lite_worker(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        self.cop_lite_worker.clone()
-    }
-
-    /// Returns the mandatory outer execution cancellation owner.
-    #[must_use]
-    pub const fn execution_cancellation(&self) -> &Arc<CancelHandle> {
-        &self.execution_cancellation
-    }
-
-    /// Returns the one request-local authority minted at the send binding.
-    pub fn request_cancellation(&self) -> Result<&Arc<CancelHandle>, TransportRequestError> {
-        self.request_cancellation
-            .as_ref()
-            .ok_or(TransportRequestError::Unbound)
-    }
-
-    /// Returns the instant at which this request acquired its transport owner.
-    pub fn bound_at(&self) -> Result<Instant, TransportRequestError> {
-        self.bound_at.ok_or(TransportRequestError::Unbound)
-    }
-
-    /// Returns the immutable request metadata snapshot.
-    #[must_use]
-    pub const fn metadata(&self) -> &KvRequestMetadata {
-        &self.metadata
-    }
-
-    /// Builds the source resource-group tag from the first request key.
-    ///
-    /// This is a real pre-transport consumer of the canonical request
-    /// envelope. It deliberately stops before `tikvrpc.Request`, which is
-    /// encoded separately by the concrete transport.
-    #[must_use]
-    pub fn resource_group_tag(&self) -> Option<Vec<u8>> {
-        let tagger = self.metadata.resource_group_tagger.as_ref()?;
-        let first_key = self
-            .metadata
-            .key_ranges
-            .as_ref()
-            .and_then(|ranges| ranges.partitions().first())
-            .and_then(|ranges| ranges.first())
-            .map_or(&[][..], |range| range.start_key.as_slice());
-        Some(tagger.encode_tag_with_key(first_key))
-    }
-
-    /// Returns whether a transport owner has been attached.
-    #[must_use]
-    pub const fn is_bound(&self) -> bool {
-        self.binding.is_some()
-    }
-
-    /// Returns metadata only when a transport owner is attached.
-    ///
-    /// The error is deliberate: returning fake serialized bytes or silently
-    /// treating an unbound request as sendable would bypass the query runtime
-    /// transport boundary.
-    pub fn metadata_for_send(&self) -> Result<&KvRequestMetadata, TransportRequestError> {
-        if self.binding.is_some() {
-            Ok(&self.metadata)
-        } else {
-            Err(TransportRequestError::Unbound)
-        }
-    }
-
+/// Go `copr.buildCopTasks` / `SplitKeyRangesByLocations` over a built
+/// request.
+pub trait RegionTaskRequest {
     /// Splits this immutable built request into source-shaped region tasks.
     ///
     /// The caller supplies a checked region snapshot. This method performs no
     /// cache lookup, endpoint selection, retry, or RPC, and it does not require
     /// a transport binding because task construction precedes client send.
-    pub fn build_region_tasks(
+    fn build_region_tasks(
         &self,
         topology: &[RegionTaskTopology],
-    ) -> Result<Vec<RegionTaskEnvelope>, TransportRequestError> {
-        build_region_tasks(&self.metadata, topology)
-            .ok_or(TransportRequestError::InvalidRegionTopology)
-    }
+    ) -> Result<Vec<RegionTaskEnvelope>, TransportRequestError>;
 
     /// Returns request ranges grouped by normalized region, honoring Go's
     /// `UnspecifiedLimit = -1` and zero-limit fast path.
-    pub fn split_key_ranges_by_regions(
+    fn split_key_ranges_by_regions(
+        &self,
+        topology: &[RegionTaskTopology],
+        limit: isize,
+    ) -> Result<Vec<Vec<RequestKeyRange>>, TransportRequestError>;
+
+    /// Flattens [`Self::split_key_ranges_by_regions`] in region order.
+    fn split_region_ranges(
+        &self,
+        topology: &[RegionTaskTopology],
+        limit: isize,
+    ) -> Result<Vec<RequestKeyRange>, TransportRequestError>;
+}
+
+impl RegionTaskRequest for TransportRequest {
+    fn build_region_tasks(
+        &self,
+        topology: &[RegionTaskTopology],
+    ) -> Result<Vec<RegionTaskEnvelope>, TransportRequestError> {
+        build_region_tasks(self.metadata(), topology)
+            .ok_or(TransportRequestError::InvalidRegionTopology)
+    }
+
+    fn split_key_ranges_by_regions(
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
@@ -215,7 +69,7 @@ impl TransportRequest {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let mut metadata = self.metadata.clone();
+        let mut metadata = self.metadata().clone();
         metadata.store_batch_size = 0;
         let mut tasks = build_region_tasks(&metadata, topology)
             .ok_or(TransportRequestError::InvalidRegionTopology)?;
@@ -225,8 +79,7 @@ impl TransportRequest {
         Ok(tasks.into_iter().map(|task| task.ranges).collect())
     }
 
-    /// Flattens [`Self::split_key_ranges_by_regions`] in region order.
-    pub fn split_region_ranges(
+    fn split_region_ranges(
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
@@ -237,57 +90,14 @@ impl TransportRequest {
             .flatten()
             .collect())
     }
-
-    /// Attaches an opaque transport owner without mutating this snapshot.
-    pub fn bind(&self, binding: TransportBinding) -> Result<Self, TransportRequestError> {
-        if self.binding.is_some() {
-            return Err(TransportRequestError::AlreadyBound);
-        }
-        Ok(Self {
-            metadata: self.metadata.clone(),
-            kv_exec_counter: self.kv_exec_counter.clone(),
-            kv_context: self.kv_context.clone(),
-            cop_lite_worker: self.cop_lite_worker.clone(),
-            execution_cancellation: Arc::clone(&self.execution_cancellation),
-            request_cancellation: Some(self.execution_cancellation.request_child()),
-            bound_at: Some(Instant::now()),
-            binding: Some(binding),
-        })
-    }
-
-    /// Binds a transport and atomically applies the source request-source
-    /// mutation required by `Analyze` before the send boundary observes it.
-    ///
-    /// The original built request stays reusable, just as `bind` preserves
-    /// immutable request ownership. A second binding remains an explicit
-    /// error instead of silently replacing a transport's request source.
-    pub fn bind_with_request_source(
-        &self,
-        binding: TransportBinding,
-        request_source: RequestSource,
-    ) -> Result<Self, TransportRequestError> {
-        if self.binding.is_some() {
-            return Err(TransportRequestError::AlreadyBound);
-        }
-        let mut metadata = self.metadata.clone();
-        metadata.request_source = request_source;
-        Ok(Self {
-            metadata,
-            kv_exec_counter: self.kv_exec_counter.clone(),
-            kv_context: self.kv_context.clone(),
-            cop_lite_worker: self.cop_lite_worker.clone(),
-            execution_cancellation: Arc::clone(&self.execution_cancellation),
-            request_cancellation: Some(self.execution_cancellation.request_child()),
-            bound_at: Some(Instant::now()),
-            binding: Some(binding),
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::{KvRequestBuilder, RequestType, GLOBAL_REPLICA_SCOPE};
+    use crate::{CancelHandle, KvRequestBuilder, RequestType, GLOBAL_REPLICA_SCOPE};
 
     #[test]
     fn transport_request_starts_unbound_and_rejects_send() {

@@ -1228,3 +1228,108 @@ fn a_refused_begin_keeps_the_open_transactions_global_temporary_rows() {
     assert_eq!(row_text(session.run("SELECT * FROM gt")), [["5"]]);
     session.run("ROLLBACK").unwrap();
 }
+
+/// Go `DDLExec.Next` (`pkg/executor/ddl.go:113-185`): a DROP naming LOCAL
+/// temporary tables beside stored ones takes the local names out, runs the
+/// job for the rest after `NewTxnInStmt`, and only then drops the local ones
+/// (`dropLocalTemporaryTables`). A local table that shadows a stored one is
+/// dropped as the local table; the stored one survives.
+#[test]
+fn mixed_drop_runs_the_job_then_drops_the_local_tables() {
+    let mut session = temporary_session();
+    session.run("create table perm (a int)").unwrap();
+    session.run("create table shadow (a int)").unwrap();
+    session.run("insert into shadow values (1)").unwrap();
+    session.run("create temporary table loc (a int)").unwrap();
+    session.run("create temporary table shadow (b int)").unwrap();
+
+    session.run("drop table perm, loc, shadow").unwrap();
+
+    assert_eq!(refusal(&mut session, "select * from perm").0, 1146);
+    assert_eq!(refusal(&mut session, "select * from loc").0, 1146);
+    assert_eq!(
+        row_text(session.run("select * from shadow")),
+        vec![vec!["1"]],
+        "the stored table the local one shadowed is still there"
+    );
+}
+
+/// Go `DDLExec.Next` (`pkg/executor/ddl.go:129-141`): `DROP TEMPORARY TABLE
+/// IF EXISTS` naming a stored table reports it as one Note 1051 and returns
+/// before anything is dropped -- neither the stored table nor the LOCAL
+/// temporary table listed beside it.
+#[test]
+fn drop_temporary_table_if_exists_of_a_stored_table_is_a_note_and_drops_nothing() {
+    let mut session = temporary_session();
+    session.run("create table perm (a int)").unwrap();
+    session.run("create temporary table loc (a int)").unwrap();
+
+    session
+        .run("drop temporary table if exists perm, loc")
+        .expect("IF EXISTS turns the 1051 into a note");
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        vec![vec!["Note", "1051", "Unknown table 'test.perm'"]]
+    );
+    session.run("select * from perm").expect("perm is not dropped");
+    session.run("select * from loc").expect("loc is not dropped");
+}
+
+/// Go `SessionTables` keys a LOCAL temporary table by `schema.L` and
+/// `table.L`, so every DDL on it finds it whatever case it is written in.
+#[test]
+fn local_temporary_ddl_finds_the_table_in_any_case() {
+    let mut session = temporary_session();
+    session.run("create temporary table TmpCase (a int)").unwrap();
+    session.run("insert into tmpcase values (1)").unwrap();
+    assert_eq!(
+        refusal(&mut session, "create temporary table TMPCASE (a int)").0,
+        1050
+    );
+    session.run("truncate table TMPCASE").unwrap();
+    assert_eq!(
+        row_text(session.run("select count(*) from tmpCase")),
+        vec![vec!["0"]]
+    );
+    session.run("drop temporary table tmpCASE").unwrap();
+    assert_eq!(refusal(&mut session, "select * from TmpCase").0, 1146);
+}
+
+/// Go `buildCompactTable` takes the table the preprocessor resolved through
+/// the session's infoschema (`planbuilder.go:6270`), which holds the LOCAL
+/// temporary tables, and `doCompact` skips one with no TiFlash replica with
+/// a warning (`executor/compact_table.go:88`).
+#[test]
+fn compact_on_a_local_temporary_table_is_skipped_with_a_warning() {
+    let mut session = temporary_session();
+    session.run("create temporary table loc (a int)").unwrap();
+    session
+        .run("alter table loc compact tiflash replica")
+        .expect("the local temporary table resolves");
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "compact skipped: no tiflash replica in the table"
+        ]]
+    );
+}
+
+/// Go `SessionTables` owns each local temporary table with its `DBInfo`, so
+/// dropping the schema leaves the table readable under its name, a schema
+/// created again by that name sees it, and `DROP TABLE` removes it (gorun).
+#[test]
+fn a_local_temporary_table_outlives_its_dropped_schema() {
+    let mut s = temporary_session();
+    s.run("create database d").unwrap();
+    s.run("create temporary table d.t (a int)").unwrap();
+    s.run("insert into d.t values (1)").unwrap();
+    s.run("drop database d").unwrap();
+    assert_eq!(row_text(s.run("select * from d.t")), vec![vec!["1"]]);
+    assert_eq!(refusal(&mut s, "show tables in d").0, 1049);
+    s.run("create database d").unwrap();
+    assert_eq!(row_text(s.run("select * from d.t")), vec![vec!["1"]]);
+    s.run("drop table d.t").unwrap();
+    assert_eq!(refusal(&mut s, "select * from d.t").0, 1146);
+}

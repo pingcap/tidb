@@ -17,10 +17,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
-use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_exec::real_tikv_read::{
+use tidb_cluster::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
+use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
+use tidb_cluster::real_tikv_read::{
     ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
 };
 use tidb_exec::real_tikv_stats::{
@@ -405,10 +405,8 @@ impl std::error::Error for RunConfiguredNodeError {
 mod tests {
     use super::*;
     use crate::domain::secure_transport::TransportKind;
-    use crate::domain::session_api::cluster_ddl_error;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use tidb_exec::real_tikv_ddl::ClusterDdlError;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 

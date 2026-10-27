@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Live `TcpStream` ownership for the bounded MySQL connection lifecycle.
+//! Live client-socket ownership for the bounded MySQL connection lifecycle.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufReader, Write};
-use std::net::{SocketAddr, TcpStream};
+use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -274,7 +274,6 @@ impl PreparedStatementRegistry {
         engine: &mut S,
         stmt: &Stmt,
     ) -> Result<(), SqlQueryError> {
-        use base64::Engine as _;
         use tidb_session::session_states::{PreparedStmtInfo, ProtocolSessionStates};
         let effective = engine
             .migration_session()
@@ -309,9 +308,9 @@ impl PreparedStatementRegistry {
                     id,
                     PreparedStmtInfo {
                         name: String::new(),
-                        text: sql.to_owned(),
-                        database: prepared.database.clone(),
-                        parameter_types: base64::engine::general_purpose::STANDARD.encode(types),
+                        stmt_text: sql.to_owned(),
+                        stmt_db: prepared.database.clone(),
+                        param_types: types,
                     },
                 );
             }
@@ -331,30 +330,21 @@ impl PreparedStatementRegistry {
                 SqlQueryError::new(error.code, error.state, error.message)
                     .with_identity(error.identity)
             })?;
-        let records: std::collections::BTreeMap<u32, PreparedStmtInfo> = serde_json::from_value(
-            state
-                .get("prepared-stmts")
-                .cloned()
-                .unwrap_or(serde_json::json!({})),
-        )
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        for (id, info) in records {
+        for (id, info) in state.prepared_stmts {
             if !info.name.is_empty() {
                 continue;
             }
-            let types = base64::engine::general_purpose::STANDARD
-                .decode(&info.parameter_types)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            let types = info.param_types;
             if types.len() % 2 != 0 {
                 return Err(SqlQueryError::unknown(
                     "invalid prepared parameter type state",
                 ));
             }
-            let database = info.database;
+            let database = info.stmt_db;
             let old_db = engine
                 .migration_session()
                 .map(|session| session.replace_migration_database(database.clone()));
-            let result = engine.prepare_general(&info.text);
+            let result = engine.prepare_general(&info.stmt_text);
             if let Some(old_db) = old_db {
                 if let Some(session) = engine.migration_session() {
                     session.replace_migration_database(old_db);
@@ -667,7 +657,7 @@ pub struct ConnectionReport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AcceptedConnectionIdentity {
     connection_id: u64,
-    peer_addr: SocketAddr,
+    peer_addr: PeerAddress,
 }
 
 /// Adds Go `clientConn.user`/`peerHost` error accounting to the ordinary
@@ -934,8 +924,8 @@ const SHA2_FAST_AUTH_FAIL: u8 = 4;
 /// The port advertises no `CLIENT_SSL`, so a client that wants TLS is refused
 /// by the negotiation rather than left waiting for an upgrade.
 pub fn serve_mysql_connection<F: QuerySessionFactory>(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
+    stream: impl Into<ClientSocket>,
+    peer_addr: impl Into<PeerAddress>,
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
@@ -963,8 +953,8 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
 /// `s.capability |= mysql.ClientSSL` guard in `pkg/server/server.go`.
 #[allow(clippy::too_many_arguments)]
 pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
+    stream: impl Into<ClientSocket>,
+    peer_addr: impl Into<PeerAddress>,
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
@@ -973,8 +963,8 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
     tls: Option<&MysqlServerTls>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     serve_mysql_connection_with_runtime(
-        stream,
-        peer_addr,
+        stream.into(),
+        peer_addr.into(),
         cancellation,
         factory,
         users,
@@ -1041,8 +1031,8 @@ pub(crate) struct MysqlConnectionRuntime<'a> {
 }
 
 pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
+    stream: ClientSocket,
+    peer_addr: PeerAddress,
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
@@ -1102,7 +1092,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
 
 #[allow(clippy::too_many_arguments)]
 fn serve_connection_inner<F: QuerySessionFactory>(
-    stream: TcpStream,
+    stream: ClientSocket,
     identity: AcceptedConnectionIdentity,
     cancellation: ConnectionCancellation,
     factory: &F,
@@ -1130,7 +1120,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // it.
     let socket = ClientStream::plain(stream);
     let mut output =
-        ClientErrorRecordingOutput::new(socket.clone(), String::new(), peer_addr.ip().to_string());
+        ClientErrorRecordingOutput::new(socket.clone(), String::new(), peer_addr.host());
     let server_capabilities = if runtime.tls.is_some() {
         SERVER_CAPABILITIES | CLIENT_SSL
     } else {
@@ -1238,7 +1228,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // AuthSwitchRequest. Keep the returned token so the account verifier
     // consumes this exact live-global decision instead of reading it again
     // after an interactive auth exchange.
-    let transport = if socket.is_tls() {
+    let transport = if peer_addr.is_unix_socket() {
+        TransportKind::UnixSocket
+    } else if socket.is_tls() {
         TransportKind::DirectTls
     } else {
         TransportKind::PlainTcp
@@ -1272,7 +1264,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                access_denied_message(&response_user, &peer_addr.ip().to_string(), &response.auth),
+                access_denied_message(&response_user, &peer_addr.host(), &response.auth),
                 response.capability & CLIENT_PROTOCOL_41 != 0,
             )?;
             return Ok(ConnectionReport {
@@ -1290,7 +1282,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             reply_sequence,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
-            access_denied_message(&response_user, &peer_addr.ip().to_string(), &response.auth),
+            access_denied_message(&response_user, &peer_addr.host(), &response.auth),
             protocol_41,
         )?;
         return Ok(ConnectionReport {
@@ -1300,17 +1292,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             exit: ConnectionExit::AuthenticationRejected,
         });
     }
-    // Go `checkAuthPlugin` (`server/conn.go` line 939): the ACCOUNT's
-    // `mysql.user.plugin` -- not the plugin the client offered -- decides
-    // what this connection speaks. An account with no plugin (or none at
-    // all) is Go's "assuming MySQL Native Password".
+    // Go `handleAuthPlugin`: a client without plugin support speaks
+    // `mysql_native_password`, and `checkAuthPlugin` (`server/conn.go` line
+    // 939) always permits `tidb_session_token`, skipping the stored user
+    // plugin: the response is the token a migrated session presents.
+    let client_plugin = if capabilities & CLIENT_PLUGIN_AUTH != 0 {
+        String::from_utf8_lossy(response.auth_plugin.as_bytes()).into_owned()
+    } else {
+        AUTH_NATIVE_PASSWORD.to_owned()
+    };
+    let session_token = client_plugin == crate::auth_plugin_registry::AUTH_TIDB_SESSION_TOKEN;
+    // Otherwise the ACCOUNT's `mysql.user.plugin` -- not the plugin the
+    // client offered -- decides what this connection speaks. An account
+    // with no plugin (or none at all) is Go's "assuming MySQL Native
+    // Password".
     let account_plugin = users
-        .auth_plugin_for(&response_user, &peer_addr.ip().to_string())
+        .auth_plugin_for(&response_user, &peer_addr.host())
         .unwrap_or_else(|| AUTH_NATIVE_PASSWORD.to_owned());
     // Go switches when the server's advertised plugin differs from EITHER
     // the account's or the client's. This server always advertises
     // `mysql_native_password`, so that reduces to these two disjuncts.
-    let (auth_response, response_sequence) = if capabilities & CLIENT_PLUGIN_AUTH != 0
+    let (auth_response, response_sequence) = if !session_token
+        && capabilities & CLIENT_PLUGIN_AUTH != 0
         && (account_plugin != AUTH_NATIVE_PASSWORD
             || (!response.auth_plugin.is_empty()
                 && response.auth_plugin.as_bytes() != AUTH_NATIVE_PASSWORD.as_bytes()))
@@ -1334,7 +1337,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // for issue 40831, because asking a passwordless client for a full
     // authentication confuses it.
     let (auth_response, response_sequence) =
-        if plugin_needs_cleartext(&account_plugin) && !auth_response.is_empty() {
+        if !session_token && plugin_needs_cleartext(&account_plugin) && !auth_response.is_empty() {
             write_payload(
                 &mut output,
                 response_sequence,
@@ -1359,9 +1362,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // own REQUIRE clause plus ordinary/bypassed identity authentication.
     let auth_result = users.authenticate_admitted(
         &response_user,
-        &peer_addr.ip().to_string(),
+        &peer_addr.host(),
         &salt,
         &auth_response,
+        &client_plugin,
         transport_admission,
     );
     let identity = match auth_result {
@@ -1390,7 +1394,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 response_sequence,
                 ER_ACCOUNT_HAS_BEEN_LOCKED,
                 *b"HY000",
-                account_locked_message(&response_user, &peer_addr.ip().to_string()),
+                account_locked_message(&response_user, &peer_addr.host()),
                 protocol_41,
             )?;
             return Ok(ConnectionReport {
@@ -1461,7 +1465,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 response_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                access_denied_message(&response_user, &peer_addr.ip().to_string(), &auth_response),
+                access_denied_message(&response_user, &peer_addr.host(), &auth_response),
                 protocol_41,
             )?;
             return Ok(ConnectionReport {
@@ -1482,7 +1486,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         peer_addr,
         identity,
         client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
-        secure_transport: socket.is_tls(),
+        // Go `ConnectionInfo.IsSecureTransport`: TLS or a Unix socket.
+        secure_transport: socket.is_tls() || peer_addr.is_unix_socket(),
         tls_status: socket.negotiated_tls().map(|(cipher, version)| {
             (
                 tidb_util::tls::cipher_suite_name(cipher).to_owned(),
@@ -1549,16 +1554,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
-    // ... and a handshake that carried NO database leaves the connection with
-    // none selected, which is Go's state rather than a default schema: a
-    // session that silently landed in `test` answered `DATABASE()` with
-    // `test` instead of NULL, resolved unqualified names there instead of
-    // raising 1046, and -- the part that loses data to the wrong schema --
-    // let `create table cq(a int)` succeed in `test` for a client that had
-    // simply forgotten its `USE`.
-    if response_db_name.is_empty() {
-        engine.deselect_database();
-    }
+    // A handshake that carried no database leaves the session's empty
+    // `CurrentDB` as it is.
     if !response_db_name.is_empty() {
         if let Err(error) = engine.select_database(&response_db_name) {
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
@@ -1623,7 +1620,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         cancellation,
         stream_for_watch,
         conn_info: ConnInfo {
-            addr: peer_addr.to_string(),
+            addr: peer_addr.remote_addr(),
             collation: handshake_collation,
             user: response_user.clone(),
         },
@@ -1636,7 +1633,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
 /// unknown states. Probes never overlap (Go's `mu.TryLock`): a probe that
 /// finds another running answers alive.
 struct ConnectionAliveProbe {
-    socket: TcpStream,
+    socket: ClientSocket,
     checking: Mutex<()>,
 }
 
@@ -1705,7 +1702,7 @@ struct CommandContext<'a> {
     capabilities: u32,
     framing: WireFraming,
     cancellation: ConnectionCancellation,
-    stream_for_watch: TcpStream,
+    stream_for_watch: ClientSocket,
     conn_info: ConnInfo,
 }
 
@@ -2193,14 +2190,14 @@ fn run_connection_commands<S: QuerySession>(
                                 // go session.go:1955-1968's parse-failure
                                 // half: fresh warning context + the error row
                                 // (see the session's own record_parse_failure).
-                                engine.record_parse_failure(error.code, error.message.clone());
+                                engine.record_parse_failure(&error);
                                 write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
                         };
                         if let Err(error) = prepared.session_states_handler(engine, &stmt) {
-                            engine.record_parse_failure(error.code, error.message.clone());
+                            engine.record_parse_failure(&error);
                             write_query_error_at(output, sequence, &error, protocol_41)?;
                             aborted = true;
                             break;
@@ -3258,7 +3255,7 @@ mod connection_alive_tests {
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (server, _) = listener.accept().unwrap();
         let probe = ConnectionAliveProbe {
-            socket: server,
+            socket: server.into(),
             checking: Mutex::new(()),
         };
         assert!(probe.is_alive(), "a quiet client is alive");
@@ -3274,6 +3271,23 @@ mod connection_alive_tests {
         assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 0);
     }
 
+    /// The same probe over a Unix-domain socket connection.
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_sees_a_unix_socket_client_close() {
+        let (server, client) = std::os::unix::net::UnixStream::pair().unwrap();
+        std::io::Write::write_all(&mut &client, b"x").unwrap();
+        let probe = ConnectionAliveProbe {
+            socket: server.into(),
+            checking: Mutex::new(()),
+        };
+        assert!(probe.is_alive(), "a client byte is no end of stream");
+        let mut byte = [0_u8; 1];
+        assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 1);
+        drop(client);
+        assert!(!probe.is_alive(), "the closed peer is an end of stream");
+    }
+
     /// The probe peeks rather than reads: a client byte stays for the
     /// command loop.
     #[test]
@@ -3284,7 +3298,7 @@ mod connection_alive_tests {
         std::io::Write::write_all(&mut client, b"x").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         let probe = ConnectionAliveProbe {
-            socket: server,
+            socket: server.into(),
             checking: Mutex::new(()),
         };
         assert!(probe.is_alive());

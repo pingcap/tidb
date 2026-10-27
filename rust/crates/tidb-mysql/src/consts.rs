@@ -663,6 +663,28 @@ impl Priority {
         }
     }
 }
+impl Priority {
+    /// Go `PriorityEnum(n)`: the priority an enum value names, no priority
+    /// for any other.
+    pub const fn from_enum(value: i32) -> Self {
+        match value {
+            1 => Self::Low,
+            2 => Self::High,
+            3 => Self::Delayed,
+            _ => Self::None,
+        }
+    }
+
+    /// Go's `PriorityEnum` value.
+    pub const fn as_enum(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Low => 1,
+            Self::High => 2,
+            Self::Delayed => 3,
+        }
+    }
+}
 /// Parses a priority case-insensitively, defaulting to no priority.
 pub fn priority_from_str(value: &str) -> Priority {
     match crate::to_uppercase(value).as_str() {

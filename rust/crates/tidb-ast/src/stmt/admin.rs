@@ -2,7 +2,11 @@
 //! [`crate::Stmt::Admin`]. The `AdminStmt` dispatch enum and its restore live
 //! here; each payload family lives in a sibling module below.
 
-use crate::util::{escape_string_literal, push_name_path};
+use crate::util::{back_quote, escape_string_literal, push_name_path};
+use crate::{
+    AlterInstanceStmt, AlterRangeStmt, CompactTableStmt, CreateUserCommentOrAttribute, CreateUserPasswordOption,
+    CreateProcedureStmt, CreateUserSpec, DropProcedureStmt, RenameUserPair, RoleSpec,
+};
 use crate::{
     AddQueryWatchStmt, AnalyzeIncrementalStmt, AnalyzeTableStmt, BinlogStmt, BrieStmt,
     CalibrateResourceStmt, CreateBindingStmt, CreateStatisticsStmt, DropBindingStmt, DropQueryWatchStmt, ExplainForStmt, ExplainStmt, Expr, FlushStmt, KillStmt,
@@ -194,13 +198,6 @@ pub enum AdminStmt {
     BindingControl(AdminBindingControlKind),
     /// `ADMIN CREATE WORKLOAD SNAPSHOT`.
     CreateWorkloadSnapshot,
-    /// `ADMIN CLEANUP TABLE LOCK table [, table ...]`.
-    ///
-    /// TiDB's cleanup operation releases stale metadata locks owned by the
-    /// named tables. The parser/restore contract is kept separate from
-    /// `ADMIN CLEANUP INDEX`: Go uses a distinct `CleanupTableLockStmt` AST
-    /// payload and executor path.
-    CleanupTableLock(Box<AdminCleanupTableLockStmt>),
     /// `LOCK STATS table [, table ...] [PARTITION ...]`.
     LockStats(Box<StatsLockStmt>),
     /// `UNLOCK STATS table [, table ...] [PARTITION ...]`.
@@ -228,6 +225,63 @@ pub enum AdminStmt {
     /// project keeps it in the administrative envelope and rejects execution
     /// explicitly.
     SplitRegion(Box<SplitRegionStmt>),
+    /// A `RENAME USER old_user TO new_user [, ...]` statement.
+    RenameUser {
+        /// The user-identity rename pairs in source order.
+        pairs: Vec<RenameUserPair>,
+    },
+    /// A `CREATE USER [IF NOT EXISTS] user_spec [, ...]` statement.
+    CreateUser {
+        /// Whether duplicate-account errors are suppressed.
+        if_not_exists: bool,
+        /// The account specifications.
+        users: Vec<CreateUserSpec>,
+        /// Statement-global `REQUIRE` TLS/token options, in Go parser order.
+        tls_options: Vec<crate::AlterUserTlsOption>,
+        /// Statement-global `WITH MAX_*` resource limits, in Go parser order.
+        resource_options: Vec<crate::AlterUserResourceOption>,
+        /// Statement-global password/account-lock policies, in source order.
+        password_options: Vec<CreateUserPasswordOption>,
+        /// The optional statement-global account annotation.
+        comment_or_attribute: Option<CreateUserCommentOrAttribute>,
+        /// The optional statement-global resource group, parsed after the
+        /// comment/attribute option and restored as an identifier.
+        resource_group: Option<String>,
+    },
+    /// A `CREATE ROLE [IF NOT EXISTS] role_spec [, ...]` statement.
+    ///
+    /// Roles deliberately use [`RoleSpec`] rather than [`UserSpec`]: Go's
+    /// `Rolename` grammar rejects a bare non-reserved keyword unless it is in
+    /// the composed `role@host` form, and it never permits `CURRENT_USER`.
+    CreateRole {
+        /// Whether duplicate-role errors are suppressed.
+        if_not_exists: bool,
+        /// The role identities in source order.
+        roles: Vec<RoleSpec>,
+    },
+    /// An `ALTER USER [IF EXISTS] user_spec [, ...] [PASSWORD EXPIRE ...]`
+    /// statement.
+    AlterUser(Box<crate::AlterUserStmt>),
+    /// A `DROP USER` or `DROP ROLE` statement.
+    DropUser {
+        /// Whether this is `DROP ROLE` rather than `DROP USER`.
+        is_role: bool,
+        /// Whether missing-account errors are suppressed.
+        if_exists: bool,
+        /// The accounts or roles.
+        users: Vec<UserSpec>,
+    },
+    /// A `CREATE PROCEDURE` statement: Go's `ProcedureInfo`, a plain
+    /// `stmtNode` like `DropProcedureStmt`, not a `DDLNode`.
+    CreateProcedure(Box<CreateProcedureStmt>),
+    /// A `DROP PROCEDURE` statement.
+    DropProcedure(Box<DropProcedureStmt>),
+    /// `ALTER INSTANCE RELOAD TLS [NO ROLLBACK ON ERROR]`.
+    AlterInstance(Box<AlterInstanceStmt>),
+    /// `ALTER RANGE name placement_option`.
+    AlterRange(Box<AlterRangeStmt>),
+    /// Go `CompactTableStmt`: `ALTER TABLE name COMPACT ...`.
+    CompactTable(Box<CompactTableStmt>),
 }
 
 impl AdminStmt {
@@ -322,7 +376,6 @@ impl AdminStmt {
                 out.push_str(" BINDINGS");
             }
             Self::CreateWorkloadSnapshot => out.push_str("ADMIN CREATE WORKLOAD SNAPSHOT"),
-            Self::CleanupTableLock(cleanup) => cleanup.restore_into(out),
             Self::LockStats(lock) => lock.restore_into(out, true),
             Self::UnlockStats(lock) => lock.restore_into(out, false),
             Self::Explain(explain) => explain.restore_into(out),
@@ -330,6 +383,104 @@ impl AdminStmt {
             Self::LoadStats(load) => load.restore_into(out),
             Self::DropStats(drop) => drop.restore_into(out),
             Self::SplitRegion(split) => split.restore_into(out),
+            Self::RenameUser { pairs } => {
+                out.push_str("RENAME USER ");
+                for (index, pair) in pairs.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    pair.old_user.restore_into(out);
+                    out.push_str(" TO ");
+                    pair.new_user.restore_into(out);
+                }
+            }
+            Self::CreateUser {
+                if_not_exists,
+                users,
+                tls_options,
+                resource_options,
+                password_options,
+                comment_or_attribute,
+                resource_group,
+            } => {
+                out.push_str("CREATE USER ");
+                if *if_not_exists {
+                    out.push_str("IF NOT EXISTS ");
+                }
+                for (index, user) in users.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    user.restore_into(out);
+                }
+                if !tls_options.is_empty() {
+                    out.push_str(" REQUIRE ");
+                    for (index, option) in tls_options.iter().enumerate() {
+                        if index > 0 {
+                            out.push_str(" AND ");
+                        }
+                        option.restore_into(out);
+                    }
+                }
+                if !resource_options.is_empty() {
+                    out.push_str(" WITH");
+                    for option in resource_options {
+                        out.push(' ');
+                        out.push_str(option.kind.as_sql());
+                        out.push(' ');
+                        out.push_str(&option.count.to_string());
+                    }
+                }
+                for option in password_options {
+                    out.push(' ');
+                    option.restore_into(out);
+                }
+                if let Some(option) = comment_or_attribute {
+                    out.push(' ');
+                    option.restore_into(out);
+                }
+                if let Some(resource_group) = resource_group {
+                    out.push_str(" RESOURCE GROUP ");
+                    out.push_str(&back_quote(resource_group));
+                }
+            }
+            Self::CreateRole {
+                if_not_exists,
+                roles,
+            } => {
+                out.push_str("CREATE ROLE ");
+                if *if_not_exists {
+                    out.push_str("IF NOT EXISTS ");
+                }
+                for (index, role) in roles.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    role.restore_into(out);
+                }
+            }
+            Self::AlterUser(statement) => statement.restore_into(out),
+            Self::DropUser {
+                is_role,
+                if_exists,
+                users,
+            } => {
+                out.push_str(if *is_role { "DROP ROLE " } else { "DROP USER " });
+                if *if_exists {
+                    out.push_str("IF EXISTS ");
+                }
+                for (index, user) in users.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    user.restore_into(out);
+                }
+            }
+            Self::CreateProcedure(procedure) => procedure.restore_into(out),
+            Self::DropProcedure(procedure) => procedure.restore_into(out),
+            Self::AlterInstance(instance) => instance.restore_into(out),
+            Self::AlterRange(range) => range.restore_into(out),
+            Self::CompactTable(compact) => compact.restore_into(out),
         }
     }
 }
@@ -619,12 +770,6 @@ impl crate::Visitable for AdminStmt {
                 let _ = field_0;
             }
             Self::CreateWorkloadSnapshot => {}
-            Self::CleanupTableLock(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
             Self::LockStats(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
@@ -662,6 +807,118 @@ impl crate::Visitable for AdminStmt {
                 let _ = field_0;
             }
             Self::SplitRegion(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RenameUser { pairs } => {
+                for value in pairs.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = pairs;
+            }
+            Self::CreateUser {
+                if_not_exists,
+                users,
+                tls_options,
+                resource_options,
+                password_options,
+                comment_or_attribute,
+                resource_group,
+            } => {
+                for value in users.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in tls_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in resource_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in password_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                if let Some(value) = comment_or_attribute.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = users;
+                let _ = tls_options;
+                let _ = resource_options;
+                let _ = password_options;
+                let _ = comment_or_attribute;
+                let _ = resource_group;
+            }
+            Self::CreateRole {
+                if_not_exists,
+                roles,
+            } => {
+                for value in roles.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = roles;
+            }
+            Self::AlterUser(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropUser {
+                is_role,
+                if_exists,
+                users,
+            } => {
+                for value in users.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = is_role;
+                let _ = if_exists;
+                let _ = users;
+            }
+            Self::CreateProcedure(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropProcedure(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterInstance(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterRange(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CompactTable(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
                 }

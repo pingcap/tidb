@@ -45,7 +45,6 @@ mod select_iter;
 mod signed_handle_range;
 mod table_handle_ranges;
 mod transport;
-mod warning;
 
 pub use chblock::{decode_ch_block, RawChBlockChunk};
 pub use chunk_decode::{
@@ -78,12 +77,13 @@ pub use distsql_runtime::{
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CancelHandle, CpuUsage, ExecutionState, KillHandle, KvVariables};
 pub use kv_request::{
-    KvRequestMetadata, PartitionIdAndRanges, RequestKeyRange, RequestKeyRanges, DC_LABEL_KEY,
-    GLOBAL_REPLICA_SCOPE,
+    request_from_context, KvRequestMetadata, PartitionIdAndRanges, RequestKeyRange,
+    RequestKeyRanges, DC_LABEL_KEY, GLOBAL_REPLICA_SCOPE,
 };
 pub use query_runtime::{
-    CopInfo, InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponse, QueryResponseError,
-    QueryResultContext, QueryRuntimeError, QueryTransport,
+    checksum, select_with_runtime_stats_over_client, send_request, CopInfo, InjectedQueryRuntime,
+    QueryDispatch, QueryOperation, QueryResponse, QueryResponseError, QueryResultContext,
+    QueryRuntimeError, QueryTransport,
 };
 pub use read_bytes_ema::ReadBytesEma;
 pub use region_location::RegionTaskLocation;
@@ -115,8 +115,10 @@ pub use tidb_util::paging::{
     calculate_seek_cnt as calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE,
     MIN_PAGING_SIZE, THRESHOLD as PAGING_THRESHOLD,
 };
-pub use transport::{TransportBinding, TransportRequest, TransportRequestError};
-pub use warning::{Warning, WarningClass, WarningCollector, WarningLevel};
+pub use transport::{
+    RegionTaskRequest, TransportBinding, TransportRequest, TransportRequestError,
+};
+pub use tidb_util::context::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub mod metrics;
 #[cfg(test)]

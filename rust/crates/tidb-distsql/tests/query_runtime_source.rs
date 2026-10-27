@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use prost::Message;
 use tidb_codec::encode_value_in_timezone;
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
-use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
     QueryRuntimeError, QueryTransport, ResponseChannel, ResponseRuntimeStats, SelectInput,
@@ -83,7 +83,7 @@ struct TrackingResponse {
     limiter_wait: tidb_distsql::LimiterWaitStats,
 }
 
-impl QueryResponse for TrackingResponse {
+impl tidb_txnkv::Response for TrackingResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         Ok(self.subsets.pop_front())
     }
@@ -97,6 +97,7 @@ impl QueryResponse for TrackingResponse {
         self.limiter_wait
     }
 }
+
 
 struct TrackingTransport(Option<TrackingResponse>);
 
@@ -532,17 +533,19 @@ fn transport_error_remains_the_first_error() {
 #[test]
 fn registered_storage_error_survives_row_and_chunk_decoding() {
     struct Failure(Arc<AtomicBool>);
-    impl QueryResponse for Failure {
+    impl tidb_txnkv::Response for Failure {
         fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
             Err(QueryResponseError::Sql {
                 code: 9004,
                 message: "[tikv:9004]Resolve lock timeout".to_owned(),
             })
         }
+
         fn close(&mut self) {
             self.0.store(true, Ordering::SeqCst);
         }
     }
+
     for chunk in [false, true] {
         let closed = Arc::new(AtomicBool::new(false));
         let mut iter = tidb_distsql::SelectResponseIter::from_query_response(

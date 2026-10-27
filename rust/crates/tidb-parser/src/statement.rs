@@ -233,11 +233,11 @@ impl Parser {
                 AdminStmt::CancelImportJob(job_id),
             )))
         } else if self.is_kw("CREATE") && self.is_kw_at(1, "PROCEDURE") {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateProcedure(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::CreateProcedure(
                 Box::new(self.parse_create_procedure()?),
             ))))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "PROCEDURE") {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::DropProcedure(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::DropProcedure(
                 Box::new(self.parse_drop_procedure()?),
             ))))
         } else if self.is_kw("LOCK") && (self.is_kw_at(1, "TABLE") || self.is_kw_at(1, "TABLES")) {
@@ -320,6 +320,15 @@ impl Parser {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
                 self.parse_flashback_statement()?,
             )))
+        } else if self.is_kw("ADMIN")
+            && self.is_kw_at(1, "CLEANUP")
+            && self.is_kw_at(2, "TABLE")
+            && self.is_kw_at(3, "LOCK")
+        {
+            // Go's `CleanupTableLockStmt` is a `DDLNode`.
+            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CleanupTableLock(
+                Box::new(self.parse_admin_cleanup_table_lock()?),
+            ))))
         } else if self.is_kw("ADMIN") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 self.parse_admin_statement()?,
@@ -337,7 +346,7 @@ impl Parser {
                 self.parse_placement_policy_source_statement()?,
             )))
         } else if self.is_user_ddl_statement() {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 self.parse_user_ddl_statement()?,
             )))
         } else if self.is_kw("CREATE")
@@ -409,11 +418,11 @@ impl Parser {
                 Box::new(self.parse_alter_sequence()?),
             ))))
         } else if self.is_kw("ALTER") && self.is_kw_at(1, "INSTANCE") {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterInstance(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::AlterInstance(
                 Box::new(self.parse_alter_instance()?),
             ))))
         } else if self.is_kw("ALTER") && self.is_kw_at(1, "RANGE") {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterRange(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::AlterRange(
                 Box::new(self.parse_alter_range()?),
             ))))
         } else if self.is_kw("ALTER") {

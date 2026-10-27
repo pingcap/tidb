@@ -99,8 +99,8 @@ pub struct NodeConfig {
     /// Go `cfg.Status.StatusPort` (default 10080).
     pub status_port: u16,
     /// Go `cfg.Socket` after `setGlobalVars`' `{Port}` substitution
-    /// (`main.go:1110`) — the value `@@socket` reports. The listener itself
-    /// remains TCP-only; the unix-socket LISTENER is unported.
+    /// (`main.go:1110`) — the value `@@socket` reports, and the Unix-domain
+    /// socket the server listens on beside `host:port` when non-empty.
     pub socket: String,
     /// Go `cfg.IsolationRead.Engines` (default `tikv,tiflash,tidb`), the
     /// startup value of `@@tidb_isolation_read_engines`.

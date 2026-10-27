@@ -21,7 +21,7 @@ use tidb_executor::{run_create_table_on, run_insert_on, run_select_on, Catalog, 
 
 #[test]
 fn dirty_table_union_scan_plan_executes_conditions_and_index_order() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = StmtContext::for_query();
     run_create_table_on(
         "CREATE TABLE union_scan_build (\

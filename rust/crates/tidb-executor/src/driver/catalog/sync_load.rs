@@ -482,8 +482,8 @@ mod tests {
         let loader: Arc<dyn StatisticsItemLoader> = Arc::new(TestLoader::default());
         let workers = StatisticsLoadWorkers::new();
         let weak_workers = Arc::downgrade(&workers);
-        let mut first = super::super::Catalog::default();
-        let mut second = super::super::Catalog::default();
+        let mut first = super::super::Catalog::mock();
+        let mut second = super::super::Catalog::mock();
         first.set_statistics_item_loader(Arc::clone(&loader), Arc::clone(&workers));
         second.set_statistics_item_loader(loader, workers);
         assert!(Arc::ptr_eq(
@@ -491,18 +491,9 @@ mod tests {
             &second.statistics.sync_load.get().unwrap().pool,
         ));
         // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
-        // committed session must not retain its workers after its last view.
-        let history = Arc::downgrade(&first.commit_history);
-        first.record_commit(1);
-        let snapshot = first.state_as_of(1).unwrap();
+        // closed session must not retain its workers after its last view.
         drop(first);
         drop(second);
-        assert!(history.upgrade().is_some());
-        drop(snapshot);
-        assert!(
-            history.upgrade().is_none(),
-            "history retains its own catalog"
-        );
         assert!(
             weak_workers.upgrade().is_none(),
             "closed catalog retains workers"

@@ -13,7 +13,6 @@
 //! behaviour, point gets, range scans, defaults, and set operations.
 
 mod aggregates;
-mod catalog_version;
 mod column_defaults;
 mod column_type_flags;
 mod create_table_like;
@@ -35,7 +34,7 @@ use super::*;
 
 fn test_catalog() -> Catalog {
     use tidb_datatype::FieldTypeCode;
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register(
         "t",
         MemTable {

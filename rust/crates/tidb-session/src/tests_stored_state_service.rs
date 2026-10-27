@@ -5,28 +5,32 @@
 //! statement runs against the scratch copy, a failure commits nothing, and
 //! the live copy is put back either way.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use crate::stored_state_service::{PendingSysvarChange, SysvarService};
+use crate::analyze_service::AnalyzeService;
+use crate::ddl_service::DdlService;
+use crate::domain_services::DomainServices;
+use crate::stats_statement_service::StatsStatementService;
+use crate::stored_state_service::{AccountService, PendingSysvarChange, SysvarService};
 use crate::tests_support::*;
 use crate::*;
 
 struct FakeSysvars {
     scratch: GlobalSysvars,
-    committed: Rc<Cell<bool>>,
+    committed: Arc<AtomicUsize>,
 }
 
 struct FakePendingSysvars {
     scratch: GlobalSysvars,
-    committed: Rc<Cell<bool>>,
+    committed: Arc<AtomicUsize>,
 }
 
 impl SysvarService for FakeSysvars {
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, DriverError> {
         Ok(Box::new(FakePendingSysvars {
             scratch: self.scratch.clone(),
-            committed: Rc::clone(&self.committed),
+            committed: Arc::clone(&self.committed),
         }))
     }
 }
@@ -37,41 +41,108 @@ impl PendingSysvarChange for FakePendingSysvars {
     }
 
     fn commit(self: Box<Self>) -> Result<Vec<String>, DriverError> {
-        self.committed.set(true);
-        Ok(vec!["tidb_mem_quota_query".to_owned()])
+        self.committed.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
     }
 }
 
+/// The services a `SET` never reaches.
+struct Unreached;
+
+impl DdlService for Unreached {
+    fn execute(
+        &self,
+        _statement: &tidb_ddl::cluster_ddl::DdlStatement,
+        _job_context: &tidb_executor::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
+        unreachable!("a SET runs no DDL job")
+    }
+
+    fn check_cached_table_ddl(
+        &self,
+        _stmt: &tidb_ast::Stmt,
+        _current_db: &str,
+    ) -> Result<(), DriverError> {
+        unreachable!("a SET runs no DDL job")
+    }
+
+    fn tiflash_store_count(&self) -> Result<u64, String> {
+        unreachable!("a SET runs no DDL job")
+    }
+}
+
+impl AccountService for Unreached {
+    fn load_accounts(&self) -> Result<crate::privilege::PrivilegeRegistry, DriverError> {
+        unreachable!("a SET reads no account")
+    }
+
+    fn system_session(
+        &self,
+    ) -> Result<Box<dyn crate::user_table::AccountSqlSession>, DriverError> {
+        unreachable!("a SET opens no system session")
+    }
+
+    fn notify_update_privilege(&self) -> Result<(), DriverError> {
+        unreachable!("a SET reloads no privilege")
+    }
+}
+
+fn domain_with_sysvars(sysvars: FakeSysvars) -> DomainServices {
+    DomainServices {
+        ddl: Arc::new(Unreached),
+        accounts: Arc::new(Unreached),
+        sysvars: Arc::new(sysvars),
+        analyze: Arc::new(|_: &Session| -> Box<dyn AnalyzeService> {
+            unreachable!("a SET analyzes nothing")
+        }),
+        stats: Arc::new(|_: &Session| -> Box<dyn StatsStatementService> {
+            unreachable!("a SET changes no statistics")
+        }),
+    }
+}
+
+/// Go `SetExecutor` writes each GLOBAL assignment through
+/// `GlobalVarsAccessor.SetGlobalSysVar` (`executor/set.go:166`): against a
+/// scratch copy inside its own change, persisted at once, the live copy
+/// untouched until the domain publishes it. A refused assignment persists
+/// nothing of its own, counts as the statement's error, and leaves the
+/// assignments before it stored.
 #[test]
-fn set_global_runs_on_the_scratch_table_and_a_failure_counts_as_an_error() {
+fn set_global_persists_each_assignment_through_the_domain() {
     let mut session = Session::new();
-    let committed = Rc::new(Cell::new(false));
+    let committed = Arc::new(AtomicUsize::new(0));
     let scratch = GlobalSysvars::new();
-    let service = FakeSysvars {
+    session.install_domain_services(domain_with_sysvars(FakeSysvars {
         scratch: scratch.clone(),
-        committed: Rc::clone(&committed),
-    };
+        committed: Arc::clone(&committed),
+    }));
     session
-        .run_global_var_statement_with("SET GLOBAL tidb_mem_quota_query = 123456789", &service)
+        .run("SET GLOBAL tidb_mem_quota_query = 123456789")
         .unwrap();
-    assert!(committed.get());
+    assert_eq!(committed.load(Ordering::SeqCst), 1);
     assert_eq!(scratch.get("tidb_mem_quota_query").unwrap(), "123456789");
     assert_ne!(
         row_text(session.run("SELECT @@global.tidb_mem_quota_query")),
         [["123456789"]]
     );
 
-    let committed = Rc::new(Cell::new(false));
-    let service = FakeSysvars {
-        scratch: GlobalSysvars::new(),
-        committed: Rc::clone(&committed),
-    };
     session
-        .run_global_var_statement_with("SET GLOBAL svc_no_such_variable = 1", &service)
+        .run("SET GLOBAL svc_no_such_variable = 1")
         .expect_err("an unknown variable is refused");
-    assert!(!committed.get());
+    assert_eq!(committed.load(Ordering::SeqCst), 1);
     // Go's SetExecutor appends the failure to the statement context.
     assert_eq!(row_text(session.run("SELECT @@error_count")), [["1"]]);
+
+    session
+        .run("SET GLOBAL tidb_mem_quota_query = 987654321, GLOBAL autocommit = 'bogus'")
+        .expect_err("a bad value is refused");
+    assert_eq!(
+        committed.load(Ordering::SeqCst),
+        2,
+        "the assignment before the refused one is stored"
+    );
+    assert_eq!(scratch.get("tidb_mem_quota_query").unwrap(), "987654321");
+    assert_ne!(scratch.get("autocommit").unwrap(), "bogus");
 }
 
 mod analyze {

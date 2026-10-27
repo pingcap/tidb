@@ -22,7 +22,7 @@
 //! the way Go's DDL does: strip the AST option, then stamp
 //! `generated_expr_string`/`generated_stored` on the built column.
 
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 use tidb_schemacmp::{decode_column_field_types, encode, IncompatibleError, Table};
 
@@ -51,7 +51,7 @@ fn to_table_info(create_table_stmt: &str) -> TableInfo {
         });
     }
 
-    let table_info = build_table_info(&create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On)
+    let table_info = build_table_info(&create, "utf8mb4", "utf8mb4_bin")
         .expect("the test SQL builds a table");
     for (name, expr, stored) in generated {
         let column = table_info

@@ -668,20 +668,21 @@ fn ddl_visit_batch_database_alter_requires_schema_privilege() {
 
 #[test]
 fn ddl_visit_batch_partition_and_fk_visits_follow_go_order() {
-    use privilege::GlobalPriv::{Alter, Create, Drop, Insert, References};
+    use tidb_mysql::{
+        AlterPriv as Alter, CreatePriv as Create, DropPriv as Drop, InsertPriv as Insert,
+        ReferencesPriv as References,
+    };
     let session = Session::new();
     let cases = [
+        // Go `buildDDL` (`planbuilder.go:5324`) visits the exchanged table
+        // under the ALTER table's schema (`dbName`), not `spec.NewTable`'s.
         (
             "ALTER TABLE test.t EXCHANGE PARTITION p0 WITH TABLE other.u",
             vec![
                 ("test", "t", Alter),
                 ("test", "t", Drop),
-                ("other", "u", Create),
-                ("other", "u", Insert),
-                ("test", "t", Insert),
-                ("test", "t", Create),
-                ("other", "u", Alter),
-                ("other", "u", Drop),
+                ("test", "u", Create),
+                ("test", "u", Insert),
             ],
         ),
         (
@@ -839,6 +840,78 @@ fn a_definer_view_is_invalid_when_its_definer_lost_the_base_table() {
             1356
         );
     }
+}
+
+/// Go `planbuilder.go:5496`: a `CREATE VIEW` whose DEFINER is not the
+/// session's own `user@host` (`v.Definer.String() != User.String()`) needs
+/// SUPER -- the host counts, not only the user name.
+#[test]
+fn a_view_definer_on_another_host_of_the_same_user_needs_super() {
+    let (privs, mut boot, _) = scoped();
+    boot.run("CREATE TABLE definer_base (c INT)").unwrap();
+    boot.run("CREATE USER 'viewdef'@'localhost'").unwrap();
+    boot.run("GRANT CREATE VIEW, SELECT ON test.* TO 'viewdef'@'localhost'")
+        .unwrap();
+    let mut user = session_as(&privs, boot.shared_catalog(), "viewdef", "localhost");
+    assert_eq!(
+        denied(
+            &mut user,
+            "CREATE DEFINER = 'viewdef'@'%' VIEW test.v_other_host AS SELECT c FROM test.definer_base",
+        )
+        .0,
+        1227
+    );
+    user.run(
+        "CREATE DEFINER = 'viewdef'@'localhost' VIEW test.v_same_host AS SELECT c FROM test.definer_base",
+    )
+    .unwrap();
+}
+
+/// A store timestamp after every write so far.
+fn current_ts(session: &mut Session) -> String {
+    session.run("BEGIN").unwrap();
+    let crate::StmtResult::Rows(rows) = session.run("SELECT @@tidb_current_ts").unwrap() else {
+        panic!("expected rows");
+    };
+    session.run("COMMIT").unwrap();
+    String::from_utf8(rows[0][0].sql_bytes().unwrap()).unwrap()
+}
+
+/// Go `ExecuteStmt` runs `validateStatementReadOnlyInStaleness`
+/// (`session.go:2822`) before `Compile`: inside a read-only staleness
+/// transaction a write the account may not run is refused as a write, not
+/// with the privilege error `Compile` would give.
+#[test]
+fn a_write_in_a_staleness_transaction_is_refused_before_privileges() {
+    let (_, mut boot, mut bob) = scoped();
+    let ts = current_ts(&mut boot);
+    bob.run(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+        .unwrap();
+    assert_eq!(
+        denied(&mut bob, "INSERT INTO t VALUES (2, 20)"),
+        (
+            1105,
+            "only support read-only statement during read-only staleness transactions".to_owned()
+        )
+    );
+}
+
+/// Go refuses a write under `tidb_snapshot` in `ExecStmt`
+/// (`adapter.go:1152`), after `Compile`: a DDL the account may not run gets
+/// the privilege error first.
+#[test]
+fn a_ddl_under_tidb_snapshot_reports_privileges_first() {
+    let (_, mut boot, mut bob) = scoped();
+    // Go's tests write the GC safe point `SET @@tidb_snapshot` validates
+    // against (`gcutil.ValidateSnapshot`).
+    boot.run("INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')")
+        .unwrap();
+    let ts = current_ts(&mut boot);
+    bob.run(&format!("SET @@tidb_snapshot = '{ts}'")).unwrap();
+    assert_eq!(
+        denied(&mut bob, "CREATE TABLE snapshot_ddl (a INT)"),
+        table_denied("CREATE", "snapshot_ddl")
+    );
 }
 
 /// `TestFieldList`: a connection with no schema selected may still name one in

@@ -47,7 +47,7 @@ where
     fn all_ddl_jobs(&self) -> Result<(Vec<Job>, Vec<Job>), String> {
         // Go `GetAllDDLJobs`: `select job_meta from mysql.tidb_ddl_job ...
         // order by job_id`.
-        let running = tidb_exec::real_tikv_ddl::load_active_persisted_ddl_jobs(
+        let running = tidb_ddl::real_tikv_ddl::load_active_persisted_ddl_jobs(
             Arc::clone(&self.opener),
             self.timeout,
             0,

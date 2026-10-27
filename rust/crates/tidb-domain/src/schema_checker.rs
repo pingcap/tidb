@@ -40,16 +40,16 @@
 //!   validator. Here only the one method this file calls is required, as
 //!   [`SchemaValidator`]. The `pkg/infoschema/isvalidator` implementation of
 //!   that interface is already ported, as
-//!   `tidb_exec::schema_validator::SchemaValidator`; it is deliberately not
+//!   `tidb_cluster::schema_validator::SchemaValidator`; it is deliberately not
 //!   depended on, because `tidb-exec` pulls in `tidb-planner` and
 //!   `tidb-executor`, and `pkg/domain` must stay below them. The `domain.go`
 //!   batch should collapse the two by writing a blanket impl of this trait
-//!   for `tidb_exec::schema_validator::Validator`.
+//!   for `tidb_cluster::schema_validator::Validator`.
 //! - `// boundary:` Go
 //!   `github.com/tikv/client-go/v2/txnkv/transaction.RelatedSchemaChange` —
 //!   re-declared locally as [`RelatedSchemaChange`] for the same reason;
 //!   field-for-field identical to
-//!   `tidb_exec::schema_validator::RelatedSchemaChange`.
+//!   `tidb_cluster::schema_validator::RelatedSchemaChange`.
 //! - `// boundary:` Go `pkg/infoschema/validatorapi.Result` — re-declared as
 //!   [`CheckResult`], same three variants.
 //! - `// boundary:` Go `github.com/tikv/client-go/v2/tikv.SchemaVer` — the
@@ -125,7 +125,7 @@ impl SchemaVer for IntSchemaVer {
 ///
 /// boundary: Go `pkg/infoschema/validatorapi.Validator` — narrowed to
 /// `Check`, the only method this file uses. See the module doc for why the
-/// already-ported `tidb_exec::schema_validator::Validator` is not reused
+/// already-ported `tidb_cluster::schema_validator::Validator` is not reused
 /// directly.
 pub trait SchemaValidator {
     /// Go `Validator.Check`.
@@ -387,7 +387,7 @@ mod tests {
     ///
     /// `TestSchemaCheckerSimple` in `pkg/domain/schema_checker_test.go`
     /// drives a real `isvalidator.New(lease)`, whose delta-ring semantics
-    /// are already covered by `tidb_exec::schema_validator`'s own source
+    /// are already covered by `tidb_cluster::schema_validator`'s own source
     /// tests. What `schema_checker.go` itself owns is the retry loop over
     /// whatever the validator answers, so these tests script the answers
     /// instead of re-deriving them.

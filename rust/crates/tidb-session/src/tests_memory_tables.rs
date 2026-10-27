@@ -161,7 +161,7 @@ fn a_missing_memory_table_is_reported_as_the_planner_resolves_it() {
 /// arms would be shadowed).
 #[test]
 fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
-    let catalog = tidb_executor::Catalog::default();
+    let catalog = tidb_executor::Catalog::mock();
     let ctx = tidb_executor::StmtContext::default();
     let visibility = crate::infoschema::SchemaVisibility::unrestricted();
     for table in crate::infoschema::SERVED_TABLES {
@@ -360,4 +360,23 @@ fn multi_table_writes_join_memory_tables() {
         .run("delete from t6 using t6 join information_schema.schemata s on s.schema_name = t6.n")
         .unwrap();
     assert_eq!(rows(&mut session, "t6"), [["2", "nomatch"]]);
+}
+
+/// Go `setDataFromIndexUsage` lists every table of every schema the user may
+/// see, the memory schemas' included, with each table's `TableInfo` indexes
+/// (gorun as root).
+#[test]
+fn index_usage_lists_the_memory_schemas_indexes_like_go() {
+    let mut session = Session::new();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(
+            "select table_schema, table_name, index_name from information_schema.tidb_index_usage \
+             where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA')"
+        )),
+        vec![
+            vec!["INFORMATION_SCHEMA", "CLUSTER_SLOW_QUERY", "primary"],
+            vec!["PERFORMANCE_SCHEMA", "events_statements_summary_by_digest", "schema_name"],
+            vec!["PERFORMANCE_SCHEMA", "status_by_connection", "primary"],
+        ]
+    );
 }

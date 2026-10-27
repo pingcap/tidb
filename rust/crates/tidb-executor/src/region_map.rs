@@ -25,6 +25,7 @@
 //! shares one map.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// One region as the store reports it, for `SHOW TABLE ... REGIONS`: Go
 /// `regionMeta` (client-go `Region.GetMeta()`, its leader, PD's statistics
@@ -126,6 +127,17 @@ pub fn clip_regions(regions: &[RegionMeta], start: &[u8], end: &[u8]) -> Vec<(Ve
             (low, high)
         })
         .collect()
+}
+
+/// The store's regions as a statement context holds them; a context with no
+/// store behind it gets one in-process region map.
+#[derive(Clone, Debug)]
+pub struct StoreRegions(pub Arc<dyn RegionStore>);
+
+impl Default for StoreRegions {
+    fn default() -> Self {
+        Self(Arc::new(LocalRegionStore::default()))
+    }
 }
 
 /// The in-process store's [`RegionStore`]: a [`RegionMap`] that splits at

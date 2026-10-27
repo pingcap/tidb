@@ -95,7 +95,7 @@ use super::spill::parallel_new_group_bytes;
 use super::*;
 use hashbrown::hash_map::{Entry, EntryRef};
 use hashbrown::HashMap as SwissMap;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -1842,7 +1842,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PipelineWorkers<C> {
             if self.abort.raised() {
                 break;
             }
-            if let Err(error) = memory.check() {
+            if let Err(error) = memory.check().map_err(ExecError::from) {
                 fetch_error = Some(error);
                 break;
             }
@@ -1858,7 +1858,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PipelineWorkers<C> {
                 fetch_error = Some(error);
                 break;
             }
-            if let Err(error) = memory.check() {
+            if let Err(error) = memory.check().map_err(ExecError::from) {
                 fetch_error = Some(error);
                 break;
             }
@@ -2136,7 +2136,7 @@ impl FinalInput {
                     if abort.raised() {
                         return Ok(None);
                     }
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                     merge_map(&mut merged, map, funcs)?;
                 }
                 Ok(Some(merged))
@@ -2159,7 +2159,7 @@ impl FinalInput {
                     if abort.raised() {
                         return Ok(None);
                     }
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                     let chunk = file
                         .get_chunk(chunk_index)
                         .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
@@ -2259,7 +2259,7 @@ impl FinalOutput {
         memory: &StatementMemory,
     ) -> Result<bool, ExecError> {
         loop {
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             if self.current.is_none() {
                 match self.results.as_ref().expect("live final output").recv() {
                     Ok(result) => self.current = Some(result?),
@@ -2417,7 +2417,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> FinalWorker<C> {
     }
 
     fn fill_inner(&mut self, current: &mut Chunk) -> Result<bool, ExecError> {
-        self.memory.check()?;
+        self.memory.check().map_err(ExecError::from)?;
         while !self.abort.raised() {
             let group = self.groups.as_mut().and_then(Iterator::next);
             if let Some(mut group) = group {
@@ -2576,7 +2576,7 @@ impl PipelineKeyBuffer {
         // Drop releases it when this partial worker ends.
         self.account();
         result?;
-        inputs.memory.check()
+        inputs.memory.check().map_err(ExecError::from)
     }
 
     fn key(&self, row: usize) -> PipelineMapKeyRef<'_> {
@@ -2636,7 +2636,7 @@ fn fold_chunk<C: Columns>(
         tracker.consume(new_group_bytes_total);
     }
     keys.account_partial_results();
-    memory.check()?;
+    memory.check().map_err(ExecError::from)?;
     let inputs = input::bind_inputs(input_modes, chunk);
     let decimal_cache = input::prepare_decimal_cache(input_modes, chunk);
     let integer_cache = input::prepare_integer_cache(input_modes, chunk);
@@ -2673,7 +2673,7 @@ fn fold_chunk<C: Columns>(
     tracker.consume(state_memory_delta);
     // Go's Consume raises OOM on this worker. Rust records a kill signal;
     // return it here even when the fetcher has already observed EOF.
-    memory.check()
+    memory.check().map_err(ExecError::from)
 }
 
 /// Merges one shuffled sub-map into an accumulator (Go
@@ -2839,7 +2839,7 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
             (_, None) => {}
             (None, Some(value)) => *dst_value = Some(value),
             (Some(current), Some(value)) => {
-                let ordering = crate::remote_scan::compare_extreme(&value, current, dst.collation)?;
+                let ordering = crate::aggfuncs::compare_extreme(&value, current, dst.collation)?;
                 if (*is_max && ordering == Ordering::Greater)
                     || (!*is_max && ordering == Ordering::Less)
                 {

@@ -66,7 +66,7 @@ fn process_admin_batch_kill_configuration() {
         cfg.compatible_kill_query = false;
     });
     session.run("KILL QUERY 7").unwrap();
-    assert_eq!(session.warnings()[0].message, "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead");
+    assert_eq!(session.warnings()[0].message(), "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead");
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     session.run("KILL TIDB QUERY 7").unwrap();
     assert!(session.warnings().is_empty());
@@ -77,13 +77,13 @@ fn process_admin_batch_kill_configuration() {
     update_global(|cfg| cfg.enable_global_kill = true);
     session.run("KILL TIDB QUERY 7").unwrap();
     assert!(session.warnings()[0]
-        .message
+        .message()
         .contains("truncated ConnectionID"));
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     for (id, suffix) in [(1_u64 << 63, "int64"), (1_u64 << 32, "uint32")] {
         session.run(&format!("KILL {id}")).unwrap();
         assert_eq!(
-            session.warnings()[0].message,
+            session.warnings()[0].message(),
             format!("Parse ConnectionID failed: unexpected connectionID exceeds {suffix}")
         );
     }
@@ -593,8 +593,9 @@ fn kill_of_another_users_connection_requires_super() {
 
     // Killing root's connection without SUPER is refused.
     match bob.run("kill 4") {
-        Err(DriverError::KillAccessDenied) => {}
-        other => panic!("expected KillAccessDenied, got {other:?}"),
+        // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
+        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
+        other => panic!("expected SUPER or CONNECTION_ADMIN, got {other:?}"),
     }
 
     // Granting SUPER lets the same KILL through.
@@ -636,8 +637,9 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     bob.attach_process(2, bob_guard);
 
     match bob.run("kill 4") {
-        Err(DriverError::KillAccessDenied) => {}
-        other => panic!("expected KillAccessDenied, got {other:?}"),
+        // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
+        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
+        other => panic!("expected SUPER or CONNECTION_ADMIN, got {other:?}"),
     }
 
     boot.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
@@ -660,8 +662,8 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     boot.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
         .unwrap();
     match bob.run("kill 4") {
-        Err(DriverError::KillAccessDenied) => {}
-        other => panic!("expected KillAccessDenied after REVOKE, got {other:?}"),
+        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
+        other => panic!("expected SUPER or CONNECTION_ADMIN after REVOKE, got {other:?}"),
     }
 }
 

@@ -42,7 +42,7 @@ fn alter_auto_increment_rebases_and_shows() {
         session
             .warnings()
             .iter()
-            .map(|warning| (warning.code, warning.message.clone()))
+            .map(|warning| (warning.code(), warning.message().to_owned()))
             .collect::<Vec<_>>(),
         [(
             1105,

@@ -1,0 +1,1023 @@
+//! The ALTER-family cluster DDL, split out of `cluster_ddl_source` when that
+//! file passed the repository's 2200-line ceiling.
+//!
+//! Each test pins one Go action -- ActionModifyTableComment, onRebaseAutoID,
+//! ActionSetDefaultValue, ActionRenameIndex and the rest -- against the
+//! stored `TableInfo` the change publishes.
+
+#![allow(missing_docs)]
+
+use crate::cluster_ddl_source::{lower_ddl, plan_ddl};
+use tidb_ddl::cluster_ddl::{DdlPlan, DdlPlanError};
+use tidb_ddl::real_tikv_ddl::DdlWarningLevel;
+use tidb_meta::key;
+
+// The fixture helpers stay with the file that owns the bootstrap; the
+// aggregated harness makes every `tests/*.rs` a sibling module.
+use crate::cluster_ddl_source::{
+    apply, bootstrapped, plan, statement, stored_table, stored_value, MetaStore,
+};
+
+/// Go `onModifyTableComment` (`ddl/table.go`) is a one-line
+/// `tblInfo.Comment = args.Comment` under `ActionModifyTableComment`, with
+/// `validateCommentLength` applied when the statement is admitted. The
+/// stored comment is what `SHOW CREATE TABLE` prints and what
+/// `information_schema.tables.table_comment` reports, so a comment that
+/// never reaches the stored `TableInfo` is invisible everywhere.
+#[test]
+fn alter_table_comment_replaces_the_stored_comment() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED) COMMENT='original'",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    assert_eq!(
+        stored_table(&write, table_id)["comment"],
+        serde_json::json!("original"),
+        "CREATE TABLE stores its COMMENT option"
+    );
+
+    let write = plan(&mut store, "ALTER TABLE u6.t COMMENT='changed'", 200);
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["comment"],
+        serde_json::json!("changed")
+    );
+
+    // Go clears the comment rather than refusing the empty form.
+    let write = plan(&mut store, "ALTER TABLE u6.t COMMENT=''", 300);
+    apply(&mut store, &write);
+    assert_eq!(stored_table(&write, table_id)["comment"], serde_json::json!(""));
+}
+
+/// Go `onRebaseAutoID` over `autoid.AutoIncrementType`, plus the
+/// `adjustNewBaseToNextGlobalID` floor it applies without FORCE.
+///
+/// Two keys move together: `TableInfo.AutoIncID` and the allocator counter,
+/// which holds the id LAST handed out and therefore lands one below the new
+/// base. Moving only the first would leave the next INSERT allocating from
+/// the old counter.
+#[test]
+fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let counter_key = key::auto_table_id_kv_key(112, table_id);
+
+    let counter = |store: &MetaStore| {
+        store
+            .pairs
+            .get(&counter_key)
+            .map(|value| tidb_meta::value::parse_int_value(value).expect("an int counter"))
+    };
+
+    // Raising the base is the ordinary case: the table records 500 and the
+    // counter becomes 499, so the next allocation is exactly 500.
+    let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 500", 200);
+    assert!(write.warnings.is_empty(), "a rise needs no adjustment");
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["auto_inc_id"],
+        serde_json::json!(500)
+    );
+    assert_eq!(counter(&store), Some(499));
+
+    // Lowering it WITHOUT force is floored at the allocator's next id
+    // (counter + 1 = 500) and warns that it used that instead. Both the
+    // recorded base and the counter therefore stay put.
+    let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 10", 300);
+    assert_eq!(
+        write.warnings.iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+        vec![(DdlWarningLevel::Warning, 1105, "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead".to_owned())]
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["auto_inc_id"],
+        serde_json::json!(500)
+    );
+    assert_eq!(counter(&store), Some(499));
+
+    // FORCE sets it exactly, backwards, and raises no warning.
+    let write = plan(&mut store, "ALTER TABLE u6.t FORCE AUTO_INCREMENT = 10", 400);
+    assert!(write.warnings.is_empty(), "FORCE does what it was told");
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["auto_inc_id"],
+        serde_json::json!(10)
+    );
+    assert_eq!(counter(&store), Some(9));
+}
+
+/// Go `AlterTableEngineAttribute` -> `onModifyTableEngineAttribute`: the
+/// written attribute (or the JSON its `STORAGE_CLASS` sugar stands for) is
+/// stored verbatim, and the table's and every partition's storage class are
+/// resolved again from it. CREATE TABLE resolves them the same way.
+#[test]
+fn engine_attribute_resolves_table_and_partition_storage_classes() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT) STORAGE_CLASS = 'ia' PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN (200))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let classes = |stored: &serde_json::Value| {
+        stored["partition"]["definitions"]
+            .as_array()
+            .expect("partition definitions")
+            .iter()
+            .map(|definition| definition["storage_class_tier"].clone())
+            .collect::<Vec<_>>()
+    };
+    let stored = stored_table(&write, table_id);
+    assert_eq!(
+        stored["engine_attribute"],
+        serde_json::json!(r#"{"storage_class":"IA"}"#)
+    );
+    assert_eq!(stored["storage_class_tier"], serde_json::json!("IA"));
+    assert_eq!(classes(&stored), vec![serde_json::json!("IA"); 2]);
+
+    let write = plan(
+        &mut store,
+        r#"ALTER TABLE u6.t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["P1"]}}'"#,
+        200,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    assert_eq!(stored["storage_class_tier"], serde_json::json!("STANDARD"));
+    assert_eq!(
+        classes(&stored),
+        vec![serde_json::json!("STANDARD"), serde_json::json!("IA")]
+    );
+
+    let parsed = tidb_parser::parse("ALTER TABLE u6.t STORAGE_CLASS = 'AI'").expect("parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("an unknown tier is refused");
+    assert_eq!(error.code, 8271, "{error:?}");
+    assert!(
+        error.reason.contains("invalid storage class tier: AI"),
+        "{error:?}"
+    );
+}
+
+/// Go's `ALTER TABLE` option switch has EMPTY cases for `ENGINE` and
+/// `ROW_FORMAT`: the statement succeeds and no job is published. Refusing
+/// them instead would reject the `ENGINE=InnoDB` every mysqldump emits.
+///
+/// `OrderByColumns` is the same shape with one addition: Go warns when the
+/// table has a user-defined primary key column, because the ordering it asks
+/// for cannot survive one.
+#[test]
+fn accepted_no_op_alters_publish_nothing_and_order_by_warns_under_a_primary_key() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.keyed (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let write = plan(&mut store, "CREATE TABLE u6.bare (v BIGINT)", 200);
+    apply(&mut store, &write);
+
+    let satisfied = |store: &mut MetaStore, sql: &str, ts: u64| match plan_ddl(
+        store,
+        &statement(sql),
+        ts,
+    )
+    .expect("the statement plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, warnings } => (detail, warnings),
+        DdlPlan::Write(_) => panic!("`{sql}` must publish nothing"),
+    };
+
+    for (offset, sql) in [
+        "ALTER TABLE u6.keyed ENGINE = InnoDB",
+        "ALTER TABLE u6.keyed ROW_FORMAT = DYNAMIC",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (_, warnings) = satisfied(&mut store, sql, 300 + offset as u64);
+        assert!(warnings.is_empty(), "`{sql}` is accepted silently");
+    }
+
+    let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.keyed ORDER BY v", 400);
+    assert_eq!(
+        warnings.iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+        vec![(DdlWarningLevel::Warning, 1105, "ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'".to_owned())]
+    );
+
+    // No primary key column, so Go raises nothing at all.
+    let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.bare ORDER BY v", 500);
+    assert!(warnings.is_empty());
+
+    // Go resolves the table first, so a missing one still fails.
+    plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.nosuch ENGINE = InnoDB"),
+        600,
+    )
+    .expect_err("a missing table is refused");
+}
+
+/// Go `AlterColumn` followed by `updateColumnDefaultValue`
+/// (`ActionSetDefaultValue`). `SET DEFAULT` installs the exact stored
+/// spelling the column's own definition would have produced; `DROP DEFAULT`
+/// stores nothing and sets `NoDefaultValueFlag`.
+#[test]
+fn set_and_drop_column_default_rewrite_the_stored_column() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a INT, b VARCHAR(10))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let column_of = |write: &tidb_ddl::cluster_ddl::DdlWrite, name: &str| {
+        stored_table(write, table_id)["cols"]
+            .as_array()
+            .expect("column array")
+            .iter()
+            .find(|column| column["name"]["O"] == name)
+            .expect("the column is there")
+            .clone()
+    };
+
+    let write = plan(&mut store, "ALTER TABLE u6.t ALTER COLUMN a SET DEFAULT 7", 200);
+    apply(&mut store, &write);
+    let column = column_of(&write, "a");
+    assert_eq!(column["default"], serde_json::json!("7"));
+
+    // Go stores no value and marks the column, which is what makes a later
+    // omitted INSERT report 1364 under strict mode.
+    let write = plan(&mut store, "ALTER TABLE u6.t ALTER COLUMN a DROP DEFAULT", 300);
+    apply(&mut store, &write);
+    let column = column_of(&write, "a");
+    assert_eq!(column["default"], serde_json::json!(null));
+
+    // A spelling the column type cannot hold is Go's 1067, not the generic
+    // refusal: the code is what a MySQL client switches on.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ALTER COLUMN a SET DEFAULT 'zz'"),
+        400,
+    )
+    .expect_err("a bad default is refused");
+    match error {
+        DdlPlanError::Admission(ref admission) => {
+            assert_eq!(admission.code, 1067, "{admission:?}");
+            assert!(
+                admission.reason.contains("Invalid default value for 'a'"),
+                "{admission:?}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+
+    // Go resolves the column before the default, so a missing one is 1054.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ALTER COLUMN nope SET DEFAULT 1"),
+        500,
+    )
+    .expect_err("a missing column is refused");
+    assert!(
+        matches!(error, DdlPlanError::UnknownColumn { ref column, .. } if column == "nope"),
+        "{error:?}"
+    );
+}
+
+/// Go `ValidateRenameIndex` then `renameIndexes` (`ActionRenameIndex`).
+/// The entries already written are untouched: an index's key prefix comes
+/// from its ID, not its name.
+#[test]
+fn rename_index_rewrites_the_name_and_rejects_a_collision() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, \
+         KEY ia(a), KEY ib(b))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let names = |write: &tidb_ddl::cluster_ddl::DdlWrite| {
+        stored_table(write, table_id)["index_info"]
+            .as_array()
+            .expect("index array")
+            .iter()
+            .map(|index| index["idx_name"]["O"].as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    let write = plan(&mut store, "ALTER TABLE u6.t RENAME INDEX ia TO renamed", 200);
+    apply(&mut store, &write);
+    assert_eq!(names(&write), ["renamed", "ib"]);
+
+    // Case-only renames are real: Go's no-op test is case-SENSITIVE, so this
+    // publishes a new spelling rather than finishing early.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t RENAME INDEX renamed TO ReNamed",
+        300,
+    );
+    apply(&mut store, &write);
+    assert_eq!(names(&write), ["ReNamed", "ib"]);
+
+    // The same spelling changes nothing and spends no schema version.
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX ReNamed TO ReNamed"),
+        400,
+    )
+    .expect("an identical rename plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("already has that name"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("an identical rename must publish nothing"),
+    }
+
+    // Renaming onto a DIFFERENT existing index is 1061.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX ReNamed TO ib"),
+        500,
+    )
+    .expect_err("a collision is refused");
+    assert!(
+        matches!(error, DdlPlanError::DuplicateKeyName(ref name) if name == "ib"),
+        "{error:?}"
+    );
+
+    // A missing source index is Go's ErrKeyNotExists, as in ALTER INDEX.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX nosuch TO x"),
+        600,
+    )
+    .expect_err("a missing index is refused");
+    assert!(
+        matches!(error, DdlPlanError::KeyNotExists { ref index, .. } if index == "nosuch"),
+        "{error:?}"
+    );
+}
+
+/// Go `ModifySchemaCharsetAndCollate` then `onModifySchemaCharsetAndCollate`.
+/// A written COLLATE settles the charset and vice versa, and a change that is
+/// already true finishes without spending a schema version.
+#[test]
+fn alter_database_charset_settles_the_pair_and_no_ops_when_already_true() {
+    let mut store = bootstrapped();
+
+    let stored_database = |write: &tidb_ddl::cluster_ddl::DdlWrite| -> serde_json::Value {
+        serde_json::from_slice(stored_value(write, &key::database_kv_key(112)))
+            .expect("a stored DBInfo")
+    };
+
+    // CHARACTER SET alone settles the collation to that charset's default.
+    let write = plan(&mut store, "ALTER DATABASE u6 CHARACTER SET latin1", 200);
+    apply(&mut store, &write);
+    let database = stored_database(&write);
+    assert_eq!(database["charset"], serde_json::json!("latin1"));
+    assert_eq!(database["collate"], serde_json::json!("latin1_bin"));
+
+    // COLLATE alone settles the charset it belongs to.
+    let write = plan(&mut store, "ALTER DATABASE u6 COLLATE utf8mb4_general_ci", 300);
+    apply(&mut store, &write);
+    let database = stored_database(&write);
+    assert_eq!(database["charset"], serde_json::json!("utf8mb4"));
+    assert_eq!(database["collate"], serde_json::json!("utf8mb4_general_ci"));
+
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER DATABASE u6 COLLATE utf8mb4_general_ci"),
+        400,
+    )
+    .expect("an already-satisfied charset plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("is already utf8mb4/utf8mb4_general_ci"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("a no-op charset must publish nothing"),
+    }
+
+    // A collation of another charset is refused at admission: Go
+    // `AlterSchema` walks the options in order and answers 1302 (oracle).
+    let parsed = tidb_parser::parse("ALTER DATABASE u6 CHARACTER SET latin1 COLLATE utf8mb4_bin")
+        .expect("the fixture SQL parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("a mismatched pair is refused");
+    assert_eq!(error.code, 1302, "{error:?}");
+    assert!(
+        error.reason.contains(
+            "Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8mb4'"
+        ),
+        "{error:?}"
+    );
+
+    plan_ddl(
+        &mut store,
+        &statement("ALTER DATABASE nosuch CHARACTER SET latin1"),
+        600,
+    )
+    .expect_err("a missing database is refused");
+}
+
+/// Go `handleTableOptions`: `CREATE TABLE ... AUTO_ID_CACHE=n` stores the
+/// value on the TableInfo, and anything past int64 is refused with its own
+/// message. It was accepted by `ALTER TABLE` here but refused at CREATE,
+/// which is the same option disagreeing with itself.
+#[test]
+fn create_table_stores_auto_id_cache() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=100",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    assert_eq!(
+        stored_table(&write, table_id)["auto_id_cache"],
+        serde_json::json!(100)
+    );
+
+    // Unset stays Go's zero rather than being materialised as the default.
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.plain (id BIGINT PRIMARY KEY AUTO_INCREMENT)",
+        200,
+    );
+    apply(&mut store, &write);
+    let plain_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let stored = stored_table(&write, plain_id);
+    assert!(
+        stored["auto_id_cache"].is_null() || stored["auto_id_cache"] == serde_json::json!(0),
+        "{}",
+        stored["auto_id_cache"]
+    );
+
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE u6.big (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=9223372036854775808",
+    )
+    .expect("the fixture SQL parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("an overflowing cache is refused");
+    assert!(
+        error.reason.contains("auto_id_cache overflows int64"),
+        "{error:?}"
+    );
+}
+
+/// Go `checkAlterTableCharset` then `onModifyTableCharsetAndCollate`.
+///
+/// TiDB never rewrites stored bytes for a charset change, so it permits only
+/// the conversions whose encoding is a superset of the original. `CONVERT TO`
+/// additionally rewrites each column's own charset; the bare option moves the
+/// table default alone.
+#[test]
+fn convert_to_character_set_rewrites_columns_and_refuses_a_narrowing() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a VARCHAR(10), b INT) \
+         CHARACTER SET latin1 COLLATE latin1_bin",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let column_charsets = |write: &tidb_ddl::cluster_ddl::DdlWrite| {
+        stored_table(write, table_id)["cols"]
+            .as_array()
+            .expect("column array")
+            .iter()
+            .map(|column| {
+                (
+                    column["name"]["O"].as_str().expect("a name").to_owned(),
+                    column["type"]["Charset"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t CONVERT TO CHARACTER SET utf8mb4",
+        200,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    assert_eq!(stored["charset"], serde_json::json!("utf8mb4"));
+    assert_eq!(stored["collate"], serde_json::json!("utf8mb4_bin"));
+    // A text column takes the new pair; everything else is marked binary,
+    // which is Go's `field_types.HasCharset` split.
+    let charsets = column_charsets(&write);
+    assert_eq!(
+        charsets
+            .iter()
+            .find(|(name, _)| name == "a")
+            .expect("column a")
+            .1,
+        "utf8mb4"
+    );
+    assert_eq!(
+        charsets
+            .iter()
+            .find(|(name, _)| name == "b")
+            .expect("column b")
+            .1,
+        "binary"
+    );
+
+    // Repeating it changes nothing and spends no schema version.
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET utf8mb4"),
+        300,
+    )
+    .expect("an already-satisfied conversion plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("is already utf8mb4/utf8mb4_bin"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("a no-op conversion must publish nothing"),
+    }
+
+    // Narrowing back is refused: the stored bytes would be reinterpreted.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET latin1 COLLATE latin1_bin"),
+        400,
+    )
+    .expect_err("a narrowing conversion is refused");
+    match error {
+        DdlPlanError::Admission(ref admission) => {
+            assert_eq!(admission.code, 8200, "{admission:?}");
+            assert!(
+                admission
+                    .reason
+                    .contains("Unsupported modify charset from utf8mb4 to latin1"),
+                "{admission:?}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+}
+
+/// Go `BuildTableInfoWithLike`: the copy inherits the source's definition and
+/// nothing that identifies it.
+///
+/// The reset list is where the bugs live -- an inherited auto-increment
+/// counter would make the copy's first row collide with the source's handles,
+/// and an inherited foreign key would name a constraint that already exists.
+#[test]
+fn create_table_like_copies_the_definition_and_resets_the_identity() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.src (id BIGINT PRIMARY KEY AUTO_INCREMENT, a VARCHAR(10), KEY ia(a)) \
+         COMMENT='the source' AUTO_INCREMENT=500",
+        100,
+    );
+    apply(&mut store, &write);
+    let source_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let write = plan(&mut store, "CREATE TABLE u6.cp LIKE u6.src", 200);
+    apply(&mut store, &write);
+    let copy_id = write.created_id.expect("CREATE TABLE LIKE allocates an id");
+    assert_ne!(copy_id, source_id, "the copy is its own table");
+
+    let copy = stored_table(&write, copy_id);
+    assert_eq!(copy["name"]["O"], serde_json::json!("cp"));
+    // The definition is inherited whole.
+    assert_eq!(copy["comment"], serde_json::json!("the source"));
+    assert_eq!(
+        copy["cols"]
+            .as_array()
+            .expect("column array")
+            .iter()
+            .map(|column| column["name"]["O"].as_str().expect("a name"))
+            .collect::<Vec<_>>(),
+        ["id", "a"]
+    );
+    assert_eq!(
+        copy["index_info"]
+            .as_array()
+            .expect("index array")
+            .iter()
+            .map(|index| index["idx_name"]["O"].as_str().expect("a name"))
+            .collect::<Vec<_>>(),
+        ["ia"]
+    );
+    // The identity is NOT: Go's `tblInfo.AutoIncID = 0` means the copy's
+    // first row is handle 1 however far the source has run.
+    assert!(
+        copy["auto_inc_id"].is_null() || copy["auto_inc_id"] == serde_json::json!(0),
+        "{}",
+        copy["auto_inc_id"]
+    );
+
+    // Go `ErrWrongObject`: the source has to be a real table.
+    // A view's `TableInfo` is finished at the statement ROUTE (the columns
+    // come from resolving the body), so it is built here rather than lowered
+    // from text like the rest of the fixture.
+    let view = tidb_ddl::cluster_ddl::DdlStatement::CreateView {
+        schema: "u6".to_owned(),
+        name: "v".to_owned(),
+        or_replace: false,
+        info: Box::new(tidb_model::TableInfo {
+            name: tidb_ast::CiString::new("v"),
+            state: tidb_model::SchemaState::PUBLIC,
+            view: Some(tidb_model::GoShared::new(tidb_model::table::ViewInfo::default())),
+            ..tidb_model::TableInfo::default()
+        }),
+    };
+    let DdlPlan::Write(write) = plan_ddl(&mut store, &view, 300).expect("the view plans") else {
+        panic!("CREATE VIEW publishes a write");
+    };
+    apply(&mut store, &write);
+    let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.c2 LIKE u6.v"), 400)
+        .expect_err("a view source is refused")
+        .to_sql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1347, "'u6.v' is not BASE TABLE")
+    );
+
+    // The new name still collides the ordinary way.
+    let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.cp LIKE u6.src"), 500)
+        .expect_err("an existing name is refused");
+    assert!(
+        matches!(error, DdlPlanError::TableExists { ref table, .. } if table == "cp"),
+        "{error:?}"
+    );
+    match plan_ddl(
+        &mut store,
+        &statement("CREATE TABLE IF NOT EXISTS u6.cp LIKE u6.src"),
+        600,
+    )
+    .expect("IF NOT EXISTS plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("IF NOT EXISTS must publish nothing"),
+    }
+}
+
+/// Go `CheckIsDropPrimaryKey` followed by the ordinary index drop.
+///
+/// A clustered primary key is what the rows are STORED under -- whether it is
+/// the int handle (`PKIsHandle`) or a composite one (`IsCommonHandle`) -- so
+/// dropping it would leave every row unaddressable, and Go refuses. Only a
+/// NONCLUSTERED primary key is a real index that can go.
+#[test]
+fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.clustered (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.clustered DROP PRIMARY KEY"),
+        200,
+    )
+    .expect_err("a clustered primary key cannot be dropped");
+    match error {
+        DdlPlanError::Admission(ref admission) => {
+            assert_eq!(admission.code, 8200, "{admission:?}");
+            assert!(
+                admission
+                    .reason
+                    .contains("Unsupported drop primary key when the table is using clustered index"),
+                "{admission:?}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+
+    // No primary key at all is Go's ErrCantDropFieldOrKey, the same 1091
+    // DROP INDEX answers for a name that is not there.
+    let write = plan(&mut store, "CREATE TABLE u6.bare (id BIGINT, v BIGINT)", 300);
+    apply(&mut store, &write);
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.bare DROP PRIMARY KEY"),
+        400,
+    )
+    .expect_err("a missing primary key is refused");
+    assert!(
+        matches!(error, DdlPlanError::UnknownIndex(ref name) if name == "PRIMARY"),
+        "{error:?}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("Can't DROP 'PRIMARY'; check that column/key exists"),
+        "{error}"
+    );
+
+    // A NONCLUSTERED primary key is an ordinary index and goes; its entries
+    // are left to the delete range, as DROP INDEX leaves them.
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.plain (id BIGINT, v BIGINT, PRIMARY KEY (id) NONCLUSTERED)",
+        500,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let write = plan(&mut store, "ALTER TABLE u6.plain DROP PRIMARY KEY", 600);
+    apply(&mut store, &write);
+    let (start, end) = super::cluster_ddl_source::index_range(table_id, 1);
+    assert_eq!(
+        super::cluster_ddl_source::delete_ranges(&mut store),
+        vec![(1, start, end)]
+    );
+    assert_eq!(
+        stored_table(&write, table_id)["index_info"]
+            .as_array()
+            .map_or(0, Vec::len),
+        0
+    );
+}
+
+/// Go answers a missing table with TWO different errors, and which one
+/// depends on the statement.
+///
+/// `DROP TABLE` uses `ErrBadTable` (1051, "Unknown table"), which Go's own
+/// `TestDropTableWithoutIfExists` pins. Every other statement resolves its
+/// table through `getSchemaAndTableByIdent` and answers
+/// `infoschema.ErrTableNotExists` (1146, "Table ... doesn't exist"). This
+/// port had used the DROP spelling everywhere.
+#[test]
+fn a_missing_table_is_1146_everywhere_except_drop_table() {
+    let mut store = bootstrapped();
+
+    for sql in [
+        "ALTER TABLE u6.nosuch COMMENT='x'",
+        "ALTER TABLE u6.nosuch AUTO_ID_CACHE = 4",
+        "ALTER TABLE u6.nosuch DROP PRIMARY KEY",
+        "ALTER TABLE u6.nosuch RENAME INDEX a TO b",
+        "ALTER TABLE u6.nosuch ALTER COLUMN a SET DEFAULT 1",
+        "CREATE INDEX i ON u6.nosuch (a)",
+        "CREATE TABLE u6.copy LIKE u6.nosuch",
+        "RENAME TABLE u6.nosuch TO u6.other",
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 100).expect_err("refused");
+        assert!(
+            matches!(error, DdlPlanError::TableNotExists { ref table, .. } if table == "nosuch"),
+            "`{sql}` must answer Go's ErrTableNotExists, got {error:?}"
+        );
+        assert_eq!(error.to_string(), "Table 'u6.nosuch' doesn't exist");
+    }
+
+    // DROP TABLE keeps Go's own, different answer.
+    let error = plan_ddl(&mut store, &statement("DROP TABLE u6.nosuch"), 200)
+        .expect_err("refused")
+        .to_sql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1051, "Unknown table 'u6.nosuch'")
+    );
+
+
+}
+
+/// A `DATETIME(n) DEFAULT CURRENT_TIMESTAMP(n)` column must produce a
+/// `TableInfo` this node's own catalog loader can then load.
+///
+/// Publishing one it cannot load is the worst shape a DDL can take: the
+/// CREATE reports success, the table exists as far as a later CREATE is
+/// concerned (1050), and every read of it answers 1146.
+#[test]
+fn a_fractional_current_timestamp_default_is_storable() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.dt (o DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let stored = stored_table(&write, table_id);
+    let column = &stored["cols"].as_array().expect("column array")[0];
+    // Go stores the marker WORD; the fsp is the column's own decimal.
+    assert_eq!(column["default"], serde_json::json!("CURRENT_TIMESTAMP"));
+    println!("origin = {}", column["origin_default"]);
+}
+
+/// A refusal reaches the client verbatim, so it must name the user's SQL and
+/// Go accepts a virtual generated column added after its dependencies, but
+/// rejects the stored spelling because ALTER would have to backfill it.
+#[test]
+fn add_virtual_generated_column_and_refuse_stored_like_go() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT)",
+        100,
+    );
+    let table_id = create.created_id.expect("CREATE TABLE allocates an id");
+    apply(&mut store, &create);
+
+    let add = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+b) VIRTUAL",
+        200,
+    );
+    let stored = stored_table(&add, table_id);
+    let column = stored["cols"]
+        .as_array()
+        .expect("column array")
+        .last()
+        .expect("added column");
+    assert_eq!(column["generated_expr_string"], "`a` + `b`");
+    assert_eq!(column["generated_stored"], false);
+    assert_eq!(column["dependences"], serde_json::json!({"a": {}, "b": {}}));
+
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN d BIGINT AS (a*2) STORED"),
+        201,
+    )
+    .expect_err("stored generated ADD is refused");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("stored generated ADD reached the wrong refusal: {error:?}");
+    };
+    assert_eq!(admission.code, 3106);
+    assert_eq!(
+        admission.reason,
+        "'Adding generated stored column through ALTER TABLE' is not supported for generated columns."
+    );
+}
+
+#[test]
+fn rename_owner_batch_destination_schema_uses_rename_error() {
+    let mut store = bootstrapped();
+    let write = plan(&mut store, "CREATE TABLE u6.source (id INT)", 100);
+    apply(&mut store, &write);
+    for sql in [
+        "RENAME TABLE u6.source TO absent.t",
+        "ALTER TABLE u6.source RENAME TO absent.t",
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 200)
+            .unwrap_err()
+            .to_sql_error();
+        assert_eq!(error.code, 1025, "{sql}: {error:?}");
+    }
+}
+
+#[test]
+fn rename_owner_batch_missing_schema_preserves_source_error() {
+    let mut store = bootstrapped();
+    let error = plan_ddl(&mut store, &statement("RENAME TABLE absent.t TO u6.t"), 200)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!(error.code, 1146);
+}
+
+#[test]
+fn rename_owner_batch_persistent_target_identifier_limit() {
+    let mut store = bootstrapped();
+    let write = plan(&mut store, "CREATE TABLE u6.source (id INT)", 100);
+    apply(&mut store, &write);
+    let sql = format!("RENAME TABLE u6.source TO u6.{}", "x".repeat(65));
+    let error = plan_ddl(&mut store, &statement(&sql), 200)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!(error.code, 1059);
+}
+
+#[test]
+fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
+    let mut store = bootstrapped();
+    let parent = plan(&mut store, "CREATE TABLE u6.parent (id INT PRIMARY KEY, pid INT, FOREIGN KEY self_fk(pid) REFERENCES u6.parent(id))", 100);
+    apply(&mut store, &parent);
+    let parent_id = parent.created_id.unwrap();
+    let child = plan(
+        &mut store,
+        "CREATE TABLE u6.child (id INT, FOREIGN KEY fk(id) REFERENCES u6.parent(id))",
+        200,
+    );
+    apply(&mut store, &child);
+    let child_id = child.created_id.unwrap();
+    let before = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
+    let write = plan(
+        &mut store,
+        "RENAME TABLE u6.parent TO u6.renamed, u6.child TO u6.moved_child",
+        300,
+    );
+    for id in [parent_id, child_id] {
+        assert_eq!(
+            stored_table(&write, id)["fk_info"][0]["ref_table"]["O"],
+            "renamed"
+        );
+    }
+    assert_eq!(
+        write.diff.affected_options.len(),
+        1,
+        "moved child is published once"
+    );
+    assert_eq!(
+        before
+            .find_table("u6", "child")
+            .unwrap()
+            .1
+            .foreign_keys
+            .get(0)
+            .unwrap()
+            .read()
+            .ref_table
+            .original(),
+        "parent",
+        "planning must not mutate the source catalog"
+    );
+    apply(&mut store, &write);
+    let reloaded = tidb_cluster::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
+    let peer = reloaded.catalog().unwrap();
+    assert!(peer.find_table("u6", "parent").is_none());
+    assert!(peer.find_table("u6", "child").is_none());
+    let child = peer.find_table("u6", "moved_child").unwrap().1;
+    assert_eq!(child.id, child_id);
+    assert_eq!(
+        child
+            .foreign_keys
+            .get(0)
+            .unwrap()
+            .read()
+            .ref_table
+            .original(),
+        "renamed"
+    );
+}
+
+/// `util/admin`: Go's `AlterTableOption` loop has empty cases for ENGINE and
+/// ROW_FORMAT, so specifications made only of them add no sub-job and the
+/// statement resolves the table and changes nothing.
+#[test]
+fn engine_and_row_format_specifications_are_no_ops() {
+    for sql in ["ALTER TABLE u6.t engine=innodb, ROW_FORMAT=DYNAMIC"] {
+        let parsed = tidb_parser::parse(sql).expect("parses");
+        let lowered = lower_ddl(&parsed, "u6").expect("admitted");
+        assert!(
+            matches!(
+                lowered,
+                Some(
+                    tidb_ddl::cluster_ddl::DdlStatement::AcceptedNoOp { .. }
+                        | tidb_ddl::cluster_ddl::DdlStatement::IgnoredTableOption { .. }
+                )
+            ),
+            "{sql}: {lowered:?}"
+        );
+    }
+}
+
+/// Go runs one specification's options as its loop does: one job per option,
+/// CHARSET/COLLATE together at the first, ENGINE / ROW_FORMAT as nothing,
+/// storage class and placement after the loop.
+#[test]
+fn one_specification_splits_into_go_option_loop_jobs() {
+    use tidb_ddl::cluster_ddl::split_table_option_alter;
+    let split = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("parses");
+        let tidb_ast::Stmt::Ddl(ddl) = &parsed else {
+            panic!("{sql}")
+        };
+        let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl else {
+            panic!("{sql}")
+        };
+        split_table_option_alter(alter).map(|parts| {
+            parts
+                .iter()
+                .map(|part| match part.actions.as_slice() {
+                    [tidb_ast::AlterTableAction::SetTableOptions { options }] => options.len(),
+                    other => panic!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(
+        split("ALTER TABLE t engine=innodb row_format=dynamic"),
+        Some(vec![1])
+    );
+    assert_eq!(
+        split("ALTER TABLE t comment='x' charset=utf8mb4 engine=innodb collate=utf8mb4_bin"),
+        Some(vec![1, 2])
+    );
+    assert_eq!(split("ALTER TABLE t comment='x'"), None);
+}

@@ -132,6 +132,6 @@ impl VirtualSamples {
             &mut row[..self.columns.len()],
             context,
         )
-        .map_err(tidb_executor::analyze::AnalyzeError::from)
+        .map_err(|error| tidb_executor::analyze::AnalyzeError::from(tidb_executor::DriverError::from(error)))
     }
 }

@@ -29,7 +29,7 @@
 //! lives in [`global_sysvar_initial`]. The complete Go `vardef` and `variable`
 //! package obligations remain tracked in the structural parity audit.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
 // Go's `vardef.DefTiDBEnableMDL` defaults to true.  Keep the process flag at
 // that effective value from the first instruction: startup may begin the
@@ -70,6 +70,10 @@ pub static STATS_CACHE_MEM_QUOTA: AtomicI64 =
 /// Go `vardef.MemoryUsageAlarmRatio`, stored as the IEEE-754 bit pattern.
 pub static MEMORY_USAGE_ALARM_RATIO: AtomicU64 =
     AtomicU64::new(defaults::DEF_MEMORY_USAGE_ALARM_RATIO.to_bits());
+
+/// Go `vardef.ForcePriority`: the `mysql.PriorityEnum` every statement runs
+/// at when not `NoPriority` (0).
+pub static FORCE_PRIORITY: AtomicI32 = AtomicI32::new(defaults::DEF_TIDB_FORCE_PRIORITY as i32);
 
 /// Go `vardef.MemoryUsageAlarmKeepRecordNum`.
 pub static MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: AtomicI64 =

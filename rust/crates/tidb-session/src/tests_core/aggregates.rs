@@ -343,9 +343,9 @@ fn stream_agg_hint_enforces_group_key_order() {
     // leaving its normal (hash) cost choice in effect.
     row_text(session.run("SELECT /*+ HASH_AGG() STREAM_AGG() */ g, COUNT(v) FROM t GROUP BY g"));
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1815);
+    assert_eq!(session.warnings()[0].code(), 1815);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Optimizer aggregation hints are conflicted"
     );
 
@@ -1202,7 +1202,7 @@ fn group_concat_max_len_truncates_by_bytes_and_warns_1260_once() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>()
     };
     let cut = |column: &str| {
@@ -1307,9 +1307,9 @@ fn group_concat_truncation_obeys_dml_strictness_atomically() {
         .run("INSERT INTO gc_destination SELECT GROUP_CONCAT(a) FROM gc_source")
         .unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1260);
+    assert_eq!(session.warnings()[0].code(), 1260);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Some rows were cut by GROUPCONCAT(test.gc_source.a)"
     );
     assert_eq!(

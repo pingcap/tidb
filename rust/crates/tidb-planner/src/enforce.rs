@@ -27,9 +27,8 @@
 //! # Narrowings
 //!
 //! * `ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(...)`
-//!   (`enforce.go:37`): the session-vars warning sink is unported; the
-//!   not-all-for-partition MPP arm returns the invalid task Go returns, and
-//!   the warning text is not raised anywhere.
+//!   (`enforce.go:37`) is raised through the caller's
+//!   [`crate::find_best_task::dispatch::MppWarningSink`].
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use crate::physical_property::PhysicalProperty;
@@ -143,6 +142,7 @@ pub fn enforce_property(
         task,
         allocator,
         &crate::ranger::points::evaluate_static,
+        None,
     )
 }
 
@@ -151,6 +151,7 @@ pub(crate) fn enforce_property_in(
     mut task: Task,
     allocator: &PlanIdAllocator,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    mpp_warning_sink: Option<&dyn crate::find_best_task::dispatch::MppWarningSink>,
 ) -> Result<Task, PlanError> {
     if prop.task_tp == TaskType::Mpp {
         let Task::Mpp(mpp) = &task else {
@@ -160,8 +161,11 @@ pub(crate) fn enforce_property_in(
             return Ok(Task::invalid_task());
         }
         if !prop.is_sort_item_all_for_partition() {
-            // Go: RaiseWarningWhenMPPEnforced("MPP mode may be blocked
-            // because operator `Sort` is not supported now.") — narrowed.
+            if let Some(sink) = mpp_warning_sink {
+                sink.raise_mpp_warning(
+                    "MPP mode may be blocked because operator `Sort` is not supported now.",
+                );
+            }
             return Ok(Task::invalid_task());
         }
         task = Task::Mpp(mpp.enforce_exchanger(prop, allocator)?);

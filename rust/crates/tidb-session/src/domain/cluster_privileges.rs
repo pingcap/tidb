@@ -14,7 +14,7 @@
 
 //! Turning a cluster's `mysql.*` rows into this node's live account table.
 //!
-//! [`tidb_exec::cluster_privilege_load`] reads the rows; this turns them into
+//! [`tidb_cluster::cluster_privilege_load`] reads the rows; this turns them into
 //! the one [`PrivilegeRegistry`] that the login path, `SHOW GRANTS`, and every
 //! privilege check share. The two halves are deliberately separate crates:
 //! `tidb-exec` owns cluster reads and has no idea what a registry is, and this
@@ -33,7 +33,7 @@ use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_exec::cluster_privilege_load::{
+use tidb_cluster::cluster_privilege_load::{
     ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
     LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
@@ -494,10 +494,10 @@ fn run_one_privilege_reload_pass(
 
 #[cfg(test)]
 mod tests {
-    use tidb_exec::cluster_privilege_load::{
+    use tidb_cluster::cluster_privilege_load::{
         LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant,
     };
-    use crate::privilege::{Account, GlobalPriv};
+    use crate::privilege::{Account, PrivilegeTypeExt};
 
     use super::*;
 
@@ -683,13 +683,13 @@ mod tests {
         );
         assert!(built
             .registry
-            .has_global_priv("bridge", "%", GlobalPriv::Select));
+            .has_global_priv("bridge", "%", tidb_mysql::SelectPriv));
         assert!(built
             .registry
-            .has_global_priv("bridge", "%", GlobalPriv::Super));
+            .has_global_priv("bridge", "%", tidb_mysql::SuperPriv));
         assert!(!built
             .registry
-            .has_global_priv("bridge", "%", GlobalPriv::Delete));
+            .has_global_priv("bridge", "%", tidb_mysql::DeletePriv));
     }
 
     #[test]
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(built.registry.matching_account("alice", "localhost"), None);
         assert!(built
             .registry
-            .has_global_priv("", "localhost", GlobalPriv::Select));
+            .has_global_priv("", "localhost", tidb_mysql::SelectPriv));
         assert!(unwritable_account_rows(&loaded).is_empty());
         assert_eq!(cluster_image_from_registry(&built.registry), loaded);
     }
@@ -785,7 +785,7 @@ mod tests {
         assert!(built.registry.db_grant_row_exists("bridge", "%", "test"));
         assert!(!built
             .registry
-            .has_global_priv("bridge", "%", GlobalPriv::Select));
+            .has_global_priv("bridge", "%", tidb_mysql::SelectPriv));
     }
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
-    use tidb_exec::cluster_privilege_load::ClusterBootstrapState;
+    use tidb_cluster::cluster_privilege_load::ClusterBootstrapState;
     use tidb_exec::real_tikv_privileges::ClusterAccounts;
 
     fn bootstrapped(privileges: ClusterPrivileges) -> ClusterAccounts {
@@ -899,7 +899,7 @@ mod tests {
     fn a_reload_picks_up_a_new_user_a_new_grant_a_revoke_and_a_drop() {
         let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
         registry.create_user("stale", "%", "");
-        registry.grant("stale", "%", GlobalPriv::Select.mask());
+        registry.grant("stale", "%", tidb_mysql::SelectPriv.mask());
 
         let (sender, receiver) = mpsc::channel();
         let mut tick = 0u32;
@@ -931,7 +931,7 @@ mod tests {
         reloader.shutdown().unwrap();
 
         assert!(registry.user_exists("new_user", "%"));
-        assert!(!registry.has_global_priv("new_user", "%", GlobalPriv::Select));
+        assert!(!registry.has_global_priv("new_user", "%", tidb_mysql::SelectPriv));
         assert!(!registry.user_exists("stale", "%"));
         let stats = reloader.stats();
         assert_eq!(stats.reloads, 2);
@@ -964,7 +964,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the nudge must run a pass");
         reloader.shutdown().unwrap();
-        assert!(registry.has_global_priv("granted", "%", GlobalPriv::Select));
+        assert!(registry.has_global_priv("granted", "%", tidb_mysql::SelectPriv));
     }
 
     #[test]
@@ -1033,13 +1033,13 @@ mod tests {
         let bridge: Account = ("bridge".to_owned(), "%".to_owned());
         let role: Account = ("r1".to_owned(), "%".to_owned());
         registry.grant_role(&role, &bridge);
-        registry.grant("r1", "%", GlobalPriv::Select.mask());
+        registry.grant("r1", "%", tidb_mysql::SelectPriv.mask());
         let active_roles = vec![role];
         assert!(registry.has_global_priv_with_roles(
             "bridge",
             "%",
             &active_roles,
-            GlobalPriv::Select
+            tidb_mysql::SelectPriv
         ));
 
         let (sender, receiver) = mpsc::channel();
@@ -1067,7 +1067,7 @@ mod tests {
             "bridge",
             "%",
             &active_roles,
-            GlobalPriv::Select
+            tidb_mysql::SelectPriv
         ));
     }
 }
@@ -1075,7 +1075,7 @@ mod tests {
 #[cfg(test)]
 mod account_tls_batch_tests {
     use super::*;
-    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
     use crate::privilege::SslType;
 
     fn policy(json: &str) -> ClusterPrivileges {
@@ -1124,7 +1124,7 @@ mod account_tls_batch_tests {
 #[cfg(test)]
 mod account_tls_batch_policy_controls {
     use super::*;
-    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
     use crate::privilege::SslType;
 
     #[test]
@@ -1210,7 +1210,7 @@ mod account_tls_batch_admission_controls {
     use super::*;
     use crate::domain::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
     use crate::domain::secure_transport::TransportKind;
-    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
     use crate::privilege::SslType;
 
     #[test]

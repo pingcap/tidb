@@ -21,6 +21,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-config = { path = "../tidb-config" }
 tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-funcdep = { path = "../tidb-funcdep" }

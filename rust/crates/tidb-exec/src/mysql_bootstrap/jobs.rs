@@ -56,7 +56,6 @@ use crate::cluster_ddl::{
 };
 use crate::ddl_job_submit::{plan_insert_attempt, JobSpec};
 use crate::real_tikv_ddl::prepare_persisted_job_submission;
-use crate::table_info_build::ClusteredIndexDefMode;
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 
@@ -249,6 +248,8 @@ fn run_ddl_job<S: MetaSnapshot>(
         false,
         0,
         0,
+        // The bootstrap's statements set no TiFlash replica.
+        &|| Ok(0),
         &mut |_, _| Ok(false),
     )
     .map_err(|error| job_error(error.to_string()))?;
@@ -334,7 +335,11 @@ fn parse_statement(sql: &str, default_schema: &str) -> Result<DdlStatement, Boot
         statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
         detail: format!("does not parse: {error:?}"),
     })?;
-    lower_ddl_with_context(&parsed, default_schema, &bootstrap_context(sql))
+    lower_ddl_with_context(
+        &parsed,
+        default_schema,
+        &(std::sync::Arc::new(bootstrap_context(sql)) as crate::cluster_ddl::DdlContext),
+    )
         .map_err(|error| BootstrapError::Job {
             statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
             detail: error.to_string(),
@@ -462,7 +467,7 @@ fn plan_with<S: MetaSnapshot>(
             .iter()
             .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name))
         {
-            let info = build_bootstrap_table(table, start_ts, ClusteredIndexDefMode::On)?;
+            let info = build_bootstrap_table(table, start_ts)?;
             write_table(&mut overlay, database_id, &info)?;
             batch.push(info.id);
             created_tables.push(info);
@@ -480,7 +485,7 @@ fn plan_with<S: MetaSnapshot>(
         for table in version.tables {
             // Go `InitDDLTables` builds under the metabuild default
             // (`tidb_enable_clustered_index` ON).
-            let info = build_bootstrap_table(table, start_ts, ClusteredIndexDefMode::On)?;
+            let info = build_bootstrap_table(table, start_ts)?;
             write_table(&mut overlay, database_id, &info)?;
             group.push(info.id);
             created_tables.push(info);

@@ -597,9 +597,9 @@ mod tests {
             let warnings = ctx.take_warnings();
             assert_eq!(warnings.len(), warning_count, "{level:?} / {input}");
             if warning_count != 0 {
-                assert_eq!(warnings[0].1, 1292);
+                assert_eq!(warnings[0].code(), 1292);
                 assert_eq!(
-                    warnings[0].2,
+                    warnings[0].message(),
                     format!("Truncated incorrect DOUBLE value: '{input}'")
                 );
             }
@@ -642,7 +642,7 @@ mod tests {
             let actual = ctx.take_warnings();
             assert_eq!(actual.len(), warnings);
             if warnings != 0 {
-                assert_eq!((actual[0].1, actual[0].2.as_str()), (1365, "Division by 0"));
+                assert_eq!((actual[0].code(), actual[0].message()), (1365, "Division by 0"));
             }
         }
     }

@@ -33,7 +33,7 @@ use tidb_domain::schema_checker::{
     CheckResult, RelatedSchemaChange as DomainRelatedSchemaChange, SchemaChecker,
     SchemaValidator as DomainSchemaValidator,
 };
-use tidb_exec::schema_validator::{Result as ValidatorResult, SchemaValidator, Validator};
+use tidb_cluster::schema_validator::{Result as ValidatorResult, SchemaValidator, Validator};
 use tidb_txnkv::transaction::{SchemaLeaseChecker, SchemaLeaseError};
 
 /// One transaction's checker: Go `domain.NewSchemaChecker(validator,
@@ -125,7 +125,7 @@ mod tests {
     use tidb_domain::schema_checker::{
         set_schema_out_of_date_retry_interval, set_schema_out_of_date_retry_times,
     };
-    use tidb_exec::schema_validator::RelatedSchemaChange;
+    use tidb_cluster::schema_validator::RelatedSchemaChange;
 
     /// A PD timestamp whose physical part is `unix_millis`.
     fn ts_at(unix_millis: u64) -> u64 {

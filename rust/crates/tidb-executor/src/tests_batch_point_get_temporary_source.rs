@@ -45,7 +45,7 @@ fn text_rows(catalog: &Catalog, sql: &str) -> Vec<Vec<String>> {
 }
 
 fn global_temp_catalog() -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create global temporary table t1 (id int primary key, val int) on commit delete rows",
         &mut catalog,

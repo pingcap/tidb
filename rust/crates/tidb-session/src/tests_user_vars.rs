@@ -233,18 +233,18 @@ fn an_inline_assignment_from_a_column_runs_once_per_row() {
 fn user_variable_batch_migrates_independent_declared_types() {
     let mut source = Session::new();
     source.run("SET @value_only = 7").unwrap();
-    let mut state = source.encode_session_states().unwrap();
+    let mut state = serde_json::to_value(source.encode_session_states().unwrap()).unwrap();
     let mut declared = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
     declared.set_flen(18);
     declared.set_decimal(5);
     state["user-var-types"] = serde_json::json!({"type_only": declared});
     let mut target = Session::new();
     target.decode_session_states(&state.to_string()).unwrap();
-    let restored = target.encode_session_states().unwrap();
+    let restored = serde_json::to_value(target.encode_session_states().unwrap()).unwrap();
     assert_eq!(restored["user-var-types"], state["user-var-types"]);
     assert_eq!(restored["user-var-values"], state["user-var-values"]);
     target.run("SET @type_only = NULL").unwrap();
-    assert!(target.encode_session_states().unwrap()["user-var-types"]
+    assert!(serde_json::to_value(target.encode_session_states().unwrap()).unwrap()["user-var-types"]
         .get("type_only")
         .is_none());
 }
@@ -256,7 +256,7 @@ fn user_variable_batch_plans_inline_types_without_executing_values() {
     session
         .run("SELECT @planned := CAST(a AS DECIMAL(18,5)) FROM test.empty_vars")
         .unwrap();
-    let state = session.encode_session_states().unwrap();
+    let state = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
     assert!(state["user-var-values"].get("planned").is_none());
     let declared: tidb_datatype::FieldType =
         serde_json::from_value(state["user-var-types"]["planned"].clone()).unwrap();
@@ -278,7 +278,7 @@ fn user_variable_batch_set_retains_declared_width_and_scale() {
     session
         .run("SET @d = CAST(1.25 AS DECIMAL(18,5)), @s = CAST('x' AS CHAR(12))")
         .unwrap();
-    let state = session.encode_session_states().unwrap();
+    let state = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
     let decimal: tidb_datatype::FieldType =
         serde_json::from_value(state["user-var-types"]["d"].clone()).unwrap();
     let string: tidb_datatype::FieldType =
@@ -291,7 +291,7 @@ fn user_variable_batch_set_retains_declared_width_and_scale() {
 fn user_variable_batch_uses_migrated_types_and_source_string_assignments() {
     let mut session = Session::new();
     session.run("SET @number = '1.25', @word = 'abc'").unwrap();
-    let mut state = session.encode_session_states().unwrap();
+    let mut state = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
     let mut decimal = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
     decimal.set_flen(18);
     decimal.set_decimal(5);
@@ -348,7 +348,7 @@ fn user_variable_batch_set_plans_all_assignments_before_execution() {
 fn user_variable_batch_reads_integer_carrier_and_running_totals() {
     let mut session = Session::new();
     session.run("SET @carrier = '12'").unwrap();
-    let mut state = session.encode_session_states().unwrap();
+    let mut state = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
     state["user-var-types"]["carrier"] = serde_json::to_value(tidb_datatype::FieldType::new(
         tidb_datatype::FieldTypeCode::LongLong,
     ))

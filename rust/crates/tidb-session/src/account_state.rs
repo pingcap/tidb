@@ -19,6 +19,7 @@
 //! `Next`); what they read of the viewing session is snapshotted when a scan
 //! first asks for one of them.
 
+use crate::privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
 use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
 use tidb_executor::{Catalog, DriverError};
@@ -83,7 +84,7 @@ impl AccountState {
                 user,
                 host,
                 tidb_mysql::consts::SystemDB,
-                privilege::GlobalPriv::Select.bit(),
+                tidb_mysql::SelectPriv.bit(),
             );
             if self.privilege_bypassed {
                 return own_raw_cache;
@@ -102,7 +103,7 @@ impl AccountState {
                                 &role_user,
                                 &role_host,
                                 tidb_mysql::consts::SystemDB,
-                                privilege::GlobalPriv::Select.bit(),
+                                tidb_mysql::SelectPriv.bit(),
                             )
                         })
                 });
@@ -126,8 +127,8 @@ impl AccountState {
             if !visible(account) {
                 continue;
             }
-            let grantable = flag(privs & privilege::GlobalPriv::GrantOption.bit() != 0);
-            let named: Vec<&privilege::GlobalPriv> = privilege::ALL_GLOBAL_PRIVS
+            let grantable = flag(privs & tidb_mysql::GrantPriv.bit() != 0);
+            let named: Vec<&privilege::PrivilegeType> = tidb_mysql::ALL_GLOBAL_PRIVS
                 .iter()
                 .filter(|priv_| privs & priv_.bit() != 0)
                 .collect();
@@ -181,15 +182,11 @@ impl AccountState {
     /// rows; its error is the table's error (`infoschema_reader.go:382`).
     pub(crate) fn user_attributes_rows(
         &self,
-        catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let rows = crate::restricted_sql::exec_restricted_sql_over(
             self.restricted_sql.as_deref(),
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
              FROM mysql.user",
-            catalog,
-            ctx,
         )?;
 
         let Some((viewer_user, viewer_host)) = self.current_identity() else {
@@ -208,7 +205,7 @@ impl AccountState {
             self.active_roles(),
             tidb_mysql::consts::SystemDB,
             "user",
-            privilege::GlobalPriv::Select.bit() | privilege::GlobalPriv::Update.bit(),
+            tidb_mysql::SelectPriv.bit() | tidb_mysql::UpdatePriv.bit(),
         );
         let can_create_user = registry.has_priv_mask_with_roles(
             viewer_user,
@@ -216,7 +213,7 @@ impl AccountState {
             self.active_roles(),
             "",
             "",
-            privilege::GlobalPriv::CreateUser.bit(),
+            tidb_mysql::CreateUserPriv.bit(),
         );
         let caller_is_system_user = registry.has_dynamic_priv_with_roles(
             viewer_user,
@@ -375,13 +372,13 @@ impl MemTableRetriever for AccountRetriever {
     fn retrieve(
         &self,
         read: &MemTableRead,
-        catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
+        _catalog: &Catalog,
+        _ctx: &tidb_executor::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         Ok(if read.table_name.go_lower_eq("USER_PRIVILEGES") {
             self.account.user_privileges_rows()
         } else {
-            self.account.user_attributes_rows(catalog, ctx)?
+            self.account.user_attributes_rows()?
         })
     }
 }

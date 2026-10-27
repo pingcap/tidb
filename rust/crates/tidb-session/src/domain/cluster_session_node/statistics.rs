@@ -18,7 +18,7 @@ use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_exec::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 
-use crate::domain::session_api::{QuerySession, SqlQueryError, WriteOutcome};
+use crate::domain::session_api::{SqlQueryError, WriteOutcome};
 
 use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};
 use crate::stats_statement_service::FlushStatsDeltaTargets;
@@ -45,7 +45,7 @@ struct PersistedAnalyzeJobs {
     global_vars: crate::GlobalSysvars,
     /// The node's live row-ID allocators (Go's internal INSERT allocates
     /// `mysql.analyze_jobs.id` from the table's AUTO_INCREMENT allocator).
-    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 }
 
 impl PersistedAnalyzeJobs {
@@ -53,7 +53,7 @@ impl PersistedAnalyzeJobs {
         &self,
         build: impl FnOnce(
             &mut super::SnapshotMetaSnapshot,
-            &tidb_exec::cluster_catalog::ClusterCatalog,
+            &tidb_cluster::cluster_catalog::ClusterCatalog,
         ) -> Result<StatsWritePlan, String>,
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
@@ -220,7 +220,9 @@ impl ClusterServerSession {
             .session
             .parse_statement(sql)
             .map_err(super::map_error)?;
-        let super::StatementRoute::Analyze(mut tables) = self.schema_route(&parsed)? else {
+        // Go runs it as internal SQL through `ExecuteInternalStmt`, whose
+        // `Compile` builds the plan like a client statement's.
+        let super::StatementRoute::Analyze(mut tables) = self.compile_route(&parsed)? else {
             return Err(SqlQueryError::unknown(
                 "auto analyze generated a non-ANALYZE statement",
             ));
@@ -236,29 +238,21 @@ impl ClusterServerSession {
         self.run_analyze(&tables)
     }
 
-    /// Applies client-transferred LOAD STATS bytes through the cluster handle.
-    /// The statistics handle as the session's [`StatsStatementService`].
-    ///
-    /// [`StatsStatementService`]: crate::stats_statement_service::StatsStatementService
-    fn stats_statement_service(&self) -> ClusterStatsStatementService {
-        ClusterStatsStatementService {
-            resource_group: self.store.session.current_resource_group().to_owned(),
-            stats_usage: Arc::clone(&self.stats_usage),
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            stats: Arc::clone(&self.stats),
-            global_vars: self.global_vars.clone(),
-            analyze: Arc::clone(&self.analyze),
-            stats_lock: Arc::clone(&self.stats_lock),
-            row_ids: Arc::clone(&self.auto_ids),
-        }
+    /// The statistics handle the session's services hold, for the running
+    /// statement.
+    fn stats_statement_service(
+        &self,
+    ) -> Box<dyn crate::stats_statement_service::StatsStatementService> {
+        let stats = Arc::clone(&self.domain_services().stats);
+        stats(&self.store.session)
     }
 
+    /// Applies client-transferred LOAD STATS bytes through the cluster handle.
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
         self.store
             .session
-            .run_load_stats(data, &service)
+            .run_load_stats(data, service.as_ref())
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
     }
@@ -270,7 +264,7 @@ impl ClusterServerSession {
         let service = self.stats_statement_service();
         self.store
             .session
-            .run_flush_stats_delta(targets, &service)
+            .run_flush_stats_delta(targets, service.as_ref())
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
     }
@@ -282,7 +276,7 @@ impl ClusterServerSession {
         let service = self.stats_statement_service();
         self.store
             .session
-            .run_drop_stats(physical_ids, &service)
+            .run_drop_stats(physical_ids, service.as_ref())
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
     }
@@ -294,7 +288,7 @@ impl ClusterServerSession {
         let service = self.stats_statement_service();
         self.store
             .session
-            .run_stats_lock(statement, &service)
+            .run_stats_lock(statement, service.as_ref())
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
     }
@@ -313,34 +307,99 @@ impl ClusterServerSession {
         &mut self,
         tables: &[AnalyzeStatement],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let statement_memory = self.store.session.routed_statement_memory();
-        if self.store.txn.explicit.is_some() || self.store.session.in_transaction() {
-            self.control_transaction("COMMIT")?;
-        }
-        self.record_new_txn_in_stmt();
-        let service = ClusterAnalyzeService {
-            statement_memory,
-            resource_group: self.store.session.active_resource_group().to_owned(),
-            instance: self.store.session.analyze_job_instance(),
-            connection_id: self.connection_id,
-            stats_usage: Arc::clone(&self.stats_usage),
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            stats: Arc::clone(&self.stats),
-            global_vars: self.global_vars.clone(),
-            analyze: Arc::clone(&self.analyze),
-            approximate_table_counts: Arc::clone(&self.approximate_table_counts),
-            historical_stats_worker: Arc::clone(&self.historical_stats_worker),
-            row_ids: Arc::clone(&self.auto_ids),
-        };
+        // Go `AnalyzeExec.Next` (`pkg/executor/analyze.go:300`) has no
+        // `NewTxnInStmt`: the statistics are written by internal sessions and
+        // the user's transaction stays open.
+        let analyze = Arc::clone(&self.domain_services().analyze);
+        let service = analyze(&self.store.session);
         self.store
             .session
-            .run_analyze_statements(tables, &service)
+            .run_analyze_statements(tables, service.as_ref())
             .map_err(super::map_error)?;
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
+        })
+    }
+}
+
+impl super::ClusterSessionFactory {
+    /// The cluster analyzer as the session's [`AnalyzeService`], for the
+    /// statement running on the session it is built from: its memory, its
+    /// active resource group and its analyze-job identity.
+    ///
+    /// [`AnalyzeService`]: crate::analyze_service::AnalyzeService
+    pub(super) fn analyze_service(
+        &self,
+    ) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService>
+    {
+        self.analyze_service_over(Arc::clone(&self.analyze))
+    }
+
+    /// [`Self::analyze_service`] over `analyze`, the domain's analyzer.
+    pub(super) fn analyze_service_over(
+        &self,
+        analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
+    ) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService>
+    {
+        let stats_usage = Arc::clone(&self.stats_usage);
+        let transactions = Arc::clone(&self.transactions);
+        let catalog = Arc::clone(&self.catalog);
+        let stats = Arc::clone(&self.stats);
+        let global_vars = self.global_vars.clone();
+        let approximate_table_counts = Arc::clone(&self.approximate_table_counts);
+        let historical_stats_worker = Arc::clone(&self.historical_stats_worker);
+        let row_ids = Arc::clone(&self.auto_ids);
+        Arc::new(move |session: &crate::Session| {
+            Box::new(ClusterAnalyzeService {
+                statement_memory: session.routed_statement_memory(),
+                resource_group: session.active_resource_group().to_owned(),
+                instance: session.analyze_job_instance(),
+                connection_id: session.connection_id(),
+                stats_usage: Arc::clone(&stats_usage),
+                transactions: Arc::clone(&transactions),
+                catalog: Arc::clone(&catalog),
+                stats: Arc::clone(&stats),
+                global_vars: global_vars.clone(),
+                analyze: Arc::clone(&analyze),
+                approximate_table_counts: Arc::clone(&approximate_table_counts),
+                historical_stats_worker: Arc::clone(&historical_stats_worker),
+                row_ids: Arc::clone(&row_ids),
+            }) as Box<dyn crate::analyze_service::AnalyzeService>
+        })
+    }
+
+    /// The statistics handle as the session's [`StatsStatementService`], for
+    /// the statement running on the session it is built from (its resource
+    /// group).
+    ///
+    /// [`StatsStatementService`]: crate::stats_statement_service::StatsStatementService
+    pub(super) fn stats_statement_service(
+        &self,
+    ) -> crate::domain_services::StatementService<
+        dyn crate::stats_statement_service::StatsStatementService,
+    > {
+        let stats_usage = Arc::clone(&self.stats_usage);
+        let transactions = Arc::clone(&self.transactions);
+        let catalog = Arc::clone(&self.catalog);
+        let stats = Arc::clone(&self.stats);
+        let global_vars = self.global_vars.clone();
+        let analyze = Arc::clone(&self.analyze);
+        let stats_lock = Arc::clone(&self.stats_lock);
+        let row_ids = Arc::clone(&self.auto_ids);
+        Arc::new(move |session: &crate::Session| {
+            Box::new(ClusterStatsStatementService {
+                resource_group: session.current_resource_group().to_owned(),
+                stats_usage: Arc::clone(&stats_usage),
+                transactions: Arc::clone(&transactions),
+                catalog: Arc::clone(&catalog),
+                stats: Arc::clone(&stats),
+                global_vars: global_vars.clone(),
+                analyze: Arc::clone(&analyze),
+                stats_lock: Arc::clone(&stats_lock),
+                row_ids: Arc::clone(&row_ids),
+            }) as Box<dyn crate::stats_statement_service::StatsStatementService>
         })
     }
 }
@@ -364,7 +423,7 @@ struct ClusterAnalyzeService {
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
     >,
-    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 }
 
 impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
@@ -469,7 +528,7 @@ struct ClusterStatsStatementService {
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 }
 
 impl crate::stats_statement_service::StatsStatementService for ClusterStatsStatementService {

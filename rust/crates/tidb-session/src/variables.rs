@@ -28,7 +28,6 @@ use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 use tidb_hack::{GoCaseCompare, GoToLower};
 
-use crate::vars::validation_var_error;
 use crate::{sysvar, Session, VarError};
 
 /// Go `kv.ReplicaReadFollower`, passed as a byte to avoid coupling the hint
@@ -66,16 +65,6 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
         }
         _ => Expr::String(value),
     }
-}
-
-/// A SET value Go's `buildSet` rewrote (`VarAssignment.Expr`): the
-/// expression with its system variables read, the one-field query it is
-/// planned as, that plan, and the value's type.
-struct PlannedSetValue {
-    bound: tidb_ast::Expr,
-    query: tidb_ast::NodeBox<tidb_ast::QueryStmt>,
-    physical: tidb_planner::physical::PhysicalPlan,
-    field: tidb_datatype::FieldType,
 }
 
 fn is_set_literal(expr: &tidb_ast::Expr) -> bool {
@@ -142,45 +131,7 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
     DriverError::from(error)
 }
 
-/// The text form a system variable stores for a datum (Go keeps every system
-/// variable as a string).
-pub(crate) fn datum_text(value: &Datum) -> Option<String> {
-    match value {
-        Datum::Null => None,
-        Datum::Int(v) => Some(v.to_string()),
-        Datum::UInt(v) => Some(v.to_string()),
-        Datum::Real(v) => Some(v.to_string()),
-        Datum::Decimal(d) => Some(d.to_string()),
-        Datum::String(s) => Some(String::from_utf8_lossy(s.bytes()).into_owned()),
-        Datum::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        // `BinaryJSON.String`: the canonical document text a JSON column
-        // sends on the wire.
-        Datum::Json(j) => Some(j.to_string()),
-        // `types.Time.String()`: the text a temporal column prints, fsp
-        // included -- what `mysql.bind_info`'s TIMESTAMP(6) rows read back
-        // as.
-        Datum::Time(t) => Some(t.to_string()),
-        // Go `Datum.ToString` for the two set-valued types prints the NAME,
-        // not the bit value: an ENUM default read back as `''` instead of
-        // `'x'` is what a metadata reader would otherwise report for a
-        // column whose stored default is correct.
-        Datum::Enum(value, _) => {
-            Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned())
-        }
-        Datum::Set(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
-        Datum::Duration(value) => Some(value.to_string()),
-        // Go `BinaryLiteral.ToString` is the raw bytes: `SET autocommit =
-        // 0x30` is `'0'` and `SET sql_mode = 0x414E5349` is `'ANSI'`.
-        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
-            Some(String::from_utf8_lossy(literal.as_bytes()).into_owned())
-        }
-        // Go `strconv.FormatFloat(float64(f), 'f', -1, 32)`.
-        Datum::Float32(value) => Some(tidb_datatype::go_strconv::format_float(
-            *value, b'f', -1, 32,
-        )),
-        _ => None,
-    }
-}
+pub(crate) use tidb_executor::simple::account_tables::sysvar_datum_text as datum_text;
 
 impl Session {
     /// Go session.SetGlobalSysVar notifies after validation/hooks and before
@@ -216,7 +167,7 @@ impl Session {
     /// re-parsing. Go's `SetExecutor` walks the assignments in source order
     /// and stops at the first error, which this reproduces.
     ///
-    /// `SET GLOBAL` writes straight into the shared [`vars::GlobalSysvars`]
+    /// `SET GLOBAL` writes straight into the shared [`tidb_domain::global_sysvars::GlobalSysvars`]
     /// this call was given (see [`Self::attach_globals`],
     /// [`Self::swap_globals`]), which is this process's only copy unless a
     /// front end also persists it: the convergence node's
@@ -242,54 +193,22 @@ impl Session {
             return Ok(None);
         };
         match &**session_stmt {
-            SessionStmt::SetSessionStates(set) => {
-                self.in_set_session_states = true;
-                self.decode_session_states(&set.session_states)?;
-                Ok(Some(()))
-            }
             SessionStmt::Set(set) => {
                 self.run_set_stmt(set)?;
                 Ok(Some(()))
             }
-            // `SET PASSWORD` shares the `SET` keyword and the front end's
-            // OK-packet reply, but writes `mysql.user`, not a variable.
-            SessionStmt::SetPassword(set_password) => {
-                self.set_password_stmt(set_password)?;
-                Ok(Some(()))
-            }
-            SessionStmt::SetResourceGroup(resource_group) => {
-                // Go `buildSimple`: under `tidb_resource_control_strict_mode`
-                // the statement needs SUPER, RESOURCE_GROUP_ADMIN or
-                // RESOURCE_GROUP_USER.
-                if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    && !["RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"]
-                        .iter()
-                        .any(|name| self.has_dynamic_privilege(name, false))
-                {
-                    return Err(DriverError::SpecificAccessDenied(
-                        "SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER".to_owned(),
-                    ));
-                }
-                // Go `executeSetResourceGroupName`: a named group must exist.
-                self.vars.resource_group = if resource_group.name.is_empty() {
-                    "default".to_owned()
-                } else {
-                    if self
-                        .lock_catalog()?
-                        .resource_group(&resource_group.name)
-                        .is_none()
-                    {
-                        return Err(crate::resource_group::resource_group_not_exists(
-                            &resource_group.name,
-                        ));
-                    }
-                    resource_group.name.go_to_lower()
-                };
-                Ok(Some(()))
-            }
             _ => Ok(None),
         }
+    }
+
+    /// Go `SimpleExec.executeSetResourceGroupName`, the executor's.
+    pub(crate) fn set_resource_group_stmt(
+        &mut self,
+        resource_group: &tidb_ast::SetResourceGroupStmt,
+    ) -> Result<(), DriverError> {
+        let catalog = self.shared_catalog();
+        let catalog = catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        tidb_executor::simple::execute_set_resource_group_name(self, &catalog, resource_group)
     }
 
     /// The connection's persistent resource group. A statement hint does not
@@ -402,343 +321,51 @@ impl Session {
         Ok(self.statement_resource_group(&stmt).into_owned())
     }
 
-    /// Go `buildSet` followed by `SetExecutor.Next` for one `SET` statement.
-    ///
-    /// `buildSet` appends the privilege visit info of EVERY assignment
-    /// (SYSTEM_VARIABLES_ADMIN for GLOBAL/INSTANCE, RESTRICTED_VARIABLES_ADMIN
-    /// under SEM) and rewrites every value before the executor runs, so a
-    /// denied or unplannable assignment leaves the earlier ones unapplied.
-    /// `SetExecutor` then applies each assignment in source order: a later
-    /// value observes earlier writes, and a later error keeps them.
+    /// Go `Compile` and `runStmt` for one `SET` statement: `buildSet` (its
+    /// values rewritten, subqueries evaluated), `CheckPrivilege` over the
+    /// visit infos -- SYSTEM_VARIABLES_ADMIN for GLOBAL/INSTANCE,
+    /// RESTRICTED_VARIABLES_ADMIN under SEM -- so a denied assignment leaves
+    /// the earlier ones unapplied, then `SetExecutor`.
     fn run_set_stmt(&mut self, set: &tidb_ast::SetStmt) -> Result<(), DriverError> {
-        let mut planned = Vec::with_capacity(set.variables.len());
-        for variable in &set.variables {
-            if variable.is_global || variable.is_instance {
-                self.require_set_global_privilege()?;
-            }
-            self.require_sem_visible_sysvar(&variable.name.go_to_lower())?;
-            // Go: `DEFAULT` is `IsDefault`, with no expression to rewrite;
-            // `NAMES` / `CHARSET` carry their charset as a constant.
-            let rewrites = !matches!(variable.value, tidb_ast::Expr::Default(None))
-                && variable.name != tidb_ast::SET_NAMES
-                && variable.name != tidb_ast::SET_CHARSET;
-            planned.push(if rewrites {
-                Some(self.plan_set_value(&variable.value)?)
-            } else {
-                None
-            });
-        }
-        for (variable, planned) in set.variables.iter().zip(planned) {
-            if variable.name == tidb_ast::SET_NAMES || variable.name == tidb_ast::SET_CHARSET {
-                let charset = match &variable.value {
-                    tidb_ast::Expr::RawString(charset) => Some(charset.as_str()),
-                    _ => None,
-                };
-                let collation = match &variable.extend_value {
-                    Some(tidb_ast::Expr::RawString(collation)) => Some(collation.as_str()),
-                    _ => None,
-                };
-                self.apply_charset(variable.name == tidb_ast::SET_NAMES, charset, collation)?;
-            } else if !variable.is_system {
-                let planned = planned.expect("a user variable's value is never DEFAULT");
-                self.assign_user_var(&variable.name.go_to_lower(), planned)?;
-            } else {
-                self.apply_assignment(variable, planned)?;
+        // Go's `rewriteSystemVariable` reads a system variable while the
+        // value is built: `SET @@x = 7, @y = @@x` stores the OLD `@@x`.
+        let mut set = set.clone();
+        for variable in &mut set.variables {
+            if variable.name != tidb_ast::SET_NAMES
+                && variable.name != tidb_ast::SET_CHARSET
+                && !matches!(variable.value, tidb_ast::Expr::Default(None))
+            {
+                variable.value = self.bind_variables_in(&variable.value)?;
             }
         }
-        Ok(())
-    }
-
-    /// Go `buildSet`'s rewrite of one value: a bare column name becomes its
-    /// string, system variables are read now (Go's `rewriteSystemVariable`
-    /// folds them at build time, so `SET @@x = 7, @y = @@x` stores the OLD
-    /// `@@x`), and the value is planned over a one-row dual. Planning every
-    /// value before any is applied also keeps a later read from rebinding
-    /// against the type an earlier assignment installs.
-    fn plan_set_value(&mut self, value: &tidb_ast::Expr) -> Result<PlannedSetValue, DriverError> {
-        let mut bound = self.bind_variables_in(value)?;
-        if let tidb_ast::Expr::Column(path) = &bound {
-            if let [word] = path.as_slice() {
-                bound = tidb_ast::Expr::String(word.clone());
-            }
-        }
-        // Go `buildSet` rewrites the parsed assignment expression
-        // itself. Restoring it to text and reparsing would print a
-        // plain literal with a `_UTF8MB4` introducer, which pins
-        // utf8mb4_bin where Go's literal takes the connection
-        // collation -- and the variable stores that type. The
-        // expression is substituted into a parsed one-field SELECT
-        // instead.
-        let query = match &bound {
-            tidb_ast::Expr::Subquery(query) => query.clone(),
-            _ => {
-                let Stmt::Query(mut query) =
-                    tidb_parser::parse_with_sql_mode("SELECT 1", self.scanner_sql_mode())
-                        .map_err(|error| DriverError::Parse(format!("{error:?}")))?
-                else {
-                    unreachable!("SELECT 1 parses as a query")
-                };
-                let tidb_ast::QueryStmt::Select(select) = &mut *query else {
-                    unreachable!("SELECT 1 is a plain SELECT")
-                };
-                select.fields.fields_mut()[0] = tidb_ast::SelectField::Expr {
-                    expr: bound.clone(),
-                    alias: None,
-                };
-                query
-            }
-        };
         let ctx = self.statement_context(false);
         let database = self.current_database().to_owned();
-        let physical = self.with_catalog_retrieving(&ctx, |catalog| {
-            tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
+        let (plan, visits) = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::driver::plan_set_stmt(&set, catalog, &database, &ctx)
         })?;
-        let field = physical
-            .schema()
-            .and_then(|schema| schema.columns.first())
-            .and_then(|column| column.ret_type.clone())
-            .ok_or_else(|| DriverError::unsupported("SET expression has no type"))?;
-        Ok(PlannedSetValue {
-            bound,
-            query,
-            physical,
-            field,
-        })
+        self.check_visit_infos(&visits)?;
+        let result = tidb_executor::set::execute_set(self, &ctx, &plan);
+        // Go's SET evaluates under the statement's own context, so what the
+        // evaluation warned (`SET @a = (SELECT 1/0)`'s 1365) is the
+        // statement's warning.
+        self.drain_eval_warnings(&ctx);
+        result
     }
 
-    /// Go `SetExecutor`'s user-variable arm: evaluate the planned value and
-    /// store it with its type; NULL unsets the variable.
-    fn assign_user_var(&mut self, key: &str, planned: PlannedSetValue) -> Result<(), DriverError> {
-        let field = planned.field.clone();
-        let value = self.eval_set_value(planned)?;
-        if value.is_null() {
-            self.user_vars.unset_user_var(key);
-        } else {
-            self.user_vars.set_user_var_val(key, value);
-            self.user_vars.set_user_var_type(key, field);
-        }
-        Ok(())
-    }
-
-    /// Go `v.Expr.Eval`: a planned SET value's datum.
-    fn eval_set_value(&mut self, planned: PlannedSetValue) -> Result<Datum, DriverError> {
-        let PlannedSetValue {
-            bound,
-            query,
-            mut physical,
-            ..
-        } = planned;
-        Ok(if is_set_literal(&bound) {
-            // Raising a cancelled query's quota must not allocate a SELECT result.
-            self.eval_bound_value(&bound)?
-        } else {
-            let ctx = self.statement_context(false);
-            let database = self.current_database().to_owned();
-            let (_, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
-                tidb_executor::run_query_meta_stmt_with_physical(
-                    &query,
-                    Some(&mut physical),
-                    catalog,
-                    &database,
-                    &ctx,
-                )
-            })?;
-            // Go's SET evaluates the expression under the
-            // statement's own context, so what the evaluation
-            // warned (`SET @a = (SELECT 1/0)`'s 1365) is the
-            // statement's warning.
-            self.drain_eval_warnings(&ctx);
-            match rows.len() {
-                0 => Datum::Null,
-                1 => rows[0].first().cloned().unwrap_or(Datum::Null),
-                _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
-            }
-        })
-    }
-
-    /// One `name = value` assignment.
-    ///
-    /// `GLOBAL` writes the shared table every session of this factory reads
-    /// (see [`vars::GlobalSysvars`]), gated on Go's `ErrSpecificAccessDenied`
-    /// (1227): SUPER or the dynamic `SYSTEM_VARIABLES_ADMIN` privilege.
-    /// `SESSION`/`INSTANCE`/unqualified write this session's own copy, as
-    /// today. Both directions reject a scope the variable does not have
-    /// (1228/1229), matching Go's `validateScope`.
-    fn apply_assignment(
+    /// Go `SessionVars.SetSystemVar` for a SESSION assignment: the
+    /// variable's hooks run in `tidb-variable` (`SessionVars::set_system_var`);
+    /// the `SetSession` hooks that reach the session itself -- the random
+    /// generator's seed, autocommit ending the transaction -- run here.
+    pub(crate) fn set_session_sys_var(
         &mut self,
-        assignment: &tidb_ast::VariableAssignment,
-        planned: Option<PlannedSetValue>,
+        name: &str,
+        value: String,
     ) -> Result<(), DriverError> {
-        // Go's SetExecutor deliberately checks the removed-variable table
-        // before privilege and scope handling: these names are parse-but-
-        // ignore compatibility shims, even for SET GLOBAL.
-        if sysvar::removed_sys_var_reason(&assignment.name).is_some() {
-            return Ok(());
-        }
-        let is_global = assignment.is_global;
-        if is_global {
-            self.require_set_global_privilege()?;
-        }
-        self.require_sem_writable_sysvar(&assignment.name)?;
-        // Go `setSysVariable`: a noop variable may still be set, with a
-        // warning that it will not do anything (8144).
-        if sysvar::get_sys_var(&assignment.name).is_some_and(|def| def.is_noop())
-            && !self.vars.noop_variables_enabled()
-        {
-            self.append_warning(
-                crate::warnings::WarningLevel::Warning,
-                8144,
-                format!(
-                    "setting {} has no effect in TiDB",
-                    sysvar::get_sys_var(&assignment.name)
-                        .map_or(assignment.name.as_str(), |def| def.name)
-                ),
-            );
-        }
-        // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
-        // unqualified/SESSION reaches the tier only through the legacy
-        // rewrite, which warns.
-        let is_instance = assignment.is_instance
-            || (!is_global && self.routes_to_instance_tier(&assignment.name)?);
-        // The GLOBAL and INSTANCE tiers share one node-wide table keyed by
-        // scope (`GlobalSysvars::store`), so a DEFAULT or a value written
-        // through either lands where the read path looks.
-        let is_node_wide = is_global || is_instance;
-        let is_txn_read = !is_node_wide && assignment.name.eq_ignore_ascii_case("tx_read_ts");
-        let is_snapshot = !is_node_wide && assignment.name.eq_ignore_ascii_case("tidb_snapshot");
-        let is_read_timestamp = is_snapshot || is_txn_read;
-        let old_snapshot_ts = if is_txn_read {
-            self.vars.txn_read_ts()
-        } else {
-            self.vars.snapshot_ts()
-        };
-        let value = match (&assignment.value, planned) {
-            // Go `getVarValue`: a SESSION (or unqualified) variable set to
-            // DEFAULT takes the GLOBAL value -- the compiled default only for
-            // a variable with no global scope (`GetGlobalSysVar` falls back to
-            // `sv.Value`) -- and is then set like any explicit value.
-            (tidb_ast::Expr::Default(None), _) if !is_node_wide => Some(
-                self.vars
-                    .global_value_for_session_default(&assignment.name)
-                    .map_err(var_error)?,
-            ),
-            // Go `getVarValue`: GLOBAL and INSTANCE DEFAULT resolve to
-            // `GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)`,
-            // which is then validated and set like any explicit value.
-            (tidb_ast::Expr::Default(None), _) => {
-                Some(crate::vars::global_system_variable_initial_value(
-                    sysvar::get_sys_var(&assignment.name).ok_or_else(|| {
-                        var_error(VarError::UnknownSystemVariable(
-                            assignment.name.to_ascii_lowercase(),
-                        ))
-                    })?,
-                ))
-            }
-            // Go `getVarValue`: the evaluated datum's string; NULL is "".
-            (_, Some(planned)) => datum_text(&self.eval_set_value(planned)?),
-            (_, None) => unreachable!("buildSet rewrote every non-DEFAULT value"),
-        };
-        // Go stores every system variable as a string.
-        let value = value.unwrap_or_default();
-        if is_read_timestamp {
-            // Go evaluates the expression before checking transaction state.
-            self.check_snapshot_change_in_transaction(is_txn_read)?;
-        }
-        // Go `SetExecutor.setSysVariable`'s `InTxn` refusal, which covers
-        // `SET TRANSACTION ISOLATION LEVEL` as well as `tx_read_ts`.
-        if !is_node_wide
-            && assignment
-                .name
-                .eq_ignore_ascii_case("tx_isolation_one_shot")
-            && self.in_transaction()
-        {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS,
-                "Transaction characteristics can't be changed while a transaction is in progress",
-            )));
-        }
-        self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
-        self.check_isolation_level(&assignment.name, &value)?;
-        self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
-        if assignment
-            .name
-            .eq_ignore_ascii_case("tidb_partition_prune_mode")
-        {
-            self.warn_partition_prune_assignment(&value, is_global);
-        }
-        if !is_global
-            && assignment
-                .name
-                .eq_ignore_ascii_case(tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE)
-        {
-            self.warn_mpp_exchange_compression(&value);
-        }
-        if !is_global
-            && assignment
-                .name
-                .eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL)
-        {
-            self.warn_parallel_hashagg_spill(&value);
-        }
-        self.warn_sysvar_assignment(&assignment.name, &value);
-        if is_node_wide {
-            // Go's `require_secure_transport` Validation closure runs after
-            // Bool normalization and the SET GLOBAL privilege check, but
-            // before SetGlobal mutates the live table. Direct startup/cache
-            // loads do not run this SQL-only guard.
-            if is_global
-                && assignment
-                    .name
-                    .eq_ignore_ascii_case("require_secure_transport")
-            {
-                let definition = sysvar::get_sys_var(&assignment.name)
-                    .expect("the assignment named a registered sysvar");
-                let normalized = definition
-                    .validate_in_scope(&value, sysvar::SCOPE_GLOBAL)
-                    .map_err(|error| {
-                        var_error(validation_var_error(&assignment.name, &value, error))
-                    })?;
-                if normalized.value == "ON" && !self.has_secure_transport() {
-                    return Err(var_error(VarError::ValidationRefused(
-                        "require_secure_transport can only be set to ON if the connection issuing the change is secure"
-                            .to_owned(),
-                    )));
-                }
-            }
-            let truncated = if is_global {
-                self.vars.set_global(&assignment.name, value.clone())
-            } else {
-                self.vars.set_instance(&assignment.name, value.clone())
-            }
-            .map_err(var_error)?;
-            if truncated {
-                self.warn_truncated_var(&assignment.name, &value);
-            }
-            self.append_fix_control_parse_warnings(&assignment.name, &value);
-            if is_global {
-                // `SetGlobal` stores Go's type-normalized value. Workloadrepo
-                // hooks consume that stored value too; passing the original
-                // `-1`/`7201` text would make the worker reject an assignment
-                // that the sysvar layer had already accepted and clamped.
-                let stored = self.vars.get_global(&assignment.name).map_err(var_error)?;
-                self.apply_workload_repository_global(&assignment.name, &stored)?;
-                self.notify_global_config_change(&assignment.name, &stored);
-            }
-            return Ok(());
-        }
         let was_autocommit = self.is_autocommit();
-        let truncated = self
-            .vars
-            .set_system(&assignment.name, value.clone())
-            .map_err(var_error)?;
-        if is_read_timestamp {
-            self.load_snapshot_schema_after_set(old_snapshot_ts, is_txn_read)?;
-        }
-        if truncated {
-            self.warn_truncated_var(&assignment.name, &value);
-        }
-        self.append_fix_control_parse_warnings(&assignment.name, &value);
-        self.seed_rand_from_sysvar(&assignment.name)?;
+        let result = self.vars.set_system_var(name, value);
+        self.take_var_warnings();
+        result.map_err(var_error)?;
+        self.seed_rand_from_sysvar(name)?;
         // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
         // ON ends the ongoing transaction ("Implicitly commit the possible
         // ongoing transaction if mode is changed from off to on"). Only the
@@ -746,10 +373,7 @@ impl Session {
         // leaves an explicit `BEGIN` running, which is why
         // `BEGIN; INSERT; SET autocommit = 1; ROLLBACK` still rolls back
         // (captured).
-        if assignment.name.eq_ignore_ascii_case("autocommit")
-            && !was_autocommit
-            && self.is_autocommit()
-        {
+        if name.eq_ignore_ascii_case("autocommit") && !was_autocommit && self.is_autocommit() {
             // Go `SetInTxn(false)`; the statement's finish commits the store
             // transaction (`autoCommitAfterStmt`).
             self.leave_txn_ctx_for_commit();
@@ -757,17 +381,91 @@ impl Session {
         Ok(())
     }
 
-    fn check_snapshot_change_in_transaction(&self, one_shot: bool) -> Result<(), DriverError> {
-        if self.historical_read_ts().is_some() || (one_shot && self.in_transaction()) {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS,
-                "Transaction characteristics can't be changed while a transaction is in progress",
-            )));
+    /// Go `GlobalVarsAccessor.SetGlobalSysVar` (`is_global`) or
+    /// `SetInstanceSysVar`: the variable's hooks and the node-wide table in
+    /// `tidb-variable`, then what Go's domain does after the store -- the
+    /// workload repository's hooks and the global config notification.
+    pub(crate) fn set_node_wide_sys_var(
+        &mut self,
+        name: &str,
+        value: String,
+        is_global: bool,
+    ) -> Result<(), DriverError> {
+        if is_global {
+            if let Some(services) = &self.domain_services {
+                let sysvars = std::sync::Arc::clone(&services.sysvars);
+                return self.set_global_sys_var_through(sysvars.as_ref(), name, value);
+            }
+        }
+        let result = if is_global {
+            self.vars.set_global_sys_var(name, value)
+        } else {
+            self.vars.set_instance_sys_var(name, value)
+        };
+        self.take_var_warnings();
+        result.map_err(var_error)?;
+        if is_global {
+            // `SetGlobal` stores Go's type-normalized value. Workloadrepo
+            // hooks consume that stored value too; passing the original
+            // `-1`/`7201` text would make the worker reject an assignment
+            // that the sysvar layer had already accepted and clamped.
+            let stored = self.vars.get_global(name).map_err(var_error)?;
+            self.apply_workload_repository_global(name, &stored)?;
+            self.notify_global_config_change(name, &stored);
         }
         Ok(())
     }
 
-    fn load_snapshot_schema_after_set(
+    /// Go `GlobalVarsAccessor.SetGlobalSysVar` over the domain's
+    /// `mysql.global_variables` (`set.go:166`): each GLOBAL assignment is
+    /// validated against a scratch copy read inside its own change and
+    /// persisted at once, so an assignment that fails leaves the earlier
+    /// ones of its statement stored, and the user's transaction is not
+    /// touched. `SetExecutor.setSysVariable` then logs it.
+    fn set_global_sys_var_through(
+        &mut self,
+        sysvars: &dyn crate::stored_state_service::SysvarService,
+        name: &str,
+        value: String,
+    ) -> Result<(), DriverError> {
+        let pending = sysvars.begin()?;
+        let live = self.swap_globals(Some(std::sync::Arc::new(pending.table())));
+        let shown = if name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI {
+            tidb_ast::redact_url(&value)
+        } else {
+            value.clone()
+        };
+        let result = self
+            .vars
+            .set_global_sys_var(name, value)
+            .and_then(|()| self.vars.get_global(name));
+        self.swap_globals(live);
+        self.take_var_warnings();
+        // `SetGlobal` stores Go's type-normalized value, which the hooks
+        // below consume (see `set_node_wide_sys_var`).
+        let stored = result.map_err(var_error)?;
+        pending.commit()?;
+        tidb_util::logutil::bg_logger().info(
+            "set global var",
+            &[
+                tidb_log::Field::new("conn", tidb_log::Value::U64(self.connection_id())),
+                tidb_log::Field::new("name", tidb_log::Value::Str(name.to_owned())),
+                tidb_log::Field::new("val", tidb_log::Value::Str(shown)),
+            ],
+        );
+        self.apply_workload_repository_global(name, &stored)?;
+        self.notify_global_config_change(name, &stored);
+        Ok(())
+    }
+
+    /// Moves what the sysvar hooks appended onto the statement's warnings.
+    pub(crate) fn take_var_warnings(&mut self) {
+        for warning in self.vars.take_stmt_warnings() {
+            self.append_sql_warning(warning);
+        }
+    }
+
+    pub(crate) fn load_snapshot_schema_after_set(
         &mut self,
         old_ts: u64,
         one_shot: bool,
@@ -814,507 +512,6 @@ impl Session {
         result.map_err(DriverError::unsupported)
     }
 
-    /// Publishes duplicate-key diagnostics after the scope-aware writer has
-    /// validated and atomically stored the value. A wrong scope or malformed
-    /// value therefore cannot leak a fix-control warning ahead of its error.
-    fn append_fix_control_parse_warnings(&mut self, name: &str, value: &str) {
-        if !name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
-            return;
-        }
-        let (_, warnings) = tidb_planner::fix_control::OptimizerFixControl::parse(value)
-            .expect("the system/global writer validated fix-control before publication");
-        for warning in warnings {
-            self.append_warning(crate::warnings::WarningLevel::Warning, 1105, warning);
-        }
-    }
-
-    /// Go `checkIsolationLevel` (`pkg/sessionctx/variable/varsutil.go:116`),
-    /// wired to both spellings at `sysvar.go:2100` (`tx_isolation`) and
-    /// `:2106` (`transaction_isolation`):
-    ///
-    /// ```text
-    /// if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-    ///     returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
-    ///     if !TiDBOptOn(vars.systems[vardef.TiDBSkipIsolationLevelCheck]) {
-    ///         return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
-    ///     }
-    ///     vars.StmtCtx.AppendWarning(returnErr)
-    /// }
-    /// ```
-    ///
-    /// The escape hatch does not change the value: with the check skipped the
-    /// level is STORED and read back, it merely warns. The two accepted
-    /// levels (`READ-COMMITTED`, `REPEATABLE-READ`) pass through untouched.
-    ///
-    /// This lives here rather than in `SysVarDef::run_validation` because
-    /// both halves need the session: the skip switch is read from it, and the
-    /// warning is appended to it.
-    fn check_isolation_level(&mut self, name: &str, value: &str) -> Result<(), DriverError> {
-        if !name.eq_ignore_ascii_case("transaction_isolation")
-            && !name.eq_ignore_ascii_case("tx_isolation")
-        {
-            return Ok(());
-        }
-        // Go tests the NORMALIZED value: the entry is `TypeEnum`, so
-        // `serializable` and the ordinal `3` both arrive here as
-        // `SERIALIZABLE`.
-        let Some(normalized) = sysvar::get_sys_var(name)
-            .and_then(|def| def.normalize_by_type(value, sysvar::SCOPE_SESSION).ok())
-            .map(|validated| validated.value)
-        else {
-            return Ok(());
-        };
-        if normalized != "SERIALIZABLE" && normalized != "READ-UNCOMMITTED" {
-            return Ok(());
-        }
-        let skip = self
-            .vars
-            .get_system("tidb_skip_isolation_level_check")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
-        if !skip {
-            return Err(DriverError::Var(
-                tidb_executor::VarError::UnsupportedIsolationLevel(normalized),
-            ));
-        }
-        self.append_warning(
-            crate::warnings::WarningLevel::Warning,
-            8048,
-            format!(
-                "The isolation level '{normalized}' is not supported. Set \
-                 tidb_skip_isolation_level_check=1 to skip this error"
-            ),
-        );
-        Ok(())
-    }
-
-    /// Go's `max_allowed_packet` `Validation` (`sysvar.go:2193`) refuses a
-    /// SESSION write outright:
-    ///
-    /// ```text
-    /// if scope == vardef.ScopeSession {
-    ///     err := ErrReadOnly.GenWithStackByArgs("SESSION", vardef.MaxAllowedPacket, "GLOBAL")
-    ///     return normalizedValue, err
-    /// }
-    /// ```
-    ///
-    /// The variable still HAS session scope -- `SELECT @@max_allowed_packet`
-    /// answers from the session copy -- so this is a write-side refusal only,
-    /// which is why it cannot be expressed as a scope bit.
-    ///
-    /// Go guards it with `vars.StmtCtx.StmtType == "Set"`, so only a user
-    /// `SET` is refused; the handshake's own seeding is not.
-    ///
-    /// The 1024-rounding half of the same closure is in
-    /// [`sysvar::SysVarDef::run_validation`], where the clamp flag already
-    /// travels to the statement as `ErrTruncatedWrongValue` (1292).
-    ///
-    /// # The refusal comes AFTER the type validation, not before
-    ///
-    /// `SysVar.Validate` (`pkg/sessionctx/variable/variable.go:219`) is
-    /// `validateScope` -> `ValidateFromType` -> `Validation`, and the closure
-    /// above is the LAST of the three. `ValidateFromType` has therefore
-    /// already clamped the value into `[MinValue, MaxValue]` and appended its
-    /// own `ErrTruncatedWrongValue` by the time the read-only refusal is
-    /// reached, so the statement reports BOTH. Captured from TiDB:
-    ///
-    /// ```text
-    /// set @@Max_Allowed_Packet=100;
-    ///   ERROR 1621 SESSION variable 'max_allowed_packet' is read-only.
-    ///              Use SET GLOBAL to assign the value
-    ///   Warning 1292 Truncated incorrect max_allowed_packet value: '100'
-    /// set @@max_allowed_packet='abc';
-    ///   ERROR 1232 Incorrect argument type to variable 'max_allowed_packet'
-    /// ```
-    ///
-    /// The second capture is why the type check runs here rather than being
-    /// skipped on the refusal path: a value the TYPE rejects never reaches
-    /// the closure at all, so 1232 outranks 1621.
-    fn check_max_allowed_packet_scope(
-        &mut self,
-        name: &str,
-        value: &str,
-        is_node_wide: bool,
-    ) -> Result<(), DriverError> {
-        if is_node_wide || !name.eq_ignore_ascii_case("max_allowed_packet") {
-            return Ok(());
-        }
-        if let Some(def) = sysvar::get_sys_var(name) {
-            match def.normalize_by_type(value, sysvar::SCOPE_SESSION) {
-                Ok(validated) if validated.truncated => self.warn_truncated_var(name, value),
-                Ok(_) => {}
-                Err(error) => return Err(var_error(validation_var_error(name, value, error))),
-            }
-        }
-        Err(DriverError::Var(
-            tidb_executor::VarError::SessionScopeIsReadOnly("max_allowed_packet".to_owned()),
-        ))
-    }
-
-    /// Whether a non-GLOBAL assignment writes the INSTANCE tier, appending
-    /// Go's deprecation warning when it does so through the legacy route.
-    ///
-    /// Go `pkg/executor/set.go:152`:
-    ///
-    /// ```text
-    /// if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-    ///     v.IsInstance = true
-    ///     sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
-    /// }
-    /// ```
-    ///
-    /// `v.IsGlobal` is false for an explicit `SET SESSION` as well as for an
-    /// unqualified `SET`, so both take this route -- the switch is what the
-    /// variable IS, not how the statement spelled the scope. An explicit `SET
-    /// INSTANCE` is Go's `v.IsInstance` and warns about nothing.
-    ///
-    /// With `tidb_enable_legacy_instance_scope = OFF` the route is not taken
-    /// and the assignment falls through to `set_system`, whose
-    /// `!has_session_scope()` guard is Go's `errGlobalVariable` (1229) -- the
-    /// same refusal Go's `validateScope` reaches once the rewrite is skipped.
-    ///
-    /// The warning goes through [`crate::Session::append_warning`], the one
-    /// door that feeds both `SHOW WARNINGS` and the OK packet's
-    /// `wire_warning_count`.
-    fn routes_to_instance_tier(&mut self, name: &str) -> Result<bool, DriverError> {
-        let Some(def) = sysvar::get_sys_var(name) else {
-            return Ok(false);
-        };
-        if !def.has_instance_scope() {
-            return Ok(false);
-        }
-        if !self.legacy_instance_scope_enabled() {
-            return Ok(false);
-        }
-        self.append_warning(
-            crate::warnings::WarningLevel::Warning,
-            // Go `errno.ErrInstanceScope` = 8142
-            // (`pkg/errno/errcode.go:1063`), message at
-            // `pkg/errno/errname.go:1058`.
-            8142,
-            format!(
-                "modifying {} will require SET GLOBAL in a future version of TiDB",
-                def.name
-            ),
-        );
-        Ok(true)
-    }
-
-    /// Go `SessionVars.EnableLegacyInstanceScope`, fed by
-    /// `tidb_enable_legacy_instance_scope` (default ON,
-    /// `vardef.DefEnableLegacyInstanceScope`).
-    fn legacy_instance_scope_enabled(&self) -> bool {
-        self.vars
-            .get_system("tidb_enable_legacy_instance_scope")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("ON"))
-    }
-
-    /// Appends warnings produced by Go system-variable `Validation` closures.
-    ///
-    /// The switch is `ScopeGlobal|ScopeSession` and `Validation` runs for both,
-    /// so `SET GLOBAL` warns the same way `SET SESSION` does. Captured through
-    /// `gorun`:
-    ///
-    /// ```text
-    /// set @@session.tidb_enable_fast_analyze=1; show warnings;
-    ///   Warning|1105|the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect
-    /// set @@session.tidb_enable_fast_analyze=0; show warnings;  -- empty
-    /// set global tidb_enable_fast_analyze=1;    show warnings;
-    ///   Warning|1105|the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect
-    /// ```
-    ///
-    /// The message is built with `errors.NewNoStackError`, so it carries no
-    /// code of its own and files under `ER_UNKNOWN_ERROR` (1105), the same way
-    /// [`crate::warnings::CHECK_CONSTRAINT_IS_OFF_CODE`] does.
-    ///
-    /// Appends Go's partition-prune mode warnings from the variable's
-    /// `SetSession`/`SetGlobal` hooks. The closure's normalized value is used
-    /// here as well, so out-of-date enum spellings warn as their upgraded mode.
-    fn warn_partition_prune_assignment(&mut self, value: &str, is_global: bool) {
-        let Some(definition) = sysvar::get_sys_var("tidb_partition_prune_mode") else {
-            return;
-        };
-        let Ok(normalized) = definition.validate_in_scope(value, sysvar::SCOPE_SESSION) else {
-            return;
-        };
-        let previous = if is_global {
-            self.vars.get_global("tidb_partition_prune_mode").ok()
-        } else {
-            self.vars.get_system("tidb_partition_prune_mode").ok()
-        };
-        if normalized.value == "static" {
-            self.append_warning(
-                crate::warnings::WarningLevel::Warning,
-                1681,
-                "static prune mode is deprecated and will be removed in the future release."
-                    .to_owned(),
-            );
-        } else if normalized.value == "dynamic" {
-            let warn_analyze = is_global || previous.as_deref() == Some("static");
-            if warn_analyze {
-                self.append_warning(
-                    crate::warnings::WarningLevel::Warning,
-                    1105,
-                    "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
-                );
-            }
-            if !is_global && previous.as_deref() == Some("static") {
-                self.append_warning(
-                    crate::warnings::WarningLevel::Warning,
-                    1105,
-                    "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
-                );
-            }
-        }
-    }
-
-    /// Go's `mpp_exchange_compression_mode` SetSession hook warns when a
-    /// concrete compression mode is selected while the effective MPP version
-    /// is V0. `UNSPECIFIED` deliberately has no warning, and GLOBAL writes do
-    /// not invoke SetSession (the caller filters those out before calling).
-    fn warn_mpp_exchange_compression(&mut self, value: &str) {
-        let Some(definition) =
-            sysvar::get_sys_var(tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE)
-        else {
-            return;
-        };
-        let Ok(normalized) = definition.validate_in_scope(value, sysvar::SCOPE_SESSION) else {
-            return;
-        };
-        let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(&normalized.value) else {
-            return;
-        };
-        if mode == tidb_vardef::modes::ExchangeCompressionMode::UNSPECIFIED {
-            return;
-        }
-        let mpp_version = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
-            .ok()
-            .and_then(|value| tidb_vardef::modes::to_mpp_version(&value))
-            .unwrap_or(tidb_vardef::modes::NEWEST_MPP_VERSION);
-        if mpp_version == 0 {
-            self.append_warning(
-                crate::warnings::WarningLevel::Warning,
-                1105,
-                "mpp exchange compression won't work under current mpp version 0".to_owned(),
-            );
-        }
-    }
-
-    /// Go's `tidb_enable_parallel_hashagg_spill` SetSession hook emits a
-    /// deprecation warning only when the session switch is turned OFF. GLOBAL
-    /// writes do not invoke SetSession, so the caller filters those out.
-    fn warn_parallel_hashagg_spill(&mut self, value: &str) {
-        let Some(definition) =
-            sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL)
-        else {
-            return;
-        };
-        let Ok(normalized) = definition.normalize_by_type(value, sysvar::SCOPE_SESSION) else {
-            return;
-        };
-        if normalized.value == "OFF" {
-            self.append_warning(
-                crate::warnings::WarningLevel::Warning,
-                1681,
-                "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
-            );
-        }
-    }
-
-    /// Go tests the NORMALIZED value with `TiDBOptOn`, so this normalizes the
-    /// typed text through the registry first: `1`, `on` and `ON` all warn,
-    /// while a value the type check would reject falls through to the real
-    /// rejection below.
-    /// The `Validation` closures that WARN. The value half of each closure
-    /// lives in [`sysvar::SysVarDef::validate_in_scope`], which has no session
-    /// to append to; this is the half that does. Go runs `Validation` before
-    /// storing and for BOTH scopes, so this runs on the same footing.
-    fn warn_sysvar_assignment(&mut self, name: &str, value: &str) {
-        // Go tests the NORMALIZED value, so the typed text goes through the
-        // registry first: `1`, `on` and `ON` are one case. A value the type
-        // check would reject warns about nothing and falls through to the real
-        // rejection below.
-        let normalized = sysvar::get_sys_var(name)
-            .and_then(|def| def.normalize_by_type(value, sysvar::SCOPE_SESSION).ok())
-            .map(|validated| validated.value);
-        let Some(normalized) = normalized else {
-            return;
-        };
-        // Each message is built with `errors.NewNoStackError` or a deprecation
-        // error, so the code is the one the error itself carries; captured
-        // through `gorun` with `SHOW WARNINGS` after each `SET`.
-        let warning = if name.eq_ignore_ascii_case("tidb_enable_fast_analyze") {
-            // The removed feature warns only when TURNED ON.
-            (normalized == "ON").then_some((
-                1105,
-                "the fast analyze feature has already been removed in TiDB v7.5.0, so this will \
-                 have no effect",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_table_partition") {
-            // Always on: warns only when someone tries to turn it OFF, and the
-            // value stored is `ON` regardless (see the validation).
-            (normalized == "OFF").then_some((
-                1105,
-                "tidb_enable_table_partition is always turned on. This variable has been \
-                 deprecated and will be removed in the future releases",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_list_partition") {
-            // Go `ErrWarnDeprecatedSyntaxSimpleMsg` (1681), appended for EVERY
-            // assignment -- including the one the same closure then refuses,
-            // which is why `SHOW WARNINGS` after `set ... = off` reports the
-            // deprecation warning AND the error.
-            Some((
-                1681,
-                "tidb_enable_list_partition is deprecated and will be removed in a future \
-                 release.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_tiflash_pipeline_model") {
-            Some((
-                1681,
-                "tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_mpp_store_fail_ttl") {
-            Some((
-                1105,
-                "tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_column_tracking") {
-            Some((
-                1681,
-                "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_exchange_partition") && normalized == "OFF"
-        {
-            Some((
-                1105,
-                "tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_new_cost_interface") && normalized == "OFF"
-        {
-            Some((
-                1287,
-                "'OFF' is deprecated and will be removed in a future release. Please use ON instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_tiflash_read_for_write_stmt")
-            && normalized == "OFF"
-        {
-            Some((
-                1105,
-                "tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_clustered_index")
-            && normalized == "INT_ONLY"
-        {
-            Some((
-                1287,
-                "'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_global_index") && normalized == "OFF" {
-            Some((
-                1105,
-                "tidb_enable_global_index is always turned on. This variable has been deprecated and will be removed in the future releases",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_auto_analyze_partition_batch_size") {
-            Some((
-                1681,
-                "Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_async_merge_global_stats") {
-            // Pinned Go warns for EVERY assignment, in both session and
-            // global scope, independent of the normalized boolean value.
-            Some((
-                1105,
-                "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a \
-                 future release; changing it is discouraged.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_disable_txn_auto_retry") && normalized == "OFF" {
-            Some((
-                1287,
-                "'OFF' is deprecated and will be removed in a future release. Please use ON instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_index_lookup_concurrency") {
-            Some((
-                1287,
-                "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_index_serial_scan_concurrency") {
-            Some((
-                1287,
-                "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'.",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_prepared_plan_cache_size") {
-            Some((
-                1287,
-                "'tidb_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_non_prepared_plan_cache_size") {
-            Some((
-                1287,
-                "'tidb_non_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead",
-            ))
-        } else if name.eq_ignore_ascii_case("tidb_merge_partition_stats_concurrency")
-            && normalized != "1"
-        {
-            Some((
-                1287,
-                "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility.",
-            ))
-        } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
-            // Go appends this deprecation warning only when its validation
-            // succeeds.  Unlike the always-warning compatibility variables,
-            // an unknown or non-utf8mb4 collation must not leave a warning on
-            // the failed statement.
-            sysvar::get_sys_var(name)
-                .and_then(|definition| {
-                    definition
-                        .validate_in_scope(value, sysvar::SCOPE_SESSION)
-                        .ok()
-                })
-                .map(|_| {
-                    (
-                        1681,
-                        "Updating 'default_collation_for_utf8mb4' is deprecated. It will be made \
-                         read-only in a future release.",
-                    )
-                })
-        } else {
-            None
-        };
-        let Some((code, message)) = warning else {
-            return;
-        };
-        self.append_warning(
-            crate::warnings::WarningLevel::Warning,
-            code,
-            message.to_owned(),
-        );
-    }
-
-    /// Go `ErrTruncatedWrongValue` (1292) for a system variable whose
-    /// assignment was clamped rather than refused.
-    ///
-    /// Every clamping site in Go -- `checkUInt64SystemVar`,
-    /// `checkInt64SystemVar`, `checkFloatSystemVar`, `checkDurationSystemVar`
-    /// in `variable.go`, and the per-variable `Validation` closures such as
-    /// `tidb_session_alias`'s -- reports the SAME pair: the variable's
-    /// registry name, and the value as ORIGINALLY assigned, not the clamped
-    /// one that got stored. So `set @@group_concat_max_len=1` stores 4 and
-    /// names `1` in the warning.
-    ///
-    /// The name comes from the registry rather than from the statement, since
-    /// Go passes `sv.Name`: `SET @@GROUP_CONCAT_MAX_LEN=1` still warns about
-    /// `group_concat_max_len`.
-    fn warn_truncated_var(&mut self, name: &str, original: &str) {
-        let reported = sysvar::get_sys_var(name)
-            .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
-        self.append_warning(
-            crate::warnings::WarningLevel::Warning,
-            1292,
-            format!("Truncated incorrect {reported} value: '{original}'"),
-        );
-    }
-
     /// Go's `rand_seed1`/`rand_seed2` `SetSession` hooks: the value SET is a
     /// raw seed for this session's `RAND()` generator, and is NOT retained as
     /// the variable's value.
@@ -1349,23 +546,6 @@ impl Session {
             self.rand.set_seed2(seed);
         }
         self.vars.reset_system(name).map_err(var_error)
-    }
-
-    /// `SET NAMES` / `SET CHARACTER SET`: Go `SetExecutor.executeSet` hands
-    /// both to `setCharset`, with `DEFAULT` as `mysql.DefaultCharset` and no
-    /// collation.
-    /// Go `SetExecutor.setCharset`; `DEFAULT` (no charset) is Go's
-    /// `mysql.DefaultCharset`.
-    fn apply_charset(
-        &mut self,
-        is_set_names: bool,
-        charset: Option<&str>,
-        collation: Option<&str>,
-    ) -> Result<(), DriverError> {
-        let charset = charset.unwrap_or(tidb_mysql::DefaultCharset);
-        self.vars
-            .set_charset(charset, collation, is_set_names)
-            .map_err(var_error)
     }
 
     /// Evaluates a `SET` right-hand side to its TYPED value, which is what a
@@ -1706,11 +886,12 @@ impl Session {
             )
         };
         for warning in warnings {
-            self.append_warning(
+            self.append_sql_warning(crate::SqlWarning::from_error(
                 crate::warnings::WarningLevel::Warning,
                 warning.code,
                 warning.message,
-            );
+                warning.identity,
+            ));
         }
         let set_vars = std::mem::take(&mut stmt_hints.set_vars);
         self.stmt_hints = stmt_hints;
@@ -1880,20 +1061,18 @@ fn set_var_hint_checker(
     if sysvar::get_sys_var(&folded).is_none() {
         return (
             false,
-            Some(tidb_hint::HintWarning {
-                code: 3128,
-                message: format!("Unresolved name '{variable_name}' for {hint_name} hint"),
-            }),
+            Some(tidb_hint::HintWarning::of(
+                &tidb_error::plannererrors::ERR_UNRESOLVED_HINT_NAME,
+                format!("Unresolved name '{variable_name}' for {hint_name} hint"),
+            )),
         );
     }
     let warning =
         (!tidb_exec::hint_updatable_vars::is_hint_updatable_verified(&folded)).then(|| {
-            tidb_hint::HintWarning {
-                code: 3637,
-                message: format!(
-                    "Variable '{variable_name}' might not be affected by SET_VAR hint."
-                ),
-            }
+            tidb_hint::HintWarning::of(
+                &tidb_error::plannererrors::ERR_NOT_HINT_UPDATABLE,
+                format!("Variable '{variable_name}' might not be affected by SET_VAR hint."),
+            )
         });
     (true, warning)
 }

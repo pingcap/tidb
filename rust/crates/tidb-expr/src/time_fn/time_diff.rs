@@ -192,8 +192,8 @@ fn convert_string_to_duration(
             // warning `parseDatetime` appends.
             DurationOrTime::Time(time) => {
                 if converted.event.is_some() {
-                    cols.append_warning(
-                        1292,
+                    cols.append_go_warning(
+                        &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
                         &format!("Truncated incorrect datetime value: '{trimmed}'"),
                     );
                 }

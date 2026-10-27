@@ -101,7 +101,7 @@ fn planner_index_path(
 fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE new_order (\
             no_o_id INT NOT NULL, no_d_id INT NOT NULL, no_w_id INT NOT NULL, \
@@ -273,7 +273,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
 fn non_covering_random_points_use_index_lookup_without_identity_projection() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE lookup_shape (id INT PRIMARY KEY, k INT NOT NULL, c CHAR(4), pad CHAR(4), KEY k_1(k))",
         &mut catalog,
@@ -321,7 +321,7 @@ fn non_covering_random_points_use_index_lookup_without_identity_projection() {
 /// rows is invisible to the range text alone.
 #[test]
 fn multi_column_and_multi_range_scans_read_the_same_rows_as_a_full_scan() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE m (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ab (a, b))",
         &mut catalog,
@@ -377,7 +377,7 @@ fn multi_column_and_multi_range_scans_read_the_same_rows_as_a_full_scan() {
 /// index covers instead of scanning the table, with Go's range semantics.
 #[test]
 fn index_range_scans() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE r (id BIGINT PRIMARY KEY, score BIGINT, KEY score_idx (score))",
         &mut catalog,
@@ -483,7 +483,7 @@ fn index_range_scans() {
 /// -- including the NULL entries a unique index stores non-distinctly.
 #[test]
 fn index_range_scan_over_a_unique_index() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE u2 (id BIGINT PRIMARY KEY, code BIGINT UNIQUE)",
         &mut catalog,
@@ -525,7 +525,7 @@ fn index_range_scan_over_a_unique_index() {
 /// the DECISION and the ranges themselves.
 #[test]
 fn index_ranges_are_built_the_way_go_builds_them() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE q (id BIGINT PRIMARY KEY, score BIGINT, note VARCHAR(8), KEY s (score))",
         &mut catalog,
@@ -639,7 +639,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
 /// ``'ab`q', 'abAq', 'abzz', 'abcq'``.
 #[test]
 fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE ci (a VARCHAR(50) COLLATE utf8mb4_general_ci, KEY idx (a))",
         &mut catalog,
@@ -684,7 +684,7 @@ fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
 /// `[abc  ]` and `[abc  x]`.
 #[test]
 fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE bn (a VARCHAR(50) COLLATE utf8mb4_bin, KEY idx (a))",
         &mut catalog,
@@ -731,7 +731,7 @@ fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
 /// ```
 #[test]
 fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
         &mut catalog,
@@ -783,7 +783,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
 /// `c2` value (so a dimension read in the wrong order would still find rows).
 #[test]
 fn a_handle_range_reads_the_rows_a_full_scan_reads() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE h (c1 BIGINT PRIMARY KEY, c2 BIGINT, c3 BIGINT, INDEX c2 (c2))",
         &mut catalog,
@@ -858,7 +858,7 @@ fn a_handle_range_reads_the_rows_a_full_scan_reads() {
 /// reach it. Go states the same condition as `!path.Index.Unique`.
 #[test]
 fn a_unique_index_gets_no_handle_dimension() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE u (c1 BIGINT PRIMARY KEY, c2 BIGINT, UNIQUE KEY uc2 (c2))",
         &mut catalog,
@@ -914,7 +914,7 @@ fn a_unique_index_gets_no_handle_dimension() {
 /// ```
 #[test]
 fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE hu (c1 BIGINT UNSIGNED PRIMARY KEY, c2 INT, INDEX c2 (c2))",
         &mut catalog,
@@ -953,7 +953,7 @@ fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
 /// `(1 1,1 +inf]` -- TWO dimensions, from the two DECLARED columns.
 #[test]
 fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE hd (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c2c1 (c2, c1))",
         &mut catalog,
@@ -1013,7 +1013,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
 /// ```
 #[test]
 fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE hp (c1 BIGINT PRIMARY KEY, s VARCHAR(20), INDEX sp (s(3)))",
         &mut catalog,
@@ -1072,7 +1072,7 @@ fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
 /// `[1 2,1 2]` for `where c1 = 1 and c2 = 2`, and returns the row.
 #[test]
 fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE hr (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c1c2 (c1, c2))",
         &mut catalog,
@@ -1104,7 +1104,7 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
 fn a_descending_handle_limit_answers_the_largest_ids() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE walk (id BIGINT PRIMARY KEY, v INT)",
         &mut catalog,
@@ -1173,7 +1173,7 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
 fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE walk (id BIGINT PRIMARY KEY, v INT)",
         &mut catalog,
@@ -1227,7 +1227,7 @@ fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
 fn partial_index_topn_eliminates_identity_projection() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE flex_plan (a INT, b INT, c INT, d INT, KEY idx_ab (a, b DESC, d))",
         &mut catalog,

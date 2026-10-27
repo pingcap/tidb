@@ -121,7 +121,7 @@ impl PreparedOnUpdateNow {
                 continue;
             }
             let value = crate::column_default::on_update_current_timestamp(&meta.field_type)
-                .map_err(|error| error.into_driver_error(&meta.name))?;
+                .map_err(|error| error.to_mysql_error(&meta.name))?;
             columns.push((offset, value, meta.clone()));
         }
         Ok(Self { columns })
@@ -174,95 +174,34 @@ pub(crate) fn column_default(
 }
 
 /// Materializes one column default at the statement-planning point selected
-/// by the caller. The nil-default order is Go's
-/// `getColDefaultValueFromNil`: nullable, NOT NULL ENUM first member,
-/// AUTO_INCREMENT zero marker, then strict/no-strict 1364 handling.
+/// by the caller: an INSERT first runs Go `table.CheckNoDefaultValueForInsert`,
+/// then both take Go `table.GetColDefaultValue`.
 pub(crate) fn materialize_column_default(
     meta: &ColumnDefaultMeta,
     use_kind: DefaultUse,
     ctx: &crate::StmtContext,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, DriverError> {
-    if use_kind == DefaultUse::Insert
-        && meta.no_default_value
-        && meta.default_value.is_none()
-        && meta.field_type.code() != tidb_datatype::FieldTypeCode::Enum
-    {
-        if ctx.strict() {
-            return Err(DriverError::NoDefaultForField(meta.name.clone()));
-        }
-        // `CheckNoDefaultValueForInsert` warns here only for a nullable
-        // column. A NOT NULL column reaches the common nil arm below, which
-        // emits the one warning Go reports while choosing its zero value.
-        if !meta.not_null {
-            ctx.append_warning_parts(
-                1364,
-                &format!("Field '{}' doesn't have a default value", meta.name),
-            );
-        }
-    }
-
-    match &meta.default_value {
-        // Go `getColDefaultExprValue`: an expression default (`DefaultIsExpr`)
-        // is evaluated and then cast with `CastColumnValue` under the
-        // statement's own contexts, so a value the column cannot hold fails a
-        // strict INSERT and warns otherwise.
-        Some(crate::column_default::ColumnDefault::Computed(computed)) if computed.is_expr() => {
-            let value = computed
-                .expr
-                .as_ref()
-                .map_err(Clone::clone)
-                .and_then(|expr| expr.eval(ctx, row))
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            crate::driver::write_cast::cast_table_value(
-                value,
-                &meta.field_type,
-                &meta.name,
-                ctx,
-                false,
-            )
-        }
-        // A COMPUTED default reads the statement's own clock here rather than
-        // a value settled at DDL time, which is what makes every row of one
-        // `INSERT` share one `CURRENT_TIMESTAMP` / `CURRENT_DATE` reading --
-        // Go's `GetColDefaultValue` over the same fixed `EvalContext`.
-        Some(default) => crate::column_default::evaluate(
-            default,
+    if use_kind == DefaultUse::Insert {
+        crate::column_default::check_no_default_value_for_insert(
+            meta.default_value.as_ref(),
             &meta.field_type,
-            meta.column_info_version,
-            ctx.write_conversion_flags(),
+            &meta.name,
+            meta.not_null,
+            meta.no_default_value,
             ctx,
-            row,
-        )
-        .map_err(|e| DriverError::Exec(ExecError::Eval(e))),
-        // Go `getColDefaultValueFromNil`: AUTO_INCREMENT owns its value
-        // source, so DEFAULT reads as the zero marker rather than 1364. An
-        // INSERT replaces that marker with an allocation; UPDATE stores it.
-        None if !meta.not_null => Ok(Datum::Null),
-        None if meta.field_type.code() == tidb_datatype::FieldTypeCode::Enum => {
-            let value = meta
-                .field_type
-                .with_elems_visible(|elements| tidb_datatype::parse_enum_value(elements, 1))
-                .map_err(|error| {
-                    DriverError::Parse(format!("invalid first ENUM member: {error:?}"))
-                })?;
-            Ok(Datum::new_enum(value, meta.field_type.collation()))
-        }
-        None if meta
-            .field_type
-            .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT) =>
-        {
-            Ok(crate::bad_null::zero_value(&meta.field_type))
-        }
-        None if !ctx.strict() => {
-            ctx.append_warning_parts(
-                1364,
-                &format!("Field '{}' doesn't have a default value", meta.name),
-            );
-            Ok(crate::bad_null::zero_value(&meta.field_type))
-        }
-        None => Err(DriverError::NoDefaultForField(meta.name.clone())),
+        )?;
     }
+    crate::column_default::get_col_default_value(
+        meta.default_value.as_ref(),
+        &meta.field_type,
+        &meta.name,
+        meta.column_info_version,
+        meta.not_null,
+        ctx,
+        row,
+    )
+    .map_err(DriverError::from)
 }
 
 /// Go `InsertValues.setValueForRefColumn`: the row an INSERT whose values

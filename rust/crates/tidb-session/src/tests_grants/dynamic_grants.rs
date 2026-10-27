@@ -328,3 +328,60 @@ fn user_privileges_uses_raw_host_patterns_and_mysql_schema_select() {
         "an active role's wildcard mysql.db row uses the same raw matching semantics: {role_rows:?}"
     );
 }
+
+/// Runs `name` alone in a child process (SEM is process-wide), returning
+/// true in the child.
+fn isolated_sem_case(name: &str) -> bool {
+    if std::env::var("TIDB_SEM_GRANT_CASE").as_deref() == Ok(name) {
+        return true;
+    }
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("tests_grants::dynamic_grants::{name}"),
+            "--nocapture",
+        ])
+        .env("TIDB_SEM_GRANT_CASE", name)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    false
+}
+
+/// Go `collectVisitInfoFromRevokeStmt` (`planbuilder.go:3926-3934`) checks
+/// the revokees against `RESTRICTED_USER_ADMIN` BEFORE the trailing `GRANT
+/// OPTION`: under SEM, a revoker lacking both is told about
+/// `RESTRICTED_USER_ADMIN` (1227), not the grant option (8121).
+#[test]
+fn revoke_from_a_restricted_user_checks_restricted_user_admin_before_grant_option() {
+    if !isolated_sem_case(
+        "revoke_from_a_restricted_user_checks_restricted_user_admin_before_grant_option",
+    ) {
+        return;
+    }
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privileges);
+    for sql in [
+        "CREATE USER revoker",
+        "CREATE USER protected",
+        "GRANT SELECT ON *.* TO revoker",
+        "GRANT SELECT ON *.* TO protected",
+        "GRANT RESTRICTED_USER_ADMIN ON *.* TO protected",
+    ] {
+        boot.run(sql).unwrap();
+    }
+    let mut revoker = authenticated_session(&privileges, "revoker", "%");
+    tidb_util::sem::enable();
+    let result = revoker.run("REVOKE SELECT ON *.* FROM protected");
+    tidb_util::sem::disable();
+    assert_err(
+        result,
+        1227,
+        "Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation",
+    );
+}

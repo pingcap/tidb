@@ -302,79 +302,9 @@ pub fn handle_bound_col(ft: &FieldType, mut val: Datum, op: &str) -> (Datum, Str
     (val, op, true)
 }
 
-/// Go `CutDatumByPrefixLen` (`ranger.go:737`): cut a string/bytes datum to
-/// a prefix-index length — by BYTES for binary/ascii charsets, by RUNES
-/// otherwise. Answers whether a cut happened.
-pub fn cut_datum_by_prefix_len(v: &mut Datum, length: i64, tp: &FieldType) -> bool {
-    if length == super::checker::UNSPECIFIED_LENGTH {
-        return false;
-    }
-    let length = usize::try_from(length).unwrap_or(usize::MAX);
-    let col_charset = tp.charset_name();
-    match v {
-        Datum::Bytes(bytes) => {
-            // Bytes cut by bytes regardless (Go reaches the byte arm for
-            // KindBytes under the binary/ascii charsets, and a KindBytes
-            // value under another charset still cuts through SetBytes).
-            if col_charset == "binary" || col_charset == "ascii" {
-                if bytes.len() > length {
-                    bytes.truncate(length);
-                    return true;
-                }
-                return false;
-            }
-            let text = String::from_utf8_lossy(bytes);
-            if text.chars().count() > length {
-                let cut: String = text.chars().take(length).collect();
-                *bytes = cut.into_bytes();
-                return true;
-            }
-            false
-        }
-        Datum::String(s) => {
-            let collation = s.collation();
-            let bytes = s.bytes().to_vec();
-            if col_charset == "binary" || col_charset == "ascii" {
-                if bytes.len() > length {
-                    *v = Datum::String(tidb_datatype::StringDatum::new(
-                        bytes[..length].to_vec(),
-                        collation,
-                    ));
-                    return true;
-                }
-                return false;
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            if text.chars().count() > length {
-                let cut: String = text.chars().take(length).collect();
-                *v = Datum::String(tidb_datatype::StringDatum::new(cut.into_bytes(), collation));
-                return true;
-            }
-            false
-        }
-        _ => false,
-    }
-}
-
-/// Go `ReachPrefixLen` (`ranger.go:763`): whether the value's length is
-/// EXACTLY the prefix length (same byte/rune split as the cut).
-#[must_use]
-pub fn reach_prefix_len(v: &Datum, length: i64, tp: &FieldType) -> bool {
-    if length == super::checker::UNSPECIFIED_LENGTH {
-        return false;
-    }
-    let length = usize::try_from(length).unwrap_or(usize::MAX);
-    let bytes = match v {
-        Datum::Bytes(bytes) => bytes.as_slice(),
-        Datum::String(s) => s.bytes(),
-        _ => return false,
-    };
-    let col_charset = tp.charset_name();
-    if col_charset == "binary" || col_charset == "ascii" {
-        return bytes.len() == length;
-    }
-    String::from_utf8_lossy(bytes).chars().count() == length
-}
+/// Go `CutDatumByPrefixLen` (`ranger.go:737`) and `ReachPrefixLen`
+/// (`ranger.go:763`): the same cut as `tablecodec.TruncateIndexValue`.
+pub use tidb_tablecodec::{cut_datum_by_prefix_len, reach_prefix_len};
 
 /// Go `cutPrefixForPoints` (`ranger.go:714`): cut every point to the
 /// prefix length; a CUT point — or a START point already AT the length —
@@ -538,6 +468,13 @@ pub trait RangerEvaluator {
 
     /// Go `TypeCtx.AppendWarning`.
     fn append_warning(&self, _code: u16, _message: &str) {}
+
+    /// Go `TypeCtx.AppendWarning(err)` of the Go error `proto` with
+    /// `message`.
+    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+        let error = proto.generate(message.to_owned()).to_sql_error();
+        self.append_warning(error.code, &error.message);
+    }
 }
 
 impl<F> RangerEvaluator for F
@@ -582,6 +519,10 @@ impl RangerEvaluator for StatementRangerEvaluator<'_> {
 
     fn append_warning(&self, code: u16, message: &str) {
         self.0.append_warning(code, message);
+    }
+
+    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+        self.0.append_go_warning(proto, message);
     }
 }
 
@@ -1605,8 +1546,8 @@ pub fn convert_point_in_place(
                 Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition),
             ) = (&p.value, &converted.event)
             {
-                evaluator.append_warning(
-                    8179, // Go `mysql.ErrTimeStampInDSTTransition`.
+                evaluator.append_go_warning(
+                    &tidb_error::catalog::types::ERR_TIMESTAMP_IN_DST_TRANSITION,
                     &format!(
                         "Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'",
                         time.core_time(),

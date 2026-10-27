@@ -186,7 +186,7 @@ fn grant_and_revoke_need_the_privilege_itself_plus_grant_option() {
         denied(&mut bob, "REVOKE CONNECTION_ADMIN ON *.* FROM 'admin'@'%'"),
         check_fail("[CONNECTION_ADMIN]")
     );
-    assert!(!privs.has_global_priv("bob", "%", privilege::GlobalPriv::Select));
+    assert!(!privs.has_global_priv("bob", "%", tidb_mysql::SelectPriv));
 
     // Holding the privilege WITHOUT the grant option is still not enough --
     // that is the second half of Go's rule, and the one that keeps a
@@ -200,9 +200,9 @@ fn grant_and_revoke_need_the_privilege_itself_plus_grant_option() {
     // POSITIVE CONTROL: with both, the same statement lands.
     let mut admin = authenticated_session(&privs, "admin", "%");
     admin.run("GRANT SELECT ON *.* TO 'victim'@'%'").unwrap();
-    assert!(privs.has_global_priv("victim", "%", privilege::GlobalPriv::Select));
+    assert!(privs.has_global_priv("victim", "%", tidb_mysql::SelectPriv));
     admin.run("REVOKE SELECT ON *.* FROM 'victim'@'%'").unwrap();
-    assert!(!privs.has_global_priv("victim", "%", privilege::GlobalPriv::Select));
+    assert!(!privs.has_global_priv("victim", "%", tidb_mysql::SelectPriv));
 }
 
 /// Go `planbuilder.go`'s `*ast.GrantRoleStmt`/`*ast.RevokeRoleStmt` cases

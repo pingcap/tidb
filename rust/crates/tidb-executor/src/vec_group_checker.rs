@@ -489,7 +489,12 @@ struct GroupWarnings<'a, C>(&'a C);
 impl<C: Columns> tidb_datatype::ConversionWarningAppender for GroupWarnings<'_, C> {
     fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
         let warning = warning.to_sql_error();
-        self.0.append_warning(warning.code, &warning.message);
+        self.0.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
     }
 }
 
@@ -646,7 +651,7 @@ mod tests {
             assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
             let warnings = ctx.take_warnings();
             assert_eq!(warnings.len(), if vectorized { 3 } else { 6 });
-            assert!(warnings.iter().all(|(_, code, message)| *code == 1292
+            assert!(warnings.iter().map(tidb_util::context::SqlWarn::parts).all(|(_, code, message)| code == 1292
                 && message == "Truncated incorrect DOUBLE value: '12tail'"));
         }
     }
@@ -851,8 +856,8 @@ mod tests {
                 }
                 let warnings: Vec<_> = ctx
                     .take_warnings()
-                    .into_iter()
-                    .map(|(_, code, message)| (code, message))
+                    .iter()
+                    .map(|warning| (warning.code(), warning.message().to_owned()))
                     .collect();
                 let expected_warnings = match case {
                     6 => vec![
@@ -905,8 +910,8 @@ mod tests {
                 assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
                 let warnings = ctx
                     .take_warnings()
-                    .into_iter()
-                    .map(|(_, code, message)| (code, message))
+                    .iter()
+                    .map(|warning| (warning.code(), warning.message().to_owned()))
                     .collect::<Vec<_>>();
                 assert_eq!(
                     warnings,
@@ -1015,8 +1020,8 @@ mod tests {
                     .unwrap_or_default();
                 let warnings = ctx
                     .take_warnings()
-                    .into_iter()
-                    .map(|(_, code, message)| (code, message))
+                    .iter()
+                    .map(|warning| (warning.code(), warning.message().to_owned()))
                     .collect::<Vec<_>>();
                 if warnings != expected {
                     mismatches.push(format!(
@@ -1173,8 +1178,8 @@ mod tests {
                 };
                 let actual = ctx
                     .take_warnings()
-                    .into_iter()
-                    .map(|(_, code, message)| (code, message))
+                    .iter()
+                    .map(|warning| (warning.code(), warning.message().to_owned()))
                     .collect::<Vec<_>>();
                 assert_eq!(actual, expected, "{name}/{level:?}");
             }

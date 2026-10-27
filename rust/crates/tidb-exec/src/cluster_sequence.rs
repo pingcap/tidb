@@ -208,10 +208,10 @@ where
                     // bound, PUTs it together with the bumped round, then
                     // recomputes -- all inside this one reservation.
                     if info.increment > 0 {
-                        base = info.min_value - 1;
+                        base = info.min_value.wrapping_sub(1);
                         offset = info.min_value;
                     } else {
-                        base = info.max_value + 1;
+                        base = info.max_value.wrapping_add(1);
                         offset = info.max_value;
                     }
                     round += 1;
@@ -229,7 +229,8 @@ where
                     } else {
                         -recomputed
                     };
-                    let new_end = base + delta;
+                    // Go `HInc`: `base += step` in int64, which wraps.
+                    let new_end = base.wrapping_add(delta);
                     match self.commit_end_and_round(call, transaction, new_end, round, true) {
                         Ok(()) => return Ok((base, new_end, round)),
                         Err(CommitFailure::Conflict) => {
@@ -249,7 +250,8 @@ where
                 }
             };
             let delta = if info.increment > 0 { step } else { -step };
-            let new_end = base + delta;
+            // Go `HInc`: `base += step` in int64, which wraps.
+            let new_end = base.wrapping_add(delta);
             match self.commit_end_and_round(call, transaction, new_end, round, false) {
                 Ok(()) => return Ok((base, new_end, round)),
                 Err(CommitFailure::Conflict) => {

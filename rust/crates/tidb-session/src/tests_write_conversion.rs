@@ -64,7 +64,7 @@ fn non_strict_mode_clamps_a_negative_value_rather_than_reinterpreting_it() {
     let warnings: Vec<(u16, String)> = session
         .warnings()
         .iter()
-        .map(|w| (w.code, w.message.clone()))
+        .map(|w| (w.code(), w.message().to_owned()))
         .collect();
     assert_eq!(
         warnings,

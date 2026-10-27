@@ -22,10 +22,15 @@
 //!
 //! - `// boundary:` Go `pkg/expression/exprctx.ExprContext` /
 //!   `exprctx.EvalContext` — modeled as the local [`ExprContext`] /
-//!   [`EvalContext`] traits carrying exactly the methods metabuild consumes
-//!   (`GetEvalCtx`, `GetDefaultCollationForUTF8MB4`, `GetCharsetInfo`,
-//!   `SQLMode`, `AppendWarning`, `AppendNote`). The crate-local
-//!   `exprctx` module is still a seed without these interfaces.
+//!   [`EvalContext`] traits carrying the methods metabuild and the DDL
+//!   builders reach through `GetExprCtx()` (`GetEvalCtx`,
+//!   `GetDefaultCollationForUTF8MB4`, `GetCharsetInfo`, `SQLMode`,
+//!   `TypeCtx().Flags()`, `AppendWarning`, `AppendNote`). The crate-local
+//!   `exprctx` module is still a seed without these interfaces. Go's
+//!   `EvalContext` is also what an expression evaluates in; this crate's
+//!   evaluator reads that through [`crate::Columns`], so [`EvalContext`]
+//!   extends it rather than repeating `Location`, `CurrentDB`,
+//!   `CurrentTime` and the error-level reads here.
 //!   Both are implemented for the real [`crate::exprstatic`] contexts, which
 //!   is what Go's `NewContext`/`NewNonStrictContext` default to.
 //! - `// boundary:` Go `pkg/infoschema/context.MetaOnlyInfoSchema` — modeled
@@ -43,6 +48,7 @@
 
 use std::sync::Arc;
 
+use tidb_datatype::ConversionFlags;
 use tidb_mysql::consts::SqlMode;
 use tidb_util::context::WarnErr;
 use tidb_vardef::defaults::{
@@ -54,11 +60,15 @@ use tidb_vardef::modes::ClusteredIndexDefMode;
 /// The slice of Go `exprctx.EvalContext` that metabuild consumes.
 ///
 /// boundary: Go `pkg/expression/exprctx.EvalContext` (`SQLMode`,
-/// `AppendWarning`, `AppendNote`).
-pub trait EvalContext {
+/// `TypeCtx`, `AppendWarning`, `AppendNote`); the evaluation half
+/// (`Location`, `CurrentDB`, `CurrentTime`, ...) is [`crate::Columns`].
+pub trait EvalContext: crate::Columns {
     /// Go `EvalContext.SQLMode`: the SQL mode the context evaluates under.
     fn sql_mode(&self) -> SqlMode;
-    /// Go `EvalContext.AppendWarning`: appends a warning.
+    /// Go `EvalContext.TypeCtx().Flags()`: the flags a value converts under.
+    fn type_ctx_flags(&self) -> ConversionFlags;
+    /// Go `EvalContext.AppendWarning`: appends a warning, keeping the
+    /// error's own identity.
     fn append_warning(&self, err: WarnErr);
     /// Go `EvalContext.AppendNote`: appends a note-level warning.
     fn append_note(&self, note: WarnErr);
@@ -68,7 +78,7 @@ pub trait EvalContext {
 ///
 /// boundary: Go `pkg/expression/exprctx.ExprContext` (`GetEvalCtx`,
 /// `GetDefaultCollationForUTF8MB4`) plus the embedded
-/// `exprctx.BuildContext.GetCharsetInfo` its tests observe.
+/// `exprctx.BuildContext.GetCharsetInfo`.
 pub trait ExprContext {
     /// Go `ExprContext.GetEvalCtx`: the evaluation context.
     fn get_eval_ctx(&self) -> &dyn EvalContext;
@@ -91,6 +101,10 @@ pub trait MetaOnlyInfoSchema {
 impl EvalContext for crate::exprstatic::EvalContext {
     fn sql_mode(&self) -> SqlMode {
         crate::exprstatic::EvalContext::sql_mode(self)
+    }
+
+    fn type_ctx_flags(&self) -> ConversionFlags {
+        crate::exprstatic::EvalContext::type_flags(self)
     }
 
     fn append_warning(&self, err: WarnErr) {
@@ -264,12 +278,12 @@ impl Context {
 
     /// Go `AppendWarning`: appends a warning.
     pub fn append_warning(&self, err: WarnErr) {
-        self.get_expr_ctx().get_eval_ctx().append_warning(err);
+        EvalContext::append_warning(self.get_expr_ctx().get_eval_ctx(), err);
     }
 
     /// Go `AppendNote`: appends a note.
     pub fn append_note(&self, note: WarnErr) {
-        self.get_expr_ctx().get_eval_ctx().append_note(note);
+        EvalContext::append_note(self.get_expr_ctx().get_eval_ctx(), note);
     }
 
     /// Go `EnableAutoIncrementInGenerated`: whether auto increment is enabled

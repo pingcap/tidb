@@ -295,7 +295,7 @@ impl HashJoinSpill {
     ) -> Result<(), ExecError> {
         self.action.control.lock().unwrap().status = SpillStatus::InSpilling;
         let result = recover_worker_panic(|| {
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
             // Go init/initTmpSpillBuildSideChunks are lazy: an in-memory join
             // must not allocate disk lanes or their spill chunks.
             if self.lanes.is_empty() {
@@ -373,7 +373,7 @@ impl HashJoinSpill {
                                 valid_keys: lane_valid_keys,
                             } = &mut *lane;
                             for &id in &selected {
-                                memory.check()?;
+                                memory.check().map_err(ExecError::from)?;
                                 let mut files = lane_files[id].take().unwrap_or_else(|| {
                                     let build = DataInDiskByChunks::new(
                                         build_types.clone(),
@@ -434,7 +434,7 @@ impl HashJoinSpill {
             }
             self.valid_rows += valid_rows;
             self.tracker.consume(-released);
-            self.memory.check()
+            self.memory.check().map_err(ExecError::from)
         });
         self.action.finish_spill();
         result
@@ -447,7 +447,7 @@ impl HashJoinSpill {
         partition: usize,
         chunk: &Chunk,
     ) -> Result<(), ExecError> {
-        self.memory.check()?;
+        self.memory.check().map_err(ExecError::from)?;
         self.lanes[worker]
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -466,7 +466,7 @@ impl HashJoinSpill {
         last_round: usize,
         max_round: usize,
     ) -> Result<(), ExecError> {
-        self.memory.check()?;
+        self.memory.check().map_err(ExecError::from)?;
         if last_round + 1 > max_round {
             return Err(ExecError::internal("Exceed max spill round"));
         }
@@ -535,7 +535,7 @@ fn spill_segments(
         valid_count += segment.valid_key_count();
         for row in 0..segment.get_row_num() {
             if chunk.is_full() {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 disk.add(chunk)
                     .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
                 chunk.reset();
@@ -546,7 +546,7 @@ fn spill_segments(
         }
     }
     if chunk.num_rows() > 0 {
-        memory.check()?;
+        memory.check().map_err(ExecError::from)?;
         disk.add(chunk)
             .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
         chunk.reset();

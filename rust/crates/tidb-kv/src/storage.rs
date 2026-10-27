@@ -1,0 +1,727 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The key/value interface used by the table layer's `KvTable`.
+//!
+//! [`TableStorage`] erases the associated iterator and error types of Go's
+//! `kv.Retriever`/`kv.Mutator` counterparts so table metadata and executors do
+//! not need a backend type parameter. Table operations own row encoding,
+//! index maintenance and constraint policy; storage owns byte-level access.
+//!
+//! [`MemTableStorage`] holds the in-process image. Clones share an immutable
+//! image until a write detaches it. the executor's `ClusterTableStorage`
+//! uses the session's snapshot and staged transaction buffer; it is already
+//! wired through the cluster catalog. Statement rollback, request policy and
+//! retryable failures remain backend responsibilities.
+//!
+//! `key_count`, `clear` and `clone_box` support local table ownership and are
+//! not additional Go KV operations. Their backend implementations define
+//! their behavior; callers must not infer an exact TiKV row count or a
+//! distributed TRUNCATE operation from the in-process implementation.
+
+use std::collections::HashMap;
+use std::fmt;
+
+use tidb_txnkv::{
+    GetOptions, Getter, Key, KvIterator, MemStorage, Mutator, Retriever,
+};
+
+
+/// A failure reported by a storage backend.
+///
+/// Kept typed through the table and SQL adapters so a diagnostic's text never
+/// decides whether an operation is absent, retryable, or a SQL failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StorageError {
+    /// A SQL error returned by the coprocessor, retained without string encoding.
+    Sql(tidb_error::mysql::MysqlError),
+    /// Go `kv.ErrNotExist`: the key has no value.
+    NotFound,
+    /// The iterator is exhausted, so it cannot advance further.
+    InvalidIterator,
+    /// The backend refused the operation and the caller cannot retry.
+    Backend(String),
+    /// The backend refused the operation but the statement may retry: a region
+    /// error, a stale epoch, or a resolvable lock. Never produced in-process.
+    Retryable(String),
+}
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StorageError::Sql(error) => error.fmt(f),
+            StorageError::NotFound => f.write_str("key not found"),
+            StorageError::InvalidIterator => f.write_str("iterator is exhausted"),
+            StorageError::Backend(message) => write!(f, "storage error: {message}"),
+            StorageError::Retryable(message) => write!(f, "retryable storage error: {message}"),
+        }
+    }
+}
+
+
+impl From<tidb_txnkv::MemStorageError> for StorageError {
+    fn from(error: tidb_txnkv::MemStorageError) -> Self {
+        match error {
+            tidb_txnkv::MemStorageError::NotFound => StorageError::NotFound,
+            tidb_txnkv::MemStorageError::InvalidIterator => StorageError::InvalidIterator,
+        }
+    }
+}
+
+
+
+/// A forward iterator over a storage range, with the error type erased.
+///
+/// This is [`KvIterator`] with `Error` pinned to [`StorageError`], which makes
+/// it object-safe.
+pub trait StorageIterator: Send {
+    /// Whether the current position holds an entry (Go `Iterator.Valid`).
+    fn valid(&self) -> bool;
+    /// The key at the current position (Go `Iterator.Key`).
+    fn key(&self) -> &Key;
+    /// The value at the current position (Go `Iterator.Value`).
+    fn value(&self) -> &[u8];
+    /// Advances one entry (Go `Iterator.Next`).
+    fn next(&mut self) -> Result<(), StorageError>;
+    /// Releases the iterator (Go `Iterator.Close`).
+    fn close(&mut self);
+    /// How many of the store snapshot's entries this cursor has consumed so
+    /// far, when it merges a transaction's staged writes over that snapshot
+    /// (Go's `UnionScan` over a coprocessor reader). Only those entries are
+    /// keys a coprocessor scan processes (`ScanDetail.ProcessedKeys`); a
+    /// staged row is merged in TiDB. `None` for a cursor with no staged
+    /// overlay, every entry of which is a snapshot entry.
+    fn snapshot_entries_consumed(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl<I> StorageIterator for I
+where
+    I: KvIterator + Send,
+    StorageError: From<<I as KvIterator>::Error>,
+{
+    fn valid(&self) -> bool {
+        KvIterator::valid(self)
+    }
+
+    fn key(&self) -> &Key {
+        KvIterator::key(self)
+    }
+
+    fn value(&self) -> &[u8] {
+        KvIterator::value(self)
+    }
+
+    fn next(&mut self) -> Result<(), StorageError> {
+        KvIterator::next(self).map_err(StorageError::from)
+    }
+
+    fn close(&mut self) {
+        KvIterator::close(self);
+    }
+}
+
+/// The key/value backend a table's rows and index entries live in.
+///
+/// All four KV methods speak raw TiKV-format bytes: the caller encodes record
+/// and index keys itself, exactly as Go's `tablecodec` does before handing
+/// them to `kv.Retriever`/`kv.Mutator`. Nothing about row or index *layout*
+/// belongs here.
+/// `Send + Sync` because a catalog's entries now live behind `Arc`, which
+/// shares one table handle across the session's staged copies; every backend
+/// is single-threaded in spirit and its interior mutability stays behind
+/// `&mut self` methods.
+pub trait TableStorage: fmt::Debug + Send + Sync {
+    /// The bytes (keys plus values) this storage holds, for a backend that
+    /// counts them. Go's `checkTempTableSize` reads the same figure from the
+    /// transaction's membuffer; a backend that does not count answers 0.
+    fn size_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Installs immutable statement policy on the native snapshot, where available.
+    fn set_snapshot_read_options(&self, _options: tidb_txnkv::SnapshotReadOptions) {}
+
+    /// Go snapshot runtime command totals. In-process storage has no RPCs.
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (0, 0)
+    }
+
+    /// Reads one key, Go `kv.Retriever.Get`. Reports
+    /// [`StorageError::NotFound`] when the key has no value, as Go returns
+    /// `kv.ErrNotExist`.
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError>;
+
+    /// Reads one key from the statement's OWN staged writes only -- Go
+    /// `txn.GetMemBuffer().GetLocal`, the lazy insert duplicate check's read.
+    /// `Ok(empty)` is a staged tombstone; [`StorageError::NotFound`] means the
+    /// staged writes hold nothing for the key. A backend without a staged
+    /// write half has nothing local to consult beyond its ordinary read, so
+    /// this defaults to [`TableStorage::get`].
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.get(key)
+    }
+
+    /// Marks one key an INSERT whose existence was presumed absent -- Go
+    /// `kv.SetPresumeKeyNotExists`, which turns the commit's mutation into
+    /// `Op_Insert` so prewrite rejects a key that turns out to exist. A
+    /// backend without per-key flags ignores the mark.
+    fn mark_presume_key_not_exists(&mut self, key: &Key) {
+        let _ = key;
+    }
+
+    /// Marks a presumed-absent key and retains the Go duplicate text for a
+    /// deferred prewrite assertion. Backends without a commit boundary keep
+    /// the ordinary mark only.
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
+        let _ = (value, index);
+        self.mark_presume_key_not_exists(key);
+    }
+
+    /// Attaches the transaction's staged-write log for one table write, or
+    /// detaches it with `None`. Go's membuffer remembers which keys a
+    /// transaction wrote and which an INSERT presumed absent; a backend that
+    /// writes through -- the in-process store inside a transaction -- keeps
+    /// that record in the attached log, so COMMIT replays the written keys
+    /// and, in an optimistic transaction, [`Self::get_local`] reads it and
+    /// COMMIT checks the presumed keys. A backend with staged writes of its
+    /// own ignores it.
+    fn attach_txn_staging(&mut self, staging: Option<crate::staged_writes::TxnStaging>) {
+        let _ = staging;
+    }
+
+    /// Reads several keys at one backend request boundary. Backends that do
+    /// not have a native batch operation retain correctness through the
+    /// point-read fallback; cluster storage overrides this with TiKV's
+    /// transaction batch-get path.
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        let mut values = HashMap::with_capacity(keys.len());
+        for key in keys {
+            match self.get(key) {
+                Ok(value) => {
+                    values.insert(key.clone(), value);
+                }
+                Err(StorageError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(values)
+    }
+
+    /// Writes one key, Go `kv.Mutator.Set`.
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError>;
+
+    /// Writes a value with the assertion selected by the table/index owner.
+    /// Transaction backends retain the first assertion for the buffered key;
+    /// stores without an MVCC commit boundary only need the value write.
+    fn set_with_assertion(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        _assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.set(key, value)
+    }
+
+    /// Writes table-selected assertion and deferred uniqueness policy together.
+    /// Stores without a commit boundary already checked absence eagerly.
+    fn set_with_constraint_check(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: tidb_txnkv::AssertionOp,
+        _check_in_prewrite: bool,
+    ) -> Result<(), StorageError> {
+        self.set_with_assertion(key, value, assertion)
+    }
+
+    /// Removes one key, Go `kv.Mutator.Delete`. Removing an absent key
+    /// succeeds, as it does in Go.
+    fn delete(&mut self, key: Key) -> Result<(), StorageError>;
+
+    /// Deletes a key with the table/index owner's existence assertion.
+    fn delete_with_assertion(
+        &mut self,
+        key: Key,
+        _assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.delete(key)
+    }
+
+    /// Iterates `[start, upper_bound)` in key order, Go `kv.Retriever.Iter`.
+    /// `None` is Go's `nil` unbounded end.
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError>;
+
+    /// Iterates `[lower_bound, upper_bound)` in descending key order, Go
+    /// `kv.Retriever.IterReverse`. `upper_bound` is exclusive.
+    ///
+    /// Backends without a native reverse cursor retain correctness by
+    /// materializing the bounded forward range. Cluster storage uses this
+    /// fallback initially; in-memory storage overrides it with the native
+    /// [`Retriever::iter_reverse`] path.
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        let mut forward = self.iter(lower_bound, upper_bound)?;
+        let mut entries = Vec::new();
+        while forward.valid() {
+            entries.push((forward.key().clone(), forward.value().to_vec()));
+            forward.next()?;
+        }
+        forward.close();
+        entries.reverse();
+        Ok(Box::new(MaterializedStorageIterator::new(entries)))
+    }
+
+    /// Reads the first pair in `[start, upper_bound)`. MVCC backends can
+    /// override this with a native bounded scan; the default preserves the
+    /// iterator semantics for backends without such a primitive.
+    fn first(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        let mut iterator = self.iter(start, upper_bound)?;
+        let result = if iterator.valid() {
+            Some((iterator.key().clone(), iterator.value().to_vec()))
+        } else {
+            None
+        };
+        iterator.close();
+        Ok(result)
+    }
+
+    /// The first pair in `[start, upper_bound)` of the transaction's READ
+    /// SNAPSHOT, without its own staged writes -- Go
+    /// `GetSnapshot(startTS).Iter`, which `TABLESAMPLE` reads instead of the
+    /// transaction. The in-process store writes through and has no snapshot
+    /// apart from its rows, so this default reads them.
+    fn snapshot_first(
+        &mut self,
+        start: &Key,
+        upper_bound: &Key,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        self.first(Some(start), Some(upper_bound))
+    }
+
+    /// Go `PointGetExecutor.lockKeyIfNeeded` / `BatchPointGetExec`'s
+    /// `LockKeys` with `InitReturnValues`: a pessimistic transaction's
+    /// locking point read locks its record keys DURING execution, before it
+    /// reads them, and the read is answered from the lock responses
+    /// (`TxnCtx.SetPessimisticLockCache`). A backend whose statement takes no
+    /// pessimistic locks (the in-process store, an optimistic transaction)
+    /// answers `Ok(())` and the read proceeds unlocked. `only_if_exists` is
+    /// read committed's `lockKeyIfExists` (`LockCtx.LockOnlyIfExists`).
+    fn lock_keys_for_read(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+        _only_if_exists: bool,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Go `doLockKeys` from `SelectLockExec.Next`: locks the record keys of
+    /// the rows the statement's plan returned, at the transaction's
+    /// for-update timestamp, without asking for their values. A backend whose
+    /// statement takes no pessimistic locks answers `Ok(())`.
+    fn do_lock_keys(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// The view of this backend Go's reader executors read: the statement's
+    /// read snapshot ALONE. A `TableReader`/`IndexReader`/`IndexLookUp`
+    /// request goes to the coprocessor, which never sees the transaction's
+    /// membuffer; the buffered writes reach a query only through the
+    /// `UnionScanExec` above the reader ([`Self::mem_buffer_snapshot`]).
+    ///
+    /// `None` -- the default, and the in-process store's answer -- is a
+    /// backend whose bytes already include the transaction's writes, so it
+    /// has no snapshot half to separate.
+    fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
+        None
+    }
+
+    /// Go `txn.GetMemBuffer().SnapshotGetter()` / `SnapshotIter` over the
+    /// `[start, end)` key ranges: the transaction's buffered entries there as
+    /// the statement found them, which `UnionScanExec` reads its added rows
+    /// from. `None` exactly when [`Self::snapshot_reader`] is.
+    fn mem_buffer_snapshot(
+        &self,
+        _ranges: &[(Key, Key)],
+    ) -> Option<std::sync::Arc<crate::mem_buffer::MemBufferSnapshot>> {
+        None
+    }
+
+    /// Go `getSnapshotTS(sctx)`: the timestamp this backend's statement
+    /// reads at. 0 for a backend with no snapshot, which is the in-process
+    /// engine.
+    fn start_ts(&self) -> u64 {
+        0
+    }
+
+    /// Go `kv.Storage.GetClient()`: the coprocessor client this backend's
+    /// requests are sent through. `None` for a backend with no coprocessor,
+    /// which is the in-process engine.
+    fn client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::Client>> {
+        None
+    }
+
+    /// Go `kv.Storage.GetMPPClient()`: the client a TiFlash read's MPP
+    /// tasks are dispatched through. `None` for a backend with no TiFlash.
+    fn mpp_client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::MppClient>> {
+        None
+    }
+
+    /// Whether this backend's reads are keys a storage node processes, which
+    /// count against `tidb_max_keys_read` (Go `ScanDetail.ProcessedKeys`).
+    fn reads_processed_keys(&self) -> bool {
+        true
+    }
+
+    /// The number of stored keys. Divergence: see the module doc.
+    fn key_count(&self) -> usize;
+
+    /// Whether the surrounding session owns a statement savepoint for this
+    /// backend. Cluster sessions keep row mutations in an outer
+    /// `MutationBuffer::checkpoint`/`restore` pair, so cloning a table for
+    /// the catalog image must not be mistaken for the rollback mechanism.
+    /// In-process stores have no such outer owner and therefore rely on the
+    /// catalog image itself.
+    fn has_external_statement_rollback(&self) -> bool {
+        false
+    }
+
+    /// Whether this backend's commit drops untouched index entries (Go
+    /// `TiDBKVFilter.IsUnnecessaryKeyValue`), so an UPDATE may stage them as
+    /// Go's `index.create(untouched = true)` does. A backend that would
+    /// persist them answers `false` and the UPDATE leaves the entry alone.
+    fn filters_untouched_index_values(&self) -> bool {
+        false
+    }
+
+    /// Drops every key this backend holds. Divergence: see the module doc.
+    fn clear(&mut self);
+
+    /// Clones the backend behind the trait object. Divergence: see the module
+    /// doc.
+    fn clone_box(&self) -> Box<dyn TableStorage>;
+}
+
+impl Clone for Box<dyn TableStorage> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+/// An owned cursor used by the correctness-first reverse fallback above.
+pub struct MaterializedStorageIterator {
+    entries: Vec<(Key, Vec<u8>)>,
+    position: usize,
+    empty_key: Key,
+}
+
+impl MaterializedStorageIterator {
+    pub fn new(entries: Vec<(Key, Vec<u8>)>) -> Self {
+        Self {
+            entries,
+            position: 0,
+            empty_key: Key::default(),
+        }
+    }
+}
+
+impl StorageIterator for MaterializedStorageIterator {
+    fn valid(&self) -> bool {
+        self.position < self.entries.len()
+    }
+
+    fn key(&self) -> &Key {
+        self.entries
+            .get(self.position)
+            .map_or(&self.empty_key, |(key, _)| key)
+    }
+
+    fn value(&self) -> &[u8] {
+        self.entries
+            .get(self.position)
+            .map_or(&[], |(_, value)| value.as_slice())
+    }
+
+    fn next(&mut self) -> Result<(), StorageError> {
+        if !self.valid() {
+            return Err(StorageError::InvalidIterator);
+        }
+        self.position += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) {
+        self.position = self.entries.len();
+    }
+}
+
+/// The in-process backend: a `tidb-txnkv` [`MemStorage`] behind
+/// [`TableStorage`].
+///
+/// NOT MODELLED (documented): MVCC versions, timestamps, locks, regions and
+/// the staging buffer -- every read sees the latest write immediately.
+#[derive(Clone, Debug, Default)]
+pub struct MemTableStorage {
+    inner: MemStorage,
+    /// Keys plus values currently stored; see [`TableStorage::size_bytes`].
+    byte_size: u64,
+    /// The transaction's staged writes while a write runs inside a
+    /// transaction (see [`TableStorage::attach_txn_staging`]).
+    staging: Option<crate::staged_writes::TxnStaging>,
+}
+
+impl MemTableStorage {
+    /// Builds an empty in-process backend.
+    #[must_use]
+    pub fn new() -> Self {
+        MemTableStorage::default()
+    }
+}
+
+impl TableStorage for MemTableStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        note_storage_op(|ops| ops.gets += 1);
+        Getter::get(&mut self.inner, key, GetOptions::default())
+            .map(|entry| entry.value.clone())
+            .map_err(StorageError::from)
+    }
+
+    fn size_bytes(&self) -> u64 {
+        self.byte_size
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        if let Some(staging) = &self.staging {
+            staging.writes.note(staging.table_id, key.as_bytes());
+        }
+        let replaced = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        let added = (key.as_bytes().len() + value.len()) as u64;
+        Mutator::set(&mut self.inner, key, value).map_err(StorageError::from)?;
+        self.byte_size = self.byte_size.saturating_sub(replaced) + added;
+        Ok(())
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        if let Some(staging) = &self.staging {
+            staging.writes.note(staging.table_id, key.as_bytes());
+        }
+        let removed = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        Mutator::delete(&mut self.inner, key).map_err(StorageError::from)?;
+        self.byte_size = self.byte_size.saturating_sub(removed);
+        Ok(())
+    }
+
+    /// Go `GetLocal` over the attached log: a key this transaction wrote
+    /// reads its value, or an empty tombstone once deleted; any other key
+    /// has nothing staged. Without a log every write is the statement's own
+    /// and committed at once, so the ordinary read answers.
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        let Some(staging) = self.staging.as_ref().filter(|staging| staging.optimistic) else {
+            return self.get(key);
+        };
+        if !staging.writes.contains(staging.table_id, key.as_bytes()) {
+            return Err(StorageError::NotFound);
+        }
+        match self.get(key) {
+            Err(StorageError::NotFound) => Ok(Vec::new()),
+            other => other,
+        }
+    }
+
+    fn attach_txn_staging(&mut self, staging: Option<crate::staged_writes::TxnStaging>) {
+        self.staging = staging;
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        note_storage_op(|ops| ops.scans += 1);
+        Retriever::iter(&mut self.inner, start, upper_bound)
+            .map(|iterator| Box::new(iterator) as Box<dyn StorageIterator>)
+            .map_err(StorageError::from)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        note_storage_op(|ops| ops.scans += 1);
+        Retriever::iter_reverse(&mut self.inner, upper_bound, lower_bound)
+            .map(|iterator| Box::new(iterator) as Box<dyn StorageIterator>)
+            .map_err(StorageError::from)
+    }
+
+    fn key_count(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn clear(&mut self) {
+        self.inner = MemStorage::new();
+        self.byte_size = 0;
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
+/// The reads a statement issued at the storage seam, by KIND.
+///
+/// The first two kinds are the two key/value request kinds
+/// [`TableStorage`]'s doc names: `get` is Go `kv.Retriever.Get`, which a real
+/// backend sends as `kv_get`, and `iter` is Go `kv.Retriever.Iter`, sent as
+/// `kv_scan`. A statement that reads one known row should send the first and
+/// never the second, and the difference is not visible in row counts -- a
+/// scan over a one-key range returns exactly one row too.
+///
+/// The last two are the third request kind, the coprocessor
+/// (`kv.Client` through [`TableStorage::client`], Go's `distsql` `coprocessor`
+/// request). They are the WIRE RECEIPT: `cop_rows` is how many rows the
+/// region actually sent, so a scan whose predicate, cap or aggregate was
+/// evaluated at the region reports fewer of them than the table holds, and
+/// one that was not reports the relation. Nothing else distinguishes the two
+/// -- `EXPLAIN` in this tier prints `root` for every operator (see
+/// [`crate::explain`]), and `actRows` counts what the operator emitted, not
+/// what crossed the network.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StorageOps {
+    /// Key lookups (`kv_get`).
+    pub gets: usize,
+    /// Iterators OPENED (`kv_scan`). Counted per iterator rather than per
+    /// entry stepped, because that is what a request is.
+    pub scans: usize,
+    /// Coprocessor scans OPENED, counted per request like `scans`. Zero means
+    /// no request reached a region at all: either the backend has no
+    /// coprocessor, or it refused this request shape and the byte-level
+    /// cursor served the read.
+    pub cop_scans: usize,
+    /// Rows a coprocessor sent back across the network, summed over those
+    /// scans. Counted per ROW rather than per request because that is the
+    /// quantity pushdown exists to shrink.
+    pub cop_rows: u64,
+}
+
+thread_local! {
+    /// Live only while a [`capture_storage_ops`] call is on this thread's
+    /// stack, exactly as `capture_decoded_column_ids`' probe is.
+    static STORAGE_PROBE: std::cell::Cell<Option<StorageOps>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+/// Runs `f` while counting the in-process backend's reads by kind, and
+/// returns those counts alongside `f`'s value.
+///
+/// This is the instrument that makes an access path's REQUEST SHAPE
+/// checkable. `EXPLAIN` states the plan and `actRows` states how many rows
+/// came back, and neither separates "looked one row up by key" from "scanned
+/// a range that happens to hold one row" -- both print one row. Only the
+/// request kind does, and it is the difference the point plan exists for.
+///
+/// Capture is per-thread and does not nest: an inner call takes the counts
+/// with it and leaves the outer one empty.
+pub fn capture_storage_ops<R>(f: impl FnOnce() -> R) -> (R, StorageOps) {
+    STORAGE_PROBE.with(|probe| probe.set(Some(StorageOps::default())));
+    let value = f();
+    let ops = STORAGE_PROBE
+        .with(std::cell::Cell::take)
+        .unwrap_or_default();
+    (value, ops)
+}
+
+/// Records one read, when a capture is active.
+pub fn note_storage_op(add: impl FnOnce(&mut StorageOps)) {
+    STORAGE_PROBE.with(|probe| {
+        if let Some(mut ops) = probe.take() {
+            add(&mut ops);
+            probe.set(Some(ops));
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(bytes: &[u8]) -> Key {
+        Key::from_bytes(bytes.to_vec())
+    }
+
+    #[test]
+    fn point_write_read_delete_round_trips() {
+        let mut store: Box<dyn TableStorage> = Box::new(MemTableStorage::new());
+        assert_eq!(store.get(&key(b"a")), Err(StorageError::NotFound));
+        store.set(key(b"a"), vec![1, 2]).unwrap();
+        assert_eq!(store.get(&key(b"a")).unwrap(), vec![1, 2]);
+        assert_eq!(store.key_count(), 1);
+        store.delete(key(b"a")).unwrap();
+        assert_eq!(store.get(&key(b"a")), Err(StorageError::NotFound));
+        // Deleting an absent key succeeds, as Go's `Delete` does.
+        store.delete(key(b"a")).unwrap();
+    }
+
+    #[test]
+    fn iteration_is_half_open_and_ordered() {
+        let mut store: Box<dyn TableStorage> = Box::new(MemTableStorage::new());
+        for byte in *b"abcd" {
+            store.set(key(&[byte]), vec![byte]).unwrap();
+        }
+        let mut iterator = store.iter(Some(&key(b"b")), Some(&key(b"d"))).unwrap();
+        let mut seen = Vec::new();
+        while iterator.valid() {
+            seen.push(iterator.value()[0]);
+            iterator.next().unwrap();
+        }
+        iterator.close();
+        assert_eq!(seen, vec![b'b', b'c']);
+        // Advancing past the end reports the source iterator error.
+        let mut iterator = store.iter(Some(&key(b"z")), None).unwrap();
+        assert_eq!(iterator.next(), Err(StorageError::InvalidIterator));
+    }
+
+    #[test]
+    fn clone_box_copies_the_in_process_bytes() {
+        let mut store: Box<dyn TableStorage> = Box::new(MemTableStorage::new());
+        store.set(key(b"a"), vec![1]).unwrap();
+        let mut copy = store.clone();
+        copy.set(key(b"b"), vec![2]).unwrap();
+        assert_eq!(store.key_count(), 1);
+        assert_eq!(copy.key_count(), 2);
+        copy.clear();
+        assert_eq!(copy.key_count(), 0);
+        assert_eq!(store.key_count(), 1);
+    }
+}

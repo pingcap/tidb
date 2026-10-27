@@ -6,6 +6,7 @@
 //! seam" and "refused before the seam" two different sentences a test can
 //! tell apart.
 
+use crate::privilege::PrivilegeTypeExt;
 use super::super::*;
 use super::mock_cluster::*;
 use super::mock_seams::*;
@@ -15,7 +16,6 @@ use crate::domain::session_api::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_datatype::Datum;
-use crate::privilege::GlobalPriv;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
@@ -200,7 +200,7 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
     node.accounts.live.create_user("low", "%", "");
     node.accounts
         .live
-        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
     let stats_lock = Arc::new(WarningStatsLock::default());
     let mut session = open_session_as_with_stats_lock(
         &node,
@@ -312,7 +312,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
             detail: "staleCommand backoffer exhausted".to_owned(),
         },
     });
-    let lock_error = tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+    let lock_error = tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
     let query_error = crate::domain::session_api::cluster_analyze_error(
         tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
@@ -373,6 +373,12 @@ fn analyze_table_routes_to_the_statistics_seam() {
 #[test]
 fn analyze_temporary_table_uses_the_session_storage_overlay() {
     let (mut session, _node) = open_session();
+    // The mock node bootstraps no `mysql` schema, so Go's saved-option read
+    // (`getSavedAnalyzeOpts` over `mysql.analyze_options`) is turned off;
+    // what this test pins is the temporary table's sampling route.
+    session
+        .execute_write("SET GLOBAL tidb_persist_analyze_options = OFF")
+        .expect("persisted analyze options off");
     session.execute_write("BEGIN").expect("begin");
     session
         .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
@@ -446,7 +452,9 @@ fn open_session_as_with_stats_lock(
                 .expect("statistics cache"),
         ),
         Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
-    );
+    )
+    .shared();
+    node.keep(&factory);
     let users =
         ConfiguredUserStore::parse(&format!("{user}\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("configured user store");
@@ -457,7 +465,7 @@ fn open_session_as_with_stats_lock(
     let mut session = factory
         .open_session(SessionContext {
             connection_id: 2,
-            peer_addr,
+            peer_addr: peer_addr.into(),
             identity,
             client_found_rows: false,
             secure_transport: false,
@@ -492,7 +500,7 @@ fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
     // visible without carrying either privilege `ANALYZE` demands.
     node.accounts
         .live
-        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
     let mut session = open_session_as(&node, "low");
     let refusal = session
         .execute_write("ANALYZE TABLE t")
@@ -516,7 +524,7 @@ fn analyze_with_only_select_on_the_table_is_still_refused() {
     node.accounts.live.create_user("ro", "%", "");
     node.accounts
         .live
-        .grant_table("ro", "%", "app", "t", GlobalPriv::Select.mask());
+        .grant_table("ro", "%", "app", "t", tidb_mysql::SelectPriv.mask());
     let mut session = open_session_as(&node, "ro");
     let refusal = session
         .execute_write("ANALYZE TABLE t")
@@ -539,7 +547,7 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
         "%",
         "app",
         "t",
-        GlobalPriv::Select.mask() | GlobalPriv::Insert.mask(),
+        tidb_mysql::SelectPriv.mask() | tidb_mysql::InsertPriv.mask(),
     );
     let mut session = open_session_as(&node, "rw");
     let refusal = session

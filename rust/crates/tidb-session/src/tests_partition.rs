@@ -125,12 +125,12 @@ fn linear_hash_is_accepted_as_plain_hash_with_a_warning() {
         .run("CREATE TABLE lh (a int, b int) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
         .expect("LINEAR HASH is accepted");
     assert_eq!(
-        session.warnings(),
-        [SqlWarning {
-            level: WarningLevel::Warning,
-            code: 8200,
-            message: "LINEAR HASH is not supported, using non-linear HASH instead".to_owned(),
-        }]
+        session.warnings().iter().map(SqlWarning::parts).collect::<Vec<_>>(),
+        [(
+            WarningLevel::Warning,
+            8200,
+            "LINEAR HASH is not supported, using non-linear HASH instead".to_owned()
+        )]
     );
     assert_eq!(show_create(&mut session, "lh"), GO_LINEAR_HASH);
 }

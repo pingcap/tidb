@@ -26,7 +26,7 @@
 //!   lowering reads one physical table, so every region has partition index
 //!   zero.
 //! * Disaggregated TiFlash (`buildBatchCopTasksConsistentHash`) lives in
-//!   `tiflash_mpp_scan`.
+//!   `mpp_client`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -89,7 +89,7 @@ pub(crate) struct LocatedRegion {
 pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
-    memory: &tidb_executor::StatementMemory,
+    memory: &std::sync::Arc<dyn tidb_txnkv::MppContext>,
     mut tiflash_replica_read_policy: ReplicaRead,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<(Vec<BatchCopTask>, Vec<String>), String> {
@@ -103,7 +103,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     let tidb_zone = tidb_zone.unwrap_or_default();
     let mut budget = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
     loop {
-        let tasks = crate::tiflash_mpp_scan::locate_mpp_regions(store, ranges, memory, kv_context)?;
+        let tasks = crate::mpp_client::locate_mpp_regions(store, ranges, memory.as_ref(), kv_context)?;
         let mut rpc_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores_map = BTreeSet::new();
@@ -168,7 +168,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
             let delay = budget
                 .next_delay(RegionBackoffKind::TiFlashRpc)
                 .map_err(|_| "Cannot find region with TiFlash peer".to_owned())?;
-            let waited = crate::tiflash_mpp_scan::mpp_retry_wait(memory, delay).await;
+            let waited = crate::mpp_client::mpp_retry_wait(memory.as_ref(), delay).await;
             budget.finish_wait(waited.is_ok());
             waited?;
             continue;
@@ -232,7 +232,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
 /// Go `getAliveStoresAndStoreIDs`.
 async fn get_alive_stores_and_store_ids<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    memory: &tidb_executor::StatementMemory,
+    memory: &std::sync::Arc<dyn tidb_txnkv::MppContext>,
     all_tiflash_stores: Vec<tidb_proto::metapb::Store>,
     used: &BTreeSet<u64>,
     policy: ReplicaRead,
@@ -244,7 +244,7 @@ async fn get_alive_stores_and_store_ids<S: tikv_client::PdClient>(
         .filter(|store| used.contains(&store.id))
         .collect();
     let stores_in_all_zones =
-        crate::tiflash_mpp_scan::filter_alive_stores(store, &used_stores, memory).await;
+        crate::mpp_client::filter_alive_stores(store, &used_stores, memory).await;
     let store_ids_in_all_zones = stores_in_all_zones.iter().map(|store| store.id).collect();
     let mut store_ids_in_tidb_zone = BTreeSet::new();
     if !policy.is_all_replicas() {

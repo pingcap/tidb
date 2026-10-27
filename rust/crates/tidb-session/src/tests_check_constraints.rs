@@ -39,7 +39,7 @@ fn a_check_constraint_is_accepted_discarded_and_warned_about() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>()
     };
     let is_off = || (1105u16, "tidb_enable_check_constraint is off".to_owned());
@@ -248,7 +248,7 @@ fn altering_check_constraints_is_discarded_and_warned_about_while_the_variable_i
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>()
     };
     let is_off = || (1105u16, "tidb_enable_check_constraint is off".to_owned());
@@ -302,7 +302,7 @@ fn a_grouped_add_column_check_is_discarded_and_warned_about() {
         session
             .warnings()
             .iter()
-            .map(|warning| (warning.code, warning.message.as_str()))
+            .map(|warning| (warning.code(), warning.message()))
             .collect::<Vec<_>>(),
         vec![(1105, "tidb_enable_check_constraint is off")]
     );

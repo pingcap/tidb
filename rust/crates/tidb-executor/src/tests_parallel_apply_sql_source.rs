@@ -78,7 +78,7 @@ fn int(value: i64) -> Datum {
 /// `parallel_apply_plan_explain_gap` test below.
 #[test]
 fn parallel_apply_plan_q1_and_q3_data() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
     run_insert_on(
         "insert into t values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(null,null)",
@@ -127,7 +127,7 @@ fn parallel_apply_plan_q1_and_q3_data() {
 #[test]
 fn apply_column_type_matrix() {
     // int: `5 5` is the only row above the inner minimum for a larger a.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t(a int, b int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(a int, b int)", &mut catalog).unwrap();
     run_insert_on(
@@ -151,7 +151,7 @@ fn apply_column_type_matrix() {
     );
 
     // varchar: `bb` for the two `aa` rows, `dd` for the two `bb` rows.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1(a varchar(255), b varchar(255))",
         &mut catalog,
@@ -185,7 +185,7 @@ fn apply_column_type_matrix() {
 
     // bit: rows with b above the inner minimum over smaller bit keys; Go's
     // duplicated fixture yields each qualifying value twice.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a bit(10), b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a bit(10), b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)", &mut catalog, &ctx()).unwrap();
@@ -208,7 +208,7 @@ fn apply_column_type_matrix() {
     // char: the inner side is EMPTY (a single all-NULL row), so Go expects no
     // rows -- the max over an empty inner group is NULL and the comparison
     // filters every outer row.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a char(25), b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a char(10), b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values ('abc', 1), ('abc', '5'), ('fff', 4), ('fff', 9), ('tidb', 6), ('tidb', 5)", &mut catalog, &ctx()).unwrap();
@@ -223,7 +223,7 @@ fn apply_column_type_matrix() {
 
     // double: rows whose a is below the average inner a over rows with a
     // larger b; Go expects `1 1.11`, `1 2.12`, `2 3`, `2 4.56`.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b double)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b double)", &mut catalog).unwrap();
     run_insert_on(
@@ -259,7 +259,7 @@ fn apply_column_type_matrix() {
 #[test]
 fn apply_multi_column_type_matrix() {
     // int & int: `4` six times and `6` four times.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1, 1), (1, 1), (2, 2), (2, 3), (2, 3), (1, 1), (1, 1), (2, 2), (2, 3), (2, 3)", &mut catalog, &ctx()).unwrap();
@@ -283,7 +283,7 @@ fn apply_multi_column_type_matrix() {
     // int & char: sum per outer row -- Go's rows are `10 10 6 6 8 8` sorted;
     // each distinct outer a contributes one sum, duplicated by the duplicated
     // fixture rows.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b char(20))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b char(20))", &mut catalog).unwrap();
     run_insert_on(
@@ -316,7 +316,7 @@ fn apply_multi_column_type_matrix() {
     );
 
     // char & char: every outer row qualifies (`count(*)` = 6).
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a char(20), b varchar(255))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a char(20), b varchar(255))", &mut catalog).unwrap();
     run_insert_on("insert into t1 values ('7', '7'), ('8', '8'), ('9', '9'), ('7', '7'), ('8', '8'), ('9', '9')", &mut catalog, &ctx()).unwrap();
@@ -329,7 +329,7 @@ fn apply_multi_column_type_matrix() {
     // char & bit: string literals inserted into BIT(10) store the BYTE value
     // ('1' -> 49), so t2.b < t1.b holds for every inner row until a='4'.
     // Go expects `1`,`1`,`2`,`2`,`3`,`3`.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a varchar(20), b bit(10))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a varchar(20), b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4'), ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4')", &mut catalog, &ctx()).unwrap();
@@ -340,7 +340,7 @@ fn apply_multi_column_type_matrix() {
     );
 
     // int & double: `3 3.3` and `4 4.4` each twice.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1 (a int, b double)", &mut catalog).unwrap();
     run_create_table_on("create table t2 (a int, b double)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)", &mut catalog, &ctx()).unwrap();
@@ -353,7 +353,7 @@ fn apply_multi_column_type_matrix() {
 
     // int & int & char: `2`,`2`,`3`,`3` then two NULLs (no inner row above
     // a=3).
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b int, c varchar(20))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int, c varchar(20))", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3')", &mut catalog, &ctx()).unwrap();
@@ -379,7 +379,7 @@ fn apply_multi_column_type_matrix() {
 fn multiple_apply_arms_source() {
     // Arm 2: `(select min(...) ...) * (select min(...) ...) > 1` -> `3 3.3`,
     // `3 3.3`, `4 4.4`, `4 4.4`.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b double)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b double)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)", &mut catalog, &ctx()).unwrap();
@@ -391,7 +391,7 @@ fn multiple_apply_arms_source() {
     );
 
     // Arm 3: two applies ANDed -> `1`,`1`,`2`,`2`,`3`,`3`.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a varchar(20), b bit(10))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a varchar(20), b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4'), ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4')", &mut catalog, &ctx()).unwrap();
@@ -403,7 +403,7 @@ fn multiple_apply_arms_source() {
 
     // Arm 4: `(select min(...)), (select max(...))` in the SELECT list with a
     // COUNT apply in WHERE -> `2 4`, `2 4`, `3 4`, `3 4`.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b int, c varchar(20))", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int, c varchar(20))", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4')", &mut catalog, &ctx()).unwrap();
@@ -421,7 +421,7 @@ fn multiple_apply_arms_source() {
 #[test]
 fn apply_with_other_operators_source() {
     // hash_join: pairs (1,1),(2,2),(3,3) with counts over duplicated data.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int, b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int)", &mut catalog).unwrap();
     run_insert_on(
@@ -443,7 +443,7 @@ fn apply_with_other_operators_source() {
     );
 
     // merge_join over a double/int pairing.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a double, b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int)", &mut catalog).unwrap();
     run_insert_on(
@@ -466,7 +466,7 @@ fn apply_with_other_operators_source() {
 
     // index merge join: Go's fixture has t1 = (1,1),(2,2),(3,3) and t2 with
     // every row DUPLICATED, so each outer row's apply count is 0/2/4 twice.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1(a int primary key, b int)", &mut catalog).unwrap();
     run_create_table_on("create table t2(a int, b int, index idx(a))", &mut catalog).unwrap();
     run_insert_on(
@@ -501,7 +501,7 @@ fn apply_with_other_operators_source() {
 
     // index hash join: the FULLY duplicated fixture from Go (6+6 rows) gives
     // 0 x4, 2 x4, 4 x4.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1(a int, b int, index idx(a, b))",
         &mut catalog,
@@ -536,7 +536,7 @@ fn apply_with_other_operators_source() {
     }
 
     // index join over UNIQUE keys: counts 0/1/2.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1(a int , b int, unique index idx(a))",
         &mut catalog,
@@ -571,7 +571,7 @@ fn apply_with_other_operators_source() {
     }
 
     // index merge: Go expects the six rows with a in 1..3 duplicated pairs.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t(a int, b int, c int, index idxa(a), unique index idxb(b))",
         &mut catalog,
@@ -599,7 +599,7 @@ fn apply_with_other_operators_source() {
 /// engine-visible contract.
 #[test]
 fn apply_concurrency_sum_over_prefix_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t (a int)", &mut catalog).unwrap();
     let values: String = (1..=100i64)
         .map(|i| format!("({i})"))
@@ -628,7 +628,7 @@ fn apply_concurrency_sum_over_prefix_source() {
 /// the production parallel worker path is enabled here.
 #[test]
 fn parallel_apply_correctness_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3))",
         &mut catalog,
@@ -654,7 +654,7 @@ fn parallel_apply_correctness_source() {
 /// parallel values are checked against the pinned serial contract below.
 #[test]
 fn ordered_parallel_apply_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1 (a int, b int, index idx_a(a))",
         &mut catalog,
@@ -737,7 +737,7 @@ fn ordered_parallel_apply_source() {
 /// NO_DECORRELATE, and a 2000-row outer side.
 #[test]
 fn ordered_parallel_apply_edge_cases_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1 (a int, b int, index idx_a(a))",
         &mut catalog,
@@ -803,7 +803,7 @@ fn ordered_parallel_apply_edge_cases_source() {
     );
 
     // Arm 6: left-outer-semi IN with NO_DECORRELATE -> 0/1 flags.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t3 (a int, index idx_a(a))", &mut catalog).unwrap();
     run_create_table_on("create table t4 (a int)", &mut catalog).unwrap();
     run_insert_on(
@@ -820,7 +820,7 @@ fn ordered_parallel_apply_edge_cases_source() {
 
     // Arm 7: 2000-row outer side over a 3-row inner: the count is
     // min(a, 3).
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t5 (a int, index idx_a(a))", &mut catalog).unwrap();
     run_create_table_on("create table t6 (a int)", &mut catalog).unwrap();
     let values: String = (1..=2000i64)
@@ -852,7 +852,7 @@ fn ordered_parallel_apply_edge_cases_source() {
 /// arm over t4 = 1..500 (sums 5050 / 20100 / 45150).
 #[test]
 fn ordered_parallel_apply_large_inner_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t1 (a int, index idx_a(a))", &mut catalog).unwrap();
     run_create_table_on("create table t2 (a int, b int)", &mut catalog).unwrap();
     run_insert_on("insert into t1 values (1),(2),(3)", &mut catalog, &ctx()).unwrap();
@@ -877,7 +877,7 @@ fn ordered_parallel_apply_large_inner_source() {
     );
 
     // Cartesian-style: every outer row pairs with the whole inner.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on("create table t3 (a int, index idx_a(a))", &mut catalog).unwrap();
     run_create_table_on("create table t4 (b int)", &mut catalog).unwrap();
     run_insert_on("insert into t3 values (1),(2),(3)", &mut catalog, &ctx()).unwrap();
@@ -912,7 +912,7 @@ fn ordered_parallel_apply_large_inner_source() {
 /// filtered/nullable outer sides.
 #[test]
 fn ordered_parallel_apply_left_outer_semi_source() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1 (a int, b int, index idx_a(a))",
         &mut catalog,

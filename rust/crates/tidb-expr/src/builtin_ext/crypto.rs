@@ -166,27 +166,33 @@ fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Ok(Datum::new_string(Vec::new()));
     }
     if payload.len() <= 4 {
-        ctx.append_warning(1259, "ZLIB: Input data corrupted");
+        ctx.append_go_warning(
+            &tidb_error::catalog::expression::ERR_ZLIB_Z_DATA,
+            "ZLIB: Input data corrupted",
+        );
         return Ok(Datum::Null);
     }
     let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
     let bytes = match inflate(&payload[4..], length as usize) {
         Ok(bytes) => bytes,
         Err(InflateError::OutputLimit) => {
-            ctx.append_warning(
-                1258,
+            ctx.append_go_warning(
+                &tidb_error::catalog::expression::ERR_ZLIB_Z_BUF,
                 "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
             );
             return Ok(Datum::Null);
         }
         Err(InflateError::Decode) => {
-            ctx.append_warning(1259, "ZLIB: Input data corrupted");
+            ctx.append_go_warning(
+                &tidb_error::catalog::expression::ERR_ZLIB_Z_DATA,
+                "ZLIB: Input data corrupted",
+            );
             return Ok(Datum::Null);
         }
     };
     if length < bytes.len() as u32 {
-        ctx.append_warning(
-            1258,
+        ctx.append_go_warning(
+            &tidb_error::catalog::expression::ERR_ZLIB_Z_BUF,
             "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
         );
         return Ok(Datum::Null);
@@ -206,7 +212,10 @@ fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalErro
         return Ok(Datum::Int(0));
     }
     if payload.len() <= 4 {
-        ctx.append_warning(1259, "ZLIB: Input data corrupted");
+        ctx.append_go_warning(
+            &tidb_error::catalog::expression::ERR_ZLIB_Z_DATA,
+            "ZLIB: Input data corrupted",
+        );
         return Ok(Datum::Int(0));
     }
     let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
@@ -262,7 +271,10 @@ where
             Err(error) => return Some(Err(error)),
         }
     } else if arg_count == 3 {
-        ctx.append_warning(1618, "<IV> option ignored");
+        ctx.append_go_warning(
+            &tidb_error::catalog::expression::ERR_WARN_OPTION_IGNORED,
+            "<IV> option ignored",
+        );
         None
     } else {
         None
@@ -372,8 +384,8 @@ fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     if bytes.is_empty() {
         return Ok(Datum::new_string(String::new()));
     }
-    ctx.append_warning(
-        1681,
+    ctx.append_go_warning(
+        &tidb_error::catalog::expression::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT,
         "PASSWORD is deprecated and will be removed in a future release.",
     );
     Ok(Datum::new_string(tidb_parser::auth::encode_password_bytes(

@@ -26,7 +26,7 @@
 use std::sync::Arc;
 
 use tidb_distsql::cop_paging::CopRuntimeConfig;
-use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_cluster::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 #[cfg(test)]
 use tidb_unistore::kv_handler::KvHandler;
@@ -76,7 +76,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 #[cfg(test)]
 mod transaction_buffer_tests {
     use super::*;
-    use tidb_exec::cluster_table_storage::SessionTransaction;
+    use tidb_cluster::cluster_table_storage::SessionTransaction;
     use tidb_executor::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
@@ -125,7 +125,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let buffer = MutationBuffer::new();
@@ -170,7 +170,7 @@ mod transaction_buffer_tests {
         let mut transaction = SessionTransaction::begin(
             Arc::new(opener),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let checked = Arc::new(CheckedTables::default());
@@ -203,13 +203,13 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let key = b"locked".to_vec();
         assert!(matches!(
             transaction.lock_keys(vec![key.clone()]).unwrap(),
-            tidb_exec::cluster_table_storage::LockKeysOutcome::Locked { .. }
+            tidb_cluster::cluster_table_storage::LockKeysOutcome::Locked { .. }
         ));
         transaction
             .commit_with(
@@ -232,7 +232,7 @@ mod transaction_buffer_tests {
 /// that keep its store and reload threads alive. One build, two callers:
 /// the running node and the in-tree tests that pin coprocessor-backed
 /// execution -- a test over this stack exercises the SAME bootstrap,
-/// catalog, and `CopScanSource` the live `--store unistore
+/// catalog, and coprocessor client the live `--store unistore
 /// --cluster-session` process serves.
 pub struct UnistoreClusterStack {
     pub factory: Arc<crate::domain::cluster_session_node::ClusterSessionFactory>,
@@ -242,7 +242,7 @@ pub struct UnistoreClusterStack {
         Option<crate::domain::cluster_session_node::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
-    pub _reloader: tidb_exec::catalog_watch::CatalogReloader,
+    pub _reloader: tidb_cluster::catalog_watch::CatalogReloader,
     pub _sysvar_reloader: crate::domain::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_exec::stats_watch::StatsReloader,
     pub _binding_reloader: crate::domain::cluster_binding_seam::BindingReloader,
@@ -278,7 +278,27 @@ pub fn unistore_cluster_session_stack(
     spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
-    unistore_cluster_session_stack_from(config, users, spill_storage, memory_arbitrator, None)
+    unistore_cluster_session_stack_from(config, users, spill_storage, memory_arbitrator, None, 0)
+}
+
+/// Go `mockstore.WithMockTiFlash(nodes)`: `nodes` stores labelled
+/// `engine=tiflash` (`tiflash0`, `tiflash1`, ...), each with a peer on every
+/// region (Go adds it to the only region before the first split).
+fn with_mock_tiflash(regions: &tidb_unistore::region_manager::InProcessRegionManager, nodes: usize) {
+    for index in 0..nodes {
+        let store_id = regions.alloc_id();
+        regions.add_store(
+            store_id,
+            &format!("tiflash{index}"),
+            vec![tidb_proto::metapb::StoreLabel {
+                key: "engine".to_owned(),
+                value: "tiflash".to_owned(),
+            }],
+        );
+        for (region, _) in regions.scan_regions(b"", b"", 0) {
+            regions.add_peer(region.id, store_id, regions.alloc_id());
+        }
+    }
 }
 
 /// Go testkit's bootstrapped store image (`tryMakeImage`): a store's
@@ -294,7 +314,7 @@ pub struct BootstrapImage {
     /// The region splits the bootstrap's tables owe.
     pub splits: tidb_exec::mysql_bootstrap::BootstrapSplits,
     /// The resource manager write the bootstrap made.
-    pub resource_group_update: tidb_exec::cluster_ddl::ResourceGroupUpdate,
+    pub resource_group_update: tidb_ddl::cluster_ddl::ResourceGroupUpdate,
 }
 
 const BOOTSTRAP_IMAGE_MAGIC: &[u8; 8] = b"TIDBIMG1";
@@ -306,11 +326,11 @@ impl BootstrapImage {
         // The bootstrap's resource group write lands in the mock resource
         // manager, as the stack's own boot initializes it.
         tidb_domain::resource_manager_client::init_resource_manager_client(None);
-        let published = tidb_ddl::bootstrap_publish::publish_bootstrap_with_effects(
+        let published = tidb_exec::bootstrap_publish::publish_bootstrap_with_effects(
             &stack.opener,
             IN_PROCESS_TIMEOUT,
         )?;
-        tidb_ddl::bootstrap_publish::notify_committed_bootstrap(
+        tidb_exec::bootstrap_publish::notify_committed_bootstrap(
             &published.outcome,
             published.schema_version,
             None,
@@ -349,7 +369,7 @@ impl BootstrapImage {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         use prost::Message as _;
-        use tidb_exec::cluster_ddl::ResourceGroupUpdate;
+        use tidb_ddl::cluster_ddl::ResourceGroupUpdate;
         fn put(out: &mut Vec<u8>, bytes: &[u8]) {
             out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
             out.extend_from_slice(bytes);
@@ -388,7 +408,7 @@ impl BootstrapImage {
     /// Reads [`Self::to_bytes`] back.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         use prost::Message as _;
-        use tidb_exec::cluster_ddl::ResourceGroupUpdate;
+        use tidb_ddl::cluster_ddl::ResourceGroupUpdate;
         struct Reader<'a>(&'a [u8]);
         impl<'a> Reader<'a> {
             fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
@@ -460,6 +480,7 @@ pub fn unistore_cluster_session_stack_from(
     spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     image: Option<&BootstrapImage>,
+    mock_tiflash: usize,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
     use crate::domain::cluster_session_node::{
         ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
@@ -470,7 +491,7 @@ pub fn unistore_cluster_session_stack_from(
     let InProcessStack {
         pd: _pd,
         opener,
-        regions: _regions,
+        regions,
         tikv_store,
         rpc,
         handler: _handler,
@@ -479,6 +500,7 @@ pub fn unistore_cluster_session_stack_from(
         image.map(|image| image.data.as_slice()),
     )
     .map_err(engine)?;
+    with_mock_tiflash(&regions, mock_tiflash);
     // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
     // `TABLESAMPLE REGIONS()` reach them: client-go's `SplitRegions` and
     // `LoadRegionsInKeyRange` over the store, as Go's mockstore runs them.
@@ -489,7 +511,7 @@ pub fn unistore_cluster_session_stack_from(
     // affinity groups live in the mock manager.
     tidb_domain::affinity::init_manager(None);
     // Go `initLabelRuleManager` without PD: a fresh `mockLabelManager`.
-    tidb_executor::label_manager::init_label_rule_manager(None);
+    tidb_domain::label_manager::init_label_rule_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain::resource_manager_client::init_resource_manager_client(None);
     // Go `initDomainSysVars` registering `setGlobalResourceControl` for every
@@ -525,18 +547,18 @@ pub fn unistore_cluster_session_stack_from(
         None => {
             let bootstrap_started = std::time::Instant::now();
             let (outcome, schema_version, bootstrap_splits) =
-                tidb_ddl::bootstrap_publish::publish_bootstrap_with_splits(
+                tidb_exec::bootstrap_publish::publish_bootstrap_with_splits(
                     &opener,
                     IN_PROCESS_TIMEOUT,
                 )
                 .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-            let schema_version = tidb_ddl::bootstrap_publish::notify_committed_bootstrap(
+            let schema_version = tidb_exec::bootstrap_publish::notify_committed_bootstrap(
                 &outcome,
                 schema_version,
                 None,
             )
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-            tidb_ddl::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
+            tidb_exec::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
             (schema_version, bootstrap_splits)
         }
         Some(image) => {
@@ -567,7 +589,7 @@ pub fn unistore_cluster_session_stack_from(
     .map_err(engine)?;
 
     let (startup, startup_lease_grant_ts) =
-        tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+        tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     // The bootstrap persisted the system time zone and the global-variable
@@ -575,15 +597,18 @@ pub fn unistore_cluster_session_stack_from(
     // production boot's own order.
     crate::domain::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
 
-    // Filled once the node's allocator registry exists below.
-    let reload_row_ids = Arc::new(std::sync::OnceLock::new());
+    // One registry for the whole node: sessions' INSERTs, the DDL owner's and
+    // the statistics writers' `mysql.*` rows, and the reload's rebases.
+    let node_auto_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds> = Arc::new(
+        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
+    );
     let (catalog, reloader, schema_validator) =
         crate::domain::real_tikv_node::spawn_catalog_reloader(
             startup,
             startup_lease_grant_ts,
             opener.clone(),
             config.schema_lease,
-            Arc::clone(&reload_row_ids),
+            Arc::clone(&node_auto_ids),
         )
         .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let (stats, stats_reloader, async_stats_loader) =
@@ -627,8 +652,9 @@ pub fn unistore_cluster_session_stack_from(
         Some(&format!("embedded-authority-{}", opener.authority_id())),
         crate::domain::cluster_session_node::STATS_OWNER_KEY,
     ));
-    let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
-        Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
+    let kv_client: Arc<dyn tidb_txnkv::Client> = Arc::new(
+        tidb_exec::cop_client::CopClient::new(transport_factory),
+    );
     let (bindings, binding_reloader) = crate::domain::cluster_binding_seam::start_binding_cache(
         opener.clone(),
         Arc::clone(&catalog),
@@ -642,10 +668,6 @@ pub fn unistore_cluster_session_stack_from(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
-    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
-        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
-    );
-    let _ = reload_row_ids.set(Arc::clone(&node_auto_ids));
     let cluster_ddl = Arc::new(
         RealClusterDdl::new(
             opener.clone(),
@@ -658,13 +680,14 @@ pub fn unistore_cluster_session_stack_from(
             None,
             Arc::clone(&schema_validator),
             config.run_ddl,
+            Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {
             crate::domain::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
                 "campaign DDL owner failed: {error}"
             )))
         })?
-        .with_row_ids(Arc::clone(&node_auto_ids))
         // Go's mockstore reports no delete-range support, so the DDL layer
         // emulates it.
         .with_delete_range_emulator()
@@ -698,8 +721,8 @@ pub fn unistore_cluster_session_stack_from(
                 Arc::clone(&stats),
                 IN_PROCESS_TIMEOUT,
                 config.stats_lease.slow_save_interval(),
-            )
-            .with_row_ids(Arc::clone(&node_auto_ids)),
+                Arc::clone(&node_auto_ids),
+            ),
         ),
         Arc::new(crate::domain::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
@@ -711,7 +734,7 @@ pub fn unistore_cluster_session_stack_from(
         Arc::clone(&stats),
         Arc::clone(&node_auto_ids),
     )
-    .with_cop_scans(cop_scans)
+    .with_kv_client(kv_client)
     .with_region_store(region_store)
     .with_server_info(server_info)
     // No etcd: the standalone server ID, as Go's Domain allocator names.
@@ -742,6 +765,10 @@ pub fn unistore_cluster_session_stack_from(
     let factory = factory.with_bindings(bindings);
     factory.attach_login_storage(&users);
     factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
+    factory.load_signing_cert_loop(
+        &config.global_config.security.session_token_signing_cert,
+        &config.global_config.security.session_token_signing_key,
+    );
 
     let stats_maintenance =
         crate::domain::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(
@@ -932,7 +959,7 @@ mod meta_txn_tests {
 #[cfg(test)]
 mod startup_schema_lease_tests {
     use super::*;
-    use tidb_exec::schema_validator::{Result as ValidatorResult, Validator as _};
+    use tidb_cluster::schema_validator::{Result as ValidatorResult, Validator as _};
 
     /// Go `Domain.Init` runs `isSyncer.Reload()` before the reload loop and
     /// before any session, so the startup load's timestamp is the validator's
@@ -943,10 +970,10 @@ mod startup_schema_lease_tests {
     #[test]
     fn the_startup_load_grants_the_schema_validator_its_first_lease() {
         let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
-        tidb_ddl::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, lease_grant_ts) =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
         let version = startup.schema_version;
         assert!(lease_grant_ts > 0, "the load read at a real timestamp");
@@ -958,7 +985,7 @@ mod startup_schema_lease_tests {
                 lease_grant_ts,
                 opener.clone(),
                 std::time::Duration::from_secs(45),
-                Arc::default(),
+                Arc::new(tidb_cluster::table_from_meta::LocalTableAutoIds::default()),
             )
             .expect("catalog reloader");
         let transaction = opener.begin_read_only().expect("commit-time timestamp");
@@ -975,10 +1002,10 @@ mod startup_schema_lease_tests {
     #[test]
     fn the_published_bootstrap_stores_the_default_group_background() {
         let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
-        tidb_ddl::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, _) =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
         let default = startup
             .resource_groups

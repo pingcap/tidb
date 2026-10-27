@@ -10,6 +10,8 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-privilege = { path = "../tidb-privilege" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-ristretto = { path = "../tidb-ristretto" }
 prometheus = { version = "0.14", default-features = false }
 tidb-config = { path = "../tidb-config" }
@@ -17,6 +19,7 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
+tidb-cluster = { path = "../tidb-cluster" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-hint = { path = "../tidb-hint" }
@@ -29,6 +32,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
@@ -50,6 +54,7 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-log = { path = "../tidb-log" }
@@ -68,7 +73,7 @@ base64.workspace = true
 crossbeam-channel = "0.5"
 openssl = "0.10.81"
 rcgen.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["net"] }
 rustls.workspace = true
 rustls-pemfile.workspace = true
 x509-parser = { version = "=0.18.1", default-features = false }
@@ -132,3 +137,10 @@ path = "tests/cardinality_stats_loading.rs"
 [[test]]
 name = "fk_global_policy"
 path = "tests/fk_global_policy.rs"
+
+# Go's serial tests: each mutates process-wide state (the global config, or a
+# sysvar Go keeps in a process atomic), so they run in their own process,
+# serialized among themselves by `support::testkit`'s serial lock.
+[[test]]
+name = "serial"
+path = "tests/serial.rs"

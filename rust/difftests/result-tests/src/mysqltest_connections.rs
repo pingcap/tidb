@@ -443,14 +443,14 @@ impl Connections {
     /// account identities are copied, and only after the caller established
     /// that TiDB expected the statement to succeed.
     pub fn recover_account_row_from_unsupported_create_user(&self, sql: &str) {
-        let Ok(tidb_ast::Stmt::Ddl(ddl)) = tidb_parser::parse(sql) else {
+        let Ok(tidb_ast::Stmt::Admin(admin)) = tidb_parser::parse(sql) else {
             return;
         };
-        let tidb_ast::DdlStmt::CreateUser {
+        let tidb_ast::AdminStmt::CreateUser {
             users,
             comment_or_attribute: Some(_),
             ..
-        } = ddl.as_ref()
+        } = admin.as_ref()
         else {
             return;
         };

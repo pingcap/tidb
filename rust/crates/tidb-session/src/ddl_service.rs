@@ -24,8 +24,8 @@
 //! production node, and later the in-process tier, differ only in the service
 //! they hand in and in how they commit the open transaction.
 
-use tidb_exec::cluster_ddl::DdlStatement;
-use tidb_exec::real_tikv_ddl::{ClusterDdlReport, DdlWarningLevel};
+use tidb_ddl::cluster_ddl::DdlStatement;
+use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_executor::{DriverError, StmtContext};
 
 use crate::Session;
@@ -47,29 +47,33 @@ pub trait DdlService {
         statement: &DdlStatement,
         job_context: &StmtContext,
     ) -> Result<ClusterDdlReport, DriverError>;
+
+    /// Go's DDL executor entry refusals for a cached table
+    /// (`ErrOptOnCacheTable`), against the latest schema the DDL holds.
+    fn check_cached_table_ddl(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        current_db: &str,
+    ) -> Result<(), DriverError>;
+
+    /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`.
+    fn tiflash_store_count(&self) -> Result<u64, String>;
 }
 
 impl Session {
-    /// Go's checks before a DDL is lowered, in Go's order: the
-    /// preprocessor's name resolution (`tableByName`, masked as a privilege
-    /// error for an account that holds nothing on the table), the planner's
-    /// privilege check, then the executor's target checks (`SchemaByName`
-    /// for CREATE TABLE, the LIKE source's kind, ALTER's base-table check).
-    /// Lowering builds the table and validates its definitions, so running
-    /// it first answered build errors where Go answers 1146/1142/1049/1347.
-    pub fn ddl_target_checks(&mut self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+    /// Go's preprocessor name resolution for a DDL (`tableByName`, masked
+    /// as a privilege error for an account that holds nothing on the table,
+    /// and `checkCreateTableGrammar`'s LIKE source), part of `Compile`: it
+    /// precedes the planner's privilege check
+    /// ([`Session::compile_statement`]).
+    pub(crate) fn ddl_preprocess_table_names(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
         use tidb_ast::{AlterTableAction, DdlStmt};
         let tidb_ast::Stmt::Ddl(ddl) = stmt else {
             return Ok(());
         };
-        // Go refuses these while building the plan, before any privilege
-        // check.
-        if matches!(
-            ddl.as_ref(),
-            DdlStmt::OptimizeTable(_) | DdlStmt::RepairTable(_)
-        ) {
-            return Ok(());
-        }
         match ddl.as_ref() {
             // `resolveAlterTableStmt` sets `inCreateOrDropTable` for a RENAME
             // or FOREIGN KEY spec, which skips resolution.
@@ -99,7 +103,19 @@ impl Session {
             }
             _ => {}
         }
-        self.require_statement_table_privileges(stmt)?;
+        Ok(())
+    }
+
+    /// The executor's target checks Go makes before a DDL is built into a
+    /// job, after `Compile` ([`Session::compile_statement`]): `SchemaByName`
+    /// for CREATE TABLE, the LIKE source's kind, ALTER's base-table check.
+    /// Lowering builds the table and validates its definitions, so running
+    /// it first answered build errors where Go answers 1049/1347.
+    pub fn ddl_target_checks(&mut self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        use tidb_ast::DdlStmt;
+        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+            return Ok(());
+        };
         match ddl.as_ref() {
             DdlStmt::AlterTable(alter) => self.alter_table_target_precheck(alter)?,
             DdlStmt::CreateTable(create) => {
@@ -160,8 +176,10 @@ impl Session {
         let current_db = self.vars.current_db.clone();
         let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
         let (database, name) = (go_to_lower(database), name.to_owned());
-        let exists =
-            self.with_catalog_mut(|catalog| Ok(catalog.table_in(&database, &name).is_some()))?;
+        // The session's infoschema Go resolves through carries its LOCAL
+        // temporary tables (`AttachLocalTemporaryTableInfoSchema`).
+        let exists = self.is_local_temporary_table(&database, &name)
+            || self.with_catalog_mut(|catalog| Ok(catalog.table_in(&database, &name).is_some()))?;
         if exists {
             return Ok(());
         }
@@ -226,27 +244,39 @@ impl Session {
         })
     }
 
-    /// The checks Go makes before its implicit-commit boundary: the DDL's
-    /// privileges and snapshot rules are decided while the connection's
-    /// transaction is still intact, so a denial neither publishes staged
-    /// writes nor reaches the schema authority.
+    /// The check Go makes between `Compile` and its implicit-commit
+    /// boundary (`ExecStmt`'s `tidb_snapshot` write refusal), while the
+    /// connection's transaction is still intact, so a refusal neither
+    /// publishes staged writes nor reaches the schema authority. The
+    /// staleness check precedes `Compile` and the privileges are `Compile`'s
+    /// ([`Session::compile_statement`]).
     pub fn begin_ddl_statement(&mut self, parsed: &tidb_ast::Stmt) -> Result<(), DriverError> {
-        self.validate_snapshot_statement(parsed)?;
-        self.require_statement_table_privileges(parsed)
+        self.validate_snapshot_write(parsed)
     }
 
     /// Everything after the implicit commit: the reference checks, the table
     /// lock job, the service call, and the copy of the outcome back onto the
     /// session. The caller has already run [`Self::begin_ddl_statement`] and
-    /// committed any open transaction.
+    /// committed any open transaction. Answers the id an applied job
+    /// created, which Go's executor pre-splits after a CREATE TABLE.
     pub fn run_ddl_statement(
         &mut self,
         sql: &str,
         parsed: &tidb_ast::Stmt,
         statement: &DdlStatement,
         service: &dyn DdlService,
-    ) -> Result<(), DriverError> {
-        self.validate_cached_table_ddl(parsed)?;
+    ) -> Result<Option<i64>, DriverError> {
+        // Go `executeDropDatabase`: the bootstrap schema is never dropped,
+        // with or without IF EXISTS.
+        if let DdlStatement::DropDatabase { name, .. } = statement {
+            if name.go_lower_eq("mysql") {
+                return Err(DriverError::DdlCoded {
+                    proto: &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
+                    message: "Drop 'mysql' database is forbidden".to_owned(),
+                });
+            }
+        }
+        service.check_cached_table_ddl(parsed, &self.vars.current_db)?;
         self.validate_persistent_ddl_references(statement)?;
         let lock_effect = self.cluster_ddl_lock_effect(statement);
         self.begin_cluster_lock_job(statement);
@@ -256,7 +286,29 @@ impl Session {
         // Go appends plan-time warnings to the session's statement context
         // before it submits the job, so they precede the job's own.
         if let Some(context) = statement.statement_context() {
-            self.drain_context_warnings(context);
+            for warning in context.take_warnings() {
+                self.append_sql_warning(warning);
+            }
+            self.drain_fold_stash();
+        }
+        // What the executor functions noted while building the job (Go's
+        // `StmtCtx.AppendNote` as each runs) stays whether or not the
+        // statement then fails.
+        for warning in job_context.take_warnings() {
+            self.append_sql_warning(warning);
+        }
+        // So do the hypothetical indexes and TiFlash replicas Go's
+        // `addHypoIndexIntoCtx`, `dropHypoIndexFromCtx` and
+        // `setHypoTiFlashReplica` wrote into `SessionVars`.
+        if let Some(indexes) = job_context.take_hypo_indexes() {
+            self.hypo_indexes = std::sync::Arc::new(indexes);
+        }
+        let hypo_replicas = job_context.take_hypo_tiflash_replicas();
+        if !hypo_replicas.is_empty() {
+            let replicas = std::sync::Arc::make_mut(&mut self.hypo_tiflash_replicas);
+            for (schema, table, add) in hypo_replicas {
+                replicas.set(&schema, &table, add);
+            }
         }
         let report = report?;
         self.finish_cluster_lock_job(statement);
@@ -278,20 +330,22 @@ impl Session {
         // `IF [NOT] EXISTS` suppression via `AppendNote`, on the session's
         // own statement context so `SHOW WARNINGS` reports what the change
         // did differently from what was written.
-        for (level, code, warning) in warnings {
-            match level {
-                DdlWarningLevel::Note => self.append_routed_note(code, warning),
-                DdlWarningLevel::Warning => self.append_routed_warning(code, warning),
-            }
+        for warning in warnings {
+            self.append_sql_warning(warning);
         }
-        // Go `dropSchema` invalidates the session's current database when the
-        // DROP removes it: the next unqualified statement answers 1046
-        // (`ErrNoDB`) until a fresh `USE`.
+        // Go `executeDropDatabase`: dropping the current database clears it
+        // (the next unqualified statement answers 1046 until a fresh `USE`)
+        // and resets `character_set_database` / `collation_database` to the
+        // server defaults.
         if let DdlStatement::DropDatabase { name, .. } = statement {
             if self.current_database().go_lower_eq(name) {
                 self.deselect_database();
+                self.vars
+                    .set_system("character_set_database", tidb_mysql::DefaultCharset.to_owned())?;
+                self.vars
+                    .set_system("collation_database", tidb_mysql::DefaultCollationName.to_owned())?;
             }
         }
-        Ok(())
+        Ok(created_id)
     }
 }

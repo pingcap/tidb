@@ -1454,13 +1454,8 @@ impl Session {
                 .warnings
                 .iter()
                 .map(|warning| crate::slow_log::JsonSqlWarnForSlowLog {
-                    level: match warning.level {
-                        WarningLevel::Warning => "Warning",
-                        WarningLevel::Error => "Error",
-                        WarningLevel::Note => "Note",
-                    }
-                    .to_owned(),
-                    message: warning.message.clone(),
+                    level: warning.level.clone(),
+                    message: warning.message().to_owned(),
                     is_extra: false,
                 })
                 .collect(),
@@ -1549,13 +1544,9 @@ impl Session {
     /// rewrites the recorded `error` once it knows the outcome.
     pub(crate) fn rerecord_last_query_error(&mut self, error: &str) {
         let info = &mut self.vars.last_query_info;
-        let Some(position) = info.find(",\"error\":") else {
-            return;
-        };
-        let mut quoted = String::new();
-        crate::slow_log::go_json_string(&mut quoted, error);
-        let rebuilt = format!("{},\"error\":{quoted}}}", &info[..position]);
-        *info = rebuilt;
+        if !info.err_msg.is_empty() {
+            info.err_msg = error.to_owned();
+        }
     }
 
     /// Go `ExecStmt.recordLastQueryInfo`: after a `SHOW` (but not `SHOW
@@ -1570,21 +1561,13 @@ impl Session {
             return;
         }
         let (start_ts, for_update_ts) = self.txn_start_and_for_update_ts();
-        let ru_consumption = observation.ru_details.read_ru() + observation.ru_details.write_ru();
-        // Go `json.Marshal(sessionstates.QueryInfo)`: `error` is
-        // `omitempty`, and a float64 marshals in its shortest form.
-        let mut info = format!(
-            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"for_update_ts\":{for_update_ts},\"ru_consumption\":{}",
-            go_json_float(ru_consumption)
-        );
-        if let Some(error) = error.filter(|error| !error.is_empty()) {
-            info.push_str(",\"error\":");
-            let mut quoted = String::new();
-            crate::slow_log::go_json_string(&mut quoted, &error);
-            info.push_str(&quoted);
-        }
-        info.push('}');
-        self.vars.last_query_info = info;
+        self.vars.last_query_info = tidb_sessionstates::QueryInfo {
+            txn_scope: "global".to_owned(),
+            start_ts,
+            for_update_ts,
+            ru_consumption: observation.ru_details.read_ru() + observation.ru_details.write_ru(),
+            err_msg: error.unwrap_or_default(),
+        };
     }
 
     /// Go `session.logStmt`: a crucial statement goes to the background log
@@ -1728,23 +1711,6 @@ fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, boo
     (tikv, tiflash)
 }
 
-/// Go `encoding/json`'s float64 spelling: the shortest round-trip digits,
-/// in exponent form below 1e-6 or from 1e21 up.
-fn go_json_float(value: f64) -> String {
-    let abs = value.abs();
-    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
-        let formatted = tidb_datatype::go_strconv::format_float(value, b'e', -1, 64);
-        // Go cleans `e-07` to `e-7`.
-        if let Some(index) = formatted.find("e-0") {
-            let mut cleaned = formatted.clone();
-            cleaned.replace_range(index..index + 3, "e-");
-            return cleaned;
-        }
-        return formatted;
-    }
-    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
-}
-
 /// Go `recordLastQueryInfo`'s node test: `*ast.ShowStmt` other than `SHOW
 /// SESSION_STATES`, `*ast.ExecuteStmt`, or an `ast.DMLNode` (SELECT, set
 /// operations, INSERT/REPLACE, UPDATE, DELETE, LOAD DATA, IMPORT INTO, CALL,
@@ -1771,24 +1737,24 @@ fn is_crucial_stmt(stmt: &Stmt) -> bool {
             tidb_ast::DdlStmt::CreateIndex(create) => {
                 create.options.index_type != Some(tidb_ast::IndexType::HYPO)
             }
-            tidb_ast::DdlStmt::CreateUser { .. }
-            | tidb_ast::DdlStmt::DropUser { .. }
-            | tidb_ast::DdlStmt::AlterUser(_)
-            | tidb_ast::DdlStmt::AlterTable(_)
+            tidb_ast::DdlStmt::AlterTable(_)
             | tidb_ast::DdlStmt::CreateDatabase { .. }
             | tidb_ast::DdlStmt::CreateTable(_)
             | tidb_ast::DdlStmt::DropDatabase { .. }
             | tidb_ast::DdlStmt::DropTable(_)
             | tidb_ast::DdlStmt::DropView { .. }
             | tidb_ast::DdlStmt::RenameTable(_)
-            | tidb_ast::DdlStmt::TruncateTable(_)
-            | tidb_ast::DdlStmt::RenameUser { .. } => true,
+            | tidb_ast::DdlStmt::TruncateTable(_) => true,
             _ => false,
         },
         Stmt::Session(session) => matches!(&**session, tidb_ast::SessionStmt::SetPassword(_)),
         Stmt::Admin(admin) => matches!(
             &**admin,
-            tidb_ast::AdminStmt::Grant(_)
+            tidb_ast::AdminStmt::CreateUser { .. }
+                | tidb_ast::AdminStmt::DropUser { .. }
+                | tidb_ast::AdminStmt::AlterUser(_)
+                | tidb_ast::AdminStmt::RenameUser { .. }
+                | tidb_ast::AdminStmt::Grant(_)
                 | tidb_ast::AdminStmt::Revoke(_)
                 | tidb_ast::AdminStmt::CreateBinding(_)
                 | tidb_ast::AdminStmt::DropBinding(_)
@@ -1849,19 +1815,17 @@ fn statement_secure_text(stmt: &Stmt, sql: &str) -> Option<String> {
         }
     };
     match stmt {
-        Stmt::Ddl(ddl) => match ddl.as_ref() {
-            tidb_ast::DdlStmt::CreateUser { users, .. } => {
-                Some(tidb_ast::create_user_secure_text(users))
-            }
-            tidb_ast::DdlStmt::AlterUser(alter) => Some(alter.secure_text()),
-            _ => None,
-        },
+        Stmt::Ddl(_) => None,
         Stmt::Session(session) => match session.as_ref() {
             tidb_ast::SessionStmt::SetPassword(set_password) => Some(set_password.secure_text()),
             tidb_ast::SessionStmt::Set(set) => Some(set.secure_text()),
             _ => None,
         },
         Stmt::Admin(admin) => match admin.as_ref() {
+            tidb_ast::AdminStmt::CreateUser { users, .. } => {
+                Some(tidb_ast::create_user_secure_text(users))
+            }
+            tidb_ast::AdminStmt::AlterUser(alter) => Some(alter.secure_text()),
             tidb_ast::AdminStmt::Grant(_) | tidb_ast::AdminStmt::GrantRole(_) => {
                 Some(cut_identified())
             }

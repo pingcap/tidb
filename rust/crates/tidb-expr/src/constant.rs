@@ -471,7 +471,12 @@ impl<C: crate::Columns + ?Sized> tidb_datatype::ConversionWarningAppender
 {
     fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
         let warning = warning.to_sql_error();
-        self.0.append_warning(warning.code, &warning.message);
+        self.0.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
     }
 }
 

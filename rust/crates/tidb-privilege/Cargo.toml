@@ -1,0 +1,23 @@
+[package]
+name = "tidb-privilege"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/privilege/privileges (the privilege cache and account policy) for the TiDB Rust rewrite."
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-util = { path = "../tidb-util" }
+
+[lints]
+workspace = true

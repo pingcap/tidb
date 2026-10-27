@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable};
-use tidb_executor::remote_scan::{PushdownScan, PushdownScanRequest};
+use prost::Message;
+use tidb_proto::tipb::DagRequest;
 use tidb_executor::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_executor::StmtContext;
 use tidb_txnkv::Key;
@@ -104,7 +105,7 @@ fn edge_table() -> KvTable {
 
 #[test]
 fn edge_point_read_with_int_type_literal_returns_the_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -122,7 +123,7 @@ fn edge_point_read_with_int_type_literal_returns_the_row() {
 
 #[test]
 fn edge_point_read_without_type_filter_returns_the_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -144,7 +145,7 @@ fn edge_point_read_without_type_filter_returns_the_row() {
 
 #[test]
 fn bare_count_star_with_limit_over_covering_primary_answers() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -159,7 +160,7 @@ fn bare_count_star_with_limit_over_covering_primary_answers() {
 
 #[test]
 fn bare_count_star_matches_the_unlimited_answer() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let limited = run_select_on(
@@ -178,27 +179,118 @@ fn select_literal_over_table_limit_one_returns_one_row() {
     // Go's own motivating case for the forced handle column:
     // "For SQL like `select 1 from t`, tikv's response will be empty if no
     // column is in schema."
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on("SELECT 1 FROM t LIMIT 1", &catalog, &ctx).unwrap();
     assert_eq!(rows.len(), 1);
 }
 
+/// The region behind [`CapturingStore`]'s client: the DAG runs on unistore's
+/// coprocessor over the table's committed bytes (Go's mockstore), and every
+/// DAG is recorded.
+#[derive(Debug)]
+struct CapturingRegion {
+    data: Vec<(Vec<u8>, Vec<u8>)>,
+    captured: Arc<Mutex<Vec<DagRequest>>>,
+}
+
+#[derive(Debug)]
+struct OneAnswer(Option<tidb_txnkv::QueryResultSubset>);
+
+impl tidb_txnkv::Response for OneAnswer {
+    fn next(
+        &mut self,
+    ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        Ok(self.0.take())
+    }
+    fn close(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl tidb_txnkv::Client for CapturingRegion {
+    fn send(
+        &self,
+        request: &tidb_txnkv::TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        let metadata = request.metadata();
+        let data = metadata.data.clone().expect("a DAG request");
+        let dag = DagRequest::decode(data.as_slice()).map_err(|error| error.to_string())?;
+        self.captured.lock().unwrap().push(dag);
+        let mut store = tidb_unistore::mvcc_store::MvccStore::new();
+        if let Some((primary, _)) = self.data.first() {
+            store
+                .prewrite(&tidb_unistore::mvcc_store::PrewriteReq {
+                    mutations: self
+                        .data
+                        .iter()
+                        .map(|(key, value)| tidb_proto::KvrpcMutation {
+                            op: tidb_proto::KvrpcOp::Put as i32,
+                            key: key.clone(),
+                            value: value.clone(),
+                            ..tidb_proto::KvrpcMutation::default()
+                        })
+                        .collect(),
+                    primary_lock: primary.clone(),
+                    start_version: 1,
+                    ..tidb_unistore::mvcc_store::PrewriteReq::default()
+                })
+                .map_err(|error| format!("{error:?}"))?;
+            let keys: Vec<Vec<u8>> = self.data.iter().map(|(key, _)| key.clone()).collect();
+            store.commit(&keys, 1, 2).map_err(|error| format!("{error:?}"))?;
+        }
+        let response = tidb_unistore::cophandler::handle_cop_request(
+            &mut store,
+            &tidb_proto::coprocessor::Request {
+                tp: tidb_unistore::cophandler::REQ_TYPE_DAG,
+                data,
+                ranges: metadata
+                    .key_ranges
+                    .as_ref()
+                    .map(|ranges| {
+                        ranges
+                            .partitions()
+                            .iter()
+                            .flatten()
+                            .map(|range| tidb_proto::coprocessor::KeyRange {
+                                start: range.start_key.as_bytes().to_vec(),
+                                end: range.end_key.as_bytes().to_vec(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                start_ts: 100,
+                ..tidb_proto::coprocessor::Request::default()
+            },
+        );
+        if !response.other_error.is_empty() {
+            return Err(response.other_error);
+        }
+        Ok(Box::new(OneAnswer(Some(tidb_txnkv::QueryResultSubset {
+            data: response.data.to_vec().into(),
+            runtime: None,
+        }))))
+    }
+    fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+        true
+    }
+}
+
 /// A backend that answers reads from an in-memory table while recording every
-/// pushdown request the executor BUILDS. The recorded requests are the parity
-/// evidence: Go's pruned `DataSource` schema is what the coprocessor request
-/// names, so the request's column list must match
+/// coprocessor request the executor BUILDS. The recorded requests are the
+/// parity evidence: Go's pruned `DataSource` schema is what the coprocessor
+/// request names, so the request's column list must match
 /// `DataSource.PruneColumns`' answer (one forced key column for a bare
 /// aggregate).
 #[derive(Debug)]
 struct CapturingStore {
     inner: MemTableStorage,
-    captured: Arc<Mutex<Vec<PushdownScanRequest>>>,
+    captured: Arc<Mutex<Vec<DagRequest>>>,
 }
 
 impl CapturingStore {
-    fn new(captured: Arc<Mutex<Vec<PushdownScanRequest>>>) -> Self {
+    fn new(captured: Arc<Mutex<Vec<DagRequest>>>) -> Self {
         Self {
             inner: MemTableStorage::new(),
             captured,
@@ -235,16 +327,25 @@ impl TableStorage for CapturingStore {
             captured: Arc::clone(&self.captured),
         })
     }
-    fn open_remote_scan(
-        &mut self,
-        request: &PushdownScanRequest,
-    ) -> Option<Result<PushdownScan, StorageError>> {
-        self.captured.lock().unwrap().push(request.clone());
-        None
+    fn client(&self) -> Option<Arc<dyn tidb_txnkv::Client>> {
+        let mut inner = self.inner.clone();
+        let mut iter = inner.iter(None, None).ok()?;
+        let mut data = Vec::new();
+        while iter.valid() {
+            data.push((iter.key().as_bytes().to_vec(), iter.value().to_vec()));
+            iter.next().ok()?;
+        }
+        Some(Arc::new(CapturingRegion {
+            data,
+            captured: Arc::clone(&self.captured),
+        }))
+    }
+    fn start_ts(&self) -> u64 {
+        100
     }
 }
 
-fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<PushdownScanRequest>>>) -> KvTable {
+fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> KvTable {
     let mut table = KvTable::with_storage(
         459,
         edges_columns(),
@@ -284,7 +385,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<PushdownScanRequest>>>
 #[test]
 fn bare_count_pushdown_request_carries_only_the_forced_key_column() {
     let captured = Arc::new(Mutex::new(Vec::new()));
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", edges_table_on_capturing_store(Arc::clone(&captured)));
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -298,7 +399,7 @@ fn bare_count_pushdown_request_carries_only_the_forced_key_column() {
     let requests = captured.lock().unwrap();
     assert!(
         !requests.is_empty(),
-        "the covering read must attempt a coprocessor request before its local fallback"
+        "the covering read sends a coprocessor request"
     );
     // Without the forced key column the statement prunes to an EMPTY demand;
     // the full-width leaf then asks the covering reader for columns PRIMARY

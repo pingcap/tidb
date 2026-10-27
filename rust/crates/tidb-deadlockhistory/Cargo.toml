@@ -1,0 +1,16 @@
+[package]
+name = "tidb-deadlockhistory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/util/deadlockhistory for the TiDB Rust rewrite."
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tracing = "0.1"
+
+[lints]
+workspace = true

@@ -91,7 +91,7 @@ pub(crate) fn show_index_rows(
                 .prefix_lengths
                 .get(position)
                 .copied()
-                .filter(|length| *length != tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH);
+                .filter(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH);
             push(
                 &index.name,
                 index.unique,

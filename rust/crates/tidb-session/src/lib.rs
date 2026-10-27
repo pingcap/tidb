@@ -305,6 +305,13 @@ pub trait DdlJobHistoryStore: Send + Sync {
 
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
+/// Go `kv.RunInNewTxn(sctx.GetStore(), ..., m.GenGlobalID())`: one id from
+/// meta's global allocator, in its own transaction on the session's store
+/// (the local temporary table DDL's ids, `newTemporaryTableFromTableInfo`).
+pub trait GlobalIdGenerator: Send + Sync {
+    fn gen_global_id(&self) -> Result<i64, DriverError>;
+}
+
 pub trait BdrRoleStore: Send + Sync {
     /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
     /// transaction; "" when unset.
@@ -445,7 +452,9 @@ impl DomainMap {
             return domains.values().next().cloned().ok_or(NoAvailableDomain);
         };
         Ok(Arc::clone(
-            domains.entry(store_uuid.to_owned()).or_default(),
+            domains
+                .entry(store_uuid.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(Catalog::new()))),
         ))
     }
 }
@@ -483,6 +492,13 @@ pub struct Session {
     /// scratch registry read from `mysql.*`: Go's privilege manager, which
     /// `FindEdge` consults, is the cache, not the tables.
     account_statement_privilege_cache: Option<privilege::PrivilegeRegistry>,
+    /// The statement its node compiled ahead of the executor that runs it
+    /// ([`Session::compile_statement`]), which that executor's own compile
+    /// takes instead of building and checking the plan again.
+    precompiled: Option<crate::identity::PrecompiledStatement>,
+    /// What the session's executors reach through Go's `Domain`; `None` for
+    /// an in-process session.
+    domain_services: Option<crate::domain_services::DomainServices>,
     /// Go `Domain.NotifyUpdateAllUsersPrivilege`'s announcement half: tells
     /// every node of the cluster to reload privileges after FLUSH
     /// PRIVILEGES. `None` for a session with no peers to tell.
@@ -558,19 +574,16 @@ pub struct Session {
     /// is Go's `AttachLocalTemporaryTableInfoSchema` /
     /// `DetachLocalTemporaryTableInfoSchema` pair around each statement.
     ///
-    /// NOT MODELLED (documented): Go DETACHES the overlay again in three
-    /// narrower places, and this tier keeps it attached in all three. Two are
-    /// harmless here -- `SHOW CREATE VIEW`/`SHOW CREATE SEQUENCE`
-    /// (`preprocess.go:551`) and the by-name `SHOW TABLES`, which
-    /// `Catalog::table_names` already excludes. The third is real: while
-    /// EXPANDING a view's body (`logical_plan_builder.go:4941`), so a local
-    /// temporary table that SHADOWS a permanent table the view reads is
-    /// followed here where Go reads the permanent one. Creating a view over a
-    /// local temporary table is refused (1352), so the shadowing case is the
-    /// only way to reach it, and closing it would mean handing the view
-    /// builder a catalog with the overlay removed -- a whole-catalog clone
-    /// per view read on this tier's shape.
+    /// Go DETACHES the overlay again in three narrower places: `SHOW CREATE
+    /// VIEW` / `SHOW CREATE SEQUENCE` (`preprocess.go:551`), the by-name
+    /// `SHOW TABLES` (which `Catalog::table_names` excludes), and while
+    /// expanding a view's body (`logical_plan_builder.go:4941`), which the
+    /// planner reads through the catalog's detached view.
     local_temporary_tables: Vec<(String, String, tidb_executor::KvTable)>,
+    /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
+    /// was built from, which `DDLExec` builds a LOCAL temporary table's
+    /// `TableInfo` against. `None` for a session no node opened.
+    info_schema: Option<Arc<tidb_cluster::cluster_catalog::ClusterCatalog>>,
     /// Go `SessionVars.HypoIndexes`: session state, never schema.
     hypo_indexes: Arc<tidb_executor::ddl::HypoIndexes>,
     /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
@@ -620,7 +633,6 @@ pub struct Session {
     /// which every privilege check widens through and which `CURRENT_ROLE()`
     /// reports. A fresh session starts with its account's DEFAULT roles
     /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
-    active_roles: Arc<Vec<privilege::Account>>,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
     /// Go `session.lockedTables`: the tables this session holds a
@@ -747,11 +759,22 @@ pub struct Session {
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
     analyze_status: Option<std::sync::Arc<dyn AnalyzeStatusProvider>>,
+    /// Go `pdhelper.GlobalPDHelper`: the node's, installed when the session
+    /// opens; a session with no node behind it has a store without PD.
+    approximate_table_counts:
+        std::sync::Arc<dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider>,
     /// Pinned Go's fresh information-schema table-size reader.
     table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
     /// Where the BDR role lives when it is not this catalog's (a cluster
     /// node's TiKV meta).
     bdr_role_store: Option<std::sync::Arc<dyn BdrRoleStore>>,
+    /// The session's store's meta global-id allocator, installed by the node
+    /// that opened the session (Go's `sctx.GetStore()`).
+    global_ids: Option<std::sync::Arc<dyn GlobalIdGenerator>>,
+    /// The session's store's regions (Go `sctx.GetStore()` as
+    /// `kv.SplittableStore` and the region cache), installed by the node; a
+    /// session with no store behind it keeps one in-process region map.
+    regions: std::sync::Arc<dyn tidb_executor::region_map::RegionStore>,
     /// Where `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS` read
     /// the cluster's DDL jobs; the catalog's own history without one.
     ddl_job_history_store: Option<std::sync::Arc<dyn DdlJobHistoryStore>>,
@@ -915,10 +938,6 @@ pub struct Session {
     /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
     /// so its statement contexts skip rendering `BriefBinaryPlan`.
     binary_prepared_execution: bool,
-    /// The jobs the current statement's DDL submitted (Go `doDDLJob2`),
-    /// shared with every statement context built for it and finished into
-    /// the store's DDL history when the statement completes.
-    ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink,
     /// The node connection a session built over a booted domain runs its
     /// statements through (Go testkit's session on `CreateMockStore`'s
     /// domain); `None` for a session that IS the node connection's own.
@@ -949,6 +968,8 @@ impl Session {
             catalog,
             account_sql: None,
             account_statement_privilege_cache: None,
+            precompiled: None,
+            domain_services: None,
             privilege_change_notifier: None,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -974,10 +995,18 @@ impl Session {
             txn_ctx: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
+            info_schema: None,
             hypo_indexes: Arc::default(),
             hypo_tiflash_replicas: Arc::default(),
             global_temporary_data: std::collections::HashMap::new(),
-            vars: SessionVars::new(),
+            // Go `createSession`: `s.sessionVars.GlobalVarsAccessor = s`,
+            // the node's accessor over its domain; a factory attaches its
+            // shared one (`attach_globals`).
+            vars: {
+                let mut vars = SessionVars::new();
+                vars.swap_globals(Some(std::sync::Arc::new(GlobalSysvars::new())));
+                vars
+            },
             global_config_syncer: None,
             stmt_hints: tidb_hint::StmtHints::default(),
             active_resource_group: "default".to_owned(),
@@ -985,7 +1014,6 @@ impl Session {
             deferred_multi_statement_warning: false,
             pending_plan_cache_refusal: None,
             in_show_warning: false,
-            active_roles: Arc::new(Vec::new()),
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
@@ -1032,8 +1060,13 @@ impl Session {
             restricted_sql_executor: None,
             column_stats_usage: None,
             analyze_status: None,
+            approximate_table_counts: std::sync::Arc::new(
+                tidb_exec::pd_approximate_count::NoPdApproximateTableCounts::default(),
+            ),
             table_storage_stats: None,
             bdr_role_store: None,
+            global_ids: None,
+            regions: std::sync::Arc::new(tidb_executor::region_map::LocalRegionStore::default()),
             ddl_job_history_store: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
@@ -1080,7 +1113,6 @@ impl Session {
             sql_cpu_usages: Arc::default(),
             ruv2_pending_session_parser_total: 0,
             binary_prepared_execution: false,
-            ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink::default(),
             node: None,
         }
     }
@@ -1174,12 +1206,12 @@ impl tidb_util::context::ValueStoreContext for Session {
 impl Drop for Session {
     fn drop(&mut self) {
         // A session over a booted domain closes inside its node connection,
-        // which owns the transaction, pins and locks that close releases.
+        // which owns the transaction, pins and the table locks Go's
+        // `session.Close` releases through the DDL (`UnlockTables`); a
+        // session without a node cannot have taken one.
         if let Some(node) = self.node.take() {
             node.close(self);
         }
-        // Go `session.Close` releases the table locks first.
-        self.release_table_locks_on_close();
         self.statement_stats.set_finished();
         if let Some(collector) = &self.session_index_usage_collector {
             collector
@@ -1211,7 +1243,6 @@ mod show_placement;
 mod index_advisor;
 mod account_password;
 mod admin_check_arm;
-mod alter_schema;
 mod analyze_arm;
 pub mod binding;
 mod binding_arm;
@@ -1221,8 +1252,10 @@ pub mod blacklist;
 mod bootstrap;
 mod classify;
 pub mod cursor;
+mod ddl_exec;
 mod ddl_jobs;
 pub mod ddl_service;
+pub mod domain_services;
 pub mod stored_state_service;
 pub mod analyze_service;
 mod load_data;
@@ -1257,6 +1290,7 @@ pub use tidb_variable::session_vars;
 mod store_helper;
 mod stmt_ctx;
 mod table_lock;
+mod temptable;
 pub use table_lock::ClusterDdlLockEffect;
 mod table_privilege;
 pub mod cluster_transactions;
@@ -1280,13 +1314,15 @@ mod warnings;
 pub(crate) use classify::{
     statement_kind_of, statement_not_fill_cache, statement_priority_of, StatementKind,
 };
-pub use classify::{StmtKind, StoredStateChange};
+pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
-pub(crate) use warnings::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 pub mod expensivequery;
-pub mod privilege;
+pub use tidb_privilege as privilege;
+mod privilege_tables;
+#[cfg(test)]
+mod tests_privilege_tls;
 pub mod process;
 mod process_arm;
 mod show;
@@ -1294,13 +1330,13 @@ pub mod show_admin;
 mod show_create_database;
 mod show_create_placement_policy;
 mod show_index;
-mod stats_lock_arm;
 pub use tidb_vardef::statusvar;
 pub use tidb_variable::sysvar;
 pub use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;
-pub use vars::{GlobalSysvars, SessionVars, VarError};
+pub use tidb_domain::global_sysvars::GlobalSysvars;
+pub use vars::{SessionVars, VarError};
 
 impl Session {
     /// The session's SQL killer (Go `SessionVars.SQLKiller`), where the
@@ -1592,7 +1628,10 @@ impl Session {
     pub fn record_last_ddl_info(&mut self, query: &str) {
         static DDL_JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = DDL_JOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        self.vars.last_ddl_info = (query.to_owned(), seq);
+        self.vars.last_ddl_info = tidb_sessionstates::LastDDLInfo {
+            query: query.to_owned(),
+            seq_num: seq,
+        };
     }
 
     /// `@@tidb_last_ddl_info`: Go's `json.Marshal(LastDDLInfo)`.
@@ -1659,19 +1698,6 @@ impl Session {
                     collector.update(table_id, item.delta, item.count);
                 }
             }
-        } else if !delta.is_empty() {
-            // The standalone catalog has no Domain stats worker. Preserve Go's
-            // post-commit collector boundary by publishing committed modify
-            // counts into the shared catalog only after its transaction lands.
-            let mut catalog = self
-                .catalog
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for (table_id, item) in delta {
-                if table_id > 0 {
-                    catalog.record_stats_modify_count(table_id, item.count);
-                }
-            }
         }
     }
 
@@ -1714,6 +1740,14 @@ impl Session {
     }
 
     /// Installs the node-global persisted analyze-job reader.
+    /// Installs the node's `GlobalPDHelper`.
+    pub fn set_approximate_table_count_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider>,
+    ) {
+        self.approximate_table_counts = provider;
+    }
+
     pub fn set_analyze_status_provider(
         &mut self,
         provider: std::sync::Arc<dyn AnalyzeStatusProvider>,
@@ -1735,6 +1769,37 @@ impl Session {
         self.bdr_role_store = Some(store);
     }
 
+    /// Installs the session's store's regions.
+    pub fn set_region_store(
+        &mut self,
+        regions: std::sync::Arc<dyn tidb_executor::region_map::RegionStore>,
+    ) {
+        self.regions = regions;
+    }
+
+    /// The session's store's regions (Go `kv.SplittableStore`).
+    #[must_use]
+    pub fn region_store(&self) -> std::sync::Arc<dyn tidb_executor::region_map::RegionStore> {
+        std::sync::Arc::clone(&self.regions)
+    }
+
+    /// Installs the session's store's global-id allocator.
+    pub fn set_global_id_generator(&mut self, ids: std::sync::Arc<dyn GlobalIdGenerator>) {
+        self.global_ids = Some(ids);
+    }
+
+    /// Go `meta.Mutator.GenGlobalID` in a new transaction on the session's
+    /// store.
+    ///
+    /// # Panics
+    /// On a session no store installed an allocator in, as Go's nil store.
+    pub(crate) fn gen_global_id(&self) -> Result<i64, DriverError> {
+        self.global_ids
+            .as_ref()
+            .expect("the session's store is installed by the node that opened it")
+            .gen_global_id()
+    }
+
     /// Installs the cluster store `ADMIN SHOW DDL JOBS` and
     /// `information_schema.DDL_JOBS` read.
     pub fn set_ddl_job_history_store(&mut self, store: std::sync::Arc<dyn DdlJobHistoryStore>) {
@@ -1745,6 +1810,13 @@ impl Session {
     #[must_use]
     pub fn has_bdr_role_store(&self) -> bool {
         self.bdr_role_store.is_some()
+    }
+
+    /// Go `meta.Mutator`'s `BDRRole` key on the session's store.
+    fn bdr_role_store(&self) -> Result<std::sync::Arc<dyn BdrRoleStore>, DriverError> {
+        self.bdr_role_store.clone().ok_or_else(|| {
+            DriverError::unsupported("ADMIN SET/UNSET/SHOW BDR ROLE needs this node's TiKV meta store")
+        })
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the
@@ -1857,9 +1929,11 @@ impl Session {
             ))
             .unwrap_or_else(|error| panic!("boot the mock store: {error}")),
         };
-        domain
+        let mut session = domain
             .new_session()
-            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
+        session.use_test_database();
+        session
     }
 
     /// Go testkit's `CreateMockStore` + `NewTestKit`: a session over a
@@ -1874,9 +1948,41 @@ impl Session {
     pub fn new_on_mock_store() -> Self {
         let domain = crate::domain::mock_store::MockStoreDomain::create()
             .unwrap_or_else(|error| panic!("boot the mock store: {error}"));
-        domain
+        let mut session = domain
             .new_session()
-            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
+        session.use_test_database();
+        session
+    }
+
+    /// [`Self::new_on_mock_store`] over a store with `nodes` TiFlash stores
+    /// (Go `mockstore.WithMockTiFlash`).
+    ///
+    /// # Panics
+    ///
+    /// When the embedded store cannot boot.
+    #[must_use]
+    pub fn new_with_mock_tiflash(nodes: usize) -> Self {
+        let domain = crate::domain::mock_store::MockStoreDomain::create_with_mock_tiflash(nodes)
+            .unwrap_or_else(|error| panic!("boot the mock store: {error}"));
+        let mut session = domain
+            .new_session()
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
+        session.use_test_database();
+        session
+    }
+
+    /// The `use test` the ported Go tests begin with (Go's `CurrentDB` starts
+    /// empty): this harness's sessions select the bootstrapped `test` schema.
+    fn use_test_database(&mut self) {
+        self.select_database("test")
+            .unwrap_or_else(|error| panic!("use test: {error:?}"));
+    }
+
+    /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
+    /// was built from.
+    pub fn set_info_schema(&mut self, info_schema: Arc<tidb_cluster::cluster_catalog::ClusterCatalog>) {
+        self.info_schema = Some(info_schema);
     }
 
     /// Go `SessionVars.CurrentDB`. Empty when no database is selected.
@@ -1918,15 +2024,9 @@ impl Session {
         }
     }
 
-    /// Selects NO schema, which is the state a connection that authenticated
-    /// without an initial database is in: Go's `SessionVars.CurrentDB` is
-    /// empty and every unqualified name is `ErrNoDB` (`Error 1046`) until a
-    /// `USE` runs.
-    ///
-    /// [`Session::default`] selects `test` because that is what a `mysql`
-    /// client's own default gives a fresh connection; a front end whose
-    /// handshake carried no schema at all -- or a harness replaying one --
-    /// needs to say so, and this is the one way to.
+    /// Selects NO schema, Go's `CurrentDB = ""`: every unqualified name is
+    /// `ErrNoDB` (`Error 1046`) until a `USE` runs. A session starts in this
+    /// state; `DROP DATABASE` of the current schema returns to it.
     pub fn deselect_database(&mut self) {
         self.vars.current_db = String::new();
     }
@@ -1986,6 +2086,11 @@ impl Session {
 
     /// Clears the statement info for command paths that do not enter the
     /// normal executor lifecycle (for example `SET` and routed DDL).
+    /// Go `StmtCtx.SetMessage`: the OK packet's info for this statement.
+    pub(crate) fn set_statement_message(&mut self, message: String) {
+        self.statement_message = message;
+    }
+
     pub fn clear_statement_message(&mut self) {
         self.statement_message.clear();
     }
@@ -2113,10 +2218,12 @@ impl Session {
     /// session.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        crate::domain::mock_store::domain_of_catalog(&catalog)
+        let mut session = crate::domain::mock_store::domain_of_catalog(&catalog)
             .expect("a catalog of a session on a store")
             .new_session()
-            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
+        session.use_test_database();
+        session
     }
 
     /// Installs the server-owned spill policy for every statement created by
@@ -2840,20 +2947,30 @@ impl Session {
 
     pub fn record_parse_failure(&mut self, error: &DriverError) {
         let reported = error.clone().to_mysql_error();
-        self.record_parse_failure_coded(reported.code, reported.message);
+        self.record_parse_failure_coded(reported.code, reported.message, reported.identity);
     }
 
     /// [`Self::record_parse_failure`] for front ends whose parse door
-    /// surfaces an already-classified `(code, message)` error.
-    pub fn record_parse_failure_coded(&mut self, code: u16, message: String) {
+    /// surfaces an already-classified error.
+    pub fn record_parse_failure_coded(
+        &mut self,
+        code: u16,
+        message: String,
+        identity: Option<tidb_error::terror::TerrorIdentity>,
+    ) {
         self.warnings.clear();
-        self.append_warning(WarningLevel::Error, code, message);
+        self.append_sql_warning(SqlWarning::from_error(WarningLevel::Error, code, message, identity));
     }
 
     /// go `driver_tidb.go:376`: every statement error lands in the statement
     /// warning buffer (DDL 1050/1007/1008/1051/1146 et al reach SHOW
     /// WARNINGS exactly as the query door's errors do).
-    pub fn record_ddl_failure(&mut self, code: u16, message: String) {
+    pub fn record_ddl_failure(
+        &mut self,
+        code: u16,
+        message: String,
+        identity: Option<tidb_error::terror::TerrorIdentity>,
+    ) {
         // go `driver_tidb.go:376` appends the error, but the DDL execution
         // path may have already recorded it (HandleStatusErr in the
         // executor's own error handling). Skip the duplicate so SHOW
@@ -2861,11 +2978,11 @@ impl Session {
         if self
             .warnings
             .last()
-            .map_or(false, |w| w.code == code && w.message == message)
+            .map_or(false, |w| w.code() == code && w.message() == message)
         {
             return;
         }
-        self.append_warning(WarningLevel::Error, code, message);
+        self.append_sql_warning(SqlWarning::from_error(WarningLevel::Error, code, message, identity));
     }
 
     /// Clears the statement warning buffer (go `ResetContextOfStmt`'s
@@ -2956,7 +3073,7 @@ impl Session {
                 // error (oracle g-group: `JSON_OBJECTAGG(NULL, 1)` answers
                 // 3158 with an EMPTY SHOW WARNINGS).
                 self.warnings
-                    .retain(|w| !(w.code == reported.code && w.message == reported.message));
+                    .retain(|w| !(w.code() == reported.code && w.message() == reported.message));
             }
             if reported.code != 1148 && reported.code != 3057 && !eval_fatal {
                 // The inner execution may have already filed this exact
@@ -2964,10 +3081,10 @@ impl Session {
                 // delegated-account route); go's SHOW WARNINGS carries it
                 // once.
                 let duplicated = self.warnings.last().map_or(false, |w| {
-                    w.code == reported.code && w.message == reported.message
+                    w.code() == reported.code && w.message() == reported.message
                 });
                 if !duplicated {
-                    error_row = Some((reported.code, reported.message));
+                    error_row = Some(reported);
                 }
             }
         }
@@ -2976,8 +3093,13 @@ impl Session {
         // `TiDBContext.ExecuteStmt` files the error with
         // `StmtCtx.AppendError`: its warning count excludes the error row.
         self.finish_statement_observation(result);
-        if let Some((code, message)) = error_row {
-            self.append_warning(WarningLevel::Error, code, message);
+        if let Some(reported) = error_row {
+            self.append_sql_warning(SqlWarning::from_error(
+                WarningLevel::Error,
+                reported.code,
+                reported.message,
+                reported.identity,
+            ));
         }
     }
 }
@@ -3178,6 +3300,8 @@ mod tests_column_defaults;
 mod tests_column_prune;
 #[cfg(test)]
 mod tests_compare_refinement;
+#[cfg(test)]
+mod tests_compile_path;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]
@@ -3447,6 +3571,109 @@ impl tidb_executor::sessionctx::SessionContext for Session {
     fn privilege_manager(&self) -> &dyn tidb_executor::sessionctx::PrivilegeManager {
         self
     }
+
+    fn privilege_checks_bypassed(&self) -> bool {
+        self.privilege_bypassed
+    }
+
+    fn has_privilege_registry(&self) -> bool {
+        self.privileges.is_some()
+    }
+
+    fn user_vars(&self) -> &tidb_expr::user_vars::UserVars {
+        &self.user_vars
+    }
+
+    fn append_sql_warning(&mut self, warning: tidb_util::context::SqlWarn) {
+        Session::append_sql_warning(self, warning);
+    }
+
+    fn in_txn(&self) -> bool {
+        self.in_transaction()
+    }
+
+    fn txn_is_staleness(&self) -> bool {
+        self.historical_read_ts().is_some()
+    }
+
+    fn set_system_var(&mut self, name: &str, value: String) -> Result<(), DriverError> {
+        self.set_session_sys_var(name, value)
+    }
+
+    fn set_global_sys_var(&mut self, name: &str, value: String) -> Result<(), DriverError> {
+        self.set_node_wide_sys_var(name, value, true)
+    }
+
+    fn set_instance_sys_var(&mut self, name: &str, value: String) -> Result<(), DriverError> {
+        self.set_node_wide_sys_var(name, value, false)
+    }
+
+    fn load_snapshot_info_schema_if_needed(
+        &mut self,
+        old_ts: u64,
+        is_txn_read_ts: bool,
+    ) -> Result<(), DriverError> {
+        self.load_snapshot_schema_after_set(old_ts, is_txn_read_ts)
+    }
+}
+
+impl tidb_planner::plan_builder::stmt_build::SessionPlanContext for Session {
+    fn request_dynamic_verification(&self, privilege: &str, with_grant: bool) -> bool {
+        self.has_dynamic_privilege(privilege, with_grant)
+    }
+
+    fn request_dynamic_verification_with_user(
+        &self,
+        privilege: &str,
+        _with_grant: bool,
+        user: &str,
+        host: &str,
+    ) -> bool {
+        self.target_has_dynamic_privilege(user, host, privilege)
+    }
+
+    fn login_user(&self) -> Option<String> {
+        // Go `SessionVars.User.Username`: the name the process list shows.
+        self.current_identity()
+            .is_some()
+            .then(|| self.process_list_user())
+    }
+
+    fn user_identity(&self) -> Option<(String, String)> {
+        self.current_identity()
+            .map(|(user, host)| (user.to_owned(), host.to_owned()))
+    }
+
+    fn process_info(&self, connection_id: u64) -> Option<(String, String)> {
+        let row = self.process.as_ref().and_then(|guard| {
+            guard
+                .registry()
+                .snapshot()
+                .into_iter()
+                .find(|row| row.id == connection_id)
+        })?;
+        // The front end stores the display address (Go Host + Port); the
+        // account match needs the presented host without its port.
+        let host = row
+            .host
+            .rsplit_once(':')
+            .filter(|(host, port)| {
+                port.parse::<u16>().is_ok()
+                    && (!host.contains(':') || (host.starts_with('[') && host.ends_with(']')))
+            })
+            .map_or(row.host.as_str(), |(host, _)| {
+                host.trim_start_matches('[').trim_end_matches(']')
+            })
+            .to_owned();
+        Some((row.user, host))
+    }
+
+    fn is_auto_analyze_process(&self, connection_id: u64) -> bool {
+        // Go `sm != nil && handleutil.GlobalAutoAnalyzeProcessList.Contains(id)`:
+        // the session manager is the process registry this session sits in.
+        self.process.is_some()
+            && tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(connection_id)
+    }
 }
 
 impl tidb_executor::sessionctx::PrivilegeManager for Session {
@@ -3466,5 +3693,26 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
     ) -> bool {
         // The registry's masks are Go's `mysql.PrivilegeType` bits.
         self.has_any_scoped_privilege(database, table, privilege.0)
+    }
+
+    fn get_all_roles(&self, user: &str, host: &str) -> Vec<(String, String)> {
+        self.privileges.as_ref().map_or_else(Vec::new, |registry| {
+            registry.granted_roles(&(user.to_owned(), host.to_owned()))
+        })
+    }
+
+    fn get_default_roles(&self, user: &str, host: &str) -> Vec<(String, String)> {
+        self.privileges.as_ref().map_or_else(Vec::new, |registry| {
+            registry.default_roles(&(user.to_owned(), host.to_owned()))
+        })
+    }
+
+    /// Go `checker.FindEdge` reads the privilege cache: a role edge written
+    /// into `mysql.role_edges` directly counts only after FLUSH PRIVILEGES.
+    fn find_edge(&self, role: &(String, String), user: &(String, String)) -> bool {
+        self.account_statement_privilege_cache
+            .as_ref()
+            .or(self.privileges.as_ref())
+            .is_some_and(|cache| cache.has_role(user, role))
     }
 }

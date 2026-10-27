@@ -40,7 +40,6 @@ use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 use tidb_expr::schema::Schema;
-use tidb_hack::GoCaseCompare;
 pub use tidb_planner::plan_builder::field_name::{
     default_field_display_name, strip_spec_field_comment_markers,
 };
@@ -48,9 +47,10 @@ pub use tidb_planner::plan_builder::field_name::{
 pub mod access;
 mod agg_build;
 mod catalog;
+mod table_resolver;
+pub(crate) use table_resolver::TableResolver;
 pub(crate) use catalog::sync_load;
 mod dml;
-mod errors;
 mod from;
 mod index_usage_reporter;
 pub mod infoschema_meta;
@@ -82,15 +82,15 @@ pub use dml::*;
 pub(crate) use from::*;
 pub use params::*;
 pub use set_opr::*;
-pub(crate) use subquery::*;
 pub(crate) use write_cast::*;
 
-pub(crate) use errors::coprocessor_evaluation_error;
-pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarError};
+pub mod error;
+pub(crate) use error::coprocessor_evaluation_error;
+pub use error::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarError};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-    run_select_on(sql, &Catalog::default(), &crate::StmtContext::for_query())
+    run_select_on(sql, &Catalog::mock(), &crate::StmtContext::for_query())
 }
 
 /// Parses and runs a single-table (or `FROM`-less) `SELECT` against `catalog`,
@@ -490,6 +490,15 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 message.clone(),
             ))
         }
+        tidb_planner::plan_base::PlanErrorKind::CannotAddForeign => DriverError::Mysql(
+            MysqlError::terror(&tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN, error.message()),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::GeneralUnsupportedDdl { message } => {
+            DriverError::Mysql(MysqlError::terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                message.clone(),
+            ))
+        }
         tidb_planner::plan_base::PlanErrorKind::InternalCoded { message } => {
             DriverError::Mysql(MysqlError::terror(
                 &tidb_error::plannererrors::ERR_INTERNAL,
@@ -744,12 +753,65 @@ pub fn plan_show_stmt(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::common_plans::Plan, DriverError> {
+) -> Result<
+    (
+        tidb_planner::common_plans::Plan,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    DriverError,
+> {
     let mut show = show.clone();
     tidb_planner::preprocess::resolve_show_stmt(&mut show, current_db, auth_user)
         .map_err(planner_error_to_driver)?;
     planner_bridge::physical_show_plan(&show, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
+}
+
+/// Go `Compile`'s build for a statement that is not a query or DML:
+/// `PlanBuilder.Build` over this catalog, answering Go's common plan and the
+/// visit infos `CheckPrivilege` reads.
+///
+/// # Errors
+///
+/// The builder's own refusals.
+pub fn plan_statement(
+    stmt: &tidb_ast::Stmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
+) -> Result<
+    (
+        tidb_planner::common_plans::Plan,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    DriverError,
+> {
+    planner_bridge::statement_plan(stmt, catalog, current_db, ctx, session_ctx)
+        .map_err(planner_error_to_driver)
+}
+
+/// Go `Compile` for `SET`: `buildSet` over this catalog, with the
+/// statement's visit infos (Go `CheckPrivilege` reads them before the
+/// executor runs). `set` is the statement with its system variables already
+/// read, as Go's `rewriteSystemVariable` reads them while building.
+///
+/// # Errors
+///
+/// A value's rewrite or subquery-evaluation error.
+pub fn plan_set_stmt(
+    set: &tidb_ast::SetStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::common_plans::Set,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    DriverError,
+> {
+    planner_bridge::set_plan(set, catalog, current_db, ctx).map_err(planner_error_to_driver)
 }
 
 /// The `PhysicalShow` a planned SHOW reads: the node whose rows the session
@@ -1269,17 +1331,17 @@ mod field_name_tests {
     #[test]
     fn a_null_literal_column_is_named_uppercase_null() {
         let ctx = crate::StmtContext::for_query();
-        let (columns, _) = run_select_meta_on("select null", &Catalog::default(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on("select null", &Catalog::mock(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
         // A parenthesized / unary-plus NULL reaches the same rule.
-        let (columns, _) = run_select_meta_on("select (null)", &Catalog::default(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on("select (null)", &Catalog::mock(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
     }
 
     /// The label of the one field of `sql`.
     fn label_of(sql: &str) -> String {
         let ctx = crate::StmtContext::for_query();
-        let (columns, _) = run_select_meta_on(sql, &Catalog::default(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on(sql, &Catalog::mock(), &ctx).unwrap();
         columns[0].0.clone()
     }
 
@@ -1359,7 +1421,7 @@ mod field_name_tests {
     /// column.
     #[test]
     fn a_parenthesized_or_unary_plus_column_is_named_like_the_column() {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
         let ctx = crate::StmtContext::for_query();
         for sql in [

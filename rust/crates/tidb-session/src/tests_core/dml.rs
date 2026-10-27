@@ -140,9 +140,9 @@ fn insert_conflict_policies() {
         StmtResult::Affected(1)
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1062);
+    assert_eq!(session.warnings()[0].code(), 1062);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Duplicate entry '1' for key 't.PRIMARY'"
     );
 
@@ -581,14 +581,14 @@ fn insert_casts_to_column_type() {
     session.apply_set("SET sql_mode = ''").unwrap();
     session.run("INSERT INTO t (v) VALUES ('abcdefg')").unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1406);
+    assert_eq!(session.warnings()[0].code(), 1406);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Data too long for column 'v' at row 1"
     );
     session.run("INSERT INTO t (i) VALUES ('x')").unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1366);
+    assert_eq!(session.warnings()[0].code(), 1366);
     assert_eq!(
         row_text(session.run("SELECT v FROM t")),
         [["ab"], ["NULL"], ["abcd"], ["NULL"]]
@@ -624,10 +624,10 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     // Both out-of-range rows warn; the two that fit stay silent.
     let warnings = session.warnings();
     assert_eq!(warnings.len(), 2);
-    assert_eq!(warnings[0].code, 1406);
-    assert_eq!(warnings[0].message, "Data too long for column 'a' at row 1");
-    assert_eq!(warnings[1].code, 1406);
-    assert_eq!(warnings[1].message, "Data too long for column 'a' at row 4");
+    assert_eq!(warnings[0].code(), 1406);
+    assert_eq!(warnings[0].message(), "Data too long for column 'a' at row 1");
+    assert_eq!(warnings[1].code(), 1406);
+    assert_eq!(warnings[1].message(), "Data too long for column 'a' at row 4");
     // The CLAMPED values are stored -- all four rows, in order.
     assert_eq!(
         row_text(session.run("SELECT a+0, b FROM tb ORDER BY b")),
@@ -639,7 +639,7 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     // turned the strict mode permissive would pass the first half alone.
     session.run("CREATE TABLE tt (a TINYINT)").unwrap();
     session.run("INSERT IGNORE INTO tt VALUES (1000)").unwrap();
-    assert_eq!(session.warnings()[0].code, 1264);
+    assert_eq!(session.warnings()[0].code(), 1264);
     assert_eq!(row_text(session.run("SELECT a FROM tt")), [["127"]]);
     crate::tests_support::assert_err(
         session.run("INSERT INTO tt VALUES (1000)"),
@@ -651,7 +651,7 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     session
         .run("INSERT IGNORE INTO ti VALUES ('12abc')")
         .unwrap();
-    assert_eq!(session.warnings()[0].code, 1366);
+    assert_eq!(session.warnings()[0].code(), 1366);
     assert_eq!(row_text(session.run("SELECT a FROM ti")), [["12"]]);
     crate::tests_support::assert_err(
         session.run("INSERT INTO ti VALUES ('12abc')"),
@@ -663,7 +663,7 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     session
         .run("INSERT IGNORE INTO td VALUES ('2020-13-45')")
         .unwrap();
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(row_text(session.run("SELECT a FROM td")), [["0000-00-00"]]);
     crate::tests_support::assert_err(
         session.run("INSERT INTO td VALUES ('2020-13-45')"),
@@ -676,7 +676,7 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     // SQL mode, and `IGNORE` overrides that promotion separately.
     session.run("CREATE TABLE nn (a INT NOT NULL)").unwrap();
     session.run("INSERT IGNORE INTO nn VALUES (NULL)").unwrap();
-    assert_eq!(session.warnings()[0].code, 1048);
+    assert_eq!(session.warnings()[0].code(), 1048);
     assert_eq!(row_text(session.run("SELECT a FROM nn")), [["0"]]);
     crate::tests_support::assert_err(
         session.run("INSERT INTO nn VALUES (NULL)"),
@@ -705,10 +705,10 @@ fn update_ignore_downgrades_a_value_error_to_a_warning() {
         StmtResult::Affected(1)
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1406);
+    assert_eq!(session.warnings()[0].code(), 1406);
     // Go's UPDATE IGNORE keeps the conversion's own text.
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Data Too Long, field len 2, data len 4"
     );
     assert_eq!(
@@ -747,7 +747,7 @@ fn update_ignore_downgrades_a_duplicate_key_to_a_warning() {
         StmtResult::Affected(0)
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1062);
+    assert_eq!(session.warnings()[0].code(), 1062);
     assert_eq!(
         row_text(session.run("SELECT id,u FROM update_ignore_key ORDER BY id")),
         [["1", "1"], ["2", "2"]]
@@ -808,7 +808,7 @@ fn a_bit_column_reports_an_overflow_as_data_too_long() {
 
     session.apply_set("SET sql_mode = ''").unwrap();
     session.run("INSERT INTO t VALUES (-1)").unwrap();
-    assert_eq!(session.warnings()[0].code, 1406);
+    assert_eq!(session.warnings()[0].code(), 1406);
     assert_eq!(row_text(session.run("SELECT a+0 FROM t")), [["1"]]);
 }
 
@@ -948,7 +948,7 @@ fn an_on_duplicate_assignment_warns_over_the_cast_value_and_its_own_row() {
     let warnings: Vec<(u16, String)> = session
         .warnings()
         .iter()
-        .map(|warning| (warning.code, warning.message.clone()))
+        .map(|warning| (warning.code(), warning.message().to_owned()))
         .collect();
     assert_eq!(
         warnings,
@@ -974,9 +974,9 @@ fn an_on_duplicate_assignment_warns_over_the_cast_value_and_its_own_row() {
         .run("INSERT INTO o VALUES (1,9,'2020-01-01') ON DUPLICATE KEY UPDATE d = 'nope'")
         .unwrap();
     let warning = session.warnings().last().cloned().expect("one warning");
-    assert_eq!(warning.code, 1292);
+    assert_eq!(warning.code(), 1292);
     assert_eq!(
-        warning.message,
+        warning.message(),
         "Incorrect datetime value: '0000-00-00 00:00:00' for column 'd' at row 1"
     );
 
@@ -985,9 +985,9 @@ fn an_on_duplicate_assignment_warns_over_the_cast_value_and_its_own_row() {
         .run("INSERT INTO o VALUES (2,9,'2020-01-01') ON DUPLICATE KEY UPDATE b = 99999999999999999999")
         .unwrap();
     let warning = session.warnings().last().cloned().expect("one warning");
-    assert_eq!(warning.code, 1264);
+    assert_eq!(warning.code(), 1264);
     assert_eq!(
-        warning.message,
+        warning.message(),
         "Out of range value for column 'b' at row 1"
     );
 }
@@ -1261,7 +1261,7 @@ fn an_assignment_cast_reports_cast_values_own_error() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>(),
         [(1292, "Truncated incorrect DOUBLE value: 'abc'".to_owned())]
     );
@@ -1272,7 +1272,7 @@ fn an_assignment_cast_reports_cast_values_own_error() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>(),
         [(
             1366,
@@ -1386,7 +1386,7 @@ fn a_point_update_casts_its_assignment_like_gos_fast_plan() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>()
     };
     session.run("SET sql_mode=''").unwrap();

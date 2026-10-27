@@ -16,14 +16,14 @@ use super::super::transactions::{
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::session_commit_protocol::SessionTransactionOptions;
+use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
-    RolledBackTransaction, TransactionCause,
+    RolledBackTransaction, TransactionCause, UndeterminedTransaction,
 };
 use tidb_txnkv::Key;
 
@@ -75,13 +75,16 @@ pub(super) struct MockCluster {
     /// (`SelectLockExec`'s `doLockKeys`) and failed on, for the statement
     /// owner to take back.
     pub(super) statement_lock_failure:
-        Mutex<Option<tidb_exec::cluster_table_storage::StatementLockFailure>>,
+        Mutex<Option<tidb_cluster::cluster_table_storage::StatementLockFailure>>,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
     /// Publications that actually carried mutations.
     pub(super) publications: AtomicUsize,
     pub(super) fail_commit: AtomicBool,
+    /// One-shot: the next publication loses its commit response, an
+    /// undetermined verdict.
+    pub(super) fail_next_commit_undetermined: AtomicBool,
     /// One-shot failure carried by the next ordinary snapshot future. Merely
     /// preparing and dropping it is harmless; waiting for a read reports it.
     pub(super) fail_next_prepared_snapshot: AtomicBool,
@@ -183,6 +186,17 @@ impl MockCluster {
                 detail: "the mock cluster refused this publication".to_owned(),
             });
         }
+        if self
+            .fail_next_commit_undetermined
+            .swap(false, Ordering::AcqRel)
+        {
+            return OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+                receipt,
+                cause: TransactionCause::Transport {
+                    detail: "commit response lost".to_owned(),
+                },
+            });
+        }
         let mut versions = self.versions.lock().expect("versions");
         for (key, _) in &staged {
             if let Some(last) = versions
@@ -281,11 +295,11 @@ impl ClusterSnapshot for MockSnapshot {
         _keys: &[Key],
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<(), StorageError> {
-        use tidb_exec::cluster_table_storage::StatementLockFailure;
+        use tidb_cluster::cluster_table_storage::StatementLockFailure;
         self.cluster.lock_waits.lock().unwrap().push(wait);
         let failure = if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             StatementLockFailure::Statement(
-                tidb_exec::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_cluster::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             )
         } else if self
             .cluster
@@ -649,7 +663,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_exec::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_cluster::cluster_table_storage::StatementLockFailure> {
         self.cluster.statement_lock_failure.lock().unwrap().take()
     }
 
@@ -721,7 +735,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
         }
         if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             return Ok(LockKeysOutcome::StatementError(
-                tidb_exec::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_cluster::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             ));
         }
         if self

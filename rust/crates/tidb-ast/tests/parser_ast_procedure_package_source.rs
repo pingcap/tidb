@@ -17,7 +17,7 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
-    AdminStmt, BinaryOp, ColumnType, ColumnTypeArg, CreateProcedureStmt, DdlStmt, Expr,
+    AdminStmt, BinaryOp, ColumnType, ColumnTypeArg, CreateProcedureStmt, Expr,
     NodeBox, ProcedureDeclaration, ProcedureHandlerAction, ProcedureHandlerCondition,
     ProcedureParameter, ProcedureParameterMode, ProcedureStatement, ProcedureWhen,
     QueryStmt, SelectField, SelectStatementKind, SelectStmt, SessionStmt, SetStmt, Stmt,
@@ -126,7 +126,7 @@ fn parameter(mode: ProcedureParameterMode, name: &str, ty: ColumnType) -> Proced
 
 /// Wraps a CREATE PROCEDURE into a restorable root.
 fn create_procedure(parameters: Vec<ProcedureParameter>, body: ProcedureStatement) -> Stmt {
-    Stmt::Ddl(NodeBox::new(DdlStmt::CreateProcedure(Box::new(
+    Stmt::Admin(NodeBox::new(AdminStmt::CreateProcedure(Box::new(
         CreateProcedureStmt {
             if_not_exists: false,
             name: vec!["proc_2".to_string()],
@@ -235,7 +235,7 @@ fn procedure_visitor_cover() {
     assert!(full_root.entered > 1);
 
     // DropProcedureStmt family.
-    let mut drop = Stmt::Ddl(NodeBox::new(DdlStmt::DropProcedure(Box::new(
+    let mut drop = Stmt::Admin(NodeBox::new(AdminStmt::DropProcedure(Box::new(
         tidb_ast::DropProcedureStmt {
             if_exists: false,
             name: vec!["proc_2".to_string()],
@@ -254,7 +254,7 @@ fn show_create_procedure() {
     assert_eq!(show.restore(), "SHOW CREATE PROCEDURE `proc_2`");
 
     // DROP PROCEDURE proc_2 has its own dedicated DDL statement type.
-    let drop = Stmt::Ddl(NodeBox::new(DdlStmt::DropProcedure(Box::new(
+    let drop = Stmt::Admin(NodeBox::new(AdminStmt::DropProcedure(Box::new(
         tidb_ast::DropProcedureStmt {
             if_exists: false,
             name: vec!["proc_2".to_string()],

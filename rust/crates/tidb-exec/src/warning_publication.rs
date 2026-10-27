@@ -23,16 +23,8 @@ use std::sync::Mutex;
 use tidb_datatype::ConversionWarningAppender;
 use tidb_error::terror::TerrorError;
 
-/// SHOW WARNINGS-compatible warning levels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WarningLevel {
-    /// A hard error retained in the statement warning list.
-    Error,
-    /// An ordinary warning.
-    Warning,
-    /// An informational note.
-    Note,
-}
+/// SHOW WARNINGS levels, Go `contextutil.WarnLevel*`.
+pub use tidb_util::context::WarningLevel;
 
 /// One ordered statement warning.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -239,7 +231,7 @@ pub fn warnings_to_json(warnings: &[StatementWarning]) -> Result<String, serde_j
         .iter()
         .map(|warning| {
             serde_json::json!({
-                "level": level_name(warning.level),
+                "level": warning.level.as_str(),
                 "msg": warning.message,
             })
         })
@@ -266,14 +258,6 @@ pub fn warnings_from_json(data: &str) -> Result<Vec<StatementWarning>, serde_jso
             StatementWarning::new(level, message)
         })
         .collect())
-}
-
-const fn level_name(level: WarningLevel) -> &'static str {
-    match level {
-        WarningLevel::Error => "Error",
-        WarningLevel::Warning => "Warning",
-        WarningLevel::Note => "Note",
-    }
 }
 
 fn level_from_name(level: &str) -> WarningLevel {

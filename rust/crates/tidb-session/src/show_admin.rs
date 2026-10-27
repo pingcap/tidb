@@ -7,7 +7,6 @@
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
-use crate::stats_statement_service::FlushStatsDeltaTargets;
 use crate::{DriverError, StmtOutput};
 
 /// Go `SimpleExec.executeFlush`.
@@ -16,11 +15,7 @@ use crate::{DriverError, StmtOutput};
 /// caches they reset are per-instance, and this node re-reads accounts from
 /// the cluster rather than holding the privilege cache Go notifies. The two
 /// that are NOT no-ops keep Go's exact answers.
-pub(crate) fn flush_stmt(
-    flush: &tidb_ast::FlushStmt,
-    catalog: &mut tidb_executor::Catalog,
-    stats_delta_targets: Option<FlushStatsDeltaTargets>,
-) -> Result<StmtOutput, DriverError> {
+pub(crate) fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError> {
     match &flush.target {
         tidb_ast::FlushTarget::Tables { read_lock, .. } => {
             if *read_lock {
@@ -39,16 +34,14 @@ pub(crate) fn flush_stmt(
                 )));
             }
         }
-        // Go dumps buffered statistics deltas to stats_meta. The embedded
-        // tier derives the net count from its row image and applies the
-        // committed modification count captured by DML.
-        tidb_ast::FlushTarget::StatsDelta { .. } => match stats_delta_targets {
-            Some(FlushStatsDeltaTargets::All) => catalog.flush_stats_delta(),
-            Some(FlushStatsDeltaTargets::Tables(ids)) if !ids.is_empty() => {
-                catalog.flush_stats_delta_for(&ids);
-            }
-            _ => {}
-        },
+        // Go `executeFlushStatsDeltaOnCurrentInstance` dumps the domain's
+        // buffered deltas through the statistics handle: the session's node
+        // routes the statement to its statistics service.
+        tidb_ast::FlushTarget::StatsDelta { .. } => {
+            return Err(DriverError::unsupported(
+                "statistics statements run on the session's node",
+            ));
+        }
         tidb_ast::FlushTarget::ClientErrorsSummary => {
             tidb_error::tidb::infoschema::flush_stats();
         }
@@ -282,7 +275,6 @@ impl crate::Session {
                     tidb_executor::split_region::split_region(
                         split,
                         table,
-                        catalog,
                         &ctx,
                         wait_finish,
                         timeout,
@@ -328,9 +320,13 @@ impl crate::Session {
                     }
                     Some(tidb_executor::TableEntry::Kv(table)) => {
                         // Every table of a session shares one storage, so
-                        // one coprocessor client and one snapshot.
+                        // one coprocessor client and one snapshot: Go
+                        // `GetClient()` and `getSnapshotTS()`.
                         if client.is_none() {
-                            client = table.coprocessor_client();
+                            client = table
+                                .store
+                                .client()
+                                .map(|client| (client, table.store.start_ts()));
                         }
                         contexts.push(tidb_executor::checksum::ChecksumContext::new(
                             database, table,

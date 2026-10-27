@@ -19,12 +19,12 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
-use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_cluster::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
+use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
-use crate::vars::GlobalSysvars;
+use crate::GlobalSysvars;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
@@ -377,7 +377,7 @@ mod tests {
         let bindings = StoredBindings {
             opener,
             catalog: Arc::new(SharedClusterCatalog::new(
-                tidb_exec::cluster_catalog::ClusterCatalog {
+                tidb_cluster::cluster_catalog::ClusterCatalog {
                     resource_groups: Vec::new(),
                     policies: Vec::new(),
                     schema_version: 0,

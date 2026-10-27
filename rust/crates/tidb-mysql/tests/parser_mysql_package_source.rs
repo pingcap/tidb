@@ -250,17 +250,17 @@ fn test_priv_string() {
     assert_eq!(OperateViewPriv.set_string(), "Operate View");
     assert_eq!(AllPriv.0, 1 << 34);
     assert_eq!(ExtendedPriv.0, 1 << 35);
-    assert!(ALL_GLOBAL_PRIVILEGES.contains(&OperateViewPriv));
-    assert!(ALL_DATABASE_PRIVILEGES.contains(&OperateViewPriv));
-    assert!(ALL_TABLE_PRIVILEGES.contains(&OperateViewPriv));
+    assert!(ALL_GLOBAL_PRIVS.contains(&OperateViewPriv));
+    assert!(ALL_DB_PRIVS.contains(&OperateViewPriv));
+    assert!(ALL_TABLE_PRIVS.contains(&OperateViewPriv));
 }
 
 #[test]
 fn test_priv_column() {
-    for privilege in ALL_GLOBAL_PRIVILEGES
+    for privilege in ALL_GLOBAL_PRIVS
         .iter()
-        .chain(STATIC_GLOBAL_ONLY_PRIVILEGES)
-        .chain(ALL_DATABASE_PRIVILEGES)
+        .chain(STATIC_GLOBAL_ONLY_PRIVS)
+        .chain(ALL_DB_PRIVS)
     {
         assert!(!privilege.column_string().is_empty(), "{privilege}");
         assert_eq!(
@@ -272,7 +272,7 @@ fn test_priv_column() {
 
 #[test]
 fn test_priv_set_string() {
-    for privilege in ALL_TABLE_PRIVILEGES.iter().chain(ALL_COLUMN_PRIVILEGES) {
+    for privilege in ALL_TABLE_PRIVS.iter().chain(ALL_COLUMN_PRIVS) {
         assert!(!privilege.set_string().is_empty(), "{privilege}");
         assert_eq!(
             privilege_from_set_enum(privilege.set_string()),
@@ -302,7 +302,7 @@ fn test_priv_all_consistency() {
         )
     }
     assert_eq!(
-        ALL_GLOBAL_PRIVILEGES.len() + 1,
+        ALL_GLOBAL_PRIVS.len() + 1,
         PRIVILEGE_USER_COLUMNS.len()
     );
     assert_eq!(PRIVILEGE_USER_COLUMNS.len() + 2, PRIVILEGE_NAMES.len());

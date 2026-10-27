@@ -549,7 +549,12 @@ pub fn run_load_data(
                         return Err(error);
                     }
                     let rendered = error.to_mysql_error();
-                    ctx.append_warning_parts(rendered.code, &rendered.message);
+                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            rendered.code,
+            rendered.message.clone(),
+            rendered.identity,
+        ));
                     row.push(Datum::Null);
                 }
             }

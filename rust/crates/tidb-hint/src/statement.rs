@@ -27,6 +27,8 @@ pub struct HintWarning {
     pub code: u16,
     /// Warning message.
     pub message: String,
+    /// The Go error's class and code; `None` for a plain `errors.New`.
+    pub identity: Option<tidb_error::terror::TerrorIdentity>,
 }
 
 impl HintWarning {
@@ -34,20 +36,29 @@ impl HintWarning {
         Self {
             code: 1105,
             message: message.into(),
+            identity: None,
         }
     }
 
+    /// Go `plannererrors.ErrWarnConflictingHint`.
     pub(crate) fn conflicting(hint: impl Into<String>) -> Self {
-        Self {
-            code: 3126,
-            message: format!("Hint {} is ignored as conflicting/duplicated.", hint.into()),
-        }
+        Self::of(
+            &tidb_error::plannererrors::ERR_WARN_CONFLICTING_HINT,
+            format!("Hint {} is ignored as conflicting/duplicated.", hint.into()),
+        )
     }
 
+    /// Go `plannererrors.ErrInternal`.
     pub(crate) fn optimizer(message: impl Into<String>) -> Self {
+        Self::of(&tidb_error::plannererrors::ERR_INTERNAL, message.into())
+    }
+
+    /// A warning raised as the Go error `proto`.
+    pub fn of(proto: &tidb_error::terror::TerrorError, message: String) -> Self {
         Self {
-            code: 1815,
-            message: message.into(),
+            code: u16::try_from(proto.code().value()).expect("a MySQL error code"),
+            message,
+            identity: Some(proto.identity()),
         }
     }
 }

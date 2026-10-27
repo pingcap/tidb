@@ -29,7 +29,7 @@ fn numeric_literals() {
         StmtResult::Rows(vec![vec![Datum::Null]])
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1365);
+    assert_eq!(session.warnings()[0].code(), 1365);
 
     // Captured: a decimal comparison against an integer.
     assert_eq!(row_text(session.run("SELECT 1.5 > 1")), [["1"]]);
@@ -80,8 +80,8 @@ fn division_by_zero() {
         StmtResult::Rows(vec![vec![Datum::Null]])
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1365);
-    assert_eq!(session.warnings()[0].message, "Division by 0");
+    assert_eq!(session.warnings()[0].code(), 1365);
+    assert_eq!(session.warnings()[0].message(), "Division by 0");
     assert_eq!(
         row_text(session.run("SHOW WARNINGS")),
         [[
@@ -153,7 +153,7 @@ fn division_by_zero() {
         .unwrap();
     session.run("INSERT INTO t VALUES (1 / 0, 4)").unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1365);
+    assert_eq!(session.warnings()[0].code(), 1365);
 
     // A query keeps warning whatever the SQL mode says.
     session.apply_set("SET sql_mode = ''").unwrap();
@@ -519,7 +519,7 @@ fn string_arithmetic_nulls_and_warnings_follow_go_vectorization() {
             let warnings = session
                 .warnings()
                 .iter()
-                .map(|warning| (warning.code, warning.message.clone()))
+                .map(|warning| (warning.code(), warning.message().to_owned()))
                 .collect::<Vec<_>>();
             assert_eq!(warnings, expected, "{sql}/{vectorized}");
         }
@@ -560,7 +560,7 @@ fn implicit_arithmetic_string_literal_cast_warns_once_at_build_time() {
             let warnings = session
                 .warnings()
                 .iter()
-                .map(|w| (w.code, w.message.clone()))
+                .map(|w| (w.code(), w.message().to_owned()))
                 .collect::<Vec<_>>();
             assert_eq!(
                 warnings,
@@ -630,7 +630,7 @@ fn hybrid_arithmetic_and_binary_literal_casts_match_go_sql() {
             let warnings = session
                 .warnings()
                 .iter()
-                .map(|w| (w.code, w.message.as_str()))
+                .map(|w| (w.code(), w.message()))
                 .collect::<Vec<_>>();
             let expected = if left.starts_with("0x") {
                 vec![(

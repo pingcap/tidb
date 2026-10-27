@@ -41,7 +41,7 @@ use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{AnalyzeOptions, analyze_physical_table, analyze_table};
 use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
-use tidb_exec::table_info_build::{ClusteredIndexDefMode, build_table_info};
+use tidb_exec::table_info_build::build_table_info;
 use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::encode_table_row;
@@ -95,7 +95,7 @@ fn table_after_add_column() -> TableInfo {
     let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("the fixture is a CREATE TABLE");
     };
-    let mut table = build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On)
+    let mut table = build_table_info(create, "utf8mb4", "utf8mb4_bin")
         .expect("the fixture is a table this node can express");
     table.id = 4242;
     let added = table
@@ -211,7 +211,7 @@ fn virtual_index_samples_are_materialized_from_stored_base_columns() {
         panic!("CREATE TABLE")
     };
     let mut table =
-        build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On).unwrap();
+        build_table_info(create, "utf8mb4", "utf8mb4_bin").unwrap();
     table.id = 4242;
     let a = table
         .columns

@@ -26,13 +26,11 @@
 use std::sync::Arc;
 
 use tidb_executor::cluster_storage::ClusterTableStorage;
-use crate::cluster_transactions::ClusterTransactions;
 use crate::txn_manager::TxnManager;
-use crate::vars::GlobalSysvars;
 use crate::Session;
 
 use super::{
-    cluster_session_catalog_with_templates, ClusterLocalTemporaryIds, ClusterStatisticsLoading,
+    cluster_session_catalog_with_templates, ClusterStatisticsLoading,
     SharedClusterCatalog, SkippedTable, TableAutoIds,
 };
 
@@ -48,8 +46,6 @@ pub(super) struct CatalogFollower {
     /// rebuilt tables keep the ranges the old ones had reserved.
     auto_ids: Arc<dyn TableAutoIds>,
     statistics_loading: ClusterStatisticsLoading,
-    transactions: Arc<dyn ClusterTransactions>,
-    global_vars: GlobalSysvars,
     /// The schema version the session's tables were built from. A move in
     /// `catalog` past this is what makes the connection rebuild them.
     schema_version: i64,
@@ -59,14 +55,11 @@ pub(super) struct CatalogFollower {
 }
 
 impl CatalogFollower {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         catalog: Arc<SharedClusterCatalog>,
         storage: ClusterTableStorage,
         auto_ids: Arc<dyn TableAutoIds>,
         statistics_loading: ClusterStatisticsLoading,
-        transactions: Arc<dyn ClusterTransactions>,
-        global_vars: GlobalSysvars,
         schema_version: i64,
         skipped: Vec<SkippedTable>,
     ) -> Self {
@@ -75,8 +68,6 @@ impl CatalogFollower {
             storage,
             auto_ids,
             statistics_loading,
-            transactions,
-            global_vars,
             schema_version,
             skipped,
         }
@@ -119,21 +110,14 @@ impl CatalogFollower {
             &self.storage,
             None,
         );
-        built
-            .catalog
-            .set_local_temporary_id_allocator(Arc::new(ClusterLocalTemporaryIds {
-                transactions: Arc::clone(&self.transactions),
-                global_vars: self.global_vars.clone(),
-            }));
         self.statistics_loading.attach(&mut built.catalog);
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        // The region map is store metadata the schema rebuild does not own.
-        built.catalog.set_region_store(catalog.region_store());
         *catalog = built.catalog;
         drop(catalog);
         self.schema_version = loaded.schema_version;
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
+        session.set_info_schema(Arc::clone(&loaded));
         self.skipped = built.skipped;
     }
 }

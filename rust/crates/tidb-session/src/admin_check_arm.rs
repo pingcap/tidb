@@ -44,6 +44,7 @@
 //! answered OK. Same for the multi-table `ADMIN CHECK TABLE t1, t2` form,
 //! which Go's own planner rejects.
 
+use tidb_executor::KvTableDdl;
 use crate::*;
 
 impl Session {

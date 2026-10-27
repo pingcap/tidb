@@ -696,45 +696,84 @@ pub fn truncate_index_value(
     index_column: &IndexColumn,
     table_column: &TableColumn,
 ) -> Result<(), TableIndexError> {
-    if index_column.length == UNSPECIFIED_LENGTH {
-        return Ok(());
+    cut_datum_by_prefix_len(value, index_column.length, &table_column.field_type);
+    Ok(())
+}
+
+/// Go's prefix cut, the one body of `tablecodec.TruncateIndexValue` and
+/// `ranger.CutDatumByPrefixLen`: a string or bytes datum cut to `length`
+/// counted in bytes under the `binary`/`ascii` charsets of `column_type`
+/// (keeping a bytes datum's kind) and in Go runes (`bytes.Runes`) under
+/// every other, which always re-lands it as a string in `column_type`'s
+/// collation. Answers whether a cut happened.
+pub fn cut_datum_by_prefix_len(value: &mut Datum, length: i64, column_type: &FieldType) -> bool {
+    if length == UNSPECIFIED_LENGTH {
+        return false;
     }
     let was_bytes = match value {
         Datum::Bytes(_) => true,
         Datum::String(_) => false,
-        _ => return Ok(()),
+        _ => return false,
     };
     let Some(bytes) = value.as_raw_bytes().map(<[u8]>::to_vec) else {
-        return Ok(());
+        return false;
     };
-    let length = usize::try_from(index_column.length).unwrap();
-    let collation = table_column.field_type.collation();
-    match table_column.field_type.charset_name() {
+    let length = usize::try_from(length).unwrap_or(usize::MAX);
+    let collation = column_type.collation();
+    match column_type.charset_name() {
         "binary" | "ascii" => {
-            if bytes.len() > length {
-                let truncated = bytes[..length].to_vec();
-                *value = if was_bytes {
-                    Datum::new_bytes(truncated)
-                } else {
-                    Datum::new_collation_string(truncated, collation)
-                };
+            if bytes.len() <= length {
+                return false;
             }
+            let truncated = bytes[..length].to_vec();
+            *value = if was_bytes {
+                Datum::new_bytes(truncated)
+            } else {
+                Datum::new_collation_string(truncated, collation)
+            };
+            true
         }
         _ => {
-            let mut runes = Vec::new();
-            let mut rest = bytes.as_slice();
-            while !rest.is_empty() {
-                let (rune, width) = go_decode_rune(rest);
-                runes.push(rune);
-                rest = &rest[width..];
+            let runes = go_runes(&bytes);
+            if runes.len() <= length {
+                return false;
             }
-            if runes.len() > length {
-                let truncated: String = runes[..length].iter().collect();
-                *value = Datum::new_collation_string(truncated.into_bytes(), collation);
-            }
+            let truncated: String = runes[..length].iter().collect();
+            *value = Datum::new_collation_string(truncated.into_bytes(), collation);
+            true
         }
     }
-    Ok(())
+}
+
+/// Go `ranger.ReachPrefixLen`: whether the value is EXACTLY `length` long,
+/// counted as [`cut_datum_by_prefix_len`] counts.
+#[must_use]
+pub fn reach_prefix_len(value: &Datum, length: i64, column_type: &FieldType) -> bool {
+    if length == UNSPECIFIED_LENGTH {
+        return false;
+    }
+    let bytes = match value {
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        Datum::String(string) => string.bytes(),
+        _ => return false,
+    };
+    let length = usize::try_from(length).unwrap_or(usize::MAX);
+    match column_type.charset_name() {
+        "binary" | "ascii" => bytes.len() == length,
+        _ => go_runes(bytes).len() == length,
+    }
+}
+
+/// Go `bytes.Runes`: every invalid byte is its own `U+FFFD`.
+fn go_runes(bytes: &[u8]) -> Vec<char> {
+    let mut runes = Vec::new();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let (rune, width) = go_decode_rune(rest);
+        runes.push(rune);
+        rest = &rest[width..];
+    }
+    runes
 }
 
 /// Truncates every indexed value using table/index metadata.

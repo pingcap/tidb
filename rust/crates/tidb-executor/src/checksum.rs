@@ -21,8 +21,8 @@
 //! them; every region's `tipb.ChecksumResponse` folds into its table's
 //! answer by `updateChecksumResponse`.
 //!
-//! The requests go through the node's coprocessor client
-//! ([`PushdownScanner::checksum`]). The in-process engine has none: it
+//! The requests go through the node's coprocessor client (Go
+//! `distsql.Checksum` over `GetClient()`). The in-process engine has none: it
 //! stands in for the oracle's embedded unistore, whose
 //! `handleCopChecksumRequest` answers every region request with the fixed
 //! `ChecksumResponse{Checksum: 1, TotalKvs: 1, TotalBytes: 1}`, and an
@@ -36,7 +36,7 @@ use tidb_datatype::Datum;
 use tidb_distsql::{DatumRange, RequestBuilder, TransportRequest};
 use tidb_proto::tipb;
 
-use crate::remote_scan::{PushdownScanner, PushdownScannerError};
+use crate::storage::StorageError;
 use crate::{DriverError, ExecError, StmtContext};
 
 /// Go `checksumContext`: one table of the statement, with the metadata its
@@ -85,7 +85,7 @@ struct RequestSettings {
 /// Go `ChecksumTableExec`.
 pub struct ChecksumTableExec {
     tables: Vec<ChecksumContext>,
-    client: Option<Arc<dyn PushdownScanner>>,
+    client: Option<Arc<dyn tidb_txnkv::Client>>,
     settings: RequestSettings,
 }
 
@@ -253,7 +253,7 @@ impl ChecksumTableExec {
     #[must_use]
     pub fn new(
         tables: Vec<ChecksumContext>,
-        client: Option<Arc<dyn PushdownScanner>>,
+        client: Option<Arc<dyn tidb_txnkv::Client>>,
         start_ts: u64,
         explicit_request_source_type: String,
         ctx: &StmtContext,
@@ -369,11 +369,12 @@ impl ChecksumTableExec {
             );
             return Ok(response);
         };
-        let mut result = client.checksum(request).map_err(|error| match error {
-            PushdownScannerError::Backend(error) => DriverError::from(error),
-            PushdownScannerError::Unsupported(reason) => DriverError::unsupported(reason),
-        })?;
-        while let Some(data) = result.next_raw().map_err(DriverError::from)? {
+        let backend = |error: String| DriverError::from(StorageError::Backend(error));
+        let mut result = tidb_distsql::checksum(client.as_ref(), request).map_err(backend)?;
+        while let Some(data) = result
+            .next_raw()
+            .map_err(|error| backend(error.to_string()))?
+        {
             let checksum = tipb::ChecksumResponse::decode(data.as_slice()).map_err(|error| {
                 DriverError::Exec(ExecError::Internal(error.to_string().into()))
             })?;
@@ -395,8 +396,6 @@ impl ChecksumTableExec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote_scan::{PushdownRowStream, PushdownScanRequest, RawResponseStream};
-    use crate::storage::StorageError;
 
     fn settings() -> RequestSettings {
         RequestSettings {
@@ -570,24 +569,24 @@ mod tests {
 
     struct Responses(VecDeque<Vec<u8>>);
 
-    impl RawResponseStream for Responses {
-        fn next_raw(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
-            Ok(self.0.pop_front())
+    impl tidb_txnkv::Response for Responses {
+        fn next(
+            &mut self,
+        ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+            Ok(self.0.pop_front().map(|data| tidb_txnkv::QueryResultSubset {
+                data: data.into(),
+                runtime: None,
+            }))
         }
+
+        fn close(&mut self) {}
     }
 
-    impl PushdownScanner for Regions {
-        fn open(
-            &self,
-            _request: &PushdownScanRequest,
-        ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
-            Err(PushdownScannerError::Unsupported("rows".to_owned()))
-        }
-
-        fn checksum(
+    impl tidb_txnkv::Client for Regions {
+        fn send(
             &self,
             request: &TransportRequest,
-        ) -> Result<Box<dyn RawResponseStream>, PushdownScannerError> {
+        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
             assert_eq!(
                 request.metadata().request_type,
                 tidb_distsql::RequestType::Checksum
@@ -596,10 +595,14 @@ mod tests {
                 self.0.iter().map(Message::encode_to_vec).collect(),
             )))
         }
+
+        fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+            true
+        }
     }
 
     fn exec(
-        client: Option<Arc<dyn PushdownScanner>>,
+        client: Option<Arc<dyn tidb_txnkv::Client>>,
         tables: Vec<ChecksumContext>,
     ) -> ChecksumTableExec {
         ChecksumTableExec {

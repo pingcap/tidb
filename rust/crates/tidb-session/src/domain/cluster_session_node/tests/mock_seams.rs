@@ -15,7 +15,7 @@ use crate::domain::session_api::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
-use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_cluster::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::db::DBInfo;
 
 /// The catalog writer, offline: the meta-key encoding and the 2PC are
@@ -90,10 +90,15 @@ fn mock_rename_table(
 }
 
 impl ClusterDdl for MockDdl {
+    // A cluster without TiFlash stores.
+    fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
+        Ok(0)
+    }
+
     fn execute(
         &self,
         statement: &DdlStatement,
-        _job_context: &tidb_executor::StmtContext,
+        _job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {
@@ -434,22 +439,22 @@ impl ClusterDdl for MockDdl {
                         let name = info.name.lowercase().to_owned();
                         let current = info.lock.as_ref().map(|lock| lock.read().clone());
                         if check {
-                            tidb_executor::ddl::table_lock::check_table_locked(
+                            tidb_ddl_build::table_lock::check_table_locked(
                                 &name,
                                 current.as_ref(),
                                 lock.tp,
                                 session,
                             )
-                            .map_err(map_error)?;
+                            .map_err(|error| map_error(error.into()))?;
                         } else {
-                            let locked = tidb_executor::ddl::table_lock::lock_table_in_one_step(
+                            let locked = tidb_ddl_build::table_lock::lock_table_in_one_step(
                                 &name,
                                 current.as_ref(),
                                 lock.tp,
                                 session,
                                 0,
                             )
-                            .map_err(map_error)?;
+                            .map_err(|error| map_error(error.into()))?;
                             info.lock = Some(tidb_model::GoShared::new(locked));
                         }
                     }
@@ -496,6 +501,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::RenameIndex { .. }
             | DdlStatement::ModifySchemaCharsetAndCollate { .. }
             | DdlStatement::ModifySchemaDefaultPlacement { .. }
+            | DdlStatement::ModifySchemaSetTiFlashReplica { .. }
             | DdlStatement::ModifyTableCharsetAndCollate { .. }
             | DdlStatement::CreateTableLike { .. }
             | DdlStatement::DropPrimaryKey { .. }
@@ -573,7 +579,7 @@ fn mock_unlock_tables(
         };
         let current = info.lock.as_ref().map(|lock| lock.read().clone());
         if let Some(next) =
-            tidb_executor::ddl::table_lock::unlock_table(current.as_ref(), session, is_cleanup)
+            tidb_ddl_build::table_lock::unlock_table(current.as_ref(), session, is_cleanup)
         {
             info.lock = next.map(tidb_model::GoShared::new);
         }

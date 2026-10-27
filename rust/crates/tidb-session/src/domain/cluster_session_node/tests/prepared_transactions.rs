@@ -31,7 +31,7 @@ use super::node_fixture::*;
 use crate::domain::resultset_source::ResultSetSource;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+use tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 
 /// Runs one statement through PREPARE + EXECUTE with no parameters, the way
 /// `COM_STMT_PREPARE`/`COM_STMT_EXECUTE` do for a statement neither the point

@@ -22,9 +22,9 @@
 //! once a name has reached a table, it binds the column references in that
 //! table's scope.
 
+pub use tidb_table::sequence::SequenceDef;
 use super::*;
 use crate::kv_table::TableCharset;
-use std::collections::{BTreeMap, HashSet};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
@@ -60,8 +60,17 @@ impl CatalogTableKey {
 
 pub(crate) mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
+mod key_info;
+mod planner_view;
+mod sequence;
+pub use sequence::SequenceSnapshot;
+pub(crate) use planner_view::{PlannerCatalog, PlannerSchemaView};
 mod statistics;
+mod statistics_access;
+mod temporary;
 pub use statistics::{PseudoStatsTable, StatisticsSource, StatisticsView};
+pub use statistics_access::StatisticsItemLoader;
+use statistics_access::StatisticsCache;
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -110,50 +119,6 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
-
-/// Go `PseudoTable`'s schema inputs from a catalog table, whose columns and
-/// indexes are all public; a column past the visible ones is hidden.
-fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo {
-    tidb_stats::PseudoTableInfo {
-        id: table.table_id,
-        pk_is_handle: table.pk_handle_offset().is_some(),
-        columns: table
-            .columns()
-            .iter()
-            .enumerate()
-            .map(|(offset, column)| tidb_stats::PseudoColumnInfo {
-                info: tidb_stats::ColumnInfo {
-                    id: column.id,
-                    name: column.name.go_to_lower(),
-                    primary_key: column
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                },
-                public: true,
-                hidden: table.is_hidden(offset),
-            })
-            .collect(),
-        indices: table
-            .indexes()
-            .iter()
-            .map(|index| tidb_stats::PseudoIndexInfo {
-                info: tidb_stats::IndexInfo {
-                    id: index.id,
-                    name: index.name.go_to_lower(),
-                    columns: index
-                        .column_offsets
-                        .iter()
-                        .filter_map(|offset| table.columns().get(*offset))
-                        .map(|column| column.name.go_to_lower())
-                        .collect(),
-                    mv_index: table.mv_key_part_source(index.id).is_some(),
-                },
-                public: true,
-            })
-            .collect(),
-    }
-}
-
 /// One schema: Go `model.DBInfo`, reduced to the metadata this catalog serves.
 #[derive(Clone, Debug, Default)]
 struct Database {
@@ -169,117 +134,15 @@ struct Database {
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
-/// Storage half of Go's statistics sync/async load worker.
-pub trait StatisticsItemLoader: Send + Sync {
-    /// Loads the requested items and returns refreshed planner tables for
-    /// publication into the in-process cache. Cluster loaders publish directly
-    /// to the domain source read by `StatisticsView` and return no copies.
-    fn load_items(
-        &self,
-        items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String>;
-}
-
-#[derive(Default)]
-struct StatisticsCache {
-    values: std::sync::RwLock<HashMap<i64, Arc<crate::access_cost::TableStatistics>>>,
-    loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
-    sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
-}
-
-impl std::fmt::Debug for StatisticsCache {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StatisticsCache")
-            .field(
-                "tables",
-                &self
-                    .values
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .len(),
-            )
-            .field(
-                "has_loader",
-                &self
-                    .loader
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_some(),
-            )
-            .finish()
-    }
-}
-
-/// A label-manager or meta-history failure, which Go reports as a plain
-/// error (1105). The in-memory stores fail only to encode or decode JSON.
-fn label_manager_error(error: impl std::fmt::Display) -> DriverError {
-    DriverError::unsupported(error.to_string())
-}
-
-fn enqueue_sync_load_failures(
-    requested_items: &[tidb_model::StatsLoadItem],
-    remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
-) {
-    for requested in requested_items {
-        if !remaining_items.contains(&requested.table_item_id) {
-            continue;
-        }
-        let mut item = requested.table_item_id;
-        item.is_sync_load_failed = true;
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
-    }
-}
-
-/// Go local temporary DDL reserves real IDs in an independent metadata
-/// transaction, sharing the persistent DDL allocator across every SQL node.
-pub trait LocalTemporaryTableIdAllocator: std::fmt::Debug + Send + Sync {
-    fn allocate(&self) -> Result<i64, DriverError>;
-}
-
 /// A catalog of databases and their tables, the position Go's `infoschema`
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct Catalog {
     /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
     plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
-    /// Go's meta key `BDRRole` (`meta.Mutator.GetBDRRole`): the cluster's
-    /// BDR role, "" when unset. It is store-global meta rather than schema,
-    /// so every snapshot and staged copy of this catalog shares it.
-    bdr_role: Arc<std::sync::RwLock<String>>,
-    /// The store's regions (`kv.SplittableStore` and its region cache),
-    /// store state every snapshot and staged copy of this catalog shares: the
-    /// in-process store's own map, or the cluster store a node hands in
-    /// through [`Self::set_region_store`].
-    regions: Arc<dyn crate::region_map::RegionStore>,
-    /// Go `infosync`'s label-rule manager. A store without PD gets the
-    /// in-memory `mockLabelManager`; like the BDR role it is store-global,
-    /// so every snapshot and staged copy of this catalog shares it, and a
-    /// DDL job's label writes are not undone by a rolled-back transaction
-    /// (Go writes them to PD, outside the job's transaction).
-    label_rules: Arc<dyn crate::label_manager::LabelRuleManager>,
-    /// Go's meta `DDLJobHistory` hash: every finished DDL job's JSON by job
-    /// ID, store-global like the label rules (Go files it in the job's own
-    /// transaction, which this tier commits as the DDL runs).
-    ddl_job_history: Arc<std::sync::RwLock<BTreeMap<i64, Vec<u8>>>>,
-    /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
-    /// cache, scoped to this in-process catalog and shared by its snapshots.
-    pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
-    local_temporary_ids: Option<Arc<dyn LocalTemporaryTableIdAllocator>>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
-    /// Go's process-global `config.MaxIndexLength`, scoped to this in-process
-    /// catalog so DDL tests and embedded callers can change it without
-    /// racing unrelated catalogs.
-    max_index_length: i64,
-    /// Go's process-global `config.EnableEnumLengthLimit`, likewise carried
-    /// with the catalog that owns the DDL metadata in this tier.
-    enable_enum_length_limit: bool,
-    /// Go's process-global `config.TableColumnCountLimit`, scoped to this
-    /// catalog for deterministic DDL tests and embedded callers.
-    table_column_count_limit: usize,
     /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
     ///
     /// A placement policy is a schema object in its own right, not an
@@ -288,12 +151,9 @@ pub struct Catalog {
     /// changes what every referencing object means at once. Both need the
     /// policy to live here rather than being copied into each user.
     policies: HashMap<String, tidb_model::PolicyInfo>,
-    next_policy_id: i64,
     /// Go `infoschema`'s resource groups by lowercase name, `default`
     /// always among them.
     resource_groups: HashMap<String, tidb_model::ResourceGroupInfo>,
-    next_database_id: i64,
-    next_table_id: i64,
     /// Sticky indication that a table with a foreign key has existed in
     /// this catalog. DML asks this on every write; keeping the bit avoids
     /// walking and inspecting every table in the common no-FK case. It is
@@ -335,24 +195,14 @@ pub struct Catalog {
     /// Go InfoSchema's table-ID index. Names resolve against this image's
     /// current entries without retaining a second copy of table storage.
     table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
-    /// The entries a session's LOCAL temporary tables are DISPLACING while
-    /// they are attached: `(folded database, folded name, the entry that was
-    /// there)`.
-    ///
-    /// Go models the same shadowing with a wrapper rather than a list:
-    /// `infoschema.SessionExtendedInfoSchema.TableByName` consults
-    /// `LocalTemporaryTables` first and falls through to the shared
-    /// infoschema, so `CREATE TEMPORARY TABLE t` in a schema that already has
-    /// a permanent `t` hides it for this session and leaves it untouched for
-    /// every other one. This tier resolves names against ONE table map, so
-    /// the overlay has to be spelled as "put the temporary one in the slot
-    /// and remember what came out"; [`Catalog::take_local_temporary_tables`]
-    /// puts the remembered entry back.
-    ///
-    /// Without the list the permanent table would be DESTROYED by the
-    /// temporary one that shadowed it -- the create would overwrite the slot
-    /// and the detach would empty it.
-    shadowed_by_local_temporary: Vec<(String, String, std::sync::Arc<TableEntry>)>,
+    /// Go `SessionExtendedInfoSchema.LocalTemporaryTables`: the LOCAL
+    /// temporary tables of the session running a statement, attached for
+    /// that statement. A name or an id resolves here before the shared
+    /// schema (`SessionExtendedInfoSchema.TableByName` / `TableByID`),
+    /// whether or not that schema still exists -- Go's `SessionTables` owns
+    /// each table's `DBInfo` -- and no enumeration of the shared schema lists
+    /// them.
+    local_temporary: Vec<(CatalogTableKey, std::sync::Arc<TableEntry>)>,
     /// While a session's LOCAL temporary tables are attached: the metadata
     /// version of the image without them, and the version attaching gave.
     /// Go's `SessionExtendedInfoSchema` keeps the shared infoschema's
@@ -368,591 +218,80 @@ pub struct Catalog {
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
     statistics: Arc<StatisticsCache>,
-    /// Go's committed-but-not-yet-flushed `statsDeltaMap`, represented here
-    /// on the catalog image so transaction rollback discards its own writes.
-    pending_stats_modify_count: HashMap<i64, i64>,
     statistics_view: Option<Arc<StatisticsView>>,
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
-    /// In-process backing for pinned Go's shared `mysql.analyze_options`
-    /// rows. Cluster execution uses the real system table.
-    analyze_options: Arc<std::sync::RwLock<HashMap<i64, crate::analyze::SavedAnalyzeOptions>>>,
-    /// The store's commit history, shared by every clone of this catalog
-    /// (working copies, sessions on the same store): a monotonic TSO-shaped
-    /// allocator plus a bounded ring of committed snapshots, which is what
-    /// serves Go's stale reads on a tier whose store otherwise keeps no
-    /// versions. See [`CommitHistory`].
-    commit_history: Arc<std::sync::Mutex<CommitHistory>>,
-    /// Memoized answer of walking EVERY database's table map for LOCAL and
-    /// GLOBAL temporary tables, valid as of one `metadata_version`. Go asks
-    /// this from `temptable`'s own session map in O(1); this tier's maps are
-    /// the catalog itself, so without the memo the walk runs twice per
-    /// statement (`txn`'s overlay guard swaps global row storage in and out,
-    /// and detaches locals), which is pure overhead for the sessions that
-    /// hold no temporary tables -- every OLTP workload. Keyed on
-    /// `metadata_version` because exactly its mutators move the table set;
-    /// [`Self::take_local_temporary_tables`] also drops it explicitly after
-    /// removing entries.
-    temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
-}
-
-/// A statement's infoschema view for sequence lookup and session LASTVAL state.
-/// Sharing the schema map is constant-time; names are resolved only when a
-/// sequence expression is used, like Go's SequenceOperatorProvider.
-#[derive(Debug, Default)]
-pub struct SequenceSnapshot {
-    databases: Arc<HashMap<String, Arc<Database>>>,
-    current_db: String,
-    /// Go SessionVars.SequenceState is keyed by sequence ID, not its name.
-    pub(crate) last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
-}
-
-impl SequenceSnapshot {
-    /// Pins the catalog's copy-on-write schema map and shares the session's
-    /// LASTVAL state. Allocator handles remain shared with the catalog.
-    #[must_use]
-    pub fn new(
-        catalog: &Catalog,
-        current_db: &str,
-        last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
-    ) -> Self {
-        Self {
-            databases: Arc::clone(&catalog.databases),
-            current_db: current_db.go_to_lower(),
-            last_values,
-        }
-    }
-
-    /// Go `getSchemaAndSequence` with the `CurrentDB` default: the schema and
-    /// sequence names as written.
-    pub(crate) fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
-        match path {
-            [name] => Some((self.current_db.as_str(), name.as_str())),
-            [database, name] => Some((database.as_str(), name.as_str())),
-            _ => None,
-        }
-    }
-
-    /// Qualified name for Go's sequence error messages.
-    pub(crate) fn key(&self, path: &[String]) -> String {
-        match path {
-            [name] => format!("{}.{}", self.current_db, name.go_to_lower()),
-            [database, name] => format!("{}.{}", database.go_to_lower(), name.go_to_lower()),
-            other => other
-                .iter()
-                .map(|part| part.go_to_lower())
-                .collect::<Vec<_>>()
-                .join("."),
-        }
-    }
-
-    /// Go GetSequenceByName: look up one table in the statement's schema,
-    /// then distinguish an absent table (1146) from a wrong object (1347).
-    pub(crate) fn resolve(&self, path: &[String]) -> Result<&SequenceDef, tidb_expr::EvalError> {
-        let entry = match path {
-            [name] => self
-                .databases
-                .get(&self.current_db)
-                .and_then(|database| database.tables.get(&name.go_to_lower())),
-            [database, name] => self
-                .databases
-                .get(&database.go_to_lower())
-                .and_then(|database| database.tables.get(&name.go_to_lower())),
-            _ => None,
-        };
-        match entry.map(Arc::as_ref) {
-            Some(TableEntry::Sequence(sequence)) => Ok(sequence),
-            Some(_) => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::WrongObject(self.key(path)),
-            )),
-            None => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::NotASequence(self.key(path)),
-            )),
-        }
-    }
-
-    /// Resolves a sequence without advancing it or changing LASTVAL state.
-    pub fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
-        self.resolve(path).map(|_| ())
-    }
-}
-
-/// An owned snapshot of the catalog fields Go's logical [`PlanBuilder`]
-/// reads. The executor catalog owns storage handles and mutable row state;
-/// the planner must see only immutable table/view metadata.
-pub(crate) struct PlannerCatalog {
-    current_database: String,
-    view: Arc<PlannerSchemaView>,
-    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
-    /// Go `SessionVars.HypoIndexes`, present only for an `EXPLAIN`.
-    hypo_indexes: Option<Arc<crate::ddl::HypoIndexes>>,
-    /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
-    hypo_tiflash_replicas: Option<Arc<crate::ddl::HypoTiFlashReplicas>>,
-    /// The table ids the open transaction has staged writes under, which Go
-    /// reads through `Context.HasDirtyContent` (`tableHasDirtyContent`).
-    dirty_tables: Vec<i64>,
-    /// Go's privilege manager as the planner sees it (`pm.RequestVerificationWithUser`).
-    privilege_verifier: Option<DefinerVerifier>,
-    /// The statement's metadata-lock map, which `buildDataSource` fills.
-    mdl_related_table: Option<crate::MdlRelatedTableRecorder>,
-}
-
-/// [`tidb_planner::plan_builder::visit_info::PrivilegeVerifier`] over the
-/// session's privilege closures.
-pub(crate) struct DefinerVerifier {
-    definer: crate::ViewDefinerPrivilegeCheck,
-    session: Option<crate::SessionPrivilegeCheck>,
-}
-
-impl tidb_planner::plan_builder::visit_info::PrivilegeVerifier for DefinerVerifier {
-    fn verify_with_user(
-        &self,
-        user: &str,
-        host: &str,
-        database: &str,
-        table: &str,
-        column: &str,
-        privilege: tidb_mysql::PrivilegeType,
-    ) -> bool {
-        (self.definer)(user, host, database, table, column, privilege)
-    }
-
-    fn request_verification(
-        &self,
-        database: &str,
-        table: &str,
-        column: &str,
-        privilege: tidb_mysql::PrivilegeType,
-    ) -> bool {
-        self.session
-            .as_ref()
-            .is_none_or(|check| check(database, table, column, privilege))
-    }
-}
-
-impl PlannerCatalog {
-    /// The statement's transaction state: which tables it has already
-    /// written, so the planner reads them through a `UnionScan`.
-    ///
-    /// Go's `HasDirtyContent` reads the transaction's membuffer, so only a
-    /// statement inside an open transaction can see a table as dirty; an
-    /// autocommit statement starts from a clean one.
-    pub(crate) fn with_dirty_tables(mut self, ctx: &crate::StmtContext) -> Self {
-        if ctx.pessimistic_transaction() || ctx.optimistic_transaction() {
-            self.dirty_tables = ctx.staged_writes().dirty_table_ids();
-        }
-        self
-    }
-
-    /// Go asks `privilege.GetPrivilegeManager(b.ctx)` while it expands a
-    /// `SQL SECURITY DEFINER` view; a session that enforces no privileges has
-    /// no manager and verifies nothing.
-    pub(crate) fn with_privilege_verifier(mut self, ctx: &crate::StmtContext) -> Self {
-        self.privilege_verifier = ctx.view_definer_privilege().map(|check| DefinerVerifier {
-            definer: check.clone(),
-            session: ctx.session_privilege().cloned(),
-        });
-        self
-    }
-
-    /// The statement's `GetRelatedTableForMDL()`, which the planner fills as it
-    /// resolves each stored table, a view's body included.
-    pub(crate) fn with_related_tables_for_mdl(mut self, ctx: &crate::StmtContext) -> Self {
-        self.mdl_related_table = ctx.mdl_related_table().cloned();
-        self
-    }
-
-    /// Go reads `SessionVars.HypoIndexes` and `HypoTiFlashReplicas` only
-    /// under `StmtCtx.InExplainStmt` (`getPossibleAccessPaths`,
-    /// `UsedHypoTiFlashReplicas`), so only an EXPLAIN's source carries them.
-    pub(crate) fn with_explain_hypo_state(mut self, ctx: &crate::StmtContext) -> Self {
-        if ctx.in_explain_stmt() {
-            self.hypo_indexes = ctx.hypo_indexes_shared();
-            self.hypo_tiflash_replicas = ctx.hypo_tiflash_replicas_shared();
-        }
-        self
-    }
-}
-
-/// Whether `database`.`name` is one of the virtual tables Go serves as a
-/// memory table: every `information_schema` table and the predefined
-/// `performance_schema` ones.
-/// Go `infoschema.IsClusterTableByName` and `buildTableMeta`: a CLUSTER_*
-/// table (and `tiflash_replica`, which reads from the DDL owner) is not a
-/// `LogicalMemTable`; `buildDataSource` plans it as a table whose scan runs
-/// on the TiDB store. Only `CLUSTER_SLOW_QUERY` has a primary key, and
-/// because its `time` column is not an integer, Go makes it a COMMON handle.
-fn mark_cluster_table(
-    table: &mut tidb_planner::plan_builder::catalog::SourceTable,
-    database: &str,
-    name: &str,
-) {
-    if !database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
-        || !crate::driver::infoschema_meta::is_cluster_table_name(name)
-    {
-        return;
-    }
-    table.is_memory_table = false;
-    table.is_cluster_table = true;
-    if !table.table_name.go_lower_eq("CLUSTER_SLOW_QUERY") {
-        return;
-    }
-    let Some(offset) = table.columns.iter().position(|column| {
-        column
-            .ret_type
-            .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
-    }) else {
-        return;
-    };
-    table.columns[offset].is_primary_key = true;
-    table.is_common_handle = true;
-    table.common_handle_version = 1;
-    table.handle_col_offsets = vec![offset];
-    table.common_handle_col_offsets = vec![offset];
-    table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
-    table.indexes = vec![tidb_planner::plan_builder::catalog::SourceIndex {
-        id: 0,
-        name: "primary".to_owned(),
-        columns: vec![tidb_planner::plan_builder::catalog::SourceIndexColumn {
-            name: table.columns[offset].name.clone(),
-            offset,
-            length: tidb_datatype::UNSPECIFIED_LENGTH,
-        }],
-        unique: true,
-        primary: true,
-        is_public: true,
-        is_visible: true,
-        ..tidb_planner::plan_builder::catalog::SourceIndex::default()
-    }];
-}
-
-pub(crate) fn is_virtual_schema_table(database: &str, name: &str) -> bool {
-    database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
-        || database.go_lower_eq(crate::driver::metricsschema::METRICS_SCHEMA)
-        || (database.go_lower_eq(crate::driver::perfschema::PERFORMANCE_SCHEMA)
-            && crate::driver::perfschema::is_predefined_table(name))
-}
-
-/// The planner's view of one schema image: the position Go's immutable
-/// `infoschema.InfoSchema` holds. Go builds it once per schema version and
-/// every statement plans against the shared value; this tier builds it once
-/// per catalog metadata version (the same epoch, see
-/// [`Catalog::metadata_version`]) and hands every statement the same `Arc`,
-/// rather than converting every column of every table per statement.
-#[derive(Debug, Default)]
-pub(crate) struct PlannerSchemaView {
-    databases: std::collections::HashSet<String>,
-    tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
-    views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
-    /// The sequences (Go `TableInfo.IsSequence()`), which a FROM reads as a
-    /// one-row dual and so carry no planner table.
-    sequences: HashMap<CatalogTableKey, String>,
-    /// The same image with the session's local temporary tables detached
-    /// (Go `temptable.DetachLocalTemporaryTableInfoSchema`), present only
-    /// while one is attached.
-    detached: Option<Arc<PlannerSchemaView>>,
-}
-
-impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
-    fn current_database(&self) -> &str {
-        &self.current_database
-    }
-
-    fn table_has_dirty_content(&self, table_ids: &[i64]) -> bool {
-        table_ids.iter().any(|id| self.dirty_tables.contains(id))
-    }
-
-    fn find_table(
-        &self,
-        db_name: &str,
-        table_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
-        self.view
-            .tables
-            .get(&CatalogTableKey::new(db_name, table_name))
-    }
-
-    fn database_exists(&self, db_name: &str) -> bool {
-        self.view.databases.contains(&db_name.go_to_lower())
-    }
-
-    fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
-        self.latest_index_schema.as_deref()
-    }
-
-    fn hypo_indexes(
-        &self,
-        db_name: &str,
-        table_name: &str,
-    ) -> Vec<tidb_planner::plan_builder::catalog::SourceIndex> {
-        let (Some(hypo), Some(table)) = (
-            self.hypo_indexes.as_deref(),
-            self.find_table(db_name, table_name),
-        ) else {
-            return Vec::new();
-        };
-        hypo.table_indexes(db_name, table_name)
-            .into_iter()
-            .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
-                id: index.id,
-                name: index.name.clone(),
-                columns: index
-                    .column_offsets
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(position, offset)| {
-                        table.column_at(*offset).map(|column| {
-                            tidb_planner::plan_builder::catalog::SourceIndexColumn {
-                                name: column.name.clone(),
-                                offset: *offset,
-                                length: index.prefix_length(position),
-                            }
-                        })
-                    })
-                    .collect(),
-                unique: index.unique,
-                primary: false,
-                is_public: true,
-                is_visible: index.visible,
-                is_columnar: false,
-                is_multi_valued: false,
-                global: index.global,
-                condition_expr_string: String::new(),
-                affect_column_offsets: Vec::new(),
-            })
-            .collect()
-    }
-
-    fn uses_hypo_tiflash_replicas(&self, db_name: &str, table_name: &str) -> bool {
-        self.hypo_tiflash_replicas
-            .as_deref()
-            .is_some_and(|replicas| replicas.contains(db_name, table_name))
-    }
-
-    fn find_table_ignoring_local_temporary(
-        &self,
-        db_name: &str,
-        table_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
-        self.view
-            .detached
-            .as_deref()
-            .unwrap_or(&self.view)
-            .tables
-            .get(&CatalogTableKey::new(db_name, table_name))
-    }
-
-    fn find_view_ignoring_local_temporary(
-        &self,
-        db_name: &str,
-        view_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
-        self.view
-            .detached
-            .as_deref()
-            .unwrap_or(&self.view)
-            .views
-            .get(&CatalogTableKey::new(db_name, view_name))
-    }
-
-    fn find_view(
-        &self,
-        db_name: &str,
-        view_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
-        self.view
-            .views
-            .get(&CatalogTableKey::new(db_name, view_name))
-    }
-
-    fn privilege_verifier(
-        &self,
-    ) -> Option<&dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier> {
-        self.privilege_verifier
-            .as_ref()
-            .map(|verifier| verifier as &dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier)
-    }
-
-    fn record_related_table_for_mdl(&self, table_id: i64) {
-        if let Some(record) = &self.mdl_related_table {
-            record(table_id);
-        }
-    }
-
-    fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
-        self.view
-            .sequences
-            .get(&CatalogTableKey::new(db_name, table_name))
-            .map(String::as_str)
-    }
-}
-
-/// The narrow store's commit history.
-///
-/// Go's stale reads run against TiKV's real MVCC versions; this tier's
-/// store is the catalog itself, so history is a ring of full snapshots
-/// keyed by a fabricated-but-real-shaped TSO. The TSOs matter as much as
-/// the snapshots: the corpus does arithmetic on them
-/// (`CAST(@ts AS UNSIGNED) - 1`) and Go's `CalculateAsOfTsExpr` validates
-/// the physical half against 2013-01-01, so a small-integer scheme would
-/// fail the very validation ported beside it.
-#[derive(Debug, Default)]
-pub struct CommitHistory {
-    /// The last TSO handed out; allocation is `max(now_ms << 18, last + 1)`,
-    /// strictly increasing like PD's.
-    last_tso: u64,
-    /// `(commit_ts, the catalog as of that commit)`, oldest first, capped at
-    /// [`COMMIT_HISTORY_CAP`].
-    entries: std::collections::VecDeque<(u64, CatalogSnapshot)>,
-}
-
-/// Committed data without live service owners. Go's snapshot infoschema is
-/// separate from its domain: retaining a version must not retain the history
-/// that contains it or the domain's statistics workers.
-#[derive(Clone, Debug)]
-struct CatalogSnapshot {
-    databases: Arc<HashMap<String, Arc<Database>>>,
-    max_index_length: i64,
-    enable_enum_length_limit: bool,
-    table_column_count_limit: usize,
-    policies: HashMap<String, tidb_model::PolicyInfo>,
-    next_policy_id: i64,
-    /// Go `infoschema`'s resource groups by lowercase name, `default`
-    /// always among them.
-    resource_groups: HashMap<String, tidb_model::ResourceGroupInfo>,
-    next_database_id: i64,
-    next_table_id: i64,
-    foreign_keys_present: bool,
-    table_locks_present: bool,
-    version: u64,
-    metadata_version: u64,
-    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
-    latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
-    planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
-    table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
-    shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
-    temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
-}
-
-impl CatalogSnapshot {
-    fn capture(catalog: &Catalog) -> Self {
-        Self {
-            databases: Arc::clone(&catalog.databases),
-            max_index_length: catalog.max_index_length,
-            enable_enum_length_limit: catalog.enable_enum_length_limit,
-            table_column_count_limit: catalog.table_column_count_limit,
-            policies: catalog.policies.clone(),
-            resource_groups: catalog.resource_groups.clone(),
-            next_policy_id: catalog.next_policy_id,
-            next_database_id: catalog.next_database_id,
-            next_table_id: catalog.next_table_id,
-            foreign_keys_present: catalog.foreign_keys_present,
-            table_locks_present: catalog.table_locks_present,
-            version: catalog.version,
-            metadata_version: catalog.metadata_version,
-            statistics_schemas: Arc::clone(&catalog.statistics_schemas),
-            latest_index_schema: catalog.latest_index_schema.clone(),
-            planner_view: catalog.planner_view.clone(),
-            table_id_names: catalog.table_id_names.clone(),
-            shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
-            temporary_sweep: catalog.temporary_sweep.clone(),
-        }
-    }
-
-    fn restore(&self, owner: &Catalog) -> Catalog {
-        Catalog {
-            plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
-            bdr_role: Arc::clone(&owner.bdr_role),
-            regions: Arc::clone(&owner.regions),
-            label_rules: Arc::clone(&owner.label_rules),
-            ddl_job_history: Arc::clone(&owner.ddl_job_history),
-            pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
-            local_temporary_ids: owner.local_temporary_ids.clone(),
-            databases: Arc::clone(&self.databases),
-            max_index_length: self.max_index_length,
-            enable_enum_length_limit: self.enable_enum_length_limit,
-            table_column_count_limit: self.table_column_count_limit,
-            policies: self.policies.clone(),
-            resource_groups: self.resource_groups.clone(),
-            next_policy_id: self.next_policy_id,
-            next_database_id: self.next_database_id,
-            next_table_id: self.next_table_id,
-            foreign_keys_present: self.foreign_keys_present,
-            table_locks_present: self.table_locks_present,
-            version: self.version,
-            metadata_version: self.metadata_version,
-            latest_index_schema: self.latest_index_schema.clone(),
-            planner_view: self.planner_view.clone(),
-            table_id_names: self.table_id_names.clone(),
-            shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
-            overlay_versions: None,
-            statistics: Arc::clone(&owner.statistics),
-            statistics_view: owner.statistics_view.clone(),
-            statistics_schemas: Arc::clone(&self.statistics_schemas),
-            analyze_options: Arc::clone(&owner.analyze_options),
-            commit_history: Arc::clone(&owner.commit_history),
-            temporary_sweep: self.temporary_sweep.clone(),
-            pending_stats_modify_count: owner.pending_stats_modify_count.clone(),
-        }
-    }
-}
-
-/// How many committed snapshots the ring keeps. The corpus needs the last
-/// two; eight leaves room for multi-statement recipes without letting a
-/// DML-heavy replay hold thousands of catalog clones.
-const COMMIT_HISTORY_CAP: usize = 8;
-
-impl Default for Catalog {
-    /// A catalog holding `test`, `INFORMATION_SCHEMA` and `mysql`, the three
-    /// schemas a freshly bootstrapped TiDB exposes that this tier can name.
-    ///
-    /// `INFORMATION_SCHEMA` is present because its tables are implemented
-    /// (see `tidb-session`'s `infoschema`), and holds no stored tables of its
-    /// own -- its rows are computed at query time.
-    ///
-    /// `mysql` is present as an OBJECT with no tables, and the distinction is
-    /// the whole point. Go's `pkg/session/bootstrap.go` creates it with 61
-    /// tables holding real rows (captured: `use mysql; show tables;` lists
-    /// `user`, `db`, `tidb`, the `stats_*` family and the rest; `select
-    /// count(*) from mysql.user` answers 1). This tier serves NONE of them,
-    /// and an absent table is exactly how it says so: `mysql.user` answers
-    /// `Table 'mysql.user' doesn't exist` (1146), the same refusal the
-    /// cluster tier's `SkippedTable` produces for a table it cannot back.
-    /// What the object buys is that `USE mysql` SUCCEEDS, and that matters
-    /// out of proportion to the statement it is: a failed `USE` leaves the
-    /// session pointed at the previous schema (captured -- Go does the same
-    /// on a genuinely unknown name), so every later unqualified name resolved
-    /// somewhere else entirely. One refused statement was silently
-    /// re-answering all the statements behind it.
-    ///
-    /// DIVERGENCE (documented): enumerating `mysql` reports it EMPTY --
-    /// `show tables` after `use mysql` returns no rows where Go returns 61,
-    /// and `information_schema.tables` likewise. That is the honest shape of
-    /// "the object exists and its contents are not ported": naming a table
-    /// refuses, only counting them under-reports.
-    ///
-    /// DIVERGENCE (documented): `performance_schema`, `sys` and
-    /// `metrics_schema` stay absent. Unlike `mysql` they gate no measured
-    /// statement in the corpus -- nothing `USE`s them and nothing connects
-    /// with them -- so seeding them would buy nothing and under-report more.
-    ///
-    /// `DROP DATABASE mysql` is refused by the session statement arm before
-    /// it calls [`Catalog::drop_database`], matching Go's
-    /// `[ddl:8267]Drop 'mysql' database is forbidden` guard. The catalog
-    /// remains deliberately generic: callers that operate on it directly
-    /// still own policy checks for protected schemas.
-    fn default() -> Self {
-        Self::seeded(true)
-    }
+    /// Memoized answer of walking EVERY database's table map for GLOBAL
+    /// temporary tables, valid as of one `metadata_version`. Without the memo
+    /// the walk runs twice per statement (`txn`'s overlay guard swaps global
+    /// row storage in and out), which is pure overhead for the sessions that
+    /// hold no temporary tables -- every OLTP workload.
+    temporary_sweep: Option<(u64, Vec<(String, String)>)>,
 }
 
 impl Catalog {
-    /// The seeded catalog [`Catalog::default`] answers. `with_metric_tables`
-    /// is false only while the metric tables themselves are being built, which
-    /// needs a catalog to build them in.
-    /// The seeded catalog without `metrics_schema`'s tables: the scratch the
-    /// metric tables are built in.
-    pub(crate) fn seeded_without_metric_tables() -> Self {
-        Self::seeded(false)
+    /// Go `infoschema.NewBuilder(...).InitWithDBInfos` before any stored
+    /// schema: only the memory schemas Go's `initVirtualTables` builds from
+    /// its `drivers` -- `INFORMATION_SCHEMA`, `PERFORMANCE_SCHEMA` and
+    /// `METRICS_SCHEMA` with their tables. Every stored schema (`test`,
+    /// `mysql`, `sys`, the user's) and every policy and resource group comes
+    /// from meta through [`Self::register_database_with_id_and_charset`],
+    /// [`Self::set_policy`] and [`Self::set_resource_group`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::virtual_schemas(true)
+    }
+
+    /// A schema image for tests that have no store behind them, Go
+    /// `infoschema.MockInfoSchema`'s role: the memory schemas plus the
+    /// stored schemas a bootstrapped TiDB holds -- `test`, `mysql` (as an
+    /// object with no tables: this tier serves none of its rows, so naming
+    /// one answers 1146 while `USE mysql` succeeds) and `sys` -- under
+    /// fixed ids, and meta's implicit `default` resource group.
+    #[must_use]
+    pub fn mock() -> Self {
+        let mut catalog = Self::new();
+        for (id, name) in [(1, DEFAULT_DATABASE), (3, SYSTEM_DATABASE), (6, "sys")] {
+            catalog.register_database_with_id_and_charset(name, id, TableCharset::default());
+        }
+        catalog.set_resource_group(tidb_model::ResourceGroupInfo::default_group());
+        catalog
+    }
+
+    /// The memory schemas with none of their tables: the scratch Go's
+    /// init-time builders (`infoschema.init`, `perfschema.Init`, the metric
+    /// tables) fill once per process.
+    pub(crate) fn memory_schema_scratch() -> Self {
+        Self::virtual_schemas(false)
+    }
+
+    /// Go `RegisterVirtualTable` for a memory schema whose `tables` its
+    /// init-time builder made: the schema joins every infoschema the DDL
+    /// reads (`TableByName`), as Go's `initVirtualTables` adds it.
+    pub(crate) fn register_virtual_schema(
+        db_id: i64,
+        name: &str,
+        tables: &std::collections::HashMap<String, Arc<TableEntry>>,
+    ) {
+        let tables = tables
+            .values()
+            .filter_map(|entry| match &**entry {
+                TableEntry::Kv(table) => Some(table.meta().read().clone()),
+                _ => None,
+            })
+            .collect();
+        tidb_metadef::virtual_tables::register_virtual_table(
+            tidb_metadef::virtual_tables::VirtualSchema {
+                db_info: tidb_model::db::DBInfo {
+                    id: db_id,
+                    name: tidb_ast::CiString::new(name.to_owned()),
+                    charset: tidb_mysql::charset::DefaultCharset.to_owned(),
+                    collate: tidb_mysql::charset::DefaultCollationName.to_owned(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::db::DBInfo::default()
+                },
+                tables,
+            },
+        );
     }
 
     /// The tables of `database` (a lowercase key), by stored name.
@@ -966,18 +305,8 @@ impl Catalog {
             .flat_map(|database| database.tables.iter())
     }
 
-    fn seeded(with_metric_tables: bool) -> Self {
+    fn virtual_schemas(with_memory_tables: bool) -> Self {
         let mut databases = HashMap::new();
-        databases.insert(
-            DEFAULT_DATABASE.to_owned(),
-            Database {
-                id: 1,
-                name: DEFAULT_DATABASE.to_owned(),
-                charset: TableCharset::default(),
-                placement_policy: None,
-                tables: HashMap::new(),
-            },
-        );
         databases.insert(
             "information_schema".to_owned(),
             Database {
@@ -987,41 +316,31 @@ impl Catalog {
                 name: "INFORMATION_SCHEMA".to_owned(),
                 charset: TableCharset::default(),
                 placement_policy: None,
-                tables: HashMap::new(),
+                // Go's `initVirtualTables` builds the memory schemas' tables
+                // into the infoschema itself, so they are ordinary objects to
+                // every name lookup; each schema's tables are built once per
+                // process, as Go's init does.
+                tables: if with_memory_tables {
+                    super::infoschema_meta::tables()
+                } else {
+                    HashMap::new()
+                },
             },
         );
-        databases.insert(
-            SYSTEM_DATABASE.to_owned(),
-            Database {
-                id: 3,
-                name: SYSTEM_DATABASE.to_owned(),
-                charset: TableCharset::default(),
-                placement_policy: None,
-                tables: HashMap::new(),
-            },
-        );
-        // go seeds metrics_schema/performance_schema/sys at bootstrap: the
-        // schemas exist (USE/SCHEMATA/SHOW DATABASES answer them). go's
-        // metrics_schema carries 642 storage-backed metric tables whose
+        // Go's metrics_schema carries 642 storage-backed metric tables whose
         // queries fail `query metric error: pd unavailable` (the metric
         // storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
-        let metric_tables = if with_metric_tables {
-            super::metricsschema::tables()
+        let (metric_tables, performance_tables) = if with_memory_tables {
+            (super::metricsschema::tables(), super::perfschema::tables())
         } else {
-            HashMap::new()
+            (HashMap::new(), HashMap::new())
         };
-        for (id, key, display) in [
+        for (id, key, display, tables) in [
             // Go `autoid.MetricSchemaDBID` and `PerformanceSchemaDBID`.
-            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA"),
-            ((1 << 62) | 10000, "performance_schema", "PERFORMANCE_SCHEMA"),
-            (6, "sys", "sys"),
+            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA", metric_tables),
+            ((1 << 62) | 10000, "performance_schema", "PERFORMANCE_SCHEMA", performance_tables),
         ] {
-            let tables = if key == "metrics_schema" {
-                metric_tables.clone()
-            } else {
-                HashMap::new()
-            };
             databases.insert(
                 key.to_owned(),
                 Database {
@@ -1033,61 +352,30 @@ impl Catalog {
                 },
             );
         }
-        let mut catalog = Catalog {
+        let catalog = Catalog {
             databases: Arc::new(
                 databases
                     .into_iter()
                     .map(|(name, database)| (name, Arc::new(database)))
                     .collect(),
             ),
-            max_index_length: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
-            enable_enum_length_limit: true,
-            table_column_count_limit: 1017,
             policies: HashMap::new(),
-            next_policy_id: 0,
-            resource_groups: HashMap::from([(
-                tidb_model::DEFAULT_RESOURCE_GROUP_NAME.to_owned(),
-                tidb_model::ResourceGroupInfo::default_group(),
-            )]),
-            next_database_id: 6,
-            next_table_id: 0,
+            resource_groups: HashMap::new(),
             version: 0,
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
-            bdr_role: Arc::default(),
-            regions: Arc::new(crate::region_map::LocalRegionStore::default()),
-            label_rules: Arc::new(crate::label_manager::MockLabelManager::default()),
-            ddl_job_history: Arc::default(),
-            // Go `defaultPDHelper`'s capacity and TTL.
-            pd_helper_cache: Arc::new(std::sync::Mutex::new(
-                crate::pd_helper::ApproximateTableCountCache::new(
-                    1024 * 1024,
-                    std::time::Duration::from_secs(30),
-                ),
-            )),
-            local_temporary_ids: None,
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
-            shadowed_by_local_temporary: Vec::new(),
+            local_temporary: Vec::new(),
             overlay_versions: None,
             statistics: Arc::default(),
-            pending_stats_modify_count: HashMap::new(),
             statistics_view: None,
             statistics_schemas: Arc::default(),
-            analyze_options: Arc::default(),
-            commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
             foreign_keys_present: false,
             table_locks_present: false,
         };
-        // Go's bootstrap builds the `information_schema` tables into the
-        // infoschema itself, so they are ordinary objects to every name
-        // lookup. Doing it here rather than at each construction site is what
-        // makes that unforgettable.
-        super::infoschema_meta::register_tables(&mut catalog);
-        super::perfschema::register_tables(&mut catalog)
-            .expect("Go's performance_schema DDL builds in this tier");
         catalog
     }
 }
@@ -1172,28 +460,6 @@ pub enum TableEntry {
     Sequence(SequenceDef),
 }
 
-/// A sequence in the catalog: the name, Go `SequenceInfo.Comment`, and its
-/// allocator.
-///
-/// The allocator is `Arc`-shared inside, so cloning this entry (as a staged
-/// catalog copy does) shares the counter rather than forking it.
-#[derive(Clone, Debug)]
-pub struct SequenceDef {
-    /// Go TableInfo.ID, stable across ALTER and distinct after DROP/CREATE.
-    pub id: i64,
-    /// The name as written, for `SHOW CREATE SEQUENCE` and `SHOW TABLES`.
-    pub name: String,
-    /// Go `model.SequenceInfo.Comment`, retained for sequence metadata and
-    /// appended to `SHOW CREATE SEQUENCE` when non-empty and exposed through
-    /// the shared information-schema sequence reader.
-    pub comment: String,
-    /// The value source. See [`crate::sequence`].
-    pub allocator: crate::sequence::SequenceAllocator,
-    /// Go `TableInfo.UpdateTS`, the TSO of the job that created it (0 when
-    /// none was recorded).
-    pub update_ts: u64,
-}
-
 impl TableEntry {
     /// The table's columns as `(name, type)` in schema order.
     ///
@@ -1268,77 +534,20 @@ impl Catalog {
             .map(Arc::make_mut)
     }
 
-    /// Go FK rollback removes staged schema changes but preserves allocated
-    /// constraint IDs. Match physical identities, including a staged rename.
-    pub(crate) fn retain_foreign_key_ids_from(&mut self, staged: &Self) {
-        let staged_tables = staged
-            .databases
-            .values()
-            .flat_map(|db| db.tables.values())
-            .filter_map(|entry| match &**entry {
-                TableEntry::Kv(table) => Some((table.table_id, table)),
-                _ => None,
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        for database in Arc::make_mut(&mut self.databases).values_mut() {
-            for entry in Arc::make_mut(database).tables.values_mut() {
-                if let TableEntry::Kv(table) = Arc::make_mut(entry) {
-                    if let Some(staged_table) = staged_tables.get(&table.table_id) {
-                        Arc::make_mut(table).retain_foreign_key_ids_from(staged_table);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Sets the Go-compatible maximum index length for this catalog's DDL.
-    pub fn set_max_index_length(&mut self, max_index_length: i64) {
-        self.max_index_length = max_index_length;
-    }
-
-    /// Sets whether this catalog's DDL enforces the Go ENUM/SET member-length
-    /// limit.
-    pub fn set_enable_enum_length_limit(&mut self, enabled: bool) {
-        self.enable_enum_length_limit = enabled;
-    }
-
-    /// Sets the Go-compatible maximum number of columns for this catalog's
-    /// DDL. Go reads this from the process-global config for every CREATE or
-    /// ADD COLUMN check; keeping it on the catalog avoids cross-test races.
-    pub fn set_table_column_count_limit(&mut self, limit: usize) {
-        self.table_column_count_limit = limit;
-    }
-
-    /// Returns the catalog-scoped Go `config.MaxIndexLength`.
-    #[must_use]
-    pub(crate) const fn max_index_length(&self) -> i64 {
-        self.max_index_length
-    }
-
-    /// Returns the catalog-scoped Go `config.EnableEnumLengthLimit`.
-    #[must_use]
-    pub(crate) const fn enable_enum_length_limit(&self) -> bool {
-        self.enable_enum_length_limit
-    }
-
-    /// Returns the catalog-scoped Go `config.TableColumnCountLimit`.
-    #[must_use]
-    pub(crate) const fn table_column_count_limit(&self) -> usize {
-        self.table_column_count_limit
-    }
-
     /// Whether every table in this catalog is backed by a session-owned
     /// statement savepoint. Cluster sessions satisfy this for their loaded
     /// `KvTable`s; standalone and pipeline sessions use the in-process
     /// `MemTableStorage` and must stage a catalog image instead.
     #[must_use]
     pub fn all_tables_have_external_statement_rollback(&self) -> bool {
-        self.databases.values().all(|database| {
-            database.tables.values().all(|entry| match entry.as_ref() {
-                TableEntry::Kv(table) => table.has_external_statement_rollback(),
-                _ => false,
-            })
-        })
+        let external = |entry: &Arc<TableEntry>| match entry.as_ref() {
+            TableEntry::Kv(table) => table.has_external_statement_rollback(),
+            _ => false,
+        };
+        self.databases
+            .values()
+            .all(|database| database.tables.values().all(external))
+            && self.local_temporary.iter().all(|(_, entry)| external(entry))
     }
 
     /// Whether one named table is backed by a session-owned statement
@@ -1436,16 +645,8 @@ impl Catalog {
     /// Every table name in `database`, sorted as Go's `fetchShowTables` sorts
     /// them. `None` when the database does not exist.
     ///
-    /// LOCAL temporary tables are NOT here. Go cannot list them because they
-    /// are not in the infoschema an enumeration reads
-    /// (`SchemaSimpleTableInfos`), and it excludes them from the by-name form
-    /// too -- `fetchShowInfoByName` (`pkg/executor/show.go:540`) finds the
-    /// table through the session overlay and then returns nothing for a
-    /// `TempTableLocal`. This tier keeps such a table in the SAME map for the
-    /// duration of a statement, so the exclusion has to be stated; it is
-    /// stated once, here, because `SHOW TABLES`, `SHOW FULL TABLES` and
-    /// `information_schema.tables` all enumerate through this one call and
-    /// must not disagree.
+    /// LOCAL temporary tables are not here: they are not in the infoschema
+    /// an enumeration reads (`SchemaSimpleTableInfos`).
     ///
     /// The names are Go's `TableInfo.Name.O`, the spelling the table was
     /// created (or renamed) with, in byte order as Go's `fetchShowTables`
@@ -1460,12 +661,7 @@ impl Catalog {
             .tables
             .iter()
             .filter_map(|(key, entry)| match entry.as_ref() {
-                TableEntry::Kv(table)
-                    if table.temp_table_type() == tidb_model::TempTableType::LOCAL =>
-                {
-                    None
-                }
-                TableEntry::Kv(table) => Some(table.name.clone()),
+                TableEntry::Kv(table) => Some(table.name()),
                 TableEntry::View(view) => Some(view.name.clone()),
                 TableEntry::Sequence(sequence) => Some(sequence.name.clone()),
                 // A memory table carries no name of its own: its key, or the
@@ -1517,18 +713,6 @@ impl Catalog {
             .as_ref()
     }
 
-    /// Go `onModifySchemaCharsetAndCollate`'s `DBInfo` edit; `false` for a
-    /// database that does not exist.
-    pub fn set_database_charset(&mut self, database: &str, charset: TableCharset) -> bool {
-        self.bump_metadata_version();
-        let Some(schema) = self.database_mut(&database.go_to_lower()) else {
-            return false;
-        };
-        schema.charset = charset;
-        self.bump_version();
-        true
-    }
-
     /// Go `onModifySchemaDefaultPlacement`'s `DBInfo` edit (or the loader
     /// restoring a stored one); `false` for a database that does not exist.
     pub fn set_database_placement_policy(
@@ -1551,137 +735,6 @@ impl Catalog {
         self.databases
             .get(&database.go_to_lower())
             .map(|database| (database.name.clone(), database.charset))
-    }
-
-    /// Creates `database`, reporting whether it was new. Go raises
-    /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
-    /// Go `meta.Mutator.GetBDRRole`: the stored BDR role, "" when unset.
-    #[must_use]
-    pub fn bdr_role(&self) -> String {
-        self.bdr_role
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    /// The store's regions.
-    #[must_use]
-    pub fn region_store(&self) -> Arc<dyn crate::region_map::RegionStore> {
-        Arc::clone(&self.regions)
-    }
-
-    /// Hands this catalog the node's store regions. They are store state, not
-    /// schema, so a node that rebuilds its catalog from the stored schema
-    /// (every DDL does) keeps the same store, as it keeps the label-rule
-    /// manager.
-    pub fn set_region_store(&mut self, regions: Arc<dyn crate::region_map::RegionStore>) {
-        self.regions = regions;
-    }
-
-    /// The regions overlapping `[start, end)`, clipped to it.
-    pub fn region_ranges_in(
-        &self,
-        start: &[u8],
-        end: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
-        let regions = self.regions.load_regions_in_key_range(start, end)?;
-        Ok(crate::region_map::clip_regions(&regions, start, end))
-    }
-
-    /// The regions overlapping `[start, end)` with their own bounds and ids,
-    /// as the region cache loads them.
-    pub fn region_metas_in(
-        &self,
-        start: &[u8],
-        end: &[u8],
-    ) -> Result<Vec<crate::region_map::RegionMeta>, String> {
-        self.regions.load_regions_in_key_range(start, end)
-    }
-
-    /// The store's label-rule manager (Go `InfoSyncer.labelRuleManager`).
-    #[must_use]
-    pub fn label_rule_manager(&self) -> &Arc<dyn crate::label_manager::LabelRuleManager> {
-        &self.label_rules
-    }
-
-    /// Hands this catalog the node's label-rule manager, so a production
-    /// node's catalog reads the rules its DDL wrote (PD's, or the node's
-    /// mock).
-    pub fn set_label_rule_manager(
-        &mut self,
-        manager: Arc<dyn crate::label_manager::LabelRuleManager>,
-    ) {
-        self.label_rules = manager;
-    }
-
-    /// Go `infosync.PutLabelRule` against this store's label manager.
-    pub fn put_label_rule(&self, rule: &crate::ddl_label::Rule) -> Result<(), DriverError> {
-        self.label_rules
-            .put_label_rule(rule)
-            .map_err(label_manager_error)
-    }
-
-    /// Go `infosync.UpdateLabelRules` against this store's label manager.
-    pub fn update_label_rules(
-        &self,
-        patch: &crate::ddl_label::LabelRulePatch,
-    ) -> Result<(), DriverError> {
-        self.label_rules
-            .update_label_rules(patch)
-            .map_err(label_manager_error)
-    }
-
-    /// Go `infosync.GetAllLabelRules` against this store's label manager,
-    /// under the store's (classic, keyspace-less) codec.
-    pub fn get_all_label_rules(&self) -> Result<Vec<crate::ddl_label::Rule>, DriverError> {
-        self.label_rules
-            .get_all_label_rules(&crate::ddl_label::CodecV1)
-            .map_err(label_manager_error)
-    }
-
-    /// Go `infosync.GetLabelRules` against this store's label manager.
-    pub fn get_label_rules(
-        &self,
-        rule_ids: &[String],
-    ) -> Result<std::collections::BTreeMap<String, crate::ddl_label::Rule>, DriverError> {
-        self.label_rules
-            .get_label_rules(rule_ids)
-            .map_err(label_manager_error)
-    }
-
-    /// Go `Mutator.AddHistoryDDLJob`: files a finished job under its ID in
-    /// this store's meta history.
-    pub fn add_history_ddl_job(&self, job: &mut tidb_model::Job) -> Result<(), DriverError> {
-        let encoded = job.encode(true).map_err(label_manager_error)?;
-        self.ddl_job_history
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(job.id, encoded);
-        Ok(())
-    }
-
-    /// Go `Mutator.GetLastHistoryDDLJobsIterator`: the meta history,
-    /// newest job first.
-    pub fn last_history_ddl_jobs(&self) -> Result<Vec<tidb_model::Job>, DriverError> {
-        self.ddl_job_history
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .rev()
-            .map(|encoded| {
-                let mut job = tidb_model::Job::default();
-                job.decode(encoded).map_err(label_manager_error)?;
-                Ok(job)
-            })
-            .collect()
-    }
-
-    /// Go `meta.Mutator.SetBDRRole` / `ClearBDRRole` (the empty role).
-    pub fn set_bdr_role(&self, role: &str) {
-        *self
-            .bdr_role
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = role.to_owned();
     }
 
     /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
@@ -1708,86 +761,20 @@ impl Catalog {
         self.resource_groups.values()
     }
 
-    /// Go `onCreateResourceGroup`/`onAlterResourceGroup`'s meta write: a
-    /// new group takes a global ID (`GenGlobalID`), an altered one keeps
-    /// its own.
-    pub fn put_resource_group(&mut self, mut group: tidb_model::ResourceGroupInfo) {
+    /// Go `infoSchemaMisc.setResourceGroup`: a group loaded from meta, as
+    /// stored.
+    pub fn set_resource_group(&mut self, group: tidb_model::ResourceGroupInfo) {
         self.bump_metadata_version();
-        if group.id == 0 {
-            group.id = self.allocate_table_id();
-        }
-        group.state = tidb_model::SchemaState::PUBLIC;
         self.resource_groups
             .insert(group.name.lowercase().to_owned(), group);
         self.bump_version();
     }
 
-    /// Go `onDropResourceGroup`'s meta delete.
-    pub fn drop_resource_group(&mut self, name: &str) -> bool {
-        self.bump_metadata_version();
-        let dropped = self.resource_groups.remove(&name.go_to_lower()).is_some();
-        if dropped {
-            self.bump_version();
-        }
-        dropped
-    }
-
-    /// Stores a policy read back from meta, KEEPING its stored id (the
-    /// references to it are by id) and moving the id counter past it.
-    pub fn put_policy(&mut self, policy: tidb_model::PolicyInfo) {
-        self.next_policy_id = self.next_policy_id.max(policy.id);
+    /// Go `infoSchemaMisc.setPolicy`: a policy loaded from meta, as stored
+    /// (the references to it are by id).
+    pub fn set_policy(&mut self, policy: tidb_model::PolicyInfo) {
         self.policies
             .insert(policy.name.lowercase().to_owned(), policy);
-    }
-
-    /// Go `CreatePlacementPolicyWithInfo`: stores a new policy.
-    ///
-    /// Returns `false` when one of that name already exists, leaving the
-    /// stored policy untouched -- the caller decides whether that is
-    /// `OnExistError` (8238), `OnExistIgnore`, or `OnExistReplace`, exactly
-    /// as Go's `OnExist` does.
-    pub fn create_policy(&mut self, mut policy: tidb_model::PolicyInfo) -> bool {
-        self.bump_metadata_version();
-        let key = policy.name.lowercase().to_owned();
-        if self.policies.contains_key(&key) {
-            return false;
-        }
-        self.next_policy_id += 1;
-        policy.id = self.next_policy_id;
-        self.policies.insert(key, policy);
-        self.bump_version();
-        true
-    }
-
-    /// Replaces a stored policy's settings, KEEPING its id.
-    ///
-    /// Go's `ALTER PLACEMENT POLICY` alters the policy every referencing
-    /// object points at, so the id has to survive: the references are by id,
-    /// and re-issuing one would orphan them.
-    pub fn replace_policy_settings(
-        &mut self,
-        name: &str,
-        settings: tidb_model::PlacementSettings,
-    ) -> bool {
-        self.bump_metadata_version();
-        let key = tidb_ast::CiString::new(name).lowercase().to_owned();
-        let Some(policy) = self.policies.get_mut(&key) else {
-            return false;
-        };
-        policy.placement_settings = Some(tidb_model::GoShared::new(settings));
-        self.bump_version();
-        true
-    }
-
-    /// Go `DropPlacementPolicy`: removes a policy by name.
-    pub fn drop_policy(&mut self, name: &str) -> bool {
-        self.bump_metadata_version();
-        let key = tidb_ast::CiString::new(name).lowercase().to_owned();
-        if self.policies.remove(&key).is_none() {
-            return false;
-        }
-        self.bump_version();
-        true
     }
 
     /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: the first table or
@@ -1828,45 +815,10 @@ impl Catalog {
         })
     }
 
-    pub fn create_database(&mut self, database: &str) -> bool {
-        self.bump_metadata_version();
-        self.create_database_with_charset(database, TableCharset::default())
-    }
-
-    /// Creates a database with its resolved charset and collation defaults.
-    pub fn create_database_with_charset(&mut self, database: &str, charset: TableCharset) -> bool {
-        self.bump_metadata_version();
-        let key = database.go_to_lower();
-        if self.databases.contains_key(&key) {
-            return false;
-        }
-        self.next_database_id += 1;
-        Arc::make_mut(&mut self.databases).insert(
-            key,
-            Arc::new(Database {
-                id: self.next_database_id,
-                name: database.to_owned(),
-                charset,
-                placement_policy: None,
-                tables: HashMap::new(),
-            }),
-        );
-        self.bump_version();
-        true
-    }
-
-    /// Installs a database with the ID from a persisted cluster catalog.
-    ///
-    /// The default catalog already contains `test` and `mysql`; loading those
-    /// schemas replaces their synthetic IDs rather than silently discarding
-    /// the source identity. Returns whether the schema name was newly added.
-    pub fn register_database_with_id(&mut self, database: &str, id: i64) -> bool {
-        self.bump_metadata_version();
-        self.register_database_with_id_and_charset(database, id, TableCharset::default())
-    }
-
-    /// [`Self::register_database_with_id`] carrying the database's stored
-    /// charset and collation.
+    /// Go `infoschema.Builder.createSchemaTablesForDB`'s schema half: a
+    /// database loaded from meta, under its stored id, charset and collation.
+    /// The mock catalog already contains `test`, `mysql` and `sys`; loading
+    /// one of those replaces its synthetic id.
     ///
     /// Go's `DBInfo.Charset`/`Collate` reach `SHOW CREATE DATABASE` and
     /// `information_schema.schemata`, and are the default a table created
@@ -1881,7 +833,6 @@ impl Catalog {
     ) -> bool {
         self.bump_metadata_version();
         let key = database.go_to_lower();
-        self.next_database_id = self.next_database_id.max(id);
         if let Some(existing) = self.database_mut(&key) {
             let changed =
                 existing.id != id || existing.name != database || existing.charset != charset;
@@ -1903,73 +854,6 @@ impl Catalog {
         );
         self.bump_version();
         true
-    }
-
-    /// Moves a table to a new schema and name, which is what RENAME does.
-    /// Returns `false`, having changed nothing, when the source table or the
-    /// destination schema does not exist.
-    ///
-    /// The destination schema is checked BEFORE the source is taken out, so
-    /// "source removed with nowhere to put it" is not a state this function
-    /// can produce and does not need undoing. Both preconditions are also
-    /// checked by the caller, which is where the MySQL error text comes from;
-    /// re-checking here is what keeps the catalog's own invariant -- a table
-    /// is in exactly one schema -- independent of any caller remembering to.
-    pub fn rename_table(
-        &mut self,
-        from_database: &str,
-        from_name: &str,
-        to_database: &str,
-        to_name: &str,
-    ) -> bool {
-        self.bump_metadata_version();
-        let to_key = to_database.go_to_lower();
-        if !self.databases.contains_key(&to_key) {
-            return false;
-        }
-        let Some(source) = self
-            .database_mut(&from_database.go_to_lower())
-            .and_then(|database| database.tables.remove(&from_name.go_to_lower()))
-        else {
-            return false;
-        };
-        // The table carries its own name for duplicate-key messages. Renames
-        // are DDL-rare, so cloning a still-shared entry here is fine.
-        let mut source = Arc::unwrap_or_clone(source);
-        if let TableEntry::Kv(table) = &mut source {
-            Arc::make_mut(table).set_name(to_name);
-        }
-        let source = std::sync::Arc::new(source);
-        // Infallible: the key was present at the top of this function and
-        // nothing between here and there can remove a schema.
-        self.database_mut(&to_key)
-            .expect("destination schema was checked above")
-            .tables
-            .insert(to_name.go_to_lower(), source);
-        self.bump_version();
-        true
-    }
-
-    /// Drops one table, reporting whether it existed.
-    pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
-        self.bump_metadata_version();
-        let dropped = match self.database_mut(&database.go_to_lower()) {
-            Some(database) => database.tables.remove(&name.go_to_lower()).is_some(),
-            None => false,
-        };
-        self.version += u64::from(dropped);
-        dropped
-    }
-
-    /// Drops `database` and its tables, reporting whether it existed. Go
-    /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
-    pub fn drop_database(&mut self, database: &str) -> bool {
-        self.bump_metadata_version();
-        let dropped = Arc::make_mut(&mut self.databases)
-            .remove(&database.go_to_lower())
-            .is_some();
-        self.version += u64::from(dropped);
-        dropped
     }
 
     /// Resolves a table in `database`.
@@ -2005,20 +889,32 @@ impl Catalog {
     }
 
     pub(crate) fn get_by_key(&self, key: &CatalogTableKey) -> Option<&TableEntry> {
-        self.databases
-            .get(&key.database)?
-            .tables
-            .get(&key.table)
-            .map(|entry| &**entry)
+        self.table_handle_ref(key).map(|entry| &**entry)
     }
 
     /// Retains immutable statement metadata without cloning the table or its store.
     pub(crate) fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
-        self.databases
-            .get(&key.database)?
-            .tables
-            .get(&key.table)
-            .cloned()
+        self.table_handle_ref(key).cloned()
+    }
+
+    /// Go `SessionExtendedInfoSchema.TableByName`: the session's LOCAL
+    /// temporary table of that name, else the shared schema's entry.
+    fn table_handle_ref(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
+        self.local_temporary_entry(key)
+            .or_else(|| self.schema_entry(key))
+    }
+
+    /// The shared schema's entry, without the session's temporary tables
+    /// (Go `DetachLocalTemporaryTableInfoSchema`).
+    fn schema_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
+        self.databases.get(&key.database)?.tables.get(&key.table)
+    }
+
+    fn local_temporary_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
+        self.local_temporary
+            .iter()
+            .find(|(local, _)| local == key)
+            .map(|(_, entry)| entry)
     }
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
@@ -2049,14 +945,6 @@ impl Catalog {
         self.foreign_keys_present
     }
 
-    /// Marks this catalog as having seen a foreign key. The flag is
-    /// intentionally monotonic; dropping or replacing a table must not make
-    /// an already-published snapshot report `false` while a DML check is in
-    /// flight.
-    pub(crate) fn mark_has_foreign_keys(&mut self) {
-        self.foreign_keys_present = true;
-    }
-
     /// Whether any table of this catalog may carry a `LOCK TABLES` lock.
     /// `false` lets Go's `CheckTableLock` answer without reading a table:
     /// with no lock anywhere and none held by the session, every arm of
@@ -2064,12 +952,6 @@ impl Catalog {
     #[must_use]
     pub fn has_table_locks(&self) -> bool {
         self.table_locks_present
-    }
-
-    /// Marks this catalog as having seen a table lock. Monotonic, as
-    /// [`Self::mark_has_foreign_keys`].
-    pub fn mark_has_table_locks(&mut self) {
-        self.table_locks_present = true;
     }
 
     /// Go `DBInfo.ID` of `database`.
@@ -2099,14 +981,14 @@ impl Catalog {
         if table_id == 0 {
             return None;
         }
-        let key = self.table_id_names().get(&table_id)?;
-        let schema = self.databases.get(&key.database)?;
-        match schema.tables.get(&key.table)?.as_ref() {
-            TableEntry::Kv(table) if table.table_id == table_id => {
-                Some((schema.name.clone(), table.name.clone()))
-            }
-            _ => None,
-        }
+        let (database, table) = self
+            .kv_table_by_physical_id(table_id)
+            .filter(|(_, table)| table.table_id == table_id)?;
+        let database = self
+            .databases
+            .get(database)
+            .map_or_else(|| database.to_owned(), |schema| schema.name.clone());
+        Some((database, table.name()))
     }
 
     /// Go `infoschema.FindTableByPartitionID`: the schema and table that own
@@ -2124,7 +1006,7 @@ impl Catalog {
                         .any(|definition| definition.id == partition_id)
                 }) =>
             {
-                Some((schema.name.clone(), table.name.clone()))
+                Some((schema.name.clone(), table.name()))
             }
             _ => None,
         }
@@ -2139,405 +1021,6 @@ impl Catalog {
                 TableEntry::Kv(table) if table.lock().is_some() => Some((schema, &**table)),
                 _ => None,
             })
-    }
-
-    /// Materializes the narrow `infoschema` view consumed by the ported Go
-    /// logical planner. Storage handles, rows, statistics and allocators stay
-    /// in this catalog; only immutable schema metadata crosses the seam.
-    pub(crate) fn planner_catalog(
-        &self,
-        current_database: &str,
-        latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
-    ) -> PlannerCatalog {
-        PlannerCatalog {
-            current_database: current_database.to_owned(),
-            view: self.planner_schema_view(),
-            latest_index_schema,
-            hypo_indexes: None,
-            hypo_tiflash_replicas: None,
-            dirty_tables: Vec::new(),
-            privilege_verifier: None,
-            mdl_related_table: None,
-        }
-    }
-
-    /// The planner's view of this catalog's schema, built on first use and
-    /// shared by every statement that plans against the same catalog image
-    /// (Go's immutable `InfoSchema` per schema version). Any mutation drops
-    /// it, so a statement never plans against a schema that has moved.
-    pub(crate) fn planner_schema_view(&self) -> Arc<PlannerSchemaView> {
-        Arc::clone(
-            self.planner_view
-                .get_or_init(|| Arc::new(self.build_planner_schema_view())),
-        )
-    }
-
-    fn build_planner_schema_view(&self) -> PlannerSchemaView {
-        use tidb_planner::plan_builder::catalog::{
-            SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView,
-        };
-
-        let databases = self.databases.keys().cloned().collect();
-        let mut tables = HashMap::new();
-        let mut views = HashMap::new();
-        let mut sequences = HashMap::new();
-        // A memory table's ID is Go's `TableInfo.ID` where the schema has one
-        // (`information_schema`'s `tableIDMap`), and otherwise a negative id
-        // fixed by its schema and name: two views of one catalog must agree
-        // on which table an id names, so it cannot follow hash-map order.
-        let mut memory_tables: Vec<(String, String)> = self
-            .databases
-            .values()
-            .flat_map(|database| {
-                database.tables.iter().filter_map(move |(name, entry)| {
-                    (matches!(**entry, TableEntry::Mem(_))
-                        || is_virtual_schema_table(&database.name, name))
-                    .then(|| (database.name.go_to_lower(), name.go_to_lower()))
-                })
-            })
-            .collect();
-        memory_tables.sort_unstable();
-        let memory_table_id = |database: &str, name: &str| {
-            if database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA) {
-                if let Some(id) = crate::driver::infoschema_meta::memory_table_id(name) {
-                    return id;
-                }
-            }
-            let key = (database.go_to_lower(), name.go_to_lower());
-            -1 - memory_tables
-                .binary_search(&key)
-                .map_or(0, |index| index as i64)
-        };
-        for (database_key, database) in self.databases.iter() {
-            let resolve_db_info = tidb_model::GoShared::new(tidb_model::DBInfo {
-                id: database.id,
-                name: tidb_ast::CiString::new(database.name.clone()),
-                charset: database.charset.charset.name().to_owned(),
-                collate: database.charset.collation.name().to_owned(),
-                state: tidb_model::SchemaState::PUBLIC,
-                ..tidb_model::DBInfo::default()
-            });
-            for (entry_name, entry) in &database.tables {
-                // The owning catalog already stores Go-folded keys. Preserve
-                // those keys rather than folding original metadata again.
-                let key = || CatalogTableKey {
-                    database: database_key.clone(),
-                    table: entry_name.clone(),
-                };
-                match &**entry {
-                    // Go plans every `information_schema` and
-                    // `performance_schema` table as a memory table
-                    // (`buildDataSource`'s `LogicalMemTable`). The stored
-                    // objects here carry the schema SHOW and DESCRIBE answer
-                    // from; a plan reads one through a `MemTableScan` of the
-                    // rows the session generates for the statement. Planned
-                    // as stored tables, all the `information_schema` ones
-                    // shared table ID 0, so a scan read whichever table that
-                    // ID found.
-                    TableEntry::Kv(table)
-                        if is_virtual_schema_table(&database.name, entry_name) =>
-                    {
-                        let table_name = if database
-                            .name
-                            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
-                        {
-                            crate::driver::infoschema_meta::canonical_table_name(entry_name)
-                                .map_or_else(|| entry_name.clone(), str::to_owned)
-                        } else {
-                            table.name.clone()
-                        };
-                        let table_id = if table.table_id != 0 {
-                            table.table_id
-                        } else {
-                            memory_table_id(&database.name, entry_name)
-                        };
-                        let mut source_table = SourceTable {
-                            is_memory_table: true,
-                            table_id,
-                            table_name,
-                            db_name: database.name.clone(),
-                            physical_table_id: table_id,
-                            columns: table
-                                .columns()
-                                .iter()
-                                .enumerate()
-                                .map(|(offset, column)| SourceColumn {
-                                    id: offset as i64 + 1,
-                                    name: column.name.clone(),
-                                    offset,
-                                    ret_type: column.field_type.clone(),
-                                    ..SourceColumn::default()
-                                })
-                                .collect(),
-                            ..SourceTable::default()
-                        };
-                        mark_cluster_table(&mut source_table, &database.name, entry_name);
-                        source_table.attach_resolve_metadata(resolve_db_info.clone());
-                        tables.insert(key(), source_table);
-                    }
-                    TableEntry::Kv(table) => {
-                        let columns = table
-                            .columns
-                            .iter()
-                            .enumerate()
-                            .map(|(offset, column)| SourceColumn {
-                                id: column.id,
-                                name: column.name.clone(),
-                                // PKIsHandle and its primary column must agree,
-                                // including tables installed through register_kv.
-                                is_primary_key: table.pk_handle_offset() == Some(offset)
-                                    || table.common_handle_offsets().contains(&offset)
-                                    || column
-                                        .field_type
-                                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                                offset,
-                                ret_type: column.field_type.clone(),
-                                is_public: true,
-                                is_generated: column.generated.is_some(),
-                                is_hidden: table.is_hidden(offset),
-                                is_virtual_generated: column
-                                    .generated
-                                    .as_ref()
-                                    .is_some_and(|generated| !generated.stored),
-                                generated_expr: column
-                                    .generated
-                                    .as_ref()
-                                    .map(|generated| generated.source.clone()),
-                            })
-                            .collect::<Vec<_>>();
-                        // Go keeps clustered PRIMARY in TableInfo.Indices even
-                        // though no separate index records are maintained.
-                        let primary = crate::handle_range::clustered_primary_metadata(table);
-                        let missing_primary = primary.as_deref().filter(|primary| {
-                            !table.indexes().iter().any(|index| index.id == primary.id)
-                        });
-                        let indexes = table
-                            .indexes()
-                            .iter()
-                            .chain(missing_primary)
-                            .map(|index| SourceIndex {
-                                id: index.id,
-                                name: index.name.clone(),
-                                columns: index
-                                    .column_offsets
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(position, offset)| {
-                                        table.columns.get(*offset).map(|column| SourceIndexColumn {
-                                            name: column.name.clone(),
-                                            offset: *offset,
-                                            length: index.prefix_length(position),
-                                        })
-                                    })
-                                    .collect(),
-                                unique: index.unique,
-                                primary: index.primary,
-                                is_public: true,
-                                is_visible: index.visible,
-                                is_columnar: false,
-                                is_multi_valued: table.mv_key_part_source(index.id).is_some(),
-                                global: index.global,
-                                condition_expr_string: table
-                                    .partial_index_condition_string(index.id)
-                                    .unwrap_or_default(),
-                                affect_column_offsets: Vec::new(),
-                            })
-                            .collect::<Vec<_>>();
-                        let common_handle_lens = table
-                            .indexes()
-                            .iter()
-                            .find(|index| index.primary)
-                            .map(|index| {
-                                (0..table.common_handle_offsets().len())
-                                    .map(|position| index.prefix_length(position))
-                                    .collect()
-                            })
-                            .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
-                        let mut source_table = SourceTable {
-                            table_id: table.table_id,
-                            table_name: table.name.clone(),
-                            db_name: database.name.clone(),
-                            physical_table_id: table.table_id,
-                            is_partitioned: table.partition().is_some(),
-                            partition_expression_is_column: table.partition().is_some_and(
-                                |partition| {
-                                    matches!(
-                                        partition.expr,
-                                        tidb_expr::expression::Expression::Column(_)
-                                    )
-                                },
-                            ),
-                            partition_is_reorganizing: table.partition().is_some_and(|partition| {
-                                !partition.overlapping_dropping_partition_indices.is_empty()
-                            }),
-                            partition_definition_names: table
-                                .partition()
-                                .map(|partition| {
-                                    partition
-                                        .definitions
-                                        .iter()
-                                        .map(|definition| definition.name.clone())
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                            partition_definition_ids: table
-                                .partition()
-                                .map(|partition| {
-                                    partition
-                                        .definitions
-                                        .iter()
-                                        .map(|definition| definition.id)
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                            columns,
-                            indexes,
-                            pk_is_handle: table.pk_handle_offset().is_some(),
-                            is_common_handle: !table.common_handle_offsets().is_empty(),
-                            common_handle_version: table.common_handle_version(),
-                            is_temporary: table.is_temporary(),
-                            is_local_temporary: table.temp_table_type()
-                                == tidb_model::TempTableType::LOCAL,
-                            is_cached: table.cache_status()
-                                != tidb_model::TableCacheStatusType::DISABLE,
-                            has_affinity: table.has_affinity(),
-                            has_tiflash_replica: table
-                                .tiflash_replica()
-                                .is_some_and(|replica| replica.available),
-                            handle_col_offsets: table
-                                .pk_handle_offset()
-                                .into_iter()
-                                .chain(table.common_handle_offsets().iter().copied())
-                                .collect(),
-                            common_handle_col_offsets: table.common_handle_offsets().to_vec(),
-                            common_handle_lens,
-                            ..SourceTable::default()
-                        };
-                        source_table.attach_resolve_metadata(resolve_db_info.clone());
-                        tables.insert(key(), source_table);
-                    }
-                    TableEntry::Mem(table) => {
-                        // Go's memory-table `TableInfo.Name.O` is the
-                        // table's own spelling, which the scan's access
-                        // object and output names print.
-                        let table_name = if database
-                            .name
-                            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
-                        {
-                            crate::driver::infoschema_meta::canonical_table_name(entry_name)
-                                .map_or_else(|| entry_name.clone(), str::to_owned)
-                        } else {
-                            entry_name.clone()
-                        };
-                        let table_id = memory_table_id(&database.name, entry_name);
-                        let mut source_table = SourceTable {
-                            is_memory_table: true,
-                            table_id,
-                            table_name,
-                            db_name: database.name.clone(),
-                            physical_table_id: table_id,
-                            columns: table
-                                .columns
-                                .iter()
-                                .enumerate()
-                                .map(|(offset, (name, ret_type))| SourceColumn {
-                                    id: offset as i64 + 1,
-                                    name: name.clone(),
-                                    offset,
-                                    ret_type: ret_type.clone(),
-                                    ..SourceColumn::default()
-                                })
-                                .collect(),
-                            ..SourceTable::default()
-                        };
-                        mark_cluster_table(&mut source_table, &database.name, entry_name);
-                        source_table.attach_resolve_metadata(resolve_db_info.clone());
-                        tables.insert(key(), source_table);
-                    }
-                    TableEntry::View(view) => {
-                        views.insert(
-                            key(),
-                            SourceView {
-                                db_name: database.name.clone(),
-                                view_name: view.name.clone(),
-                                select_sql: view.select_sql.clone(),
-                                table_id: view.id,
-                                columns: view
-                                    .columns
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(offset, (name, ret_type))| SourceColumn {
-                                        id: offset as i64 + 1,
-                                        name: name.clone(),
-                                        offset,
-                                        ret_type: ret_type.clone(),
-                                        ..SourceColumn::default()
-                                    })
-                                    .collect(),
-                                definer_user: view.definer_user.clone(),
-                                definer_host: view.definer_host.clone(),
-                                security_definer: view.security.eq_ignore_ascii_case("DEFINER"),
-                                ..SourceView::default()
-                            },
-                        );
-                    }
-                    TableEntry::Sequence(sequence) => {
-                        sequences.insert(key(), sequence.name.clone());
-                    }
-                }
-            }
-        }
-        // A view reads around the session's temporary tables; plan it
-        // against the image they displaced.
-        let detached = tables
-            .values()
-            .any(|table| table.is_local_temporary)
-            .then(|| {
-                let mut detached = self.clone();
-                detached.take_local_temporary_tables();
-                Arc::new(detached.build_planner_schema_view())
-            });
-        PlannerSchemaView {
-            databases,
-            tables,
-            views,
-            sequences,
-            detached,
-        }
-    }
-
-    /// Snapshots the latest-domain metadata read by Go
-    /// `planner/util/domainmisc.GetLatestIndexInfo`.
-    #[must_use]
-    pub fn latest_index_schema(&self) -> Arc<tidb_planner::domain_misc::LatestIndexSchema> {
-        use tidb_planner::plan_builder::catalog::SourceIndex;
-
-        Arc::clone(self.latest_index_schema.get_or_init(|| {
-            let mut table_indexes = std::collections::BTreeMap::new();
-            for database in self.databases.values() {
-                for entry in database.tables.values() {
-                    let TableEntry::Kv(table) = &**entry else {
-                        continue;
-                    };
-                    table_indexes.insert(
-                        table.table_id,
-                        table
-                            .indexes()
-                            .iter()
-                            .map(|index| SourceIndex {
-                                id: index.id,
-                                is_public: true,
-                                ..SourceIndex::default()
-                            })
-                            .collect(),
-                    );
-                }
-            }
-            Arc::new(tidb_planner::domain_misc::LatestIndexSchema {
-                schema_meta_version: self.metadata_version,
-                table_indexes,
-            })
-        }))
     }
 
     /// A mutable handle for the referential-integrity paths, which reach
@@ -2575,15 +1058,14 @@ impl Catalog {
     ) -> Option<&mut TableEntry> {
         self.version += 1;
         let key = CatalogTableKey::new(database, name);
-        let entry = self
-            .database_mut(&key.database)?
-            .tables
-            .get_mut(&key.table)?;
+        let entry = match self.local_temporary.iter().position(|(local, _)| *local == key) {
+            Some(position) => &mut self.local_temporary[position].1,
+            None => self.database_mut(&key.database)?.tables.get_mut(&key.table)?,
+        };
         // Go's write paths build a new `TableInfo` rather than editing the
         // shared one; `make_mut` is the same copy-on-write at the entry level.
         Some(Arc::make_mut(entry))
     }
-
 
     /// The catalog's mutation counter.
     #[must_use]
@@ -2595,36 +1077,6 @@ impl Catalog {
     /// Cluster servers install their domain owner directly on each session.
     pub fn plan_cache_invalidation(&self) -> Arc<super::plan_cache::PlanCacheInvalidation> {
         Arc::clone(&self.plan_cache_epoch)
-    }
-
-    /// Go `PDHelper.GetApproximateTableCountFromStorage` for this store, which
-    /// has no PD HTTP client: a cached count is `(count, true)`; a miss is the
-    /// loader's `(0, false)`, cached for the next 30 seconds.
-    pub fn approximate_table_count(
-        &self,
-        table_id: i64,
-        db_name: &str,
-        table_name: &str,
-        partition_name: &str,
-    ) -> (f64, bool) {
-        let key = crate::pd_helper::approximate_table_count_key(
-            table_id,
-            db_name,
-            table_name,
-            partition_name,
-        );
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let mut cache = self
-            .pd_helper_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(count) = cache.get(&key, now) {
-            return (count, true);
-        }
-        cache.insert(key, now, 0.0);
-        (0.0, false)
     }
 
     /// Process-local identity of this schema metadata image. Unlike a local
@@ -2681,53 +1133,6 @@ impl Catalog {
         }
     }
 
-    /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
-    /// increasing. One allocator per store, shared by every clone.
-    pub fn allocate_tso(&self) -> u64 {
-        let mut history = self
-            .commit_history
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_millis() as u64);
-        let candidate = now_ms << 18;
-        history.last_tso = candidate.max(history.last_tso + 1);
-        history.last_tso
-    }
-
-    /// Records this catalog as the state committed at `commit_ts`.
-    ///
-    /// History owns data only; a returned view reattaches the live owners.
-    pub fn record_commit(&self, commit_ts: u64) {
-        let snapshot = CatalogSnapshot::capture(self);
-        let mut history = self
-            .commit_history
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        history.entries.push_back((commit_ts, snapshot));
-        while history.entries.len() > COMMIT_HISTORY_CAP {
-            history.entries.pop_front();
-        }
-    }
-
-    /// The store's state as of `ts`: the newest commit at or below it --
-    /// Go's MVCC floor. `None` when no retained commit is old enough, which
-    /// the caller reports rather than papering over with the present.
-    #[must_use]
-    pub fn state_as_of(&self, ts: u64) -> Option<Catalog> {
-        let history = self
-            .commit_history
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        history
-            .entries
-            .iter()
-            .rev()
-            .find(|(commit_ts, _)| *commit_ts <= ts)
-            .map(|(_, snapshot)| snapshot.restore(self))
-    }
-
     /// Captures only the immutable schema metadata needed by `TIDB_DECODE_KEY`.
     #[must_use]
     pub fn tidb_decode_key_snapshot(&self) -> crate::TidbDecodeKeySnapshot {
@@ -2742,564 +1147,6 @@ impl Catalog {
         snapshot
     }
 
-    /// Publishes one table's loaded statistics, which the access-path choice
-    /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
-    ///
-    /// Two publishers reach here, and they must agree: the cluster session
-    /// loads `mysql.stats_*` rows a Go `ANALYZE` wrote
-    /// (`tidb_server::cluster_session`), and an in-process `ANALYZE TABLE`
-    /// computes them here ([`crate::analyze::kv::analyze_kv_table`]). Both
-    /// build the histograms through [`crate::analyze`], so a table's estimates
-    /// do not depend on which storage it sits on.
-    pub fn set_table_statistics(
-        &mut self,
-        table_id: i64,
-        statistics: Arc<crate::access_cost::TableStatistics>,
-    ) {
-        self.statistics
-            .values
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(table_id, statistics);
-    }
-
-    /// Records committed modifications for Go `statsDeltaMap`. The value is
-    /// the number of rows modified, while `stats_row_count` supplies the net
-    /// row count when the delta is flushed.
-    pub fn record_stats_modify_count(&mut self, table_id: i64, modified: i64) {
-        if modified > 0 {
-            let pending = self.pending_stats_modify_count.entry(table_id).or_default();
-            *pending = pending.wrapping_add(modified);
-        }
-    }
-
-    /// ANALYZE scans the current table image and resets its stats-meta
-    /// modification count, so deltas from before that scan are consumed.
-    pub fn clear_stats_modify_count(&mut self, table_id: i64) {
-        self.pending_stats_modify_count.remove(&table_id);
-    }
-
-    /// Reads one persisted ANALYZE-options row by physical ID.
-    #[must_use]
-    pub fn analyze_options(&self, physical_id: i64) -> Option<crate::analyze::SavedAnalyzeOptions> {
-        self.analyze_options
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&physical_id)
-            .cloned()
-    }
-
-    /// Replaces one persisted ANALYZE-options row by physical ID.
-    pub fn set_analyze_options(
-        &mut self,
-        physical_id: i64,
-        options: crate::analyze::SavedAnalyzeOptions,
-    ) {
-        self.analyze_options
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(physical_id, options);
-    }
-
-    /// Removes one persisted ANALYZE-options row by physical ID (Go's
-    /// `delete from mysql.analyze_options` in `DeleteTableStatsFromKV`).
-    pub fn delete_analyze_options(&mut self, physical_id: i64) {
-        self.analyze_options
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&physical_id);
-    }
-
-    /// Installs the domain statistics worker used by logical optimization.
-    pub fn set_statistics_item_loader(
-        &mut self,
-        loader: Arc<dyn StatisticsItemLoader>,
-        workers: Arc<StatisticsLoadWorkers>,
-    ) {
-        let service_loader = Arc::clone(&loader);
-        *self
-            .statistics
-            .loader
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
-        self.statistics.sync_load.get_or_init(|| {
-            sync_load::SyncLoadService::with_pool(
-                service_loader,
-                Arc::downgrade(&self.statistics),
-                workers,
-            )
-        });
-    }
-
-    /// Go `storage.CleanFakeItemsForShowHistInFlights`: remove queue entries
-    /// whose cache state no longer requires a load and return the number that
-    /// remain genuinely needed.
-    pub fn clean_needed_statistics_items(&self) -> i64 {
-        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
-        let mut really_needed = 0_i64;
-        for requested in needed.all_items() {
-            let item = requested.table_item_id;
-            let Some(statistics) = self.table_statistics(item.table_id) else {
-                needed.delete(item);
-                continue;
-            };
-            let load_needed = if item.is_index {
-                statistics.index_is_load_needed(item.id)
-            } else {
-                statistics.column_is_load_needed(item.id, requested.full_load)
-            };
-            if load_needed {
-                really_needed = really_needed.saturating_add(1);
-            } else {
-                needed.delete(item);
-            }
-        }
-        really_needed
-    }
-
-    /// Go `storage.LoadNeededHistograms`: drains the process-wide asynchronous
-    /// demand on the domain tick. Each item is attempted at most once and is
-    /// removed even when storage returns an error; a later item remains queued
-    /// when an earlier load fails.
-    pub fn load_needed_histograms(&self, resource_group: &str) -> Result<(), String> {
-        let loader = self
-            .statistics
-            .loader
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let Some(loader) = loader else {
-            return Ok(());
-        };
-        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
-        for requested in needed.all_items() {
-            let item = requested.table_item_id;
-            let valid_metadata = if item.is_index {
-                self.kv_table_by_id(item.table_id)
-                    .is_some_and(|table| table.indexes().iter().any(|index| index.id == item.id))
-            } else {
-                item.id > 0
-                    && self.kv_table_by_id(item.table_id).is_some_and(|table| {
-                        table.columns.iter().any(|column| column.id == item.id)
-                    })
-            };
-            let load_needed = self
-                .table_statistics(item.table_id)
-                .is_some_and(|statistics| {
-                    if item.is_index {
-                        statistics.index_is_load_needed(item.id)
-                    } else {
-                        statistics.column_is_load_needed(item.id, true)
-                    }
-                });
-            if !valid_metadata || !load_needed {
-                needed.delete(item);
-                continue;
-            }
-            let requested = tidb_model::StatsLoadItem {
-                table_item_id: item,
-                full_load: item.is_index || requested.full_load,
-            };
-            let loaded = loader.load_items(std::slice::from_ref(&requested), resource_group);
-            needed.delete(item);
-            let tables = loaded?;
-            let mut values = self
-                .statistics
-                .values
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for (table_id, statistics) in tables {
-                values.insert(table_id, statistics);
-            }
-        }
-        Ok(())
-    }
-
-    /// Go `CollectPredicateColumnsPoint`'s demand after `collectSyncIndices`
-    /// and the static-pruning expansion: every column and index the
-    /// statement's plan needs statistics of (`true`: the whole payload), whether
-    /// or not the shared cache already holds it.
-    pub(crate) fn statistics_demand(
-        &self,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
-    ) -> HashMap<tidb_model::TableItemID, bool> {
-        let mut columns = usage.predicate_columns.clone();
-
-        // Go `markAtLeastOneFullStatsLoadForEachTable`: determinate mode
-        // keeps at least one analyzed, non-virtual column payload per table
-        // unless some column or non-MV index is already full.
-        {
-            for table_id in &usage.visited_logical_table_ids {
-                let Some(statistics) = self.table_statistics(*table_id) else {
-                    continue;
-                };
-                if columns.iter().any(|(item, full)| {
-                    item.table_id == *table_id
-                        && *full
-                        && statistics
-                            .column_stats_existence
-                            .get(&item.id)
-                            .copied()
-                            .unwrap_or(false)
-                }) {
-                    continue;
-                }
-                // Go reads the cached `tblStats.Pseudo` straight off the
-                // handle, not `GetStatsTable`'s planner copy: an analyzed
-                // table whose count is zero still asks for a load.
-                if statistics.is_synthetic_pseudo()
-                    || statistics
-                        .column_load_status
-                        .values()
-                        .any(|status| status.is_full_load())
-                    || statistics
-                        .index_load_status
-                        .iter()
-                        .any(|(index_id, status)| {
-                            status.is_full_load()
-                                && self.kv_table_by_id(*table_id).is_none_or(|table| {
-                                    table.mv_key_part_source(*index_id).is_none()
-                                })
-                        })
-                {
-                    continue;
-                }
-                let Some(table) = self.kv_table_by_id(*table_id) else {
-                    continue;
-                };
-                if let Some(column) = table.columns.iter().find(|column| {
-                    column
-                        .generated
-                        .as_ref()
-                        .is_none_or(|generated| generated.stored)
-                        && statistics
-                            .column_stats_existence
-                            .get(&column.id)
-                            .copied()
-                            .unwrap_or(false)
-                }) {
-                    columns.insert(
-                        tidb_model::TableItemID {
-                            table_id: *table_id,
-                            id: column.id,
-                            is_index: false,
-                            is_sync_load_failed: false,
-                        },
-                        true,
-                    );
-                }
-            }
-        }
-
-        let mut items: HashMap<tidb_model::TableItemID, bool> = columns.clone();
-        // Go `CollectDependingVirtualCols` is used only to discover expression
-        // indexes; virtual columns themselves are not load items.
-        let mut index_source_columns = columns.keys().copied().collect::<Vec<_>>();
-        for column in columns.keys() {
-            let Some(table) = self.kv_table_by_id(column.table_id) else {
-                continue;
-            };
-            let Some(name) = table
-                .columns
-                .iter()
-                .find(|metadata| metadata.id == column.id)
-                .map(|metadata| metadata.name.as_str())
-            else {
-                continue;
-            };
-            index_source_columns.extend(table.columns.iter().filter_map(|metadata| {
-                let generated = metadata.generated.as_ref()?;
-                (!generated.stored
-                    && generated
-                        .dependencies
-                        .iter()
-                        .any(|dependency| dependency.go_lower_eq(name)))
-                .then_some(tidb_model::TableItemID {
-                    table_id: column.table_id,
-                    id: metadata.id,
-                    is_index: false,
-                    is_sync_load_failed: false,
-                })
-            }));
-        }
-        for column in index_source_columns {
-            let Some(table) = self.kv_table_by_id(column.table_id) else {
-                continue;
-            };
-            let Some(offset) = table
-                .columns
-                .iter()
-                .position(|metadata| metadata.id == column.id)
-            else {
-                continue;
-            };
-            let Some(statistics) = self.table_statistics(column.table_id) else {
-                continue;
-            };
-            // Go `collectSyncIndices`: the handle's cached `tblStats.Pseudo`.
-            if statistics.is_synthetic_pseudo() {
-                continue;
-            }
-            for index in table.indexes() {
-                if !index.column_offsets.contains(&offset)
-                    || !statistics.index_is_load_needed(index.id)
-                {
-                    continue;
-                }
-                if usage
-                    .kept_index_ids
-                    .get(&column.table_id)
-                    .is_some_and(|kept| !kept.contains(&index.id))
-                {
-                    continue;
-                }
-                items.insert(
-                    tidb_model::TableItemID {
-                        table_id: column.table_id,
-                        id: index.id,
-                        is_index: true,
-                        is_sync_load_failed: false,
-                    },
-                    true,
-                );
-            }
-        }
-
-        // Go expands the combined column/index demand after collection. The
-        // map is populated only by static-pruning partition data sources.
-        let logical_items = items.clone();
-        for (item, full_load) in logical_items {
-            if let Some(partition_ids) = usage.table_partition_ids.get(&item.table_id) {
-                for partition_id in partition_ids {
-                    items.insert(
-                        tidb_model::TableItemID {
-                            table_id: *partition_id,
-                            id: item.id,
-                            is_index: item.is_index,
-                            is_sync_load_failed: false,
-                        },
-                        full_load,
-                    );
-                }
-            }
-        }
-
-        items
-    }
-
-    fn statistics_load_items(
-        &self,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
-        _determinate: bool,
-    ) -> Vec<tidb_model::StatsLoadItem> {
-        let mut items = self.statistics_demand(usage);
-        // Go's stats handle drops requests already satisfied by the shared
-        // cache before queueing workers.
-        items.retain(|item, full_load| {
-            let Some(statistics) = self.table_statistics(item.table_id) else {
-                return false;
-            };
-            if item.is_index {
-                return statistics.index_is_load_needed(item.id);
-            }
-            statistics.column_is_load_needed(item.id, *full_load)
-        });
-
-        let mut result = items
-            .into_iter()
-            .map(|(table_item_id, full_load)| tidb_model::StatsLoadItem {
-                table_item_id,
-                full_load,
-            })
-            .collect::<Vec<_>>();
-        result.sort_by_key(|item| {
-            (
-                item.table_item_id.table_id,
-                item.table_item_id.is_index,
-                item.table_item_id.id,
-            )
-        });
-        result
-    }
-
-    /// Go `RequestLoadStats`: start the workers at
-    /// `CollectPredicateColumnsPoint` and leave synchronous waiting to the
-    /// later `SyncWaitStatsLoadPoint`.
-    pub fn request_statistics_load(
-        &self,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
-        context: &crate::StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
-        let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
-        if wait.is_zero() {
-            // Go `CollectPredicateColumnsPoint` without sync load queues every
-            // needed item as it is; only `SendLoadRequests` (the sync path)
-            // drops the ones the cache already holds.
-            for (item, full_load) in self.statistics_demand(usage) {
-                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
-            }
-            return Ok(());
-        }
-        let items = self.statistics_load_items(usage, true);
-        if items.is_empty() {
-            return Ok(());
-        }
-        let Some(service) = self.statistics.sync_load.get() else {
-            return Ok(());
-        };
-        let receivers = service.request(&items, context.resource_group_name(), wait);
-        context.install_pending_statistics_load(receivers, items, wait);
-        Ok(())
-    }
-
-    /// Go `SyncWaitStatsLoad`, at the later logical-rule position.
-    pub fn wait_statistics_load(
-        &self,
-        context: &crate::StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
-        use tidb_stats_handle_metrics::{
-            SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL,
-        };
-
-        if context.sync_stats_failed() {
-            return Ok(());
-        }
-        let Some(pending) = context.take_pending_statistics_load() else {
-            return Ok(());
-        };
-        if pending.items.is_empty() {
-            return Ok(());
-        }
-        /// Go `SyncWaitStatsLoad`'s deferred `DurationOptimizer.StatsSyncWait`.
-        struct RecordStatsSyncWait<'a>(
-            &'a crate::phase_durations::SessionPhaseDurations,
-            std::time::Instant,
-        );
-        impl Drop for RecordStatsSyncWait<'_> {
-            fn drop(&mut self) {
-                self.0.set_stats_sync_wait(self.1.elapsed());
-            }
-        }
-        let _record_wait =
-            RecordStatsSyncWait(context.phase_durations(), std::time::Instant::now());
-        let now = std::time::Instant::now();
-        let deadline = now.checked_add(pending.timeout).unwrap_or(now);
-        let requested_items = pending.items;
-        let mut remaining_items = requested_items
-            .iter()
-            .map(|item| item.table_item_id)
-            .collect::<std::collections::HashSet<_>>();
-        let mut wait_error = None;
-        for receiver in pending.receivers {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let result = receiver.recv_timeout(remaining);
-            SYNC_LOAD_TOTAL.inc();
-            match result {
-                Ok(sync_load::SyncLoadOutcome::TransportError(error)) => {
-                    tracing::warn!(error = %error, "synchronous statistics load request failed");
-                }
-                Ok(sync_load::SyncLoadOutcome::Item { item, error }) => {
-                    if let Some(error) = error {
-                        tracing::warn!(error = %error, "synchronous statistics item load failed");
-                    }
-                    // A worker error is still a delivered result. Only missing
-                    // results fail Go's SyncWaitStatsLoad completion check.
-                    remaining_items.remove(&item);
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    SYNC_LOAD_TIMEOUT_TOTAL.inc();
-                    wait_error = Some("sync load stats timeout");
-                    break;
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    wait_error = Some("sync load stats channel closed unexpectedly");
-                    break;
-                }
-            }
-        }
-        if wait_error.is_none() {
-            if remaining_items.is_empty() {
-                SYNC_LOAD_HISTOGRAM.observe(pending.started.elapsed().as_millis() as f64);
-                return Ok(());
-            }
-            // The singleflight timer may finish before the statement starts
-            // waiting. Apply the same failure policy regardless of timer order.
-            SYNC_LOAD_TIMEOUT_TOTAL.inc();
-            wait_error =
-                Some("sync load stats failed: some requested items are not loaded in time");
-        }
-        enqueue_sync_load_failures(&requested_items, &remaining_items);
-        context.report_sync_stats_failed();
-        let message = wait_error.expect("an incomplete statistics wait has an error");
-        if context.stats_load_pseudo_timeout() {
-            context.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
-            context.append_warning_parts(1105, message);
-            return Ok(());
-        }
-        Err(tidb_planner::plan_base::PlanError::internal(message))
-    }
-
-    /// Uses the domain cache for cluster planning, independent of schema refresh.
-    pub fn set_statistics_view(&mut self, view: Arc<StatisticsView>) {
-        self.statistics_view = Some(view);
-    }
-
-    /// One table's loaded statistics; `None` is Go's `PseudoTable`.
-    #[must_use]
-    pub fn table_statistics(
-        &self,
-        table_id: i64,
-    ) -> Option<Arc<crate::access_cost::TableStatistics>> {
-        if let Some(view) = &self.statistics_view {
-            let schemas = self.statistics_schemas.get_or_init(|| {
-                let mut schemas = HashMap::new();
-                for database in self.databases.values() {
-                    // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
-                    let system_schema =
-                        tidb_util::filter::is_system_schema(&database.name.go_to_lower());
-                    for entry in database.tables.values() {
-                        let TableEntry::Kv(table) = entry.as_ref() else {
-                            continue;
-                        };
-                        let schema = Arc::new(statistics::StatisticsSchema {
-                            columns: table
-                                .columns()
-                                .iter()
-                                .map(|column| (column.id, column.field_type.is_unsigned()))
-                                .collect(),
-                            indexes: table
-                                .indexes()
-                                .iter()
-                                .map(|index| (index.id, index.column_offsets.len(), index.unique))
-                                .collect(),
-                            pseudo: statistics::PseudoStatsTable {
-                                info: pseudo_table_info(table),
-                                partitioned: table.partition().is_some(),
-                                cacheable: table.temp_table_type()
-                                    == tidb_model::TempTableType::NONE
-                                    && !system_schema,
-                            },
-                        });
-                        if let Some(partition) = table.partition() {
-                            for definition in &partition.definitions {
-                                schemas.insert(definition.id, Arc::clone(&schema));
-                            }
-                        }
-                        schemas.insert(table.table_id, schema);
-                    }
-                }
-                schemas
-            });
-            return view.table(table_id, schemas.get(&table_id)?);
-        }
-        self.statistics
-            .values
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&table_id)
-            .cloned()
-    }
-
     /// A mutable table of `database`, for the schema-changing statements.
     pub fn table_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         // Go advances InfoSchema.SchemaMetaVersion whenever a DDL job changes
@@ -3311,202 +1158,10 @@ impl Catalog {
         self.get_mut_in(database, name)
     }
 
-    /// Go's session stats-delta flush (`DumpStatsDeltaToKV` on the stats
-    /// lease): rows written but never ANALYZEd still reach
-    /// `mysql.stats_meta`, and `GetStatsTable` (`pkg/planner/core/stats/stats.go`)
-    /// then plans from that real count with the pseudo distribution — rule 3
-    /// marks the unloaded table `Pseudo` while keeping `RealtimeCount`. The
-    /// embedded tier reads the net count from the table at flush time and
-    /// applies committed modification counts to analyzed stats as Go's stats
-    /// delta collector does.
-    pub fn flush_stats_delta(&mut self) {
-        self.flush_stats_delta_inner(None);
-    }
-
-    /// Flushes only selected physical table IDs, as Go's
-    /// `FLUSH STATS_DELTA db.tbl` and `db.*` do.
-    pub fn flush_stats_delta_for(&mut self, table_ids: &[i64]) {
-        let target_ids = table_ids.iter().copied().collect();
-        self.flush_stats_delta_inner(Some(&target_ids));
-    }
-
-    fn flush_stats_delta_inner(&mut self, target_ids: Option<&HashSet<i64>>) {
-        let mut targets: Vec<(String, String, Vec<i64>)> = Vec::new();
-        let mut partitioned_tables = Vec::new();
-        for database in self.database_names() {
-            for name in self.table_names(&database).unwrap_or_default() {
-                let (table_id, physical_ids) = match self.get_in(&database, &name) {
-                    Some(TableEntry::Kv(table)) => (
-                        table.table_id,
-                        table.partition().map_or_else(
-                            || vec![table.table_id],
-                            |partition| partition.physical_ids(),
-                        ),
-                    ),
-                    _ => continue,
-                };
-                if physical_ids.len() > 1 {
-                    partitioned_tables.push((table_id, physical_ids.clone()));
-                }
-                let selected_ids: Vec<i64> = physical_ids
-                    .into_iter()
-                    .filter(|id| target_ids.is_none_or(|ids| ids.contains(id)))
-                    .collect();
-                if !selected_ids.is_empty() {
-                    targets.push((database.clone(), name, selected_ids));
-                }
-            }
-        }
-        let mut flushed: Vec<(i64, i64)> = Vec::new();
-        for (database, name, physical_ids) in targets {
-            if let Some(TableEntry::Kv(table)) = self.get_rows_mut_in(&database, &name) {
-                let table = Arc::make_mut(table);
-                for physical_id in physical_ids {
-                    if let Ok(count) = table.stats_row_count_for_physical_id(physical_id) {
-                        flushed.push((physical_id, count));
-                    }
-                }
-            }
-        }
-        let pending = if let Some(target_ids) = target_ids {
-            target_ids
-                .iter()
-                .filter_map(|table_id| {
-                    self.pending_stats_modify_count
-                        .remove(table_id)
-                        .map(|count| (*table_id, count))
-                })
-                .collect()
-        } else {
-            std::mem::take(&mut self.pending_stats_modify_count)
-        };
-        if flushed.is_empty() {
-            return;
-        }
-        let mut values = self
-            .statistics
-            .values
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (table_id, count) in flushed {
-            let modify_count = pending.get(&table_id).copied().unwrap_or(0);
-            if let Some(current) = values.get(&table_id) {
-                if modify_count == 0 && current.row_count == count {
-                    continue;
-                }
-                let mut statistics = (**current).clone();
-                statistics.row_count = count.max(0);
-                statistics.modify_count = statistics.modify_count.saturating_add(modify_count);
-                values.insert(table_id, Arc::new(statistics));
-                continue;
-            }
-            if count <= 0 {
-                continue;
-            }
-            let Some(table) = self.physical_kv_table_by_id(table_id) else {
-                continue;
-            };
-            let columns = table
-                .visible_columns()
-                .iter()
-                .map(|column| (column.id, false))
-                .collect();
-            let indexes = table
-                .indexes()
-                .iter()
-                .map(|index| (index.id, false))
-                .collect();
-            let mut statistics = crate::access_cost::TableStatistics::new(
-                count,
-                modify_count,
-                BTreeMap::new(),
-                BTreeMap::new(),
-            )
-            .with_stats_existence(columns, indexes);
-            // This is a real stats_meta row with an unanalyzed distribution.
-            // Go's cached Table is not a synthetic PseudoTable, even though
-            // GetStatsTable gives the optimizer a pseudo-stat copy.
-            statistics.cache_pseudo = false;
-            values.insert(table_id, Arc::new(statistics));
-        }
-
-        // Dynamic partition pruning reads the logical table's merged global
-        // statistics. Keep its realtime metadata in sync with physical
-        // partition deltas while preserving the analyzed global histograms.
-        for (table_id, physical_ids) in partitioned_tables {
-            let Some(current) = values.get(&table_id) else {
-                continue;
-            };
-            let (row_count, modify_count) =
-                physical_ids
-                    .iter()
-                    .fold((0_i64, 0_i64), |(rows, modifications), physical_id| {
-                        values
-                            .get(physical_id)
-                            .map_or((rows, modifications), |stats| {
-                                (
-                                    rows.saturating_add(stats.row_count.max(0)),
-                                    modifications.saturating_add(stats.modify_count.max(0)),
-                                )
-                            })
-                    });
-            if current.row_count == row_count && current.modify_count == modify_count {
-                continue;
-            }
-            let mut statistics = (**current).clone();
-            statistics.row_count = row_count;
-            statistics.modify_count = modify_count;
-            values.insert(table_id, Arc::new(statistics));
-        }
-    }
-
     /// A table of `database`, for the metadata statements.
     #[must_use]
     pub fn table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.get_in(database, name)
-    }
-
-    /// Replaces the statement-time `information_schema` storage estimates
-    /// without moving either catalog epoch. Go keeps these values in the
-    /// statement-local `TableSizeStats`; the catalog overlay is only a Rust
-    /// executor transport detail.
-    pub fn set_table_storage_statistics(
-        &mut self,
-        table_id: i64,
-        table_statistics: (u64, u64, u64, u64),
-        partition_statistics: &[(i64, (u64, u64, u64, u64))],
-    ) {
-        for database in Arc::make_mut(&mut self.databases).values_mut() {
-            for entry in Arc::make_mut(database).tables.values_mut() {
-                let TableEntry::Kv(table) = Arc::make_mut(entry) else {
-                    continue;
-                };
-                if table.table_id != table_id {
-                    continue;
-                }
-                let table = Arc::make_mut(table);
-                table.set_storage_statistics(table_statistics);
-                for (physical_id, statistics) in partition_statistics {
-                    table.set_partition_storage_statistics(*physical_id, *statistics);
-                }
-                return;
-            }
-        }
-    }
-
-    /// Clears statement-derived information-schema storage estimates from a
-    /// scratch catalog after a seam provider refused the read. Go's reader
-    /// never fails a query over a stats refresh error; the zeroed statement is
-    /// the seam fallback for providers that surface their own errors.
-    pub fn clear_table_storage_statistics(&mut self) {
-        for database in Arc::make_mut(&mut self.databases).values_mut() {
-            for entry in Arc::make_mut(database).tables.values_mut() {
-                let TableEntry::Kv(table) = Arc::make_mut(entry) else {
-                    continue;
-                };
-                Arc::make_mut(table).clear_storage_statistics();
-            }
-        }
     }
 
     /// The base table selected by a retained physical access node.
@@ -3516,48 +1171,33 @@ impl Catalog {
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
     pub(crate) fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
-        let current = self.table_id_names().get(&table_id).and_then(|key| {
-            let TableEntry::Kv(table) = self
-                .databases
-                .get(&key.database)?
-                .tables
-                .get(&key.table)?
-                .as_ref()
-            else {
-                return None;
-            };
-            Some(table)
-        });
-        current
-            .or_else(|| {
-                self.shadowed_kv_table_by_id(table_id)
-                    .map(|(_, table)| table)
-            })
+        self.kv_table_by_physical_id(table_id)
+            .map(|(_, table)| table)
             .filter(|table| table.table_id == table_id)
             .map(|table| &**table)
     }
 
-    /// A table a session's local temporary table displaced, by logical or
-    /// partition id: Go's detached infoschema still resolves it, which is how
-    /// a view keeps reading the permanent table (see
-    /// [`PlannerSchemaView::detached`]). Returns the table's folded database.
-    fn shadowed_kv_table_by_id(&self, physical_id: i64) -> Option<(&str, &Arc<crate::KvTable>)> {
-        self.shadowed_by_local_temporary
-            .iter()
-            .find_map(|(database, _, entry)| match entry.as_ref() {
-                TableEntry::Kv(table)
-                    if table.table_id == physical_id
-                        || table.partition().is_some_and(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .any(|definition| definition.id == physical_id)
-                        }) =>
-                {
-                    Some((database.as_str(), table))
-                }
+    /// Go `SessionExtendedInfoSchema.TableByID` (or `FindTableByPartitionID`
+    /// for a partition's id): the session's LOCAL temporary table with that
+    /// id, else the shared schema's table owning it, with its folded
+    /// database.
+    pub(super) fn kv_table_by_physical_id(
+        &self,
+        physical_id: i64,
+    ) -> Option<(&str, &Arc<crate::KvTable>)> {
+        let local = self.local_temporary.iter().find_map(|(key, entry)| match entry.as_ref() {
+            TableEntry::Kv(table) if table.table_id == physical_id => {
+                Some((key.database.as_str(), table))
+            }
+            _ => None,
+        });
+        local.or_else(|| {
+            let key = self.table_id_names().get(&physical_id)?;
+            match self.schema_entry(key)?.as_ref() {
+                TableEntry::Kv(table) => Some((key.database.as_str(), table)),
                 _ => None,
-            })
+            }
+        })
     }
 
     /// The bytes `key` holds in the table `table_id` names, read from a
@@ -3603,22 +1243,7 @@ impl Catalog {
     /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
     /// since restricting reads to one partition needs an independent copy.
     pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
-        let current = self.table_id_names().get(&physical_id).and_then(|key| {
-            let TableEntry::Kv(table) = self
-                .databases
-                .get(&key.database)?
-                .tables
-                .get(&key.table)?
-                .as_ref()
-            else {
-                return None;
-            };
-            Some(table)
-        });
-        let table = current.or_else(|| {
-            self.shadowed_kv_table_by_id(physical_id)
-                .map(|(_, table)| table)
-        })?;
+        let (_, table) = self.kv_table_by_physical_id(physical_id)?;
         let mut physical = Arc::clone(table);
         if table.table_id != physical_id {
             Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
@@ -3626,52 +1251,9 @@ impl Catalog {
         Some(physical)
     }
 
-    /// Go `GetTblInfoForUsedStatsByPhysicalID`'s name: the table's name, then
-    /// ` <partition>` for a partition id or ` global` for a partitioned
-    /// table's own id, and `tableID <id>` when no table owns the id.
-    pub(crate) fn used_stats_table_name(&self, physical_id: i64) -> String {
-        let current = self.table_id_names().get(&physical_id).and_then(|key| {
-            let TableEntry::Kv(table) = self
-                .databases
-                .get(&key.database)?
-                .tables
-                .get(&key.table)?
-                .as_ref()
-            else {
-                return None;
-            };
-            Some(table)
-        });
-        let Some(table) = current.or_else(|| {
-            self.shadowed_kv_table_by_id(physical_id)
-                .map(|(_, table)| table)
-        }) else {
-            return format!("tableID {physical_id}");
-        };
-        let mut name = table.name.clone();
-        if let Some(partition) = table.partition() {
-            match partition
-                .definitions
-                .iter()
-                .find(|definition| definition.id == physical_id)
-            {
-                Some(definition) => {
-                    name.push(' ');
-                    name.push_str(&definition.name);
-                }
-                None if !partition.definitions.is_empty() => name.push_str(" global"),
-                None => {}
-            }
-        }
-        name
-    }
-
     /// Resolves a logical or partition table ID to its owning database name.
     pub(crate) fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
-        let database = match self.table_id_names().get(&physical_id) {
-            Some(key) => key.database.as_str(),
-            None => self.shadowed_kv_table_by_id(physical_id)?.0,
-        };
+        let (database, _) = self.kv_table_by_physical_id(physical_id)?;
         Some(self.databases.get(database)?.name.as_str())
     }
 
@@ -3685,32 +1267,6 @@ impl Catalog {
     #[must_use]
     pub fn contains_in(&self, database: &str, name: &str) -> bool {
         self.get_in(database, name).is_some()
-    }
-
-    /// Registers a matrix-backed table in `database`, creating the schema
-    /// when it does not exist. Used to materialize a virtual table before
-    /// running an ordinary plan over it.
-    ///
-    /// # Panics
-    /// Never: the schema is created just above when it is missing.
-    pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
-        self.bump_metadata_version();
-        let key = database.go_to_lower();
-        if !self.databases.contains_key(&key) {
-            self.next_database_id += 1;
-            Arc::make_mut(&mut self.databases).insert(
-                key,
-                Arc::new(Database {
-                    id: self.next_database_id,
-                    name: database.to_owned(),
-                    charset: TableCharset::default(),
-                    placement_policy: None,
-                    tables: HashMap::new(),
-                }),
-            );
-        }
-        self.register_in(database, name, TableEntry::Mem(table))
-            .expect("the schema was just created when it was missing");
     }
 
     /// Registers a TiKV-format-byte-backed table in `database`, or reports
@@ -3743,277 +1299,6 @@ impl Catalog {
     ) -> Result<(), DriverError> {
         self.bump_metadata_version();
         self.register_in(database, name, TableEntry::Kv(Arc::new(table)))
-    }
-
-    /// Registers a LOCAL temporary table in `database`, remembering whatever
-    /// permanent object the name held so the detach can put it back.
-    ///
-    /// Go `temptable.CreateLocalTemporaryTable` -> `SessionTables.AddTable`:
-    /// the table goes into the SESSION's own map, never into the shared
-    /// infoschema, so it neither takes a DDL job nor moves the schema
-    /// version. This does not bump [`Catalog::version`] for the same reason:
-    /// a session creating a scratch table of its own must not abort a peer's
-    /// open transaction, which the version counter is what decides.
-    ///
-    /// The schema must exist -- Go's `createSessionTemporaryTable` reports
-    /// `ErrDatabaseNotExists` (1049) before it builds anything.
-    ///
-    /// # Errors
-    ///
-    /// 1049 when `database` does not exist.
-    pub fn register_local_temporary_in(
-        &mut self,
-        database: &str,
-        name: &str,
-        table: KvTable,
-    ) -> Result<(), DriverError> {
-        self.bump_metadata_version();
-        let folded_database = database.go_to_lower();
-        let folded_name = name.go_to_lower();
-        let schema = self.database_mut(&folded_database).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
-        })?;
-        if let Some(displaced) = schema.tables.insert(
-            folded_name.clone(),
-            std::sync::Arc::new(TableEntry::Kv(Arc::new(table))),
-        ) {
-            self.shadowed_by_local_temporary
-                .push((folded_database, folded_name, displaced));
-        }
-        Ok(())
-    }
-
-    /// Attaches a session's LOCAL temporary tables for the duration of one
-    /// statement -- Go `temptable.AttachLocalTemporaryTableInfoSchema`.
-    ///
-    /// Each entry is `(folded database, folded name, table)`. A name whose
-    /// schema has since been dropped is DISCARDED rather than resurrecting
-    /// the schema: Go keeps such a table alive in `SessionTables` (which owns
-    /// its `DBInfo` by value) and this tier cannot, which is the one
-    /// documented gap in the overlay.
-    pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, KvTable)>) {
-        // The version bump is gated on an ACTUAL visibility change: this runs
-        // around EVERY statement via [`crate::txn`]'s overlay guard, and the
-        // common case is a session with NO temporary tables, where attaching
-        // inserts nothing. Bumping unconditionally moved the key-decode
-        // metadata epoch twice per statement, which rebuilt the whole
-        // TIDB_DECODE_KEY snapshot per statement (measured: ~60% of process
-        // CPU in its allocation trail under sysbench point_select). Go's row-
-        // decode caches hang off the INFOSCHEMA version, which a session
-        // mounting its own temp tables never moves either.
-        let changed = !tables.is_empty();
-        if changed {
-            let base = self.metadata_version;
-            self.bump_metadata_version();
-            self.overlay_versions = Some((base, self.metadata_version));
-        }
-        for (database, name, table) in tables {
-            let Some(schema) = self.database_mut(&database) else {
-                continue;
-            };
-            if let Some(displaced) = schema.tables.insert(
-                name.clone(),
-                std::sync::Arc::new(TableEntry::Kv(Arc::new(table))),
-            ) {
-                self.shadowed_by_local_temporary
-                    .push((database, name, displaced));
-            }
-        }
-    }
-
-    /// Detaches every LOCAL temporary table, restoring what each one shadowed
-    /// -- Go `temptable.DetachLocalTemporaryTableInfoSchema`.
-    ///
-    /// The tables are found by their own metadata rather than by the list
-    /// that was attached, which is what makes the statement's own DDL come
-    /// out right: a `CREATE TEMPORARY TABLE` run during the statement leaves
-    /// here, and a `DROP TEMPORARY TABLE` does not. Restoring a shadowed
-    /// entry only into an EMPTY slot is the other half of that: a statement
-    /// that dropped the temporary table and created a permanent one under the
-    /// same name keeps the new table rather than the resurrected old one.
-    pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
-        // Same gate as [`Self::attach_local_temporary_tables`]: a session
-        // with no local temporary tables detaches nothing, so the key-decode
-        // metadata epoch must not move either. The list itself comes from the
-        // memoized sweep rather than a fresh walk.
-        let slots = self.ensure_temporary_sweep().0.to_vec();
-        let moved_entries = !slots.is_empty() || !self.shadowed_by_local_temporary.is_empty();
-        // A statement that changed no schema leaves the image it found, so
-        // detaching restores that image's version.
-        let restored = self
-            .overlay_versions
-            .take()
-            .and_then(|(base, attached)| (attached == self.metadata_version).then_some(base));
-        if moved_entries {
-            self.bump_metadata_version();
-        }
-        let mut taken = Vec::with_capacity(slots.len());
-        for (folded_database, folded_name) in slots {
-            let Some(schema) = self.database_mut(&folded_database) else {
-                continue;
-            };
-            let Some(entry) = schema.tables.remove(&folded_name) else {
-                continue;
-            };
-            let TableEntry::Kv(table) = Arc::unwrap_or_clone(entry) else {
-                continue;
-            };
-            taken.push((folded_database, folded_name, Arc::unwrap_or_clone(table)));
-        }
-        for (folded_database, folded_name, entry) in
-            std::mem::take(&mut self.shadowed_by_local_temporary)
-        {
-            let Some(schema) = self.database_mut(&folded_database) else {
-                continue;
-            };
-            schema.tables.entry(folded_name).or_insert_with(|| entry);
-        }
-        if moved_entries {
-            self.temporary_sweep = None;
-        }
-        if let Some(base) = restored {
-            self.metadata_version = base;
-        }
-        taken
-    }
-
-    /// Every GLOBAL temporary table in the catalog, by physical id, for the
-    /// session that has to swap its own rows in.
-    ///
-    /// A global temporary table's `TableInfo` is shared by every session (it
-    /// is created by a real DDL job) while its ROWS are private to one and
-    /// die with the transaction that wrote them -- Go
-    /// `temptable.TemporaryTableSnapshotInterceptor`, whose `iterTable`
-    /// answers an EMPTY iterator for `TempTableGlobal` so nothing outside the
-    /// current transaction's own buffer is ever visible.
-    pub fn global_temporary_table_ids(&self) -> Vec<(String, String)> {
-        let mut ids = Vec::new();
-        for (folded_database, schema) in self.databases.iter() {
-            for (folded_name, entry) in &schema.tables {
-                if matches!(&**entry, TableEntry::Kv(table)
-                    if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
-                {
-                    ids.push((folded_database.clone(), folded_name.clone()));
-                }
-            }
-        }
-        ids.sort();
-        ids
-    }
-
-    /// The GLOBAL half of [`Self::global_temporary_table_ids`], served from
-    /// the memoized sweep below: `txn`'s overlay guard asks this twice per
-    /// statement, and the answer only moves when the table set does -- Go
-    /// asks the same question of `temptable`'s own session map in O(1).
-    pub fn global_temporary_table_ids_memo(&mut self) -> &[(String, String)] {
-        self.ensure_temporary_sweep().1
-    }
-
-    /// The LOCAL and GLOBAL temporary-table id lists as of the CURRENT
-    /// metadata epoch, rebuilt from ONE catalog walk when the memo is stale.
-    ///
-    /// Keyed on `metadata_version`, because exactly its mutators move the
-    /// table set; [`Self::take_local_temporary_tables`] also drops the memo
-    /// explicitly once it has removed entries under it.
-    fn ensure_temporary_sweep(&mut self) -> (&[(String, String)], &[(String, String)]) {
-        let epoch = self.metadata_version;
-        if self
-            .temporary_sweep
-            .as_ref()
-            .is_none_or(|(at, _, _)| *at != epoch)
-        {
-            let mut local: Vec<(String, String)> = Vec::new();
-            let mut global: Vec<(String, String)> = Vec::new();
-            for (folded_database, schema) in self.databases.iter() {
-                for (folded_name, entry) in &schema.tables {
-                    let TableEntry::Kv(table) = &**entry else {
-                        continue;
-                    };
-                    match table.temp_table_type() {
-                        tidb_model::TempTableType::LOCAL => {
-                            local.push((folded_database.clone(), folded_name.clone()))
-                        }
-                        tidb_model::TempTableType::GLOBAL => {
-                            global.push((folded_database.clone(), folded_name.clone()))
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            global.sort();
-            self.temporary_sweep = Some((epoch, local, global));
-        }
-        match self.temporary_sweep.as_mut() {
-            Some((at, locals, globals)) => {
-                debug_assert_eq!(*at, epoch);
-                (locals.as_slice(), globals.as_slice())
-            }
-            None => unreachable!("just stored"),
-        }
-    }
-
-    /// A mutable handle on a table for the temporary-table overlay, which
-    /// swaps row storage in and out without changing any schema.
-    ///
-    /// It deliberately does NOT bump [`Catalog::version`]: moving a session's
-    /// own rows into and out of the slot they are read through is not a
-    /// schema change, and counting it as one would abort every concurrent
-    /// transaction whenever any session touched a temporary table.
-    pub fn temporary_overlay_table_mut(
-        &mut self,
-        database: &str,
-        name: &str,
-    ) -> Option<&mut KvTable> {
-        // The row overlay keeps the schema epoch, but this public handle
-        // can also change an ID. Never retain a directory across that borrow.
-        self.invalidate_table_id_names();
-        match self
-            .database_mut(database)?
-            .tables
-            .get_mut(name)
-            .map(std::sync::Arc::make_mut)
-        {
-            Some(TableEntry::Kv(table)) => Some(std::sync::Arc::make_mut(table)),
-            _ => None,
-        }
-    }
-
-    /// Resolves a durable DDL target without the session's local name overlay.
-    pub fn persistent_table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
-        let entry = self.table_in(database, name)?;
-        if matches!(entry, TableEntry::Kv(table) if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
-        {
-            let database = database.go_to_lower();
-            let name = name.go_to_lower();
-            self.shadowed_by_local_temporary
-                .iter()
-                .rev()
-                .find(|(db, table, _)| db == &database && table == &name)
-                .map(|(_, _, entry)| entry.as_ref())
-        } else {
-            Some(entry)
-        }
-    }
-
-    /// Publishes an admitted view behind a local shadow, retaining its rows.
-    pub(crate) fn register_persistent_view_in(
-        &mut self,
-        database: &str,
-        name: &str,
-        view: ViewDef,
-    ) -> Result<(), DriverError> {
-        if matches!(self.table_in(database, name), Some(TableEntry::Kv(table))
-            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
-        {
-            // Reuse normal publication so transaction and metadata versions
-            // advance together; restore every local table even on failure.
-            let local = self.take_local_temporary_tables();
-            let result = self.register_view_in(database, name, view);
-            self.attach_local_temporary_tables(local);
-            result
-        } else {
-            self.register_view_in(database, name, view)
-        }
     }
 
     /// Registers an already-admitted view. The caller owns object-kind checks.
@@ -4065,1813 +1350,9 @@ impl Catalog {
         }
     }
 
-    /// [`Catalog::sequence_in`] for the `ALTER SEQUENCE` path, which replaces
-    /// the options on the entry in place.
-    pub fn sequence_mut_in(&mut self, database: &str, name: &str) -> Option<&mut SequenceDef> {
-        self.bump_version();
-        match self.get_mut_in(database, name) {
-            Some(TableEntry::Sequence(sequence)) => Some(sequence),
-            _ => None,
-        }
-    }
-
     /// Whether a table with `name` exists in the default database.
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.get(name).is_some()
-    }
-
-    /// Install the storage owner's independent metadata allocator.
-    pub fn set_local_temporary_id_allocator(
-        &mut self,
-        allocator: Arc<dyn LocalTemporaryTableIdAllocator>,
-    ) {
-        self.local_temporary_ids = Some(allocator);
-    }
-
-    pub fn allocate_local_temporary_table_id(&mut self) -> Result<i64, DriverError> {
-        match &self.local_temporary_ids {
-            Some(allocator) => allocator.allocate(),
-            // Embedded catalogs share the same allocator for both table kinds.
-            None => Ok(self.allocate_table_id()),
-        }
-    }
-
-    /// Go's `GenGlobalID` counter after a bootstrap that drew ids up to `id`:
-    /// the next table or database this catalog creates takes an id above it
-    /// (the process-wide table counter never moves backwards).
-    pub fn reserve_ids_through(&mut self, id: i64) {
-        TABLE_ID_HIGHWATER.fetch_max(id, std::sync::atomic::Ordering::SeqCst);
-        self.next_database_id = self.next_database_id.max(id);
-    }
-
-    /// Embedded-catalog allocator, shared by persistent and local tables.
-    /// Cluster temporary DDL must use the storage-backed allocator above.
-    pub fn allocate_table_id(&mut self) -> i64 {
-        let id = TABLE_ID_HIGHWATER.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        self.next_table_id = id;
-        id
-    }
-}
-
-/// Embedded catalog IDs survive catalog rebuilds within the process.
-static TABLE_ID_HIGHWATER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-
-impl crate::keydecoder::KeyInfoCatalog for Catalog {
-    fn resolve_physical_table(
-        &self,
-        physical_id: i64,
-    ) -> Option<crate::keydecoder::KeyInfoTableLookup> {
-        for database in self.databases.values() {
-            for (registered_name, entry) in &database.tables {
-                let TableEntry::Kv(table) = entry.as_ref() else {
-                    continue;
-                };
-                if table.table_id == physical_id {
-                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
-                        key_info_table(database, registered_name, table, 0, String::new()),
-                    ));
-                }
-            }
-        }
-        for database in self.databases.values() {
-            for (registered_name, entry) in &database.tables {
-                let TableEntry::Kv(table) = entry.as_ref() else {
-                    continue;
-                };
-                let Some(partition) = table.partition() else {
-                    continue;
-                };
-                if let Some(definition) = partition
-                    .definitions
-                    .iter()
-                    .find(|definition| definition.id == physical_id)
-                {
-                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
-                        key_info_table(
-                            database,
-                            registered_name,
-                            table,
-                            definition.id,
-                            definition.name.clone(),
-                        ),
-                    ));
-                }
-            }
-        }
-        None
-    }
-}
-
-fn key_info_table(
-    database: &Database,
-    registered_name: &str,
-    table: &KvTable,
-    partition_id: i64,
-    partition_name: String,
-) -> crate::keydecoder::KeyInfoTable {
-    crate::keydecoder::KeyInfoTable {
-        db_name: database.name.clone(),
-        db_id: database.id,
-        table_name: if table.name.is_empty() {
-            registered_name.to_owned()
-        } else {
-            table.name.clone()
-        },
-        table_id: table.table_id,
-        partition_name,
-        partition_id,
-        indexes: table
-            .indexes()
-            .iter()
-            .map(|index| crate::keydecoder::KeyInfoIndex {
-                id: index.id,
-                name: index.name.clone(),
-            })
-            .collect(),
-    }
-}
-
-/// Resolves unqualified/`t.`-qualified column names against one table's schema
-/// (case-insensitive, as in MySQL).
-pub(crate) struct TableResolver<'a> {
-    pub(crate) table_name: &'a str,
-    /// The table's database, which a `db.t.c` reference must name (Go
-    /// `FindFieldName` matches `name.DBName` even through an alias).
-    pub(crate) database: Option<&'a str>,
-    pub(crate) columns: &'a [(String, FieldType)],
-    pub(crate) constant_context: crate::StmtContext,
-    /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
-    /// taken from the write's `StmtContext` at each build site.
-    pub(crate) zone: tidb_expr::SessionTimeZone,
-    pub(crate) no_unsigned_subtraction: bool,
-    pub(crate) div_precision_increment: u32,
-    /// Go `clauseMsg` for this resolver's statement clause: the write lists
-    /// (`INSERT VALUES`, `ON DUPLICATE KEY UPDATE`, `UPDATE ... SET`) name
-    /// `field list`, while a site whose unresolved columns a DIFFERENT clause
-    /// names keeps the generic `expression` spelling.
-    pub(crate) clause_message: &'static str,
-    /// The constants the INSERT's planning folded its uncorrelated scalar
-    /// subqueries to, which the values reach as `#const#N` markers (Go's
-    /// rewriter pushes the `Constant` itself).
-    pub(crate) subquery_constants: &'a [Expression],
-}
-
-impl ColumnResolver for TableResolver<'_> {
-    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
-        self.constant_context.user_vars()
-    }
-
-    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
-        let [name] = path else {
-            return None;
-        };
-        let marker = tidb_planner::plan_builder::marker::PlanMarker::decode(name)?;
-        (marker.kind == tidb_planner::plan_builder::marker::MarkerKind::Constant)
-            .then(|| self.subquery_constants.get(marker.index).cloned())
-            .flatten()
-    }
-
-    fn has_resolved_constants(&self) -> bool {
-        !self.subquery_constants.is_empty()
-    }
-
-    fn clause_message(&self) -> &'static str {
-        self.clause_message
-    }
-
-    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
-        tidb_expr::Columns::param_value(&self.constant_context, order)
-    }
-
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        self.zone.clone()
-    }
-
-    fn date_modes(&self) -> tidb_datatype::DateModes {
-        tidb_expr::Columns::date_modes(&self.constant_context)
-    }
-
-    fn connection_charset_info(&self) -> (&str, &str) {
-        self.constant_context.connection_charset_info()
-    }
-
-    fn like_default_escape(&self) -> u8 {
-        self.constant_context.like_default_escape()
-    }
-
-    fn no_unsigned_subtraction(&self) -> bool {
-        self.no_unsigned_subtraction
-    }
-
-    fn div_precision_increment(&self) -> u32 {
-        self.div_precision_increment
-    }
-
-    fn current_database(&self) -> Option<String> {
-        tidb_expr::Columns::current_database(&self.constant_context)
-    }
-
-    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
-    }
-
-    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
-        tidb_expr::eval_expression_once(expression, &self.constant_context)
-    }
-
-    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
-        let (qualifier, name) = match path {
-            [name] => (None, name),
-            [table, name] => (Some(table), name),
-            [schema, table, name] => {
-                if !self
-                    .database
-                    .is_some_and(|database| database.go_lower_eq(schema))
-                {
-                    return None;
-                }
-                (Some(table), name)
-            }
-            _ => return None,
-        };
-        if let Some(q) = qualifier {
-            if !q.go_lower_eq(self.table_name) {
-                return None;
-            }
-        }
-        self.columns
-            .iter()
-            .position(|(n, _)| n.go_lower_eq(name))
-            .map(|i| (i, self.columns[i].1.clone(), (i + 1) as i64))
-    }
-}
-
-#[cfg(test)]
-mod statistics_request_tests {
-    use super::*;
-
-    static STATS_LOAD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[derive(Default)]
-    struct RecordingLoader {
-        requests: std::sync::Mutex<Vec<tidb_model::StatsLoadItem>>,
-        delay: std::time::Duration,
-        failure: Option<String>,
-    }
-
-    impl StatisticsItemLoader for RecordingLoader {
-        fn load_items(
-            &self,
-            items: &[tidb_model::StatsLoadItem],
-            _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String> {
-            *self
-                .requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = items.to_vec();
-            if !self.delay.is_zero() {
-                std::thread::sleep(self.delay);
-            }
-            match &self.failure {
-                Some(error) => Err(error.clone()),
-                None => Ok(Vec::new()),
-            }
-        }
-    }
-
-    fn analyzed_lite_catalog() -> (Catalog, i64, i64) {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE t(a INT, b INT, KEY ia(a))", &mut catalog)
-            .expect("fixture DDL");
-        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
-            panic!("fixture is not a KV table")
-        };
-        let table_id = table.table_id;
-        let column_id = table.columns[0].id;
-        let statistics = crate::access_cost::TableStatistics {
-            pseudo: false,
-            row_count: 10,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            ..crate::access_cost::TableStatistics::default()
-        };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
-        (catalog, table_id, column_id)
-    }
-
-    fn index_pruning_catalog(partitioned: bool) -> (Catalog, i64, Vec<i64>, Vec<(String, i64)>) {
-        let mut catalog = Catalog::default();
-        let partition_clause = if partitioned {
-            " PARTITION BY HASH(a) PARTITIONS 4"
-        } else {
-            ""
-        };
-        crate::run_create_table_on(
-            &format!(
-                "CREATE TABLE t(\
-                    a INT, b INT, c INT, d INT, e INT, f INT, g INT, h INT,\
-                    i INT, j INT, k INT, l INT, m INT,\
-                    KEY ia(a), KEY iab(a,b), KEY iac(a,c), KEY iad(a,d),\
-                    KEY iae(a,e), KEY iaf(a,f), KEY iag(a,g), KEY iah(a,h),\
-                    KEY iai(a,i), KEY iaj(a,j), KEY iak(a,k), KEY ial(a,l),\
-                    KEY iam(a,m), KEY ib(b), KEY ibc(b,c), KEY ibd(b,d),\
-                    KEY ibe(b,e), KEY ic(c), KEY icd(c,d), KEY ice(c,e),\
-                    KEY icf(c,f), KEY id(d), KEY ide(d,e), KEY idf(d,f),\
-                    KEY ie(e), KEY ief(e,f), KEY if_idx(f)\
-                ){partition_clause}"
-            ),
-            &mut catalog,
-        )
-        .expect("index-pruning fixture DDL");
-        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
-            panic!("fixture is not a KV table")
-        };
-        let table_id = table.table_id;
-        let partition_ids = table
-            .partition()
-            .map(|partition| {
-                partition
-                    .definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let column_ids = table
-            .columns
-            .iter()
-            .map(|column| column.id)
-            .collect::<Vec<_>>();
-        let indexes = table
-            .indexes()
-            .iter()
-            .map(|index| (index.name.clone(), index.id))
-            .collect::<Vec<_>>();
-        let statistics = crate::access_cost::TableStatistics {
-            pseudo: false,
-            row_count: 4,
-            column_load_status: column_ids
-                .iter()
-                .copied()
-                .map(|id| (id, tidb_stats::StatsLoadedStatus::all_evicted()))
-                .collect(),
-            index_load_status: indexes
-                .iter()
-                .map(|(_, id)| (*id, tidb_stats::StatsLoadedStatus::all_evicted()))
-                .collect(),
-            column_stats_existence: column_ids.iter().copied().map(|id| (id, true)).collect(),
-            index_stats_existence: indexes.iter().map(|(_, id)| (*id, true)).collect(),
-            ..crate::access_cost::TableStatistics::default()
-        };
-        for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
-            catalog.set_table_statistics(physical_id, Arc::new(statistics.clone()));
-        }
-        (catalog, table_id, partition_ids, indexes)
-    }
-
-    fn clear_async_statistics_items() {
-        for item in tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.all_items() {
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(item.table_item_id);
-        }
-    }
-
-    fn requested_index_ids(table_id: i64) -> std::collections::HashSet<i64> {
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .into_iter()
-            .filter_map(|item| {
-                (item.table_item_id.table_id == table_id && item.table_item_id.is_index)
-                    .then_some(item.table_item_id.id)
-            })
-            .collect()
-    }
-
-    fn assert_only_indexes_starting_with_a_are_requested(
-        requested: &std::collections::HashSet<i64>,
-        indexes: &[(String, i64)],
-        capped: bool,
-    ) {
-        let starting_with_a = indexes
-            .iter()
-            .filter_map(|(name, id)| name.starts_with("ia").then_some(*id))
-            .collect::<std::collections::HashSet<_>>();
-        let unrelated = indexes
-            .iter()
-            .filter_map(|(name, id)| (!name.starts_with("ia")).then_some(*id))
-            .collect::<std::collections::HashSet<_>>();
-        assert!(!requested.is_empty());
-        assert!(requested.is_disjoint(&unrelated));
-        assert!(requested.is_subset(&starting_with_a));
-        if capped {
-            assert!(requested.len() < starting_with_a.len());
-            assert!(requested.len() <= 10);
-        }
-    }
-
-    #[test]
-    fn determinate_load_requests_one_analyzed_column_per_visited_table() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            visited_logical_table_ids: [table_id].into_iter().collect(),
-            ..Default::default()
-        };
-
-        let context = crate::StmtContext::for_query().with_stats_load_policy(100, true, 0);
-        catalog
-            .request_statistics_load(&usage, &context)
-            .expect("start synchronous load");
-        catalog
-            .wait_statistics_load(&context)
-            .expect("finish synchronous load");
-        let requests = loader
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(requests.len(), 1);
-        assert!(requests.iter().any(|request| {
-            request.table_item_id.table_id == table_id
-                && request.table_item_id.id == column_id
-                && !request.table_item_id.is_index
-                && request.full_load
-        }));
-    }
-
-    #[test]
-    fn a_singleflight_transport_timeout_activates_statement_failure_before_wait_timer() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        // Go master TestSyncWaitStatsLoadWithFailedResultBeforeTimer: prepare
-        // the result before waiting instead of relying on two racing timers.
-        for pseudo in [false, true] {
-            let catalog = Catalog::default();
-            let requested = tidb_model::StatsLoadItem {
-                table_item_id: tidb_model::TableItemID {
-                    table_id: 9_800_001,
-                    id: 1,
-                    is_index: false,
-                    is_sync_load_failed: false,
-                },
-                full_load: true,
-            };
-            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            sender
-                .send(sync_load::SyncLoadOutcome::TransportError(
-                    "sync load took too long to return".to_owned(),
-                ))
-                .unwrap();
-            let context = crate::StmtContext::for_query().with_stats_load_policy(100, pseudo, 1000);
-            context.install_pending_statistics_load(
-                vec![receiver],
-                vec![requested],
-                std::time::Duration::from_secs(1),
-            );
-            let consumed = tidb_stats_handle_metrics::SYNC_LOAD_TOTAL.get();
-            let timeouts = tidb_stats_handle_metrics::SYNC_LOAD_TIMEOUT_TOTAL.get();
-            let result = catalog.wait_statistics_load(&context);
-            assert!(tidb_stats_handle_metrics::SYNC_LOAD_TOTAL.get() >= consumed + 1.0);
-            assert!(tidb_stats_handle_metrics::SYNC_LOAD_TIMEOUT_TOTAL.get() >= timeouts + 1.0);
-            assert!(
-                context.sync_stats_failed(),
-                "an undelivered item must fail the statement load"
-            );
-            if pseudo {
-                result.expect("pseudo timeout falls back");
-                assert!(context.skip_plan_cache());
-                assert_eq!(context.take_warnings().len(), 1);
-            } else {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("some requested items are not loaded in time"));
-                assert!(!context.skip_plan_cache());
-            }
-            let mut failed = requested.table_item_id;
-            failed.is_sync_load_failed = true;
-            assert!(tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                .all_items()
-                .iter()
-                .any(|item| item.table_item_id == failed));
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
-            assert!(context.take_pending_statistics_load().is_none());
-        }
-    }
-
-    #[test]
-    fn delivered_worker_errors_complete_the_wait_and_record_latency() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        use tidb_stats_handle_metrics::{SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TOTAL};
-        let catalog = Catalog::default();
-        let requested = tidb_model::StatsLoadItem {
-            table_item_id: tidb_model::TableItemID {
-                table_id: 9_800_002,
-                id: 1,
-                is_index: false,
-                is_sync_load_failed: false,
-            },
-            full_load: true,
-        };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(100, false, 1000);
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        sender
-            .send(sync_load::SyncLoadOutcome::Item {
-                item: requested.table_item_id,
-                error: Some("storage read failed after retry".to_owned()),
-            })
-            .unwrap();
-        context.install_pending_statistics_load(
-            vec![receiver],
-            vec![requested],
-            std::time::Duration::from_secs(1),
-        );
-        let count = SYNC_LOAD_TOTAL.get();
-        let observed = SYNC_LOAD_HISTOGRAM.get_sample_count();
-        let elapsed = SYNC_LOAD_HISTOGRAM.get_sample_sum();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        catalog
-            .wait_statistics_load(&context)
-            .expect("worker errors are delivered results");
-        assert!(!context.sync_stats_failed());
-        let mut failed = requested.table_item_id;
-        failed.is_sync_load_failed = true;
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == failed));
-        assert!(SYNC_LOAD_TOTAL.get() >= count + 1.0);
-        assert!(SYNC_LOAD_HISTOGRAM.get_sample_count() > observed);
-        assert!(
-            SYNC_LOAD_HISTOGRAM.get_sample_sum() >= elapsed + 10.0,
-            "latency includes time between submission and waiting"
-        );
-    }
-
-    #[test]
-    fn statistics_wait_timeout_and_closed_channel_record_consumption() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        use tidb_stats_handle_metrics::{SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL};
-        for closed in [false, true] {
-            let catalog = Catalog::default();
-            let requested = tidb_model::StatsLoadItem {
-                table_item_id: tidb_model::TableItemID {
-                    table_id: 9_800_003 + i64::from(closed),
-                    id: 1,
-                    is_index: false,
-                    is_sync_load_failed: false,
-                },
-                full_load: true,
-            };
-            let context = crate::StmtContext::for_query().with_stats_load_policy(100, false, 1);
-            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            let sender = if closed {
-                drop(sender);
-                None
-            } else {
-                Some(sender)
-            };
-            context.install_pending_statistics_load(
-                vec![receiver],
-                vec![requested],
-                std::time::Duration::from_millis(1),
-            );
-            let count = SYNC_LOAD_TOTAL.get();
-            let timeouts = SYNC_LOAD_TIMEOUT_TOTAL.get();
-            let error = catalog.wait_statistics_load(&context).unwrap_err();
-            assert!(error.to_string().contains(if closed {
-                "channel closed unexpectedly"
-            } else {
-                "sync load stats timeout"
-            }));
-            assert!(context.sync_stats_failed());
-            assert!(SYNC_LOAD_TOTAL.get() >= count + 1.0);
-            if !closed {
-                assert!(SYNC_LOAD_TIMEOUT_TOTAL.get() >= timeouts + 1.0);
-            }
-            let mut failed = requested.table_item_id;
-            failed.is_sync_load_failed = true;
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
-            drop(sender);
-        }
-    }
-
-    #[test]
-    fn histograms_in_flight_cleans_completed_statistics_items() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        catalog.set_statistics_item_loader(
-            Arc::new(RecordingLoader {
-                delay: std::time::Duration::from_millis(40),
-                ..RecordingLoader::default()
-            }),
-            StatisticsLoadWorkers::new(),
-        );
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(
-                tidb_model::TableItemID {
-                    table_id,
-                    id: column_id,
-                    is_index: false,
-                    is_sync_load_failed: false,
-                },
-                true,
-            )]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(0, true, 0);
-
-        catalog
-            .request_statistics_load(&usage, &context)
-            .expect("start asynchronous load");
-        assert_eq!(catalog.clean_needed_statistics_items(), 1);
-        catalog
-            .load_needed_histograms("")
-            .expect("domain tick drains asynchronous demand");
-        assert_eq!(catalog.clean_needed_statistics_items(), 0);
-    }
-
-    #[test]
-    fn asynchronous_column_metadata_request_uses_full_load_eligibility() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let requested = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
-
-        catalog
-            .load_needed_histograms("")
-            .expect("metadata-only asynchronous load");
-        assert_eq!(
-            loader
-                .requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_slice(),
-            &[tidb_model::StatsLoadItem {
-                table_item_id: requested,
-                full_load: false,
-            }]
-        );
-    }
-
-    #[test]
-    fn asynchronous_index_request_is_always_full_load() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
-        let index_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().first())
-            .expect("fixture index ia")
-            .id;
-        let mut statistics = catalog
-            .table_statistics(table_id)
-            .expect("fixture statistics")
-            .as_ref()
-            .clone();
-        statistics
-            .index_load_status
-            .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
-        statistics.index_stats_existence.insert(index_id, true);
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let requested = tidb_model::TableItemID {
-            table_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
-
-        catalog
-            .load_needed_histograms("")
-            .expect("asynchronous index load");
-        assert_eq!(
-            loader
-                .requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_slice(),
-            &[tidb_model::StatsLoadItem {
-                table_item_id: requested,
-                full_load: true,
-            }]
-        );
-    }
-
-    #[test]
-    fn failed_async_load_removes_the_item_and_returns_the_storage_error() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let loader = Arc::new(RecordingLoader {
-            failure: Some("corrupted histogram bound".to_owned()),
-            ..RecordingLoader::default()
-        });
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let requested = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(requested, true)].into_iter().collect(),
-            ..Default::default()
-        };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(0, true, 0);
-
-        catalog
-            .request_statistics_load(&usage, &context)
-            .expect("start asynchronous load");
-        assert!(catalog.load_needed_histograms("").is_err());
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == requested));
-        assert_eq!(
-            loader
-                .requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_slice(),
-            &[tidb_model::StatsLoadItem {
-                table_item_id: requested,
-                full_load: true,
-            }]
-        );
-    }
-
-    #[test]
-    fn load_column_statistics_after_table_drop() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
-        let dropped = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
-        crate::run_drop_table_in(
-            "DROP TABLE t",
-            &mut catalog,
-            "test",
-            tidb_parser::SqlMode::default(),
-            true,
-        )
-        .expect("drop the table after queueing the column");
-
-        catalog
-            .load_needed_histograms("")
-            .expect("a dropped table is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == dropped));
-    }
-
-    #[test]
-    fn load_statistics_after_column_drop() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
-        let column_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.columns.iter().find(|column| column.name == "b"))
-            .expect("fixture column b")
-            .id;
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
-        let dropped = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
-        crate::run_alter_table_in(
-            "ALTER TABLE t DROP COLUMN b",
-            &mut catalog,
-            "test",
-            &crate::StmtContext::for_query(),
-        )
-        .expect("drop the column after queueing it");
-
-        catalog
-            .load_needed_histograms("")
-            .expect("a dropped column is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == dropped));
-    }
-
-    #[test]
-    fn load_index_statistics_after_table_drop() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
-        let index_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().first())
-            .expect("fixture index ia")
-            .id;
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
-        let dropped = tidb_model::TableItemID {
-            table_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
-        crate::run_drop_table_in(
-            "DROP TABLE t",
-            &mut catalog,
-            "test",
-            tidb_parser::SqlMode::default(),
-            true,
-        )
-        .expect("drop the table after queueing the index");
-
-        catalog
-            .load_needed_histograms("")
-            .expect("a dropped table is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == dropped));
-    }
-
-    #[test]
-    fn load_statistics_after_index_drop() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
-        let index_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().first())
-            .expect("fixture index ia")
-            .id;
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
-        let dropped = tidb_model::TableItemID {
-            table_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: false,
-        };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
-        crate::run_alter_table_in(
-            "ALTER TABLE t DROP INDEX ia",
-            &mut catalog,
-            "test",
-            &crate::StmtContext::for_query(),
-        )
-        .expect("drop the index after queueing it");
-
-        catalog
-            .load_needed_histograms("")
-            .expect("a dropped index is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-            .all_items()
-            .iter()
-            .any(|item| item.table_item_id == dropped));
-    }
-
-    /// Go `collectSyncIndices` and `markAtLeastOneFullStatsLoadForEachTable`
-    /// read `tblStats.Pseudo` off the handle's cached table, not
-    /// `GetStatsTable`'s copy: an analyzed table whose `stats_meta` count is
-    /// zero is pseudo only for planning and still asks for its loads.
-    #[test]
-    fn a_zero_count_analyzed_table_still_requests_statistics_loads() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let index_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().first())
-            .expect("fixture index")
-            .id;
-        let statistics = crate::access_cost::TableStatistics {
-            // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
-            // while the cached `HistColl.Pseudo` stays false.
-            pseudo: true,
-            cache_pseudo: false,
-            row_count: 0,
-            modify_count: 3,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..crate::access_cost::TableStatistics::default()
-        };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
-        let column = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        let index = tidb_model::TableItemID {
-            table_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: false,
-        };
-
-        let predicate = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(column, true)].into_iter().collect(),
-            ..Default::default()
-        };
-        let items = catalog.statistics_load_items(&predicate, true);
-        assert!(
-            items
-                .iter()
-                .any(|item| item.table_item_id == index && item.full_load),
-            "the predicate column's index is requested: {items:?}"
-        );
-
-        let visited = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            visited_logical_table_ids: [table_id].into_iter().collect(),
-            ..Default::default()
-        };
-        let items = catalog.statistics_load_items(&visited, true);
-        assert!(
-            items
-                .iter()
-                .any(|item| item.table_item_id == column && item.full_load),
-            "a visited table without full statistics loads one column: {items:?}"
-        );
-    }
-
-    /// Go `NewPlanCacheKey`'s `statsVerHash` sums
-    /// `getLatestVersionFromStatsTable`: the largest column/index
-    /// `LastUpdateVersion`, or zero for a table `GetStatsTable` rule 2 makes
-    /// pseudo. A stats-delta flush moves only the `stats_meta` version, and Go
-    /// keeps the cached plan across it (captured live: a Go tidb-server keeps
-    /// `@@last_plan_from_cache = 1` for a prepared SELECT after a flush that a
-    /// Rust server re-planned).
-    #[test]
-    fn plan_cache_stats_hash_follows_histogram_versions_not_stats_meta() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE t(a INT, KEY ia(a))", &mut catalog)
-            .expect("fixture DDL");
-        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
-            panic!("fixture is not a KV table")
-        };
-        let (table_id, column_id, index_id) =
-            (table.table_id, table.columns[0].id, table.indexes()[0].id);
-        let statistics = |meta_version: u64, row_count: i64, column_version: u64| {
-            let histogram = |id, last_update_version| tidb_stats::Histogram {
-                id,
-                last_update_version,
-                ..tidb_stats::Histogram::default()
-            };
-            let columns = [(
-                column_id,
-                tidb_planner::cardinality::row_count_estimator::ColumnStats {
-                    histogram: histogram(column_id, column_version),
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
-                },
-            )]
-            .into_iter()
-            .collect();
-            let indexes = [(
-                index_id,
-                tidb_planner::cardinality::row_count_estimator::IndexStats {
-                    histogram: histogram(index_id, 7),
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    num_columns: 1,
-                    unique: false,
-                },
-            )]
-            .into_iter()
-            .collect();
-            Arc::new(
-                crate::access_cost::TableStatistics::new(row_count, 0, columns, indexes)
-                    .with_stat_versions(meta_version, 7),
-            )
-        };
-        let environment = crate::PreparedPlanCacheEnvironment::default();
-        let keys = [CatalogTableKey::new("test", "t")];
-
-        catalog.set_table_statistics(table_id, statistics(100, 10, 9));
-        assert_eq!(environment.stats_version_hash(&catalog, &keys), 9);
-        catalog.set_table_statistics(table_id, statistics(200, 11, 9));
-        assert_eq!(
-            environment.stats_version_hash(&catalog, &keys),
-            9,
-            "a stats-delta flush keeps the key"
-        );
-        catalog.set_table_statistics(table_id, statistics(300, 11, 12));
-        assert_eq!(environment.stats_version_hash(&catalog, &keys), 12);
-        catalog.set_table_statistics(table_id, statistics(400, 0, 12));
-        assert_eq!(
-            environment.stats_version_hash(&catalog, &keys),
-            0,
-            "a zero-count table hashes as a pseudo table"
-        );
-    }
-
-    #[test]
-    fn pruned_indexes_are_not_requested_for_statistics() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let index_id = catalog
-            .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().first())
-            .expect("fixture index")
-            .id;
-        let statistics = crate::access_cost::TableStatistics {
-            pseudo: false,
-            row_count: 10,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..crate::access_cost::TableStatistics::default()
-        };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
-        let column = tidb_model::TableItemID {
-            table_id,
-            id: column_id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(column, true)].into_iter().collect(),
-            kept_index_ids: [(table_id, std::collections::HashSet::new())]
-                .into_iter()
-                .collect(),
-            ..Default::default()
-        };
-
-        let items = catalog.statistics_load_items(&usage, true);
-        assert!(items.iter().any(|item| item.table_item_id == column));
-        assert!(!items.iter().any(|item| item.table_item_id.is_index));
-    }
-
-    /// Go `pkg/statistics/handle/handletest/handle_test.go`:
-    /// `TestPrunedIndexesNoAsyncStatsLoad` and its dynamic/static partition
-    /// variants. Drive the ordinary planner rule and inspect the same global
-    /// asynchronous demand boundary that Go drains with
-    /// `LoadNeededHistograms`.
-    #[test]
-    fn pruned_indexes_do_not_enter_async_statistics_demand() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        clear_async_statistics_items();
-
-        for (partitioned, static_prune) in [(false, false), (true, false), (true, true)] {
-            let (catalog, table_id, partition_ids, indexes) = index_pruning_catalog(partitioned);
-            let context = crate::StmtContext::for_query()
-                .with_stats_load_policy(0, true, 0)
-                .with_opt_index_prune_threshold(1)
-                .with_static_partition_prune(static_prune);
-
-            crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
-                .expect("ordinary planning and execution");
-
-            if static_prune {
-                assert!(!partition_ids.is_empty());
-                for partition_id in partition_ids {
-                    assert_only_indexes_starting_with_a_are_requested(
-                        &requested_index_ids(partition_id),
-                        &indexes,
-                        false,
-                    );
-                }
-            } else {
-                assert_only_indexes_starting_with_a_are_requested(
-                    &requested_index_ids(table_id),
-                    &indexes,
-                    true,
-                );
-            }
-            clear_async_statistics_items();
-        }
-    }
-
-    #[test]
-    fn direct_virtual_column_dependencies_request_expression_index_stats_only() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on(
-            "CREATE TABLE t(a INT, v INT AS (a + 1), KEY iv(v))",
-            &mut catalog,
-        )
-        .expect("fixture DDL");
-        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
-            panic!("fixture is not a KV table")
-        };
-        let table_id = table.table_id;
-        let a = table
-            .columns
-            .iter()
-            .find(|column| column.name == "a")
-            .unwrap()
-            .id;
-        let v = table
-            .columns
-            .iter()
-            .find(|column| column.name == "v")
-            .unwrap()
-            .id;
-        let index_id = table.indexes().first().expect("expression index").id;
-        catalog.set_table_statistics(
-            table_id,
-            Arc::new(crate::access_cost::TableStatistics {
-                pseudo: false,
-                row_count: 10,
-                column_load_status: [
-                    (a, tidb_stats::StatsLoadedStatus::all_evicted()),
-                    (v, tidb_stats::StatsLoadedStatus::all_evicted()),
-                ]
-                .into_iter()
-                .collect(),
-                index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                    .into_iter()
-                    .collect(),
-                column_stats_existence: [(a, true), (v, true)].into_iter().collect(),
-                index_stats_existence: [(index_id, true)].into_iter().collect(),
-                ..crate::access_cost::TableStatistics::default()
-            }),
-        );
-        let requested = tidb_model::TableItemID {
-            table_id,
-            id: a,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
-            predicate_columns: [(requested, true)].into_iter().collect(),
-            ..Default::default()
-        };
-
-        let items = catalog.statistics_load_items(&usage, true);
-        assert!(items.iter().any(|item| item.table_item_id == requested));
-        assert!(items.iter().any(|item| {
-            item.table_item_id.table_id == table_id
-                && item.table_item_id.id == index_id
-                && item.table_item_id.is_index
-                && item.full_load
-        }));
-        assert!(!items
-            .iter()
-            .any(|item| { item.table_item_id.id == v && !item.table_item_id.is_index }));
-    }
-
-    #[test]
-    fn ordinary_planning_runs_both_statistics_rule_points() {
-        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let usage_list = tidb_stats_handle_usage::SessionStatsList::new();
-        let usage = usage_list.new_session_stats_item();
-        let context = crate::StmtContext::for_query()
-            .with_stats_load_policy(100, true, 0)
-            .with_plan_replayer_capture(true)
-            .with_column_stats_usage(Some(Arc::clone(&usage)));
-
-        crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
-            .expect("planned query");
-
-        assert!(context.operator_num() > 0);
-        assert_eq!(
-            context
-                .table_runtime_statistics()
-                .get(&table_id)
-                .and_then(Option::as_deref)
-                .map(|statistics| statistics.row_count),
-            Some(10)
-        );
-        usage_list.sweep_session_stats_list();
-        assert!(usage_list
-            .session_stats_usage()
-            .get_usage_and_reset()
-            .contains_key(&tidb_model::TableItemID {
-                table_id,
-                id: column_id,
-                is_index: false,
-                is_sync_load_failed: false,
-            }));
-        assert!(loader
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .any(|item| {
-                item.table_item_id.table_id == table_id
-                    && item.table_item_id.id == column_id
-                    && !item.table_item_id.is_index
-                    && item.full_load
-            }));
-    }
-
-    fn stats_usage_fixture() -> Catalog {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on(
-            "CREATE TABLE t(a INT NOT NULL PRIMARY KEY, b INT NOT NULL, c INT NOT NULL)",
-            &mut catalog,
-        )
-        .expect("fixture t");
-        crate::run_create_table_on(
-            "CREATE TABLE t2(a INT UNSIGNED NOT NULL PRIMARY KEY, b INT NOT NULL, c INT UNSIGNED)",
-            &mut catalog,
-        )
-        .expect("fixture t2");
-        crate::run_create_table_on("CREATE TABLE t3(a INT, b INT, c INT)", &mut catalog)
-            .expect("fixture t3");
-        crate::run_create_table_on(
-            "CREATE TABLE pt1(a INT NOT NULL, b INT NOT NULL, c INT NOT NULL, ptn INT) \
-             PARTITION BY RANGE (ptn) (PARTITION p1 VALUES LESS THAN (16), \
-             PARTITION p2 VALUES LESS THAN (32))",
-            &mut catalog,
-        )
-        .expect("fixture pt1");
-        catalog
-    }
-
-    fn column_item(
-        catalog: &Catalog,
-        table_name: &str,
-        column_name: &str,
-    ) -> tidb_model::TableItemID {
-        let TableEntry::Kv(table) = catalog.get_in("test", table_name).expect("fixture table")
-        else {
-            panic!("fixture is not a KV table")
-        };
-        let column = table
-            .columns
-            .iter()
-            .find(|column| column.name == column_name)
-            .expect("fixture column");
-        tidb_model::TableItemID {
-            table_id: table.table_id,
-            id: column.id,
-            is_index: false,
-            is_sync_load_failed: false,
-        }
-    }
-
-    #[test]
-    fn original_collect_predicate_columns_cases_match_before_and_after_optimization() {
-        let catalog = stats_usage_fixture();
-        let cases: &[(&str, &[(&str, &str)])] = &[
-            ("SELECT * FROM t WHERE a > 2", &[("t", "a")]),
-            (
-                "SELECT * FROM t WHERE b IN (2, 5) OR c = 5",
-                &[("t", "b"), ("t", "c")],
-            ),
-            (
-                "SELECT * FROM (SELECT a + b AS ab, c FROM t) AS tmp WHERE ab > 4",
-                &[("t", "a"), ("t", "b")],
-            ),
-            (
-                "SELECT b, COUNT(*) FROM t GROUP BY b",
-                &[("t", "b")],
-            ),
-            (
-                "SELECT b, SUM(a) FROM t GROUP BY b HAVING SUM(a) > 3",
-                &[("t", "a"), ("t", "b")],
-            ),
-            ("SELECT COUNT(*), SUM(a), SUM(c) FROM t", &[]),
-            (
-                "(SELECT a, c FROM t) UNION (SELECT a, b FROM t2)",
-                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT AVG(b) OVER(PARTITION BY a) FROM t",
-                &[("t", "a")],
-            ),
-            (
-                "SELECT * FROM (SELECT AVG(b) OVER(PARTITION BY a) AS w FROM t) AS tmp WHERE w > 4",
-                &[("t", "a"), ("t", "b")],
-            ),
-            (
-                "SELECT ROW_NUMBER() OVER(PARTITION BY a ORDER BY c) FROM t",
-                &[("t", "a")],
-            ),
-            (
-                "SELECT * FROM t, t2 WHERE t.a = t2.a",
-                &[("t", "a"), ("t2", "a")],
-            ),
-            (
-                "SELECT * FROM t AS x JOIN t2 AS y ON x.c + y.b > 2",
-                &[("t", "c"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t AS x JOIN t2 AS y ON x.a = y.a AND x.c < 3 AND y.b > 2",
-                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT x.c, y.b, SUM(x.b), SUM(y.a) FROM t AS x JOIN t2 AS y ON x.a < y.a GROUP BY x.c, y.b ORDER BY x.c",
-                &[("t", "a"), ("t", "c"), ("t2", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > ALL(SELECT b FROM t WHERE t.c > 2)",
-                &[("t", "b"), ("t", "c"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > ANY(SELECT b FROM t WHERE t.c > 2)",
-                &[("t", "b"), ("t", "c"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > (SELECT SUM(b) FROM t WHERE t.c > t2.a)",
-                &[("t", "b"), ("t", "c"), ("t2", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > (SELECT COUNT(*) FROM t WHERE t.a > t2.a)",
-                &[("t", "a"), ("t2", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE EXISTS (SELECT * FROM t WHERE t.a > t2.b)",
-                &[("t", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE NOT EXISTS (SELECT * FROM t WHERE t.a > t2.b)",
-                &[("t", "a"), ("t2", "b")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.a IN (SELECT b FROM t)",
-                &[("t", "b"), ("t2", "a")],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.a NOT IN (SELECT b FROM t)",
-                &[("t", "b"), ("t2", "a")],
-            ),
-            (
-                "SELECT * FROM t ORDER BY c",
-                &[("t", "c")],
-            ),
-            (
-                "SELECT * FROM t ORDER BY a + b LIMIT 10",
-                &[("t", "a"), ("t", "b")],
-            ),
-            (
-                "SELECT * FROM ((SELECT a, c FROM t) UNION ALL (SELECT a, b FROM t2)) AS tmp WHERE tmp.c > 2",
-                &[("t", "c"), ("t2", "b")],
-            ),
-            (
-                "WITH cte(x, y) AS (SELECT a + 1, b FROM t WHERE b > 1) SELECT * FROM cte WHERE x > 3",
-                &[("t", "a"), ("t", "b")],
-            ),
-            (
-                "WITH RECURSIVE cte(x, y) AS (SELECT c, 1 FROM t UNION ALL SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte",
-                &[("t", "c")],
-            ),
-            (
-                "WITH RECURSIVE cte(x, y) AS (SELECT 1, c FROM t UNION ALL SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte WHERE y > 1",
-                &[("t", "c")],
-            ),
-            (
-                "WITH RECURSIVE cte(x, y) AS (SELECT a, b FROM t UNION SELECT x + 1, y FROM cte WHERE x < 5) SELECT * FROM cte",
-                &[("t", "a"), ("t", "b")],
-            ),
-        ];
-
-        for (sql, expected) in cases {
-            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("original SQL")
-            else {
-                panic!("original case is not a query")
-            };
-            let context = crate::StmtContext::for_query();
-            let (before, after) =
-                super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
-                    &query, &catalog, "test", &context,
-                )
-                .unwrap_or_else(|error| panic!("{sql}: {error}"));
-            let expected = expected
-                .iter()
-                .map(|(table, column)| column_item(&catalog, table, column))
-                .collect::<std::collections::HashSet<_>>();
-            assert_eq!(
-                before
-                    .predicate_columns
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>(),
-                expected,
-                "before optimization: {sql}"
-            );
-            assert_eq!(
-                after
-                    .predicate_columns
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>(),
-                expected,
-                "after optimization: {sql}"
-            );
-        }
-    }
-
-    #[test]
-    fn original_collect_histogram_needed_columns_cases_match() {
-        let catalog = stats_usage_fixture();
-        let cases: &[(&str, &[(&str, &str, bool)])] = &[
-            ("SELECT * FROM t WHERE a > 2", &[("t", "a", true)]),
-            (
-                "SELECT * FROM t WHERE b IN (2, 5) OR c = 5",
-                &[("t", "b", true), ("t", "c", true)],
-            ),
-            (
-                "SELECT * FROM t WHERE a + b > 1",
-                &[("t", "a", true), ("t", "b", true)],
-            ),
-            ("SELECT * FROM t3 WHERE _tidb_rowid > 1", &[]),
-            (
-                "SELECT b, COUNT(a) FROM t WHERE b > 1 GROUP BY b HAVING COUNT(a) > 2",
-                &[("t", "a", false), ("t", "b", true)],
-            ),
-            (
-                "SELECT * FROM t AS x JOIN t2 AS y ON x.b + y.b > 2 AND x.c > 1 AND y.a < 1",
-                &[
-                    ("t", "b", false),
-                    ("t", "c", true),
-                    ("t2", "a", true),
-                    ("t2", "b", false),
-                ],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > ALL(SELECT b FROM t WHERE t.c > 2)",
-                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b > ANY(SELECT b FROM t WHERE t.c > 2)",
-                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
-            ),
-            (
-                "SELECT * FROM t2 WHERE t2.b IN (SELECT b FROM t WHERE t.c > 2)",
-                &[("t", "b", false), ("t", "c", true), ("t2", "b", false)],
-            ),
-        ];
-
-        for (sql, expected) in cases {
-            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("original SQL")
-            else {
-                panic!("original case is not a query")
-            };
-            let context = crate::StmtContext::for_query();
-            let (_, usage) =
-                super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
-                    &query, &catalog, "test", &context,
-                )
-                .unwrap_or_else(|error| panic!("{sql}: {error}"));
-            let expected = expected
-                .iter()
-                .map(|(table, column, full)| (column_item(&catalog, table, column), *full))
-                .collect::<std::collections::HashMap<_, _>>();
-            assert_eq!(usage.predicate_columns, expected, "{sql}");
-        }
-
-        let sql = "SELECT * FROM pt1 WHERE ptn < 20 AND b > 1";
-        let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).expect("partition SQL") else {
-            panic!("partition case is not a query")
-        };
-        let expected = [("pt1", "b"), ("pt1", "ptn")]
-            .into_iter()
-            .map(|(table, column)| (column_item(&catalog, table, column), true))
-            .collect::<std::collections::HashMap<_, _>>();
-
-        let dynamic = crate::StmtContext::for_query();
-        let (_, dynamic_usage) =
-            super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
-                &query, &catalog, "test", &dynamic,
-            )
-            .expect("dynamic partition planning");
-        assert_eq!(dynamic_usage.predicate_columns, expected);
-        assert!(dynamic_usage.table_partition_ids.is_empty());
-
-        let static_prune = crate::StmtContext::for_query().with_static_partition_prune(true);
-        let (_, static_usage) =
-            super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
-                &query,
-                &catalog,
-                "test",
-                &static_prune,
-            )
-            .expect("static partition planning");
-        assert_eq!(static_usage.predicate_columns, expected);
-        let TableEntry::Kv(table) = catalog.get_in("test", "pt1").expect("fixture pt1") else {
-            panic!("fixture pt1 is not a KV table")
-        };
-        let partition_ids = table
-            .partition()
-            .expect("partition metadata")
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect::<std::collections::HashSet<_>>();
-        assert_eq!(
-            static_usage
-                .table_partition_ids
-                .get(&table.table_id)
-                .expect("static expansion")
-                .iter()
-                .copied()
-                .collect::<std::collections::HashSet<_>>(),
-            partition_ids
-        );
-    }
-}
-
-#[cfg(test)]
-mod planner_view_tests {
-    use super::*;
-    use tidb_planner::plan_builder::catalog::TableSource as _;
-
-    #[test]
-    fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
-        let mut original = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE epoch(a INT)", &mut original).unwrap();
-        let snapshot = CatalogSnapshot::capture(&original);
-        let mut branch = original.clone();
-        assert_eq!(original.metadata_version(), branch.metadata_version());
-        assert_eq!(
-            original.metadata_version(),
-            snapshot.restore(&original).metadata_version()
-        );
-        let before_write = original.metadata_version();
-        crate::run_insert_on(
-            "INSERT INTO epoch VALUES (1)",
-            &mut original,
-            &crate::StmtContext::for_query(),
-        )
-        .unwrap();
-        assert_eq!(before_write, original.metadata_version());
-        crate::run_create_table_on("CREATE TABLE left_branch(a INT)", &mut original).unwrap();
-        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch)
-            .unwrap();
-        assert_ne!(original.metadata_version(), branch.metadata_version());
-        let mut rebuilt = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE epoch(a INT, b INT)", &mut rebuilt).unwrap();
-        assert_ne!(
-            rebuilt.metadata_version(),
-            snapshot.restore(&original).metadata_version()
-        );
-    }
-
-    /// The planner's schema view is Go's immutable per-version `InfoSchema`:
-    /// one value shared by every statement and every clone that plans the
-    /// same image, and rebuilt by any mutation -- including a schema change
-    /// made through the mutable table handle, which moves the mutation
-    /// counter without claiming to be DDL.
-    #[test]
-    fn the_planner_view_is_shared_until_the_catalog_moves() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE pv(a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "pv").unwrap() else {
-            panic!("pv")
-        };
-        let table_id = table.table_id;
-        let directory = Arc::clone(&catalog.table_id_names);
-        let original = catalog.clone();
-        let snapshot = CatalogSnapshot::capture(&catalog);
-        assert!(directory.get().is_none());
-        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "pv");
-        assert!(directory.get().unwrap().contains_key(&table_id));
-        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
-        assert!(Arc::ptr_eq(&directory, &original.table_id_names));
-        assert!(catalog.physical_kv_table_by_id(i64::MAX).is_none());
-        let first = catalog.planner_schema_view();
-        assert!(Arc::ptr_eq(&first, &catalog.planner_schema_view()));
-        assert!(
-            Arc::ptr_eq(&first, &catalog.clone().planner_schema_view()),
-            "a clone plans against the same image"
-        );
-        assert!(catalog
-            .planner_catalog(DEFAULT_DATABASE, None)
-            .find_table(DEFAULT_DATABASE, "pv")
-            .is_some());
-
-        // An index added through the mutable handle is a schema change even
-        // though the accessor is the DML-narrow one: the next statement must
-        // see it.
-        let TableEntry::Kv(table) = catalog.get_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
-            panic!("pv is not a KV table");
-        };
-        Arc::make_mut(table).add_index(
-            crate::kv_table::KvIndex {
-                id: 7,
-                name: "ib".to_owned(),
-                comment: String::new(),
-                unique: false,
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-                column_offsets: vec![1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
-                clustered_primary: false,
-                primary: false,
-            },
-            false,
-        );
-        let after_index = catalog.planner_schema_view();
-        // An index does not move a table's id or its (database, name) key,
-        // so the id directory survives even though the planner view (which
-        // does carry index shape) does not.
-        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
-        assert!(catalog
-            .kv_table_by_id(table_id)
-            .unwrap()
-            .indexes()
-            .iter()
-            .any(|index| index.id == 7));
-        assert!(!original
-            .kv_table_by_id(table_id)
-            .unwrap()
-            .indexes()
-            .iter()
-            .any(|index| index.id == 7));
-        assert!(!Arc::ptr_eq(&first, &after_index), "the view is rebuilt");
-        assert!(
-            after_index
-                .tables
-                .get(&CatalogTableKey::new(DEFAULT_DATABASE, "pv"))
-                .is_some_and(|table| table.indexes.iter().any(|index| index.name == "ib")),
-            "the new index reaches the planner"
-        );
-
-        crate::run_create_table_on(
-            "CREATE TABLE pv2(a INT) PARTITION BY HASH(a) PARTITIONS 2",
-            &mut catalog,
-        )
-        .unwrap();
-        let after_ddl = catalog.planner_schema_view();
-        assert!(
-            !Arc::ptr_eq(&after_index, &after_ddl),
-            "DDL rebuilds it too"
-        );
-        let planner = catalog.planner_catalog(DEFAULT_DATABASE, None);
-        assert!(planner.find_table(DEFAULT_DATABASE, "pv").is_some());
-        assert!(planner.find_table(DEFAULT_DATABASE, "pv2").is_some());
-        assert_eq!(after_index.tables.len() + 1, after_ddl.tables.len());
-
-        let TableEntry::Kv(partitioned) = catalog.get_in(DEFAULT_DATABASE, "pv2").unwrap() else {
-            panic!("partitioned table")
-        };
-        for definition in &partitioned.partition().unwrap().definitions {
-            assert!(catalog.kv_table_by_id(definition.id).is_none());
-            let physical = catalog.physical_kv_table_by_id(definition.id).unwrap();
-            assert_eq!(physical.table_id, partitioned.table_id);
-            assert_eq!(physical.record_physical_ids(), vec![definition.id]);
-            assert_eq!(
-                catalog.physical_kv_table_database_by_id(definition.id),
-                Some(DEFAULT_DATABASE)
-            );
-        }
-
-        // Reassigning a table's id is a schema change, so it goes through
-        // `table_mut_in` (every production caller of it is DDL), not the
-        // DML-narrow `get_mut_in` -- ordinary writes never move an id, so
-        // they no longer pay to rebuild this directory (see `bump_version`).
-        let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
-            panic!("pv")
-        };
-        Arc::make_mut(table).table_id = 9000;
-        assert!(catalog.kv_table_by_id(table_id).is_none());
-        assert_eq!(catalog.kv_table_by_id(9000).unwrap().name, "pv");
-        let restored = snapshot.restore(&catalog);
-        assert!(Arc::ptr_eq(&directory, &restored.table_id_names));
-        assert!(restored.kv_table_by_id(table_id).is_some());
-        assert!(restored.kv_table_by_id(9000).is_none());
-        catalog.drop_table_in(DEFAULT_DATABASE, "pv");
-        assert!(catalog.physical_kv_table_by_id(9000).is_none());
-    }
-
-    /// Every production caller of `get_mut_in` is a row-content write
-    /// (`INSERT`/`UPDATE`/`DELETE`, sequence advance, stats-delta flush): it
-    /// never moves a table's id or its (database, name) key, so it must not
-    /// force the next id lookup to rebuild this directory from every table
-    /// in the catalog. A profiled `oltp_update_index` run found this
-    /// directory rebuilt and torn down on every single statement -- built
-    /// to resolve the statement's own cached-plan target, then thrown away
-    /// by that same statement's write before anything else could reuse it.
-    #[test]
-    fn ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE od(a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "od").unwrap() else {
-            panic!("od")
-        };
-        let table_id = table.table_id;
-        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "od");
-        let directory = Arc::clone(&catalog.table_id_names);
-        assert!(directory.get().is_some(), "the lookup above built it");
-
-        let TableEntry::Kv(od) = catalog.get_mut_in(DEFAULT_DATABASE, "od").unwrap() else {
-            panic!("od is not a KV table")
-        };
-        Arc::make_mut(od)
-            .insert_row(
-                &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
-                &tidb_expr::NoColumns,
-            )
-            .unwrap();
-        assert!(
-            Arc::ptr_eq(&directory, &catalog.table_id_names),
-            "an ordinary write through get_mut_in must not invalidate the id directory"
-        );
-        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "od");
-        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
-
-        // A real schema change (here, a second table joining the catalog)
-        // still invalidates it -- the directory is a metadata_version cache,
-        // not a permanently frozen one.
-        crate::run_create_table_on("CREATE TABLE od2(a INT PRIMARY KEY)", &mut catalog).unwrap();
-        assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
-    }
-
-    /// Two independent catalog images (an open transaction's private COW
-    /// copy, and the shared autocommit catalog) writing the SAME table id
-    /// must never mix up which write staged which record key. Go answers
-    /// this with two entirely separate membuffers; here it is two entirely
-    /// separate [`crate::kv_table::StagedWrites`] handles, one per
-    /// [`crate::StmtContext`] -- state that was never on the `KvTable` (or
-    /// any catalog-owned cache of it) to begin with, so a copy-on-write
-    /// detach of the table entry has nothing to invalidate.
-    #[test]
-    fn independent_statement_contexts_do_not_share_staged_writes() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        let mut active_transaction = catalog.clone();
-        let transaction_ctx = crate::StmtContext::for_query();
-        crate::run_insert_on(
-            "INSERT INTO cd VALUES (1, 10)",
-            &mut active_transaction,
-            &transaction_ctx,
-        )
-        .unwrap();
-        let autocommit_ctx = crate::StmtContext::for_query();
-        crate::run_insert_on(
-            "INSERT INTO cd VALUES (2, 20)",
-            &mut catalog,
-            &autocommit_ctx,
-        )
-        .unwrap();
-
-        // `has_dirty_content` is table-scoped WITHIN one tracker -- like Go's
-        // membuffer prefix seek, it answers for the logical table id, not for
-        // a specific catalog copy or record key -- so it is true under BOTH
-        // trackers here (each staged something under this table id). The
-        // record-level check is what must tell the two writes apart.
-        let staged = |image: &Catalog, ctx: &crate::StmtContext, handle: i64| {
-            let TableEntry::Kv(table) = image.get_in(DEFAULT_DATABASE, "cd").unwrap() else {
-                panic!("expected KV table")
-            };
-            table.record_key_is_staged(
-                ctx.staged_writes(),
-                table.table_id,
-                &crate::kv_table::TableHandle::Int(handle),
-            )
-        };
-        assert!(
-            staged(&catalog, &autocommit_ctx, 2),
-            "the autocommit write is visible under its own statement's tracker"
-        );
-        assert!(
-            !staged(&catalog, &transaction_ctx, 2),
-            "the OTHER transaction's tracker must not see that record key"
-        );
-        assert!(
-            staged(&active_transaction, &transaction_ctx, 1),
-            "the transaction's own write is visible under its own tracker"
-        );
-        assert!(
-            !staged(&active_transaction, &autocommit_ctx, 1),
-            "the autocommit tracker must not see the transaction's record key either"
-        );
     }
 }

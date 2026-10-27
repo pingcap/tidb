@@ -154,7 +154,7 @@ fn misc_visitor_cover() {
         // &ast.AdminStmt{} → a representative Admin payload.
         admin(AdminStmt::ShowBdrRole),
         // &ast.AlterUserStmt{}
-        ddl(DdlStmt::AlterUser(Box::new(tidy_alter_user()))),
+        admin(AdminStmt::AlterUser(Box::new(tidy_alter_user()))),
         // &ast.BeginStmt{}
         session(SessionStmt::Begin(Box::new(BeginStmt {
             mode: TransactionMode::Default,
@@ -167,9 +167,9 @@ fn misc_visitor_cover() {
         // &ast.CommitStmt{}
         session(SessionStmt::Commit(CompletionType::Default)),
         // &ast.CompactTableStmt{Table: &TableName{}}
-        ddl(DdlStmt::AlterTable(Box::new(compact_table("t")))),
+        admin(AdminStmt::CompactTable(Box::new(compact_table("t")))),
         // &ast.CreateUserStmt{}
-        ddl(DdlStmt::CreateUser {
+        admin(AdminStmt::CreateUser {
             if_not_exists: false,
             users: Vec::new(),
             tls_options: Vec::new(),
@@ -283,13 +283,11 @@ fn tidy_binlog() -> tidb_ast::BinlogStmt {
 }
 
 /// Builds `ALTER TABLE <name> COMPACT` (Go's separate `CompactTableStmt`).
-pub fn compact_table(name: &str) -> tidb_ast::AlterTableStmt {
-    tidb_ast::AlterTableStmt {
-        name: vec![name.to_string()],
-        actions: vec![tidb_ast::AlterTableAction::Compact {
-            partitions: Vec::new(),
-            replica_kind: CompactReplicaKind::All,
-        }],
+pub fn compact_table(name: &str) -> tidb_ast::CompactTableStmt {
+    tidb_ast::CompactTableStmt {
+        table: vec![name.to_string()],
+        partition_names: Vec::new(),
+        replica_kind: CompactReplicaKind::All,
     }
 }
 
@@ -307,7 +305,7 @@ fn sensitive_statement() {
             password: String::new(),
             retain_current_password: false,
         }))),
-        ddl(DdlStmt::CreateUser {
+        admin(AdminStmt::CreateUser {
             if_not_exists: false,
             users: Vec::new(),
             tls_options: Vec::new(),
@@ -316,7 +314,7 @@ fn sensitive_statement() {
             comment_or_attribute: None,
             resource_group: None,
         }),
-        ddl(DdlStmt::AlterUser(Box::new(tidy_alter_user()))),
+        admin(AdminStmt::AlterUser(Box::new(tidy_alter_user()))),
         admin(AdminStmt::Grant(Box::new(GrantStmt {
             privileges: Vec::new(),
             object_type: None,
@@ -331,7 +329,7 @@ fn sensitive_statement() {
     }
 
     let negative = [
-        ddl(DdlStmt::DropUser {
+        admin(AdminStmt::DropUser {
             is_role: false,
             if_exists: false,
             users: Vec::new(),
@@ -1083,13 +1081,11 @@ fn brie_secure_text() {
 #[test]
 fn compact_table_stmt_restore() {
     let alter = |name: &str, replica_kind: CompactReplicaKind| {
-        Stmt::Ddl(NodeBox::new(DdlStmt::AlterTable(Box::new(
-            tidb_ast::AlterTableStmt {
-                name: vec![name.to_string()],
-                actions: vec![tidb_ast::AlterTableAction::Compact {
-                    partitions: Vec::new(),
-                    replica_kind,
-                }],
+        Stmt::Admin(NodeBox::new(AdminStmt::CompactTable(Box::new(
+            tidb_ast::CompactTableStmt {
+                table: vec![name.to_string()],
+                partition_names: Vec::new(),
+                replica_kind,
             },
         ))))
     };
@@ -1103,13 +1099,11 @@ fn compact_table_stmt_restore() {
     );
     // test.abc qualified name.
     assert_eq!(
-        Stmt::Ddl(NodeBox::new(DdlStmt::AlterTable(Box::new(
-            tidb_ast::AlterTableStmt {
-                name: vec!["test".to_string(), "abc".to_string()],
-                actions: vec![tidb_ast::AlterTableAction::Compact {
-                    partitions: Vec::new(),
-                    replica_kind: CompactReplicaKind::All,
-                }],
+        Stmt::Admin(NodeBox::new(AdminStmt::CompactTable(Box::new(
+            tidb_ast::CompactTableStmt {
+                table: vec!["test".to_string(), "abc".to_string()],
+                partition_names: Vec::new(),
+                replica_kind: CompactReplicaKind::All,
             },
         ))))
         .restore(),

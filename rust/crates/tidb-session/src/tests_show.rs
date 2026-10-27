@@ -3032,14 +3032,11 @@ fn remaining_information_schema_tables_answer_as_go() {
         "CLUSTER_TIDB_PLAN_CACHE",
         "TIFLASH_INDEXES",
     ] {
-        assert!(
-            rows(
-                &mut session,
-                &format!("select * from information_schema.{empty}")
-            )
-            .is_empty(),
-            "{empty}"
+        let got = rows(
+            &mut session,
+            &format!("select * from information_schema.{empty}"),
         );
+        assert!(got.is_empty(), "{empty}: {got:?}");
     }
     for table in [
         "TIDB_HOT_REGIONS",

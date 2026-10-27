@@ -877,7 +877,7 @@ impl ViewerState {
             extractor,
             &pd_servers,
             catalog,
-            catalog.region_store().as_ref(),
+            ctx.region_store().as_ref(),
             |warning| ctx.append_warning_parts(1105, warning),
         )
     }

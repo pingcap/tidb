@@ -1,0 +1,36 @@
+[package]
+name = "tidb-ddl-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
+
+[dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-table = { path = "../tidb-table" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-domain = { path = "../tidb-domain" }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-model = { path = "../tidb-model" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-ttl = { path = "../tidb-ttl" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[lints]
+workspace = true

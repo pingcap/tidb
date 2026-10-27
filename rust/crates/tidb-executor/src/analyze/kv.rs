@@ -40,6 +40,7 @@
 //! histograms, as Go does after evaluating virtual columns in its samples.
 //! `source_positions` maps a selected plan back to the full materialized row.
 
+use crate::KvTableReader;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
@@ -68,7 +69,7 @@ pub fn is_special_global_index(table: &KvTable, index: &crate::kv_table::KvIndex
                 index
                     .prefix_lengths
                     .get(position)
-                    .is_some_and(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+                    .is_some_and(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
                     || table
                         .columns()
                         .get(*offset)
@@ -324,7 +325,7 @@ fn kv_analyze_plan(
         if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
             continue;
         }
-        let qualified = format!("`{}`.`{}`", table.name, column.name);
+        let qualified = format!("`{}`.`{}`", table.name(), column.name);
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
         columns.push(AnalyzedColumn {
             id: column.id,
@@ -373,7 +374,7 @@ fn kv_analyze_plan(
         source_indexes.push(source_index);
     }
 
-    AnalyzePlan::new(columns, indexes, &table.name).map(|plan| {
+    AnalyzePlan::new(columns, indexes, &table.name()).map(|plan| {
         (
             plan.with_unique_columns(physical_columns.iter().filter_map(|column| {
                 unique_by_schema(table, false, column.id).then_some(column.id)

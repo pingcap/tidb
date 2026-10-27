@@ -799,9 +799,9 @@ fn compact_table_follows_gos_checks() {
             .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
         let warnings = session.warnings();
         assert_eq!(warnings.len(), 1, "{sql}");
-        assert_eq!(warnings[0].code, 1105, "{sql}");
+        assert_eq!(warnings[0].code(), 1105, "{sql}");
         assert_eq!(
-            warnings[0].message, "compact skipped: no tiflash replica in the table",
+            warnings[0].message(), "compact skipped: no tiflash replica in the table",
             "{sql}"
         );
     }
@@ -831,4 +831,148 @@ fn compact_table_follows_gos_checks() {
     session.run("alter table t compact").unwrap();
     session.run("rollback").unwrap();
     assert!(row_text(session.run("select * from t")).is_empty());
+}
+
+/// Go `ast.ProcedureInfo` is a plain `stmtNode`, not a `DDLNode`, and
+/// `PlanBuilder.Build` has no builder for it (pkg/planner/core/planbuilder.go,
+/// the closing `ErrUnsupportedType`): CREATE PROCEDURE fails at compile with
+/// 8108 before anything commits, so the open transaction survives it.
+#[test]
+fn create_procedure_is_unsupported_and_keeps_the_transaction() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    for sql in [
+        "create procedure p() begin select 1; end",
+        "create procedure if not exists p(in x int) begin select x; end",
+    ] {
+        assert_eq!(
+            code(&mut session, sql),
+            (8108, "Unsupported type *ast.ProcedureInfo".to_owned()),
+            "{sql}"
+        );
+    }
+    // Not a DDL node: no implicit commit, so the ROLLBACK takes back the
+    // row inserted before the refused statement.
+    session.run("begin").unwrap();
+    session.run("insert into t values (1)").unwrap();
+    assert_eq!(
+        code(&mut session, "create procedure p() begin select 1; end").0,
+        8108
+    );
+    session.run("insert into t values (2)").unwrap();
+    session.run("rollback").unwrap();
+    assert!(row_text(session.run("select * from t")).is_empty());
+}
+
+/// Go `buildSimple` answers `DropProcedureStmt` with `ErrSpDoesNotExist`
+/// (1305) unless `IF EXISTS`, which only appends the same error as a note.
+/// `SimpleExec` has no arm for it and `autoNewTxn` does not list it, so it
+/// never commits the open transaction.
+#[test]
+fn drop_procedure_follows_build_simple() {
+    let mut session = Session::new();
+    session.run("create database pdb").unwrap();
+    session.run("use pdb").unwrap();
+    session.run("create table t (a int)").unwrap();
+    assert_eq!(
+        code(&mut session, "drop procedure p"),
+        (1305, "PROCEDURE pdb.p does not exist".to_owned())
+    );
+    session.run("drop procedure if exists p").unwrap();
+    assert_eq!(
+        warnings(&mut session),
+        vec![vec![
+            "Note".to_owned(),
+            "1305".to_owned(),
+            "PROCEDURE pdb.p does not exist".to_owned()
+        ]]
+    );
+    session.run("begin").unwrap();
+    session.run("insert into t values (1)").unwrap();
+    session.run("drop procedure if exists p").unwrap();
+    session.run("rollback").unwrap();
+    assert!(row_text(session.run("select * from t")).is_empty());
+}
+
+/// Go `TestDefaultCollationForUTF8MB4` (`pkg/ddl/db_integration_test.go`):
+/// `BuildTableInfoWithStmt` hands `@@default_collation_for_utf8mb4` to
+/// `GetCharsetAndCollateInTableOption` and `ResolveCharsetCollation`, so a
+/// table naming only `CHARSET utf8mb4` takes it, while one naming no charset
+/// takes the database's pair and one naming a collation keeps it.
+#[test]
+fn create_table_takes_the_default_collation_for_utf8mb4() {
+    let mut session = Session::new();
+    session.run("use test").unwrap();
+    session
+        .run("set @@session.default_collation_for_utf8mb4='utf8mb4_general_ci'")
+        .unwrap();
+    session.run("create table t1 (b char(1) default null)").unwrap();
+    assert_eq!(
+        create_text(&mut session, "t1"),
+        "CREATE TABLE `t1` (\n  `b` char(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    session
+        .run("create table t4 (b char(1) default null) engine=InnoDB default charset=utf8mb4")
+        .unwrap();
+    assert_eq!(
+        create_text(&mut session, "t4"),
+        "CREATE TABLE `t4` (\n  `b` char(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+    );
+    session
+        .run("create table t2 (b char(1) default null) engine=InnoDB default charset=utf8mb4 COLLATE utf8mb4_0900_ai_ci")
+        .unwrap();
+    assert_eq!(
+        create_text(&mut session, "t2"),
+        "CREATE TABLE `t2` (\n  `b` char(1) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
+    );
+}
+
+/// Go `checkTableInfoValidWithStmt`: under `sql_require_primary_key` a table
+/// without a primary key is `ErrTableWithoutPrimaryKey` (3750) -- written
+/// out, copied by `LIKE`, and as a LOCAL temporary table built either way
+/// (`BuildSessionTemporaryTableInfo` runs the check for both branches).
+#[test]
+fn sql_require_primary_key_refuses_a_table_without_one() {
+    let mut session = Session::new();
+    session.run("use test").unwrap();
+    session.run("create table nopk (a int)").unwrap();
+    session.run("set @@session.sql_require_primary_key = 1").unwrap();
+    for sql in [
+        "create table t (a int)",
+        "create table t (a int, unique key (a))",
+        "create table t like nopk",
+        "create temporary table t (a int)",
+        "create temporary table t like nopk",
+    ] {
+        assert_eq!(code(&mut session, sql).0, 3750, "{sql}");
+    }
+    session.run("create table t (a int primary key)").unwrap();
+    session.run("create table t2 like t").unwrap();
+    session.run("create temporary table t3 (a int primary key)").unwrap();
+    session.run("set @@session.sql_require_primary_key = 0").unwrap();
+    session.run("create table t4 like nopk").unwrap();
+}
+
+/// Go `checkIndexColumn` refuses an ordinary index over a VECTOR column
+/// (`TestVectorIndexSyntax`, `pkg/expression/integration_test`): only a
+/// VECTOR INDEX may cover one.
+#[test]
+fn an_ordinary_index_over_a_vector_column_is_refused() {
+    let mut session = Session::new();
+    session.run("use test").unwrap();
+    for sql in [
+        "CREATE TABLE t1 (embedding VECTOR UNIQUE)",
+        "CREATE TABLE t1 (embedding VECTOR, INDEX idx (embedding))",
+    ] {
+        let (code, message) = code(&mut session, sql);
+        assert_eq!(code, 8200, "{sql}");
+        assert!(
+            message.contains("only VECTOR INDEX can be added to vector column"),
+            "{sql}: {message}"
+        );
+    }
+    session.run("create table t2 (embedding VECTOR)").unwrap();
+    let (code, message) = code(&mut session, "alter table t2 add index idx (embedding)");
+    assert_eq!(code, 8200);
+    assert!(message.contains("only VECTOR INDEX can be added to vector column"), "{message}");
 }

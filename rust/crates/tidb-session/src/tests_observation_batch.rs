@@ -911,7 +911,7 @@ fn kv_exec_counter_batch_admission_and_request_enable_windows() {
         let ctx = session.statement_context(false);
         let ordinary = ctx.snapshot_read_options(0.0).kv_exec_counter;
         let cop =
-            tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&ctx).kv_exec_counter;
+            tidb_executor::remote_scan::pushdown_statement_context(&ctx).kv_exec_counter;
         if admitted {
             enable_top_sql();
         }
@@ -1087,7 +1087,7 @@ fn statement_context_carries_statement_kv_context() {
         ctx.snapshot_read_options(0.0).kv_context,
         Some(cell.clone())
     );
-    let cop = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&ctx);
+    let cop = tidb_executor::remote_scan::pushdown_statement_context(&ctx);
     assert_eq!(cop.kv_context, Some(cell));
     // The next statement gets fresh details.
     session.begin_statement_observation("SELECT 2");

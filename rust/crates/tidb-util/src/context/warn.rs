@@ -74,6 +74,118 @@ pub struct SqlWarn {
 }
 
 /// Go `jsonSQLWarn`: the wire shape of a serialized warning.
+impl SqlWarn {
+    /// A warning at `level` carrying `err`, as Go's `StmtCtx.AppendWarning`
+    /// / `AppendNote` / `AppendError` keep it.
+    #[must_use]
+    pub fn new(level: super::WarningLevel, err: WarnErr) -> Self {
+        Self {
+            level: level.as_str().to_owned(),
+            err,
+        }
+    }
+
+    /// A warning raised as the Go error `proto` with `message`
+    /// (`proto.GenWithStackByArgs(...)`).
+    #[must_use]
+    pub fn of(level: super::WarningLevel, proto: &TerrorError, message: impl Into<String>) -> Self {
+        Self::new(level, WarnErr::Terror(proto.generate(message.into())))
+    }
+
+    /// A warning whose error this tier knows only by its MySQL code: Go's
+    /// plain `errors.New` when the code is `ErrUnknown`, else the
+    /// compatibility form of a coded error (no RFC code).
+    #[must_use]
+    pub fn with_code(level: super::WarningLevel, code: u16, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let err = if code == tidb_error::mysql::errcode::ErrUnknown {
+            WarnErr::Message(message)
+        } else {
+            WarnErr::Terror(TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
+                message,
+            ))
+        };
+        Self::new(level, err)
+    }
+
+    /// The warning Go keeps for an error raised with `code` and `message`:
+    /// its terror `identity` when it has one (Go's class and code), else
+    /// [`Self::with_code`].
+    #[must_use]
+    pub fn from_error(
+        level: super::WarningLevel,
+        code: u16,
+        message: impl Into<String>,
+        identity: Option<tidb_error::terror::TerrorIdentity>,
+    ) -> Self {
+        match identity {
+            Some(identity) => Self::new(
+                level,
+                WarnErr::Terror(TerrorError::synthesize(
+                    identity.class(),
+                    identity.code(),
+                    message.into(),
+                )),
+            ),
+            None => Self::with_code(level, code, message),
+        }
+    }
+
+    /// The level as `SHOW WARNINGS` prints it.
+    #[must_use]
+    pub fn warning_level(&self) -> super::WarningLevel {
+        match self.level.as_str() {
+            WARN_LEVEL_ERROR => super::WarningLevel::Error,
+            WARN_LEVEL_NOTE => super::WarningLevel::Note,
+            _ => super::WarningLevel::Warning,
+        }
+    }
+
+    /// The code `SHOW WARNINGS` prints: Go `terror.ToSQLError`'s, and
+    /// `ErrUnknown` for a plain error.
+    #[must_use]
+    pub fn code(&self) -> u16 {
+        match &self.err {
+            WarnErr::Terror(error) if error.rfc_code().is_empty() => {
+                u16::try_from(error.code().value()).unwrap_or(tidb_error::mysql::errcode::ErrUnknown)
+            }
+            WarnErr::Terror(error) => error.to_sql_error().code,
+            WarnErr::Message(_) => tidb_error::mysql::errcode::ErrUnknown,
+        }
+    }
+
+    /// `(level, code, message)` as `SHOW WARNINGS` prints them.
+    #[must_use]
+    pub fn parts(&self) -> (super::WarningLevel, u16, String) {
+        (self.warning_level(), self.code(), self.message().to_owned())
+    }
+
+    /// The message `SHOW WARNINGS` prints.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match &self.err {
+            WarnErr::Terror(error) => error.message(),
+            WarnErr::Message(message) => message,
+        }
+    }
+}
+
+impl PartialEq for SqlWarn {
+    fn eq(&self, other: &Self) -> bool {
+        let rfc_code = |warn: &Self| match &warn.err {
+            WarnErr::Terror(error) => Some(error.rfc_code().to_owned()),
+            WarnErr::Message(_) => None,
+        };
+        self.level == other.level
+            && self.code() == other.code()
+            && self.message() == other.message()
+            && rfc_code(self) == rfc_code(other)
+    }
+}
+
+impl Eq for SqlWarn {}
+
 #[derive(Serialize, Deserialize)]
 struct JsonSqlWarn {
     #[serde(default)]

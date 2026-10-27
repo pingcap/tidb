@@ -16,12 +16,10 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 chrono = { workspace = true }
 serde_json.workspace = true
-tidb-domain = { path = "../tidb-domain" }
-tidb-distsql = { path = "../tidb-distsql" }
-tidb-stmtsummary = { path = "../tidb-stmtsummary" }
-tidb-tikvutil = { path = "../tidb-tikvutil" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 chrono-tz = { workspace = true }

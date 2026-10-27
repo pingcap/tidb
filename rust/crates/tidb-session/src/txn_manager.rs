@@ -29,8 +29,8 @@
 
 use std::sync::Arc;
 
-use tidb_exec::session_commit_protocol::SessionTransactionOptions;
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 

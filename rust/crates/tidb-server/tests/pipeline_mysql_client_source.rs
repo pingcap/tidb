@@ -58,11 +58,9 @@ fn users() -> ConfiguredUserStore {
     // now here too. The strict TSV provisions identities only, so an account
     // it names starts with USAGE and nothing else; give `alice` the authority
     // an operator would give the account they administer this node with.
-    let all = tidb_session::privilege::ALL_GLOBAL_PRIVS
+    let all = tidb_mysql::ALL_GLOBAL_PRIVS
         .iter()
-        .fold(tidb_session::privilege::GlobalPriv::GrantOption.mask(), |mask, priv_| {
-            mask | priv_.mask()
-        });
+        .fold(tidb_mysql::GrantPriv.0, |mask, priv_| mask | priv_.0);
     store.accounts().grant("alice", "%", all);
     store
 }

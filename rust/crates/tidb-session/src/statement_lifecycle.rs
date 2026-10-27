@@ -28,8 +28,8 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tidb_exec::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
+use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{BufferCheckpoint, ClusterSnapshot, SwappableSnapshot};
 
@@ -38,7 +38,7 @@ use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::Session;
 
 /// Go `kv.ErrWriteConflict`'s MySQL code.
-const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+const ERR_WRITE_CONFLICT: u16 = tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 
 /// The catalog a connection follows, as a statement lifecycle needs it: the
 /// version its tables were built from, and the rebuild a retried statement
@@ -305,7 +305,7 @@ impl StatementLifecycle<'_> {
         // once per statement (`adapter.go:580-593`): keys locked and the
         // pessimistic retry count, only when a lock actually happened.
         if let Some(observation) =
-            tidb_exec::cluster_table_storage::take_last_pessimistic_lock_observation()
+            tidb_cluster::cluster_table_storage::take_last_pessimistic_lock_observation()
         {
             if observation.lock_keys > 0 {
                 crate::metrics::STATEMENT_LOCK_KEYS_COUNT
@@ -413,7 +413,7 @@ impl StatementLifecycle<'_> {
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
-        let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
+        let mut retries = tidb_cluster::pessimistic_lock_error::PessimisticStatementRetry::default();
         // An autocommit pessimistic statement's lock conflict (see
         // [`transactions::LockRetrySlot`]).
         let lock_retry: transactions::LockRetrySlot = Arc::default();

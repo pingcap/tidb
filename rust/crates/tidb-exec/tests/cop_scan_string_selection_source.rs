@@ -35,16 +35,16 @@ use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
-use tidb_exec::cop_scan::CopScanSource;
+use tidb_exec::cop_client::CopClient;
+use tidb_executor::cop_reader::open_cop_scan;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvTable};
-use tidb_executor::remote_scan::PushdownScanner;
 use tidb_executor::storage::StorageError;
 use tidb_executor::StmtContext;
 use tidb_proto::tipb::{
@@ -132,7 +132,7 @@ struct FakeResponse {
     subsets: Vec<QueryResultSubset>,
 }
 
-impl QueryResponse for FakeResponse {
+impl tidb_txnkv::Response for FakeResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         Ok(if self.subsets.is_empty() {
             None
@@ -145,6 +145,7 @@ impl QueryResponse for FakeResponse {
         self.subsets.clear();
     }
 }
+
 
 /// Evaluates one `Selection` condition over a row, the way TiKV does it.
 ///
@@ -289,13 +290,13 @@ impl RealTiKvSessionTransportFactory for FakeFactory {
 }
 
 /// `t(id BIGINT, s VARCHAR(20) COLLATE <collation>)` read through a real
-/// [`CopScanSource`].
+/// coprocessor reader.
 fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
     });
-    let scanner = Arc::new(CopScanSource::new(factory));
+    let client = Arc::new(CopClient::new(factory));
     let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(EmptySnapshot));
     let mut text = FieldType::new(FieldTypeCode::Varchar).with_collation_name(collation);
     text.set_flen(20);
@@ -322,8 +323,8 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
         },
     ];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
-        .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
-    let mut catalog = Catalog::default();
+        .with_client(client as Arc<dyn tidb_txnkv::Client>);
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", KvTable::with_storage(93, columns, Box::new(storage)));
     (catalog, region)
 }
@@ -484,7 +485,7 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
 /// Go reads it fresh for every request --
 /// `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
 /// timeutil.Zone(ctx.GetSessionVars().Location())`
-/// (`pkg/executor/internal/builder/builder_utils.go`) -- and the scanner this
+/// (`pkg/executor/internal/builder/builder_utils.go`) -- and the client this
 /// exercises is ONE object shared by every connection of a node, so a zone
 /// held there could be neither corrected by `SET time_zone` nor kept private
 /// to one connection.

@@ -65,9 +65,7 @@ use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 use crate::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use crate::mysql_system_tables::SYSTEM_DB;
 use crate::system_row_write::codec_table_info;
-use crate::table_info_build::{
-    build_table_info, ClusteredIndexDefMode, DdlAdmissionError,
-};
+use crate::table_info_build::{build_table_info_with_context, DdlAdmissionError};
 
 mod jobs;
 mod rows;
@@ -544,7 +542,6 @@ fn build_bootstrap_view(
 fn build_bootstrap_table(
     table: &BootstrapTable,
     start_ts: u64,
-    clustered_index_mode: ClusteredIndexDefMode,
 ) -> Result<TableInfo, BootstrapError> {
     let admission = |error| BootstrapError::Admission {
         table: table.name,
@@ -565,11 +562,18 @@ fn build_bootstrap_table(
             "its statement is not a CREATE TABLE",
         )));
     };
-    let mut info = build_table_info(
+    // Go `createAndSplitTables`: "bootstrap session set sessionctx.Initing =
+    // true, and uses None SQL mode, we also use it here" --
+    // `metabuild.NewContext(WithExprCtx(<ModeNone static context>))`, which
+    // is `NewNonStrictContext` spelled inline: every other option at its
+    // `NewContext` default (clustered index ON).
+    let mb_ctx = tidb_expr::metabuild::Context::new_non_strict();
+    let mut info = build_table_info_with_context(
         create,
         SYSTEM_DB_CHARSET,
         SYSTEM_DB_COLLATION,
-        clustered_index_mode,
+        &mb_ctx,
+        tidb_vardef::ENABLE_CHECK_CONSTRAINT.load(std::sync::atomic::Ordering::SeqCst),
     )
     .map_err(admission)?;
     info.id = table.id;

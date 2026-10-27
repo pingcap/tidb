@@ -47,45 +47,6 @@ impl Session {
             }
         };
 
-        // Go's planner checks the local target before executeKillStmt applies
-        // config or ID warnings. Same username is exempt regardless of host.
-        if let Some(owner) = registry
-            .as_ref()
-            .and_then(|registry| registry.snapshot().into_iter().find(|row| row.id == target))
-        {
-            if owner.user != self.process_list_user() {
-                if !self.has_dynamic_privilege("CONNECTION_ADMIN", false) {
-                    return Err(DriverError::KillAccessDenied);
-                }
-                // The front end stores the display address (Go Host + Port).
-                // Verification needs the presented host without its port.
-                let host = owner
-                    .host
-                    .rsplit_once(':')
-                    .filter(|(host, port)| {
-                        port.parse::<u16>().is_ok()
-                            && (!host.contains(':')
-                                || (host.starts_with('[') && host.ends_with(']')))
-                    })
-                    .map_or(owner.host.as_str(), |(host, _)| {
-                        host.trim_start_matches('[').trim_end_matches(']')
-                    });
-                if tidb_util::sem::is_enabled()
-                    && self.target_has_dynamic_privilege(&owner.user, host, "RESTRICTED_USER_ADMIN")
-                    && !self.has_dynamic_privilege("RESTRICTED_CONNECTION_ADMIN", false)
-                {
-                    return Err(DriverError::SpecificAccessDenied(
-                        "RESTRICTED_CONNECTION_ADMIN".to_owned(),
-                    ));
-                }
-            }
-        } else if registry.is_some()
-            && tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(target)
-            && !self.has_dynamic_privilege("CONNECTION_ADMIN", false)
-        {
-            return Err(DriverError::KillAccessDenied);
-        }
-
         let config = tidb_config::config_tree::config::get_global_config();
         if !config.enable_global_kill {
             if kill.tidb_extension || config.compatible_kill_query {
@@ -271,14 +232,13 @@ impl Session {
             scan_concurrency: self.dist_sql_scan_concurrency(),
             visibility: self.schema_visibility(),
             index_usage: std::sync::Arc::clone(&self.index_usage_collector),
-            process_scoped: self.has_scoped_privilege("", "", privilege::GlobalPriv::Process),
+            process_scoped: self.has_scoped_privilege("", "", tidb_mysql::ProcessPriv),
             restricted_sql: self.restricted_sql_executor(),
             slow_query_file: self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE)
                 .unwrap_or_default(),
             ddl_job_history_store: self.ddl_job_history_store.clone(),
-            shared_catalog: std::sync::Arc::clone(&self.catalog),
             analyze_status: self.analyze_status.clone(),
             digest_retriever: self.sql_digest_text_retriever(),
             data_lock_waits: self.data_lock_waits.clone(),
@@ -287,7 +247,7 @@ impl Session {
             cluster_diagnostics: self.cluster_diagnostics.clone(),
             cluster_peer: self.cluster_peer.clone(),
             server_info_syncer: self.server_info_syncer.clone(),
-            config_scoped: self.has_scoped_privilege("", "", privilege::GlobalPriv::Config),
+            config_scoped: self.has_scoped_privilege("", "", tidb_mysql::ConfigPriv),
             hides_cluster_metadata: self.sem_hides_cluster_metadata(),
         }
     }
@@ -368,7 +328,7 @@ impl Session {
                         user,
                         host,
                         self.active_roles(),
-                        privilege::GlobalPriv::Process,
+                        tidb_mysql::ProcessPriv,
                     )
                 })
             })

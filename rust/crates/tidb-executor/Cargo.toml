@@ -10,7 +10,15 @@ description = "TiDB executor: the wired execution engine spine (Executor trait +
 autotests = false
 
 [dependencies]
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+tidb-privilege = { path = "../tidb-privilege" }
+tidb-keydecoder = { path = "../tidb-keydecoder" }
+tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-variable = { path = "../tidb-variable" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-table = { path = "../tidb-table" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
 stacker = { workspace = true }
@@ -60,6 +68,11 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-kv = { path = "../tidb-kv", features = ["test-util"] }
+tidb-table = { path = "../tidb-table", features = ["test-util"] }
+# Go's executor tests run over mockstore's unistore; the coprocessor reader's
+# tests answer its DAG with the same coprocessor.
+tidb-unistore = { path = "../tidb-unistore" }
 sha2 = { workspace = true }
 # The bench runs on the server's allocator (crates/tidb-server default feature).
 tikv-jemallocator = "0.7"

@@ -40,6 +40,8 @@ mod key_ranges;
 mod keyspace;
 mod kv_api;
 mod kv_contract;
+mod kv_request;
+mod kv_response;
 pub mod lock;
 mod mem_storage;
 mod mpp;
@@ -134,11 +136,18 @@ pub use kv_contract::{
     RunawayChecker, StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT,
     DEFAULT_TXN_TOTAL_SIZE_LIMIT, GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
+pub use kv_request::{
+    KvRequestMetadata, TransportBinding, TransportRequest, TransportRequestError,
+};
+pub use kv_response::{
+    CopInfo, LimiterWaitStats, QueryResponseError, QueryResultSubset, RequestStatsSample,
+    ResponseRuntimeStats,
+};
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{
-    CancelMppTasksParam, DispatchMppTaskParam, EstablishMppConnsParam, MppBuildTasksRequest,
-    MppClient, MppCoordinator, MppDispatchRequest, MppQueryId, MppTask, MppTaskLocation,
-    MppTaskMeta, MppTaskState, MppVersion,
+    CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator,
+    MppDispatchRequest, MppError, MppQueryId, MppStoreTask, MppStreamResponse, MppTask,
+    MppTaskLocation, MppTaskMeta, MppTaskState, MppVersion,
 };
 pub use mpp_probe::{
     global_mpp_failed_store_prober, global_mpp_server_info_manager, MppAliveClient,
@@ -184,7 +193,7 @@ pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RegionBackoffBudget,
     RegionBackoffExhausted, RegionBackoffKind, RETRY_BACKOFF_BASE_MS, RETRY_BACKOFF_CAP_MS,
 };
-pub use rpc::{UnaryCallContext, UnaryCancellation};
+pub use rpc::{CancelHandle, UnaryCallContext, UnaryCancellation};
 pub use tiflash::{
     get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,

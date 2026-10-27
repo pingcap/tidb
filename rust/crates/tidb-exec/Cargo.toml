@@ -12,6 +12,13 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-ddl = { path = "../tidb-ddl" }
+tidb-keydecoder = { path = "../tidb-keydecoder" }
+tidb-cluster = { path = "../tidb-cluster" }
+tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-privilege = { path = "../tidb-privilege" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-hack = { path = "../tidb-hack" }
@@ -29,6 +36,9 @@ tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-error = { path = "../tidb-error" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-table = { path = "../tidb-table" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }
@@ -62,7 +72,7 @@ fail = { version = "0.4", optional = true }
 
 [features]
 # Test-only fault injection (`fail::fail_point!`), as tidb-util's.
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-ddl/failpoints"]
 
 [dev-dependencies]
 tidb-sysutil = { path = "../tidb-sysutil" }

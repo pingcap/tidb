@@ -233,17 +233,14 @@ impl Session {
     ///
     /// Unlike DDL and ANALYZE, Go does not move the user's transaction: the
     /// stats handle borrows a separate restricted session and commits only
-    /// its `mysql.stats_*` changes. Every target's privileges are checked
-    /// before any lock row changes.
+    /// its `mysql.stats_*` changes. `Compile` checked every target's
+    /// privileges before any lock row changes.
     pub fn run_stats_lock(
         &mut self,
         statement: &ClusterStatsLockStatement,
         service: &dyn StatsStatementService,
     ) -> Result<(), DriverError> {
         self.begin_routed_statement_warnings();
-        for target in &statement.targets {
-            self.require_insert_and_select_privileges(&target.schema, &target.table)?;
-        }
         let warning = service.lock_stats(statement)?;
         if !warning.is_empty() {
             self.append_routed_warning(1105, warning);

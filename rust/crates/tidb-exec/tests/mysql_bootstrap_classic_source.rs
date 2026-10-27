@@ -318,7 +318,7 @@ fn the_first_user_table_is_117() {
     let sql = "create table test.t1(a int primary key, b varchar(10))";
     let context = tidb_executor::StmtContext::default().with_ddl_query(sql);
     let parsed = tidb_parser::parse(sql).unwrap();
-    let statement = lower_ddl_with_context(&parsed, "test", &context)
+    let statement = lower_ddl_with_context(&parsed, "test", &ddl_context(&context))
         .unwrap()
         .unwrap();
     let submission = prepare_persisted_job_submission(
@@ -330,6 +330,8 @@ fn the_first_user_table_is_117() {
         false,
         0,
         0,
+        // A store without TiFlash.
+        &|| Ok(0),
         &mut |_, _| Ok(false),
     )
     .unwrap();
@@ -459,4 +461,9 @@ fn a_second_classic_bootstrap_is_refused() {
         matches!(error, BootstrapError::AlreadyPresent { .. }),
         "{error}"
     );
+}
+
+/// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
+fn ddl_context(context: &tidb_executor::StmtContext) -> tidb_exec::cluster_ddl::DdlContext {
+    std::sync::Arc::new(context.clone())
 }

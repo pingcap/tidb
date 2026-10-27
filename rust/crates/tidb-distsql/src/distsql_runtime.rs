@@ -107,34 +107,7 @@ impl SelectResultMetadata {
     }
 }
 
-/// Aggregated blocking time from the Go coprocessor request limiter.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct LimiterWaitStats {
-    /// Total nanoseconds spent waiting for request permits.
-    pub total_ns: u64,
-    /// Longest single permit wait in nanoseconds.
-    pub max_ns: u64,
-}
-
-impl LimiterWaitStats {
-    /// Records one blocking wait, preserving the source total/max contract.
-    pub fn record(&mut self, wait_ns: u64) {
-        self.total_ns = self.total_ns.saturating_add(wait_ns);
-        self.max_ns = self.max_ns.max(wait_ns);
-    }
-
-    /// Merges another aggregate into this one.
-    pub fn merge(&mut self, other: Self) {
-        self.total_ns = self.total_ns.saturating_add(other.total_ns);
-        self.max_ns = self.max_ns.max(other.max_ns);
-    }
-
-    /// Reports whether no blocking wait was recorded.
-    #[must_use]
-    pub const fn is_zero(self) -> bool {
-        self.total_ns == 0
-    }
-}
+pub use tidb_txnkv::LimiterWaitStats;
 
 /// The bounded runtime statistics updated while consuming select responses.
 ///

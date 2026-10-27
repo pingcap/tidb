@@ -313,6 +313,7 @@ pub(crate) fn run_multi_update(
                     ctx,
                 )
                 .map(Some)
+                .map_err(DriverError::from)
             })
             .collect::<Result<Vec<_>, DriverError>>()?;
         let mut prepared = Vec::with_capacity(tables.len());

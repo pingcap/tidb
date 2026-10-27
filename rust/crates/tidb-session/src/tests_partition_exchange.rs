@@ -338,6 +338,10 @@ fn auto_random_follows_increment_offset_and_conversion_rules() {
         .run("set @@auto_increment_increment = 1, @@auto_increment_offset = 1")
         .unwrap();
 
+    // Go `GetModifiableColumnJob` refuses dropping AUTO_INCREMENT (8200)
+    // before `checkAutoRandom` runs unless `@@tidb_allow_remove_auto_inc` is
+    // on, as `ddl/primary_key_handle.test` sets it for these cases.
+    session.run("set @@tidb_allow_remove_auto_inc = 1").unwrap();
     session
         .run(
             "create table c (a bigint auto_increment unique key, b bigint auto_random primary key)",
@@ -365,7 +369,6 @@ fn auto_random_follows_increment_offset_and_conversion_rules() {
         )
     );
 
-    session.run("set @@tidb_allow_remove_auto_inc = 1").unwrap();
     session
         .run("create table r (a bigint auto_increment primary key)")
         .unwrap();

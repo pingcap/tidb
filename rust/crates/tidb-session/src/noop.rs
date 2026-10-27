@@ -19,66 +19,14 @@
 //! Go spells this in two places that read one setting -- `preprocessor`'s
 //! `checkNoopFuncs` for a query's clauses and `varsutil.go`'s `checkReadOnly`
 //! for the `noop.go` variables -- so both live behind the one
-//! [`Session::noop_funcs_mode`] read here.
+//! `SessionVars.NoopFuncsMode` read,
+//! [`tidb_variable::SessionVars::noop_funcs_mode`].
+
+use tidb_variable::set_hooks::NoopFuncsMode;
 
 use crate::{sysvar, DriverError, Session, WarningLevel};
 
-/// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
-/// no-op is treated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NoopFuncsMode {
-    /// `OFF` (the default): the statement is refused.
-    Off,
-    /// `ON`: the clause is accepted and does nothing.
-    On,
-    /// `WARN`: the clause is accepted with a warning.
-    Warn,
-}
-
 impl Session {
-    /// Go `SessionVars.NoopFuncsMode`, read from this session's copy of
-    /// `tidb_enable_noop_functions` or -- for a `SET GLOBAL` being validated
-    /// -- from the shared table, which is the scope Go's `checkReadOnly`
-    /// consults through `GlobalVarsAccessor`.
-    pub(crate) fn noop_funcs_mode(&self, global: bool) -> NoopFuncsMode {
-        let value = if global {
-            self.vars.get_global("tidb_enable_noop_functions")
-        } else {
-            self.vars.get_system("tidb_enable_noop_functions")
-        };
-        match value
-            .unwrap_or_else(|_| "OFF".to_owned())
-            .to_ascii_uppercase()
-            .as_str()
-        {
-            "ON" | "1" => NoopFuncsMode::On,
-            "WARN" => NoopFuncsMode::Warn,
-            _ => NoopFuncsMode::Off,
-        }
-    }
-
-    /// Go `varsutil.go:checkReadOnly` and the identical branch inlined in
-    /// `sql_auto_is_null`'s own registration: turning one of these ON is
-    /// refused with 1235 unless `tidb_enable_noop_functions` allows it,
-    /// because the server does not actually do what the setting names.
-    /// Turning one OFF is always accepted, and so is a value the registry
-    /// would reject -- that is [`vars::SessionSysvars::set_system`]'s job,
-    /// and Go likewise validates the type before it runs this hook.
-    pub(crate) fn check_noop_gated_variable(
-        &mut self,
-        name: &str,
-        value: &str,
-        is_global: bool,
-    ) -> Result<(), DriverError> {
-        let Some(clause) = sysvar::noop_gated_clause(name) else {
-            return Ok(());
-        };
-        if !turns_on(name, value) {
-            return Ok(());
-        }
-        self.gate_noop_clause(clause, is_global)
-    }
-
     /// The value a `SET_VAR` hint actually installs for one of these
     /// variables.
     ///
@@ -94,7 +42,7 @@ impl Session {
         if sysvar::noop_gated_clause(name).is_none() || !turns_on(name, &value) {
             return value;
         }
-        match self.noop_funcs_mode(false) {
+        match self.vars.noop_funcs_mode(false) {
             NoopFuncsMode::On | NoopFuncsMode::Warn => value,
             NoopFuncsMode::Off => "OFF".to_owned(),
         }
@@ -114,30 +62,21 @@ impl Session {
         clause: &'static str,
         global: bool,
     ) -> Result<(), DriverError> {
-        match self.noop_funcs_mode(global) {
+        match self.vars.noop_funcs_mode(global) {
             NoopFuncsMode::On => Ok(()),
             NoopFuncsMode::Off => {
                 // go appends the statement error into the warning buffer as
                 // well (driver_tidb.go:376's error door), so SHOW WARNINGS
                 // after the refused statement carries the same 1235 row.
-                self.append_warning(
-                    WarningLevel::Error,
-                    1235,
-                    format!(
-                        "function {clause} has only noop implementation in tidb now, use \
-                         tidb_enable_noop_functions to enable these functions"
-                    ),
-                );
-                Err(DriverError::FunctionsNoopImpl(clause))
+                let error = DriverError::FunctionsNoopImpl(clause);
+                self.append_driver_error(WarningLevel::Error, &error);
+                Err(error)
             }
             NoopFuncsMode::Warn => {
-                self.append_warning(
+                // Go `StmtCtx.AppendWarning(expression.ErrFunctionsNoopImpl...)`.
+                self.append_driver_error(
                     WarningLevel::Warning,
-                    1235,
-                    format!(
-                        "function {clause} has only noop implementation in tidb now, use \
-                         tidb_enable_noop_functions to enable these functions"
-                    ),
+                    &DriverError::FunctionsNoopImpl(clause),
                 );
                 Ok(())
             }
@@ -160,7 +99,7 @@ impl Session {
         &mut self,
         query: &tidb_ast::QueryStmt,
     ) -> Result<(), DriverError> {
-        let mode = self.noop_funcs_mode(false);
+        let mode = self.vars.noop_funcs_mode(false);
         let mut gated: Vec<&'static str> = Vec::new();
         collect_noop_clauses(query, &mut gated);
         if self.vars.shared_lock_promotion_enabled() {
@@ -173,14 +112,11 @@ impl Session {
             return Ok(());
         }
         for clause in gated {
-            let message = format!(
-                "function {clause} has only noop implementation in tidb now, use \
-                 tidb_enable_noop_functions to enable these functions"
-            );
+            let error = DriverError::FunctionsNoopImpl(clause);
             if mode == NoopFuncsMode::Off {
-                return Err(DriverError::FunctionsNoopImpl(clause));
+                return Err(error);
             }
-            self.append_warning(WarningLevel::Warning, 1235, message);
+            self.append_driver_error(WarningLevel::Warning, &error);
         }
         Ok(())
     }

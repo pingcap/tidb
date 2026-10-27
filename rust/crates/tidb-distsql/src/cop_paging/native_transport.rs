@@ -44,10 +44,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 
-use crate::query_runtime::{
-    QueryDispatch, QueryOperation, QueryResponse, QueryResponseError, QueryResultSubset,
-    QueryTransport,
-};
+use crate::query_runtime::{QueryDispatch, QueryOperation, QueryResponseError, QueryResultSubset, QueryTransport};
 use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
@@ -899,39 +896,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
     }
 }
 
-impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
-    /// Go `copClient.Send`'s concurrency: the request's, capped by the task
-    /// count and by the tasks that are not small, with the extra workers the
-    /// small tasks get (`smallTaskConcurrency`).
-    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
-        let tasks = self.logical_order.len();
-        let use_row_hints = !self.metadata.request_source.internal;
-        let small = if use_row_hints {
-            self.runtime.small_task_count()
-        } else {
-            0
-        };
-        let mut extra = crate::RegionTaskEnvelope::small_concurrency(
-            small,
-            tidb_txnkv::rpc::go_max_procs(),
-        );
-        let mut concurrency = usize::try_from(self.metadata.concurrency)
-            .unwrap_or(1)
-            .min(tasks);
-        if tasks - small.min(tasks) < concurrency {
-            concurrency = tasks - small.min(tasks);
-        }
-        concurrency = concurrency.max(1);
-        if self.metadata.keep_order {
-            extra = extra.min(20);
-        }
-        Some(crate::query_runtime::CopInfo {
-            concurrency,
-            extra_concurrency: extra,
-            build_task_elapsed: self.build_task_elapsed,
-        })
-    }
-
+impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         loop {
             if self.closed {
@@ -987,11 +952,44 @@ impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
     fn close(&mut self) {
         self.closed = true;
     }
+
+    /// Go `copClient.Send`'s concurrency: the request's, capped by the task
+    /// count and by the tasks that are not small, with the extra workers the
+    /// small tasks get (`smallTaskConcurrency`).
+    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+        let tasks = self.logical_order.len();
+        let use_row_hints = !self.metadata.request_source.internal;
+        let small = if use_row_hints {
+            self.runtime.small_task_count()
+        } else {
+            0
+        };
+        let mut extra = crate::RegionTaskEnvelope::small_concurrency(
+            small,
+            tidb_txnkv::rpc::go_max_procs(),
+        );
+        let mut concurrency = usize::try_from(self.metadata.concurrency)
+            .unwrap_or(1)
+            .min(tasks);
+        if tasks - small.min(tasks) < concurrency {
+            concurrency = tasks - small.min(tasks);
+        }
+        concurrency = concurrency.max(1);
+        if self.metadata.keep_order {
+            extra = extra.min(20);
+        }
+        Some(crate::query_runtime::CopInfo {
+            concurrency,
+            extra_concurrency: extra,
+            build_task_elapsed: self.build_task_elapsed,
+        })
+    }
 }
+
 
 impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopTaskSource for NativeCopResponse<S> {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
-        self.next()
+        tidb_txnkv::Response::next(self)
     }
 
     fn task_count(&self) -> usize {

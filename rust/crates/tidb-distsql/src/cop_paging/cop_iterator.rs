@@ -123,21 +123,7 @@ impl<R: QueryResponse> CopIterator<R> {
     }
 }
 
-impl<R: CopTaskSource> QueryResponse for CopIterator<R> {
-    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
-        self.info
-    }
-
-    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
-        let mut stats = self.limiter_wait;
-        match &self.driver {
-            Driver::Inline(source) => stats.merge(source.limiter_wait_stats()),
-            Driver::Concurrent(source) => stats.merge(source.limiter_wait_stats()),
-            Driver::Closed => {}
-        }
-        stats
-    }
-
+impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         let result = match &mut self.driver {
             Driver::Inline(source) => recover(|| source.next()),
@@ -167,7 +153,22 @@ impl<R: CopTaskSource> QueryResponse for CopIterator<R> {
     fn close(&mut self) {
         self.close_inner();
     }
+
+    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+        self.info
+    }
+
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        let mut stats = self.limiter_wait;
+        match &self.driver {
+            Driver::Inline(source) => stats.merge(source.limiter_wait_stats()),
+            Driver::Concurrent(source) => stats.merge(source.limiter_wait_stats()),
+            Driver::Closed => {}
+        }
+        stats
+    }
 }
+
 
 impl<R: QueryResponse> Drop for CopIterator<R> {
     fn drop(&mut self) {
@@ -520,15 +521,7 @@ struct ConcurrentResponse<R: CopTaskSource + Send + 'static> {
     group: Arc<WorkerGroup<R>>,
 }
 
-impl<R: CopTaskSource + Send + 'static> QueryResponse for ConcurrentResponse<R> {
-    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
-        self.group
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .limiter_wait
-    }
-
+impl<R: CopTaskSource + Send + 'static> tidb_txnkv::Response for ConcurrentResponse<R> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         let result = (|| loop {
             if let Some(result) = self.group.receive() {
@@ -545,10 +538,20 @@ impl<R: CopTaskSource + Send + 'static> QueryResponse for ConcurrentResponse<R> 
         }
         result
     }
+
     fn close(&mut self) {
         self.group.close();
     }
+
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        self.group
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .limiter_wait
+    }
 }
+
 
 impl<R: CopTaskSource + Send + 'static> Drop for ConcurrentResponse<R> {
     fn drop(&mut self) {
@@ -687,13 +690,14 @@ mod tests {
         ready_after: u32,
     }
 
-    impl QueryResponse for PendingSource {
+    impl tidb_txnkv::Response for PendingSource {
         fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
             self.try_next()
         }
 
         fn close(&mut self) {}
     }
+
 
     impl CopTaskSource for PendingSource {
         fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {

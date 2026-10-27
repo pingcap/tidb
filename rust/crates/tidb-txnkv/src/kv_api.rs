@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use crate::{
     AssertionOp, BatchGetOptions, BatchGetter, CacheDb, EventCallback, FlagsOp, GetOptions, Getter,
-    Key, KeyFlags, KvIterator, MppClient, OptionKey, ReplicaRead, Request, StagingHandle,
-    ValueEntry, Version,
+    Key, KeyFlags, KvIterator, MppClient, OptionKey, QueryResponseError, QueryResultSubset,
+    ReplicaRead, StagingHandle, TransportRequest, ValueEntry, Version,
 };
 
 /// Returns only the bytes from one point read.
@@ -169,27 +169,18 @@ impl<W> Default for ClientSendOption<W> {
     }
 }
 
-/// Coprocessor request client.
-pub trait Client {
-    /// Request context.
-    type Context;
-    /// KV variables.
-    type Variables;
-    /// Response stream.
-    type Response: Response<Context = Self::Context>;
-    /// Warning type.
-    type Warning;
+/// Go `kv.Client`: sends a built coprocessor request to the KV layer.
+///
+/// Object-safe, so a storage hands out its client as `Arc<dyn Client>`, as
+/// Go's `kv.Storage.GetClient` does.
+pub trait Client: fmt::Debug + Send + Sync {
+    /// Go `Client.Send`: sends one already-built request and returns its
+    /// response. The request is claimed for this send (its request-local
+    /// cancellation is minted here); an `Err` is a failure before any
+    /// response existed, carried as its rendered message.
+    fn send(&self, request: &TransportRequest) -> Result<Box<dyn Response + Send>, String>;
 
-    /// Sends one request to the KV layer.
-    fn send(
-        &mut self,
-        context: &Self::Context,
-        request: &Request,
-        variables: &mut Self::Variables,
-        options: &mut ClientSendOption<Self::Warning>,
-    ) -> Self::Response;
-
-    /// Returns whether a request/subtype pair is supported.
+    /// Go `Client.IsRequestTypeSupported`.
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool;
 }
 
@@ -426,19 +417,66 @@ pub trait ResultSubset {
     fn response_time(&self) -> Duration;
 }
 
-/// Streaming KV response.
+/// Go `kv.Response`: the stream of result subsets one send returns.
 pub trait Response {
-    /// Request context type.
-    type Context;
-    /// Result subset.
-    type ResultSubset: ResultSubset;
-    /// Error type.
-    type Error;
+    /// Go `Response.Next`: pulls one result subset, or `None` after natural
+    /// exhaustion.
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError>;
 
-    /// Returns the next subset, or `None` at end of stream.
-    fn next(&mut self, context: &Self::Context) -> Result<Option<Self::ResultSubset>, Self::Error>;
-    /// Closes the response.
-    fn close(&mut self) -> Result<(), Self::Error>;
+    /// Go `Response.Close`: closes the response and releases any unconsumed
+    /// subsets.
+    fn close(&mut self);
+
+    /// Pulls one raw result subset while forwarding the caller's remaining row
+    /// budget to response owners that can use it; the default is the plain
+    /// unbudgeted pull.
+    fn next_with_required_rows(
+        &mut self,
+        _required_rows: usize,
+    ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        self.next()
+    }
+
+    /// Request-limiter wait evidence accumulated by this response (Go's
+    /// `selectResult.closeImpl` reads `HasLimiterWaitStats` from it); zero
+    /// for owners without a limiter.
+    #[must_use]
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        crate::LimiterWaitStats::default()
+    }
+
+    /// Go `copr.CopInfo`, which distsql type-asserts on the response: the
+    /// concurrency and task-building time of the iterator behind it, `None`
+    /// for owners that are not a coprocessor iterator.
+    #[must_use]
+    fn cop_info(&self) -> Option<crate::CopInfo> {
+        None
+    }
+}
+
+impl<R: Response + ?Sized> Response for Box<R> {
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        (**self).next()
+    }
+
+    fn close(&mut self) {
+        (**self).close();
+    }
+
+    fn next_with_required_rows(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        (**self).next_with_required_rows(required_rows)
+    }
+
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        (**self).limiter_wait_stats()
+    }
+
+    fn cop_info(&self) -> Option<crate::CopInfo> {
+        (**self).cop_info()
+    }
 }
 
 /// Snapshot read surface.

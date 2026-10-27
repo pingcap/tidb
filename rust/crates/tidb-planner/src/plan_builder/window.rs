@@ -662,8 +662,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut updated = false;
         let mut new_spec = spec.clone();
         if new_spec.spec.frame.is_some() {
-            self.ctx.append_note(
-                3599,
+            self.ctx.append_go_note(
+                &tidb_error::plannererrors::ERR_WINDOW_FUNCTION_IGNORES_FRAME,
                 &format!(
                     "Window function '{}' ignores the frame clause of window '{}' and aggregates over the whole partition",
                     func_name.to_ascii_lowercase(),

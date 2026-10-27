@@ -1,0 +1,16 @@
+[package]
+name = "tidb-autoid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/meta/autoid for the TiDB Rust rewrite: the auto id allocator below pkg/table."
+
+[dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }
+
+[lints]
+workspace = true

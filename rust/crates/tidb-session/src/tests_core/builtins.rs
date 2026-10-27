@@ -170,9 +170,9 @@ fn time_compared_with_strings_and_numbers() {
     // comparison runs in the coprocessor, whose batch warnings are merged
     // into one before they reach the session's warning buffer.
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Incorrect datetime value: 'garbage'"
     );
 }
@@ -202,7 +202,7 @@ fn numeric_prefix_strings_warn_once_per_coercion() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect()
     };
 
@@ -1836,9 +1836,9 @@ fn aes_modes_reach_live_sql() {
     // signature ignores the third argument at evaluation time. Both warnings
     // therefore survive, in construction/evaluation order.
     assert_eq!(session.warnings().len(), 2);
-    assert_eq!(session.warnings()[0].code, 1365);
-    assert_eq!(session.warnings()[1].code, 1618);
-    assert_eq!(session.warnings()[1].message, "<IV> option ignored");
+    assert_eq!(session.warnings()[0].code(), 1365);
+    assert_eq!(session.warnings()[1].code(), 1618);
+    assert_eq!(session.warnings()[1].message(), "<IV> option ignored");
 
     for sql in [
         "SELECT AES_ENCRYPT(NULL, 1 / 0)",
@@ -1846,7 +1846,7 @@ fn aes_modes_reach_live_sql() {
     ] {
         assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
         assert_eq!(session.warnings().len(), 1, "{sql}");
-        assert_eq!(session.warnings()[0].code, 1365, "{sql}");
+        assert_eq!(session.warnings()[0].code(), 1365, "{sql}");
     }
 
     session
@@ -1861,7 +1861,7 @@ fn aes_modes_reach_live_sql() {
         assert!(session
             .warnings()
             .iter()
-            .all(|warning| warning.code == 1365));
+            .all(|warning| warning.code() == 1365));
     }
     for sql in [
         "SELECT AES_ENCRYPT('pingcap', NULL, 1 / 0)",
@@ -1869,7 +1869,7 @@ fn aes_modes_reach_live_sql() {
     ] {
         assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
         assert_eq!(session.warnings().len(), 1, "{sql}");
-        assert_eq!(session.warnings()[0].code, 1365, "{sql}");
+        assert_eq!(session.warnings()[0].code(), 1365, "{sql}");
     }
     let short_iv = session
         .run("SELECT AES_ENCRYPT('pingcap', '123', 'short')")
@@ -1987,7 +1987,7 @@ fn string_operands_take_go_s_per_operator_numeric_cast() {
         warned
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>(),
         [(1292, "Truncated incorrect DECIMAL value: 'abc'".to_owned())]
     );
@@ -1996,7 +1996,7 @@ fn string_operands_take_go_s_per_operator_numeric_cast() {
         warned
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>(),
         [(1292, "Truncated incorrect DOUBLE value: 'abc'".to_owned())]
     );

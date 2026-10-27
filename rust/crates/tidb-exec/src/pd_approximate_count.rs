@@ -59,3 +59,41 @@ pub async fn load_record_region_stats(
 }
 
 pub use tidb_executor::pd_helper::{approximate_table_count_key, ApproximateTableCountCache};
+
+/// Go `PDHelper.GetApproximateTableCountFromStorage` on a store with no PD
+/// HTTP client: a cached count is `(count, true)`; a miss is the loader's
+/// `(0, false)`, cached for the next 30 seconds (Go `defaultPDHelper`'s
+/// capacity and TTL).
+#[derive(Debug)]
+pub struct NoPdApproximateTableCounts(std::sync::Mutex<ApproximateTableCountCache>);
+
+impl Default for NoPdApproximateTableCounts {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(ApproximateTableCountCache::new(
+            1024 * 1024,
+            Duration::from_secs(30),
+        )))
+    }
+}
+
+impl crate::real_tikv_analyze::ApproximateTableCountProvider for NoPdApproximateTableCounts {
+    fn approximate_table_count(
+        &self,
+        _resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> (f64, bool) {
+        let key = approximate_table_count_key(physical_id, database, table, partition);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let mut cache = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = cache.get(&key, now) {
+            return (count, true);
+        }
+        cache.insert(key, now, 0.0);
+        (0.0, false)
+    }
+}

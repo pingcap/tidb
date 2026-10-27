@@ -1,0 +1,873 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Turning a TiKV pessimistic-lock failure into the error a SQL client sees.
+//!
+//! `tidb-txnkv` reports why a locking statement failed in TiKV's own terms.
+//! Go converts those in two places: `pkg/store/driver/error.ToTiDBErr` maps
+//! the client-go NOWAIT and lock-wait-timeout errors to `ClassTiKV`'s 3572 and
+//! 1205, and `pkg/executor/adapter.go`'s deferred `errors.Cause(err).(*
+//! tikverr.ErrDeadlock)` check replaces a proven deadlock with
+//! `exeerrors.ErrDeadlock`, which is `ClassExecutor` over `mysql.
+//! ErrLockDeadlock` (1213).
+//!
+//! Captured from TiDB's mock store, two sessions in `BEGIN PESSIMISTIC`:
+//! `SELECT ... FOR UPDATE NOWAIT` against a locked row raises
+//! `[tikv:3572]Statement aborted because lock(s) could not be acquired
+//! immediately and NOWAIT is set.`, and the same statement without `NOWAIT`,
+//! after `innodb_lock_wait_timeout`, raises `[tikv:1205]Lock wait timeout
+//! exceeded; try restarting transaction`. Those are the errors' `Error()`
+//! text; the client receives `terror.ToSQLError`'s message, which is
+//! `GetMsg()` -- the same text without the `[class:code]` prefix.
+
+use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+use tidb_kv::cluster_storage::DuplicateKeyHint;
+use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
+use tidb_txnkv::retry::RegionBackoffKind;
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
+use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
+
+/// Go `errno.ErrLockWaitTimeout`.
+pub const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
+/// Go `errno.ErrLockDeadlock`.
+pub const ERR_LOCK_DEADLOCK: u16 = 1213;
+/// Go `errno.ErrLockAcquireFailAndNoWaitSet`.
+pub const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
+/// Go `errno.ErrWriteConflict`, the statement-scoped conflict a pessimistic
+/// retry resolves.
+pub const ERR_WRITE_CONFLICT: u16 = 9007;
+/// Go `errno.ErrSharedLockLost`, a transaction-fatal shared-lock upgrade loss.
+pub const ERR_SHARED_LOCK_LOST: u16 = 9015;
+/// Go `errno.ErrRegionUnavailable`, a determinate routing failure that is not
+/// one of `pkg/kv.IsTxnRetryableError`'s three retryable identities.
+pub const ERR_REGION_UNAVAILABLE: u16 = 9005;
+
+/// Go `mysql.DefaultMySQLState`, used by every code absent from `state.go`.
+const DEFAULT_SQL_STATE: [u8; 5] = *b"HY000";
+/// Go `mysql.MySQLState[ErrLockDeadlock]`, the only one of these four with an
+/// entry of its own.
+const DEADLOCK_SQL_STATE: [u8; 5] = *b"40001";
+
+/// One client-visible SQL error: the wire triple, with nothing else attached.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockSqlError {
+    /// MySQL error number.
+    pub code: u16,
+    /// Five-byte SQLSTATE.
+    pub state: [u8; 5],
+    /// The message Go sends the client (`terror.ToSQLError`): a registered
+    /// error's `GetMsg()`, without the `[class:code]` prefix its `Error()`
+    /// adds, while unregistered passthrough errors keep their raw source
+    /// text.
+    pub message: String,
+    /// A write conflict's `newWriteConflictError` arguments, kept so the
+    /// session's commit can name the tables in them (Go
+    /// `tryReplaceWriteConflictError`).
+    pub write_conflict: Option<Box<WriteConflictArgs>>,
+    /// The Go `*terror.Error` identity the failure is raised as (`[kv:9007]`,
+    /// `[tikv:1205]`, ...), `None` for a plain error. The wire drops it;
+    /// `err.Error()` -- `@@tidb_last_query_info`, logs -- prints it.
+    pub identity: Option<tidb_error::terror::TerrorIdentity>,
+}
+
+impl LockSqlError {
+    /// Whether this error carries Go's result-undetermined identity.
+    #[must_use]
+    pub fn is_result_undetermined(&self) -> bool {
+        self.code == tidb_error::mysql::errcode::ErrUnknown
+            && self.message == ERR_RESULT_UNDETERMINED.message()
+    }
+}
+
+/// Go `ExecStmt.retryCount` and `handlePessimisticLockError`'s retry gate.
+/// Each statement owns its counter; each retry reads the current process
+/// configuration, independently of the KV client's RPC backoff budget.
+#[derive(Debug, Default)]
+pub struct PessimisticStatementRetry {
+    count: usize,
+}
+
+impl PessimisticStatementRetry {
+    /// Charges one statement replay, or returns Go's unregistered limit error.
+    pub fn retry(&mut self) -> Result<(), LockSqlError> {
+        if self.count
+            >= tidb_config::config_tree::config::get_global_config()
+                .pessimistic_txn
+                .max_retry_count
+        {
+            return Err(LockSqlError {
+                code: tidb_error::mysql::errcode::ErrUnknown,
+                state: DEFAULT_SQL_STATE,
+                message: "pessimistic lock retry limit reached".to_owned(),
+                write_conflict: None,
+                identity: None,
+            });
+        }
+        self.count += 1;
+        Ok(())
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.count
+    }
+}
+
+/// Maps a lock failure to the error TiDB reports for it.
+///
+/// [`PessimisticLockFailure::Transaction`] is not statement-scoped: it ends
+/// the transaction. Shared-lock loss keeps its registered 9015 identity;
+/// other transaction causes retain their own diagnostic under generic 1105
+/// rather than being disguised as a lock error the client could usefully
+/// retry.
+#[must_use]
+pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlError {
+    match failure {
+        PessimisticLockFailure::Deadlock(_) => LockSqlError {
+            code: ERR_LOCK_DEADLOCK,
+            state: DEADLOCK_SQL_STATE,
+            message: "Deadlock found when trying to get lock; try restarting transaction"
+                .to_owned(),
+            write_conflict: None,
+            // Go `ExecStmt.handlePessimisticLockError`: client-go's deadlock
+            // becomes `exeerrors.ErrDeadlock`.
+            identity: Some(tidb_util::dbterror::exeerrors::ERR_DEADLOCK.identity()),
+        },
+        PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => LockSqlError {
+            code: ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
+            state: DEFAULT_SQL_STATE,
+            message: "Statement aborted because lock(s) could not be acquired immediately and \
+                      NOWAIT is set."
+                .to_owned(),
+            write_conflict: None,
+            identity: Some(
+                tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
+            ),
+        },
+        PessimisticLockFailure::LockWaitTimeout { .. } => LockSqlError {
+            code: ERR_LOCK_WAIT_TIMEOUT,
+            state: DEFAULT_SQL_STATE,
+            message: "Lock wait timeout exceeded; try restarting transaction".to_owned(),
+            write_conflict: None,
+            identity: Some(tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.identity()),
+        },
+        // Go retries or aborts the statement; only a commit's conflict is
+        // rewritten with table names, so the arguments stop here.
+        PessimisticLockFailure::WriteConflict { detail } => LockSqlError {
+            code: ERR_WRITE_CONFLICT,
+            state: DEFAULT_SQL_STATE,
+            message: format!("Write conflict, {detail} [try again later]"),
+            write_conflict: None,
+            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
+        },
+        PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
+            transaction_cause_to_sql_error(cause)
+        }
+        PessimisticLockFailure::Transaction(
+            cause @ (TransactionCause::SharedLockLost { .. }
+            | TransactionCause::AssertionFailed { .. }),
+        ) => transaction_cause_to_sql_error(cause),
+        PessimisticLockFailure::Transaction(cause) => LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: format!("pessimistic transaction aborted: {cause}"),
+            write_conflict: None,
+            identity: None,
+        },
+    }
+}
+
+/// Maps a terminal commit outcome to what the client is told.
+///
+/// Only `Committed` may answer `COMMIT` with success. Every other outcome
+/// means the writes are not durable, and the coordinator reports those as an
+/// `Ok` value carrying the cause rather than as an `Err` -- so a caller that
+/// only checks for `Err` tells the client its transaction committed when TiKV
+/// rolled it back. SQL-facing commit consumers use this authority for that
+/// reason; domain-specific retry loops must apply their own typed policy.
+///
+/// # Errors
+///
+/// Returns the client-visible error for any outcome other than `Committed`.
+pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<(), LockSqlError> {
+    commit_outcome_to_sql_error_with_hint(outcome, None)
+}
+
+/// Maps a commit outcome while preserving the duplicate-key text captured by
+/// the INSERT executor before it deferred the primary assertion to prewrite.
+/// TiKV returns only the encoded key at that boundary; Go still reports the
+/// original `ErrDupEntry` (1062), so the session supplies the matching hint.
+pub fn commit_outcome_to_sql_error_with_hint(
+    outcome: &OptimisticCommitOutcome,
+    duplicate_hint: Option<&DuplicateKeyHint>,
+) -> Result<(), LockSqlError> {
+    match outcome {
+        OptimisticCommitOutcome::Committed(_) => Ok(()),
+        OptimisticCommitOutcome::RolledBack(rolled_back) => {
+            if duplicate_cause(&rolled_back.cause) {
+                if let Some(hint) = duplicate_hint {
+                    return Err(duplicate_key_sql_error(hint));
+                }
+            }
+            Err(transaction_cause_to_sql_error(&rolled_back.cause))
+        }
+        OptimisticCommitOutcome::CleanupFailed(failed) => {
+            if duplicate_cause(&failed.cause) {
+                if let Some(hint) = duplicate_hint {
+                    return Err(duplicate_key_sql_error(hint));
+                }
+            }
+            Err(transaction_cause_to_sql_error(&failed.cause))
+        }
+        OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: ERR_RESULT_UNDETERMINED.message().to_owned(),
+            write_conflict: None,
+            identity: Some(ERR_RESULT_UNDETERMINED.identity()),
+        }),
+    }
+}
+
+pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
+    LockSqlError {
+        code: 1062,
+        state: *b"23000",
+        message: format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
+        write_conflict: None,
+        identity: Some(tidb_error::catalog::kv::ERR_KEY_EXISTS.identity()),
+    }
+}
+
+/// Renders a transaction-ending cause as the error TiDB reports for it.
+///
+/// Write conflicts keep Go's retryable 9007 identity. Shared-lock loss keeps
+/// the transaction-fatal `tikv:9015` identity. A terminal effective backoff
+/// keeps the concrete client-go sentinel selected by its longest-sleep
+/// category; only `BoRegionMiss`/`BoRegionScheduling` become 9005. The
+/// excluded ServerBusy cap returns its current ordinary error, while
+/// structural region failures have no such identity and keep their exact
+/// diagnostic under 1105.
+#[must_use]
+pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
+    match cause {
+        TransactionCause::WriteConflict { detail, args } => LockSqlError {
+            code: ERR_WRITE_CONFLICT,
+            state: DEFAULT_SQL_STATE,
+            message: format!("Write conflict, {detail} [try again later]"),
+            write_conflict: args.clone(),
+            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
+        },
+        TransactionCause::BackoffExhausted { kind, detail } => {
+            backoff_exhausted_to_sql_error(*kind, detail)
+        }
+        TransactionCause::SharedLockLost { start_ts, key } => {
+            shared_lock_lost_to_sql_error(*start_ts, key)
+        }
+        // The session's own error, rendered by the checker (Go
+        // `ErrInfoSchemaChanged` 8028 / `ErrInfoSchemaExpired` 8027).
+        TransactionCause::SchemaLease { code, message } => LockSqlError {
+            code: *code,
+            state: DEFAULT_SQL_STATE,
+            message: message.clone(),
+            write_conflict: None,
+            identity: match *code {
+                tidb_error::tidb::errcode::ErrInfoSchemaChanged => {
+                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED.identity())
+                }
+                tidb_error::tidb::errcode::ErrInfoSchemaExpired => {
+                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED.identity())
+                }
+                _ => None,
+            },
+        },
+        TransactionCause::AssertionFailed {
+            key,
+            assertion,
+            start_ts,
+            existing_start_ts,
+            existing_commit_ts,
+            ..
+        } => {
+            // Go session.handleAssertionFailure keeps every wire field and
+            // uses the registered KV error, regardless of the assertion's
+            // direction or any retained duplicate-key hint.
+            let direction = tidb_proto::KvrpcAssertion::try_from(*assertion).map_or_else(
+                |_| assertion.to_string(),
+                |value| value.as_str_name().to_owned(),
+            );
+            let prototype = &tidb_txnkv::ERR_ASSERTION_FAILED;
+            let error = tidb_error::mysql::SqlError::new_f(
+                prototype.mysql_code().as_u16(),
+                prototype.message_template(),
+                prototype.redact_arg_positions(),
+                &[
+                    tidb_codec::table_key::hex(key).into(),
+                    direction.into(),
+                    (*start_ts).into(),
+                    (*existing_start_ts).into(),
+                    (*existing_commit_ts).into(),
+                ],
+            );
+            LockSqlError {
+                code: error.code,
+                state: error
+                    .state
+                    .as_bytes()
+                    .try_into()
+                    .expect("five-byte SQLSTATE"),
+                message: error.message,
+                write_conflict: None,
+                identity: Some(txnkv_identity(prototype)),
+            }
+        }
+        other => LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: format!("transaction failed: {other}"),
+            write_conflict: None,
+            identity: None,
+        },
+    }
+}
+
+/// The identity a registered `pkg/kv` / `ClassTiKV` error carries.
+fn txnkv_identity(error: &tidb_txnkv::KvError) -> tidb_error::terror::TerrorIdentity {
+    tidb_error::terror::TerrorIdentity::new(
+        tidb_error::terror::TerrorClass::from_value(isize::from(error.class().as_u8())),
+        tidb_error::terror::TerrorCode::new(error.mysql_code().as_u16() as isize),
+    )
+}
+
+/// Only client-go ErrKeyExist consumes the table's duplicate-entry hint.
+/// ErrAssertionFailed is an independent consistency error in either direction.
+pub(crate) fn duplicate_cause(cause: &TransactionCause) -> bool {
+    matches!(cause, TransactionCause::AlreadyExists { .. })
+}
+
+fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
+    let source = StorageDriverError::SharedLockLost {
+        start_ts,
+        key: key.to_owned(),
+    };
+    let ConvertedDriverError::Kv(error) = to_tidb_driver_error(&source) else {
+        unreachable!("shared lock loss has a registered KV error identity")
+    };
+    LockSqlError {
+        code: error.mysql_code().as_u16(),
+        state: DEFAULT_SQL_STATE,
+        message: error.to_string(),
+        write_conflict: None,
+        identity: Some(txnkv_identity(&error)),
+    }
+}
+
+fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> LockSqlError {
+    let source = StorageDriverError::from_backoff(kind, detail);
+    match to_tidb_driver_error(&source) {
+        ConvertedDriverError::Terror(converted) => LockSqlError {
+            code: u16::try_from(converted.code().value())
+                .expect("registered TiDB error code fits the MySQL protocol"),
+            state: DEFAULT_SQL_STATE,
+            message: converted.message().to_owned(),
+            write_conflict: None,
+            identity: Some(converted.identity()),
+        },
+        ConvertedDriverError::Passthrough(source) => LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: source.to_string(),
+            write_conflict: None,
+            identity: None,
+        },
+        ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
+            unreachable!("backoff source table has no kv or transaction conversion rows")
+        }
+    }
+}
+
+/// The write conflict a fair-locking `LockedWithConflict` result reports.
+///
+/// Go `pkg/store/driver/txn.generateWriteConflictForLockedWithConflict`: the
+/// lock exists, but at a timestamp newer than the statement's, so the
+/// statement's result was computed from a snapshot that has been overtaken.
+/// Reporting it as `ErrWriteConflict` is what puts the statement on the same
+/// retry path a plain conflict takes — the difference is that the lock is kept.
+///
+/// `conflict_key` is the key whose lock carries `conflict_commit_ts`; Go
+/// renders it through `prettyWriteKey`, which decodes the table and index it
+/// belongs to. This bounded owner has no such decoder here and prints the
+/// encoded key instead, which names the same row.
+#[must_use]
+pub fn locked_with_conflict_error(
+    start_ts: u64,
+    conflict_commit_ts: u64,
+    conflict_key: &[u8],
+) -> LockSqlError {
+    LockSqlError {
+        code: ERR_WRITE_CONFLICT,
+        state: DEFAULT_SQL_STATE,
+        message: format!(
+            "Write conflict, txnStartTS={start_ts}, conflictStartTS=0, \
+             conflictCommitTS={conflict_commit_ts}, key={conflict_key:?} primary=<unknown>, \
+             reason=LockedWithConflict [try again later]"
+        ),
+        write_conflict: None,
+        identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
+    }
+}
+
+/// Whether the SQL layer may retry only the statement, under a newer
+/// `for_update_ts`, instead of ending the transaction.
+///
+/// Go retries a pessimistic statement after a write conflict and after the
+/// single-statement deadlock identified by client-go's `hashInKeys`. Other
+/// deadlocks abort the statement because retrying would re-form the same cycle.
+#[must_use]
+pub const fn is_retryable_statement_failure(failure: &PessimisticLockFailure) -> bool {
+    matches!(failure, PessimisticLockFailure::WriteConflict { .. })
+        || matches!(failure, PessimisticLockFailure::Deadlock(detail) if detail.is_retryable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        commit_outcome_to_sql_error, commit_outcome_to_sql_error_with_hint,
+        transaction_cause_to_sql_error,
+    };
+    use super::{
+        is_retryable_statement_failure, lock_failure_to_sql_error,
+        ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
+        ERR_REGION_UNAVAILABLE, ERR_SHARED_LOCK_LOST, ERR_WRITE_CONFLICT,
+    };
+    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_kv::cluster_storage::DuplicateKeyHint;
+    use tidb_txnkv::retry::RegionBackoffKind;
+    use tidb_txnkv::transaction::{
+        CommittedTransaction, DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
+        OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
+        TransactionCause, UndeterminedTransaction,
+    };
+
+    fn receipt() -> OptimisticTransactionReceipt {
+        OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1)
+    }
+
+    /// The regression this exists for: the coordinator reports a 2PC TiKV
+    /// refused as an `Ok` value carrying the cause. A commit path that reads
+    /// that as success tells the client its transaction committed while the
+    /// rows were rolled back -- the silent-wrong COMMIT.
+    #[test]
+    fn a_rolled_back_outcome_is_a_failure_with_its_own_code() {
+        let refused = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::WriteConflict {
+                detail: "conflictStartTS=7".to_owned(),
+                args: None,
+            },
+        });
+        let error = commit_outcome_to_sql_error(&refused)
+            .expect_err("a rolled-back commit can never answer OK");
+        assert_eq!(error.code, ERR_WRITE_CONFLICT);
+        assert!(error.message.contains("conflictStartTS=7"));
+    }
+
+    #[test]
+    fn only_a_committed_outcome_answers_ok() {
+        assert!(
+            commit_outcome_to_sql_error(&OptimisticCommitOutcome::Committed(
+                CommittedTransaction {
+                    receipt: receipt(),
+                    secondary_failures: Vec::new(),
+                }
+            ))
+            .is_ok()
+        );
+        let undetermined = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::Transport {
+                detail: "connection reset".to_owned(),
+            },
+        });
+        let error = commit_outcome_to_sql_error(&undetermined)
+            .expect_err("an undetermined commit is not a durable one");
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.message, ERR_RESULT_UNDETERMINED.message());
+        assert!(error.is_result_undetermined());
+    }
+
+    /// Go's lazy `AddRecord` carries the table/index text into the deferred
+    /// prewrite assertion; the wire result must remain ErrDupEntry (1062), not
+    /// the generic 1105 used for an untyped transaction failure.
+    #[test]
+    fn a_deferred_duplicate_outcome_keeps_go_err_dup_entry_identity() {
+        let refused = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::AlreadyExists {
+                key: b"encoded-primary".to_vec(),
+                detail: "key already exists".to_owned(),
+            },
+        });
+        let hint = DuplicateKeyHint {
+            value: "1".to_owned(),
+            key: "hbx_dup.PRIMARY".to_owned(),
+        };
+        let error = commit_outcome_to_sql_error_with_hint(&refused, Some(&hint))
+            .expect_err("deferred duplicate must be reported as a SQL error");
+        assert_eq!(error.code, 1062);
+        assert_eq!(error.state, *b"23000");
+        assert_eq!(
+            error.message,
+            "Duplicate entry '1' for key 'hbx_dup.PRIMARY'"
+        );
+    }
+
+    #[test]
+    fn assertion_failure_is_not_a_deferred_duplicate() {
+        use tidb_txnkv::transaction::CleanupFailedTransaction;
+
+        let hint = DuplicateKeyHint {
+            value: "1".to_owned(),
+            key: "t.PRIMARY".to_owned(),
+        };
+        for (assertion, direction) in [(0, "None"), (1, "Exist"), (2, "NotExist"), (99, "99")] {
+            let cause = TransactionCause::AssertionFailed {
+                key: vec![0xab, 0xcd],
+                assertion,
+                start_ts: 42,
+                existing_start_ts: 7,
+                existing_commit_ts: 11,
+                detail: "assertion failed".to_owned(),
+            };
+            let outcomes = [
+                OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+                    receipt: receipt(),
+                    cause: cause.clone(),
+                }),
+                OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
+                    receipt: receipt(),
+                    cause: cause.clone(),
+                    cleanup_failures: Vec::new(),
+                }),
+            ];
+            let expected = format!(
+                "assertion failed: key: abcd, assertion: {direction}, \
+                 start_ts: 42, existing start ts: 7, existing commit ts: 11"
+            );
+            for outcome in outcomes {
+                for hint in [Some(&hint), None] {
+                    let error = commit_outcome_to_sql_error_with_hint(&outcome, hint).unwrap_err();
+                    assert_eq!(error.code, 8141);
+                    assert_eq!(error.state, *b"HY000");
+                    assert_eq!(error.message, expected);
+                }
+            }
+            let error = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(cause));
+            assert_eq!(error.code, 8141);
+            assert_eq!(error.message, expected);
+        }
+    }
+
+    #[test]
+    fn assertion_failure_on_the_lock_path_keeps_its_sql_identity() {
+        let failure = PessimisticLockFailure::Transaction(TransactionCause::AssertionFailed {
+            key: b"key".to_vec(),
+            assertion: tidb_proto::KvrpcAssertion::NotExist as i32,
+            start_ts: 42,
+            existing_start_ts: 7,
+            existing_commit_ts: 11,
+            detail: "assertion failed".to_owned(),
+        });
+        assert_eq!(lock_failure_to_sql_error(&failure).code, 8141);
+        assert!(!is_retryable_statement_failure(&failure));
+        assert!(!failure.is_statement_scoped());
+    }
+
+    #[test]
+    fn transaction_causes_keep_only_source_typed_tidb_codes() {
+        assert_eq!(
+            transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
+                detail: "d".to_owned(),
+                args: None,
+            })
+            .code,
+            ERR_WRITE_CONFLICT
+        );
+        let region = transaction_cause_to_sql_error(&TransactionCause::Region {
+            detail: "epoch not match".to_owned(),
+        });
+        assert_eq!(region.code, 1105);
+        assert!(region.message.contains("epoch not match"));
+
+        let lock_path = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(
+            TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionScheduling,
+                detail: "region scheduling exhausted".to_owned(),
+            },
+        ));
+        assert_eq!(lock_path.code, ERR_REGION_UNAVAILABLE);
+    }
+
+    #[test]
+    fn shared_lock_lost_keeps_tikv_9015_and_ends_the_transaction() {
+        let cause = TransactionCause::SharedLockLost {
+            start_ts: 101,
+            key: "6B6579".to_owned(),
+        };
+        let error = transaction_cause_to_sql_error(&cause);
+        assert_eq!(error.code, ERR_SHARED_LOCK_LOST);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579"
+        );
+
+        let lock_error = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(cause));
+        assert_eq!(lock_error.code, ERR_SHARED_LOCK_LOST);
+        assert_eq!(lock_error.message, error.message);
+    }
+
+    #[test]
+    fn exhausted_backoff_uses_client_go_config_error_identity() {
+        use tidb_error::tidb::errcode;
+
+        let cases = [
+            (
+                RegionBackoffKind::TikvRpc,
+                Some(errcode::ErrTiKVServerTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionMiss,
+                Some(ERR_REGION_UNAVAILABLE),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionScheduling,
+                Some(ERR_REGION_UNAVAILABLE),
+                None,
+            ),
+            (
+                RegionBackoffKind::TikvServerBusy,
+                None,
+                Some("TikvServerBusy backoffer exhausted"),
+            ),
+            (
+                RegionBackoffKind::TikvDiskFull,
+                None,
+                Some("tikv disk full"),
+            ),
+            (
+                RegionBackoffKind::RegionRecoveryInProgress,
+                None,
+                Some("region is being online unsafe recovered"),
+            ),
+            (
+                RegionBackoffKind::StaleCommand,
+                Some(errcode::ErrTiKVStaleCommand),
+                None,
+            ),
+            (
+                RegionBackoffKind::MaxTimestampNotSynced,
+                Some(errcode::ErrTiKVMaxTimestampNotSynced),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionNotInitialized,
+                None,
+                Some("region not Initialized"),
+            ),
+            (RegionBackoffKind::IsWitness, None, Some("peer is witness")),
+            (
+                RegionBackoffKind::TxnLock,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::TxnLockFast,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::TxnNotFound,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::PdRpc,
+                Some(errcode::ErrPDServerTimeout),
+                None,
+            ),
+        ];
+
+        for (kind, expected_code, expected_passthrough) in cases {
+            let detail = format!("{kind:?} backoffer exhausted");
+            let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
+                kind,
+                detail: detail.clone(),
+            });
+            match expected_code {
+                Some(code) => assert_eq!(error.code, code, "{kind:?}: {}", error.message),
+                None => {
+                    assert_eq!(error.code, 1105, "{kind:?}: {}", error.message);
+                    assert_eq!(
+                        error.message,
+                        expected_passthrough.expect("passthrough source text"),
+                        "{kind:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn excluded_busy_cap_keeps_the_current_error_generic() {
+        let mut budget =
+            tidb_txnkv::retry::RegionBackoffBudget::new(std::time::Duration::from_secs(20));
+        let exhausted = loop {
+            match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
+                Ok(_) => continue,
+                Err(exhausted) => break exhausted,
+            }
+        };
+        assert_eq!(exhausted.kind, RegionBackoffKind::TikvServerBusy);
+
+        let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
+            kind: exhausted.kind,
+            detail: "server is busy".to_owned(),
+        });
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.message, "server is busy");
+    }
+
+    #[test]
+    fn nowait_reports_3572_exactly_as_tidb_does() {
+        let error =
+            lock_failure_to_sql_error(&PessimisticLockFailure::LockAcquireFailAndNoWaitSet {
+                key: b"k".to_vec(),
+            });
+        assert_eq!(error.code, ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET);
+        assert_eq!(&error.state, b"HY000");
+        assert_eq!(
+            error.message,
+            "Statement aborted because lock(s) could not be acquired immediately and \
+             NOWAIT is set."
+        );
+    }
+
+    #[test]
+    fn a_timed_out_wait_reports_1205() {
+        let error = lock_failure_to_sql_error(&PessimisticLockFailure::LockWaitTimeout {
+            key: b"k".to_vec(),
+        });
+        assert_eq!(error.code, ERR_LOCK_WAIT_TIMEOUT);
+        assert_eq!(
+            error.message,
+            "Lock wait timeout exceeded; try restarting transaction"
+        );
+    }
+
+    #[test]
+    fn a_proven_deadlock_reports_1213_with_its_own_sqlstate() {
+        let error = lock_failure_to_sql_error(&PessimisticLockFailure::Deadlock(DeadlockDetail {
+            lock_ts: 7,
+            lock_key: b"k".to_vec(),
+            deadlock_key_hash: 1,
+            deadlock_key: b"j".to_vec(),
+            is_retryable: false,
+            wait_chain: vec![DeadlockWaitChainItem {
+                txn: 7,
+                wait_for_txn: 8,
+                key: Vec::new(),
+                resource_group_tag: Vec::new(),
+            }],
+        }));
+        assert_eq!(error.code, ERR_LOCK_DEADLOCK);
+        assert_eq!(&error.state, b"40001");
+        // `exeerrors.ErrDeadlock`'s `GetMsg()`: the client never sees the
+        // `[executor:1213]` prefix of its `Error()`.
+        assert_eq!(
+            error.message,
+            "Deadlock found when trying to get lock; try restarting transaction"
+        );
+    }
+
+    /// A commit's write conflict keeps `newWriteConflictError`'s arguments
+    /// for the session's table-name rewrite, and its message is `GetMsg()`.
+    #[test]
+    fn a_commit_write_conflict_carries_its_arguments_without_the_kv_prefix() {
+        use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
+
+        // Table 28, handle 20.
+        let key = b"t\x80\x00\x00\x00\x00\x00\x00\x1c_r\x80\x00\x00\x00\x00\x00\x00\x14".to_vec();
+        let args = WriteConflictArgs::new(
+            &WriteConflict {
+                start_ts: 10,
+                conflict_ts: 11,
+                conflict_commit_ts: 12,
+                key: key.clone(),
+                primary: key,
+                reason: "Optimistic".to_owned(),
+            },
+            Redaction::Disabled,
+        );
+        let error = transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
+            detail: args.detail(),
+            args: Some(Box::new(args.clone())),
+        });
+        assert_eq!(error.code, ERR_WRITE_CONFLICT);
+        assert_eq!(error.message, args.message());
+        assert_eq!(
+            error.message,
+            "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+             key={tableID=28, handle=20}, originalKey=74800000000000001c5f728000000000000014, \
+             primary={tableID=28, handle=20}, originalPrimaryKey=74800000000000001c5f728000000000000014, \
+             reason=Optimistic [try again later]"
+        );
+        assert_eq!(error.write_conflict.as_deref(), Some(&args));
+    }
+
+    #[test]
+    fn write_conflicts_and_single_statement_deadlocks_are_retryable() {
+        let conflict = PessimisticLockFailure::WriteConflict {
+            detail: "txnStartTS=1".to_owned(),
+        };
+        assert_eq!(
+            lock_failure_to_sql_error(&conflict).code,
+            ERR_WRITE_CONFLICT
+        );
+        assert!(is_retryable_statement_failure(&conflict));
+        assert!(!is_retryable_statement_failure(
+            &PessimisticLockFailure::LockWaitTimeout { key: b"k".to_vec() }
+        ));
+        assert!(!is_retryable_statement_failure(
+            &PessimisticLockFailure::Deadlock(DeadlockDetail {
+                lock_ts: 1,
+                lock_key: Vec::new(),
+                deadlock_key_hash: 0,
+                deadlock_key: Vec::new(),
+                is_retryable: false,
+                wait_chain: Vec::new(),
+            })
+        ));
+        assert!(is_retryable_statement_failure(
+            &PessimisticLockFailure::Deadlock(DeadlockDetail {
+                lock_ts: 1,
+                lock_key: Vec::new(),
+                deadlock_key_hash: 0,
+                deadlock_key: Vec::new(),
+                is_retryable: true,
+                wait_chain: Vec::new(),
+            })
+        ));
+    }
+}

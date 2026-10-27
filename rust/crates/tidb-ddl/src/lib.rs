@@ -29,11 +29,29 @@
 //!   acknowledges each loaded schema version to the owner's
 //!   `WaitVersionSynced`, held back by the node's [`schema_sync::SchemaPinRegistry`].
 //! * [`etcd_ops`] binds the syncers' etcd surface to the real client.
-//! * [`bootstrap_publish`] is `session.BootstrapSession`'s transaction.
 //! * [`embedded_store`] is `mockstore.NewMockStore` over unistore: the store
 //!   the bootstrap and every in-process test run the worker on.
+//!
+//! The executor is never named: the work Go's DDL does through the session
+//! pool the domain hands it -- a system session, the restricted SQL of the
+//! data checks -- goes through the
+//! [`crate::real_tikv_ddl::DdlSessionPool`] the node hands
+//! [`RealClusterDdl`].
 
-pub mod bootstrap_publish;
+mod cluster_bdr;
+pub mod cluster_ddl;
+pub mod ddl_affinity;
+pub mod ddl_delete_range;
+pub mod ddl_history_table;
+pub mod ddl_job_scheduler;
+pub mod ddl_job_submit;
+pub mod ddl_job_table;
+pub mod ddl_reorg_table;
+pub mod ddl_systable;
+pub mod foreign_key_build;
+pub mod placement_delivery;
+pub mod real_tikv_ddl;
+pub mod tiflash_replica_manager;
 pub mod embedded_store;
 pub mod etcd_ops;
 pub mod schema_sync;

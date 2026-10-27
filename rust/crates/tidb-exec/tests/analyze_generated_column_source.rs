@@ -18,7 +18,7 @@ use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{analyze_table, AnalyzeOptions};
 use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::encode_table_row;
 
@@ -67,7 +67,7 @@ fn generated_table(stored: bool) -> TableInfo {
     let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("the fixture is CREATE TABLE");
     };
-    let mut table = build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On)
+    let mut table = build_table_info(create, "utf8mb4", "utf8mb4_bin")
         .expect("the fixture table builds");
     table.id = 4243;
     let generated = table.columns.get(1).expect("the fixture declares b");

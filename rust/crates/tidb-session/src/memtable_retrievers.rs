@@ -1381,11 +1381,11 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for CatalogTablesRetr
         &self,
         read: &tidb_executor::mem_table_retrieval::MemTableRead,
         catalog: &Catalog,
-        _ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_executor::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
         let table = read.table_name.as_str();
-        let store = catalog.region_store();
+        let store = ctx.region_store();
         if table.go_lower_eq("TIKV_STORE_STATUS") {
             return tikv_store_status_rows(store.as_ref(), self.hides_cluster_metadata);
         }

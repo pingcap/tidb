@@ -14,13 +14,13 @@
 
 //! The row cap and a partly-lowered predicate, at the layer that answers rows.
 //!
-//! `cop_scan` lowers the conjuncts it can express and leaves the rest to the
+//! `cop_reader` lowers the conjuncts it can express and leaves the rest to the
 //! scan source above it. A row cap sent alongside a predicate that only partly
 //! travelled makes TiKV count its `limit` rows against a *weaker* filter, and
 //! the local pass then removes some of them -- a silently short answer. This
-//! drives a real [`CopScanSource`] against a coprocessor fake and asserts the
-//! rows the `SELECT` returns, because a DAG-shape assertion would pass for a
-//! request that still answers wrongly.
+//! drives the real coprocessor reader ([`open_cop_scan`]) against a
+//! coprocessor fake and asserts the rows the `SELECT` returns, because a
+//! DAG-shape assertion would pass for a request that still answers wrongly.
 
 
 #![allow(missing_docs)]
@@ -29,9 +29,10 @@ use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
-use tidb_exec::cop_scan::CopScanSource;
+use tidb_exec::cop_client::CopClient;
+use tidb_executor::cop_reader::open_cop_scan;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
@@ -40,7 +41,7 @@ use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvTable};
 use tidb_executor::remote_scan::{
     PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate, PushdownScanColumn,
-    PushdownScanRequest, PushdownScanner, PushdownStatementContext,
+    PushdownScanRequest, PushdownStatementContext,
 };
 use tidb_executor::storage::StorageError;
 use tidb_executor::StmtContext;
@@ -143,7 +144,7 @@ struct FakeResponse {
     region: Arc<FakeRegion>,
 }
 
-impl QueryResponse for FakeResponse {
+impl tidb_txnkv::Response for FakeResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.region
             .response_threads
@@ -161,6 +162,7 @@ impl QueryResponse for FakeResponse {
         self.subsets.clear();
     }
 }
+
 
 impl QueryTransport for FakeTransport {
     type Response = FakeResponse;
@@ -326,7 +328,7 @@ fn column(name: &str, id: i64, unsigned: bool) -> KvColumn {
     }
 }
 
-/// `t(id BIGINT, tag BIGINT UNSIGNED)` read through a real [`CopScanSource`].
+/// `t(id BIGINT, tag BIGINT UNSIGNED)` read through the real coprocessor reader.
 ///
 /// The query below compares `tag` with the *string* `'7'`. That is the point:
 /// the coprocessor can describe the column, so the scan is served remotely,
@@ -340,12 +342,12 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
     });
-    let scanner = Arc::new(CopScanSource::new(factory));
+    let client = Arc::new(CopClient::new(factory));
     let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(EmptySnapshot));
     let columns = vec![column("id", 1, false), column("tag", 2, true)];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
-        .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
-    let mut catalog = Catalog::default();
+        .with_client(client as Arc<dyn tidb_txnkv::Client>);
+    let mut catalog = Catalog::mock();
     catalog.register_kv("t", KvTable::with_storage(91, columns, Box::new(storage)));
     (catalog, region)
 }
@@ -597,7 +599,7 @@ fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
 fn count_star_lowers_to_count_with_one_constant_child() {
     for streamed in [false, true] {
         let region = Arc::new(FakeRegion::default());
-        let scanner = CopScanSource::new(Arc::new(FakeFactory {
+        let client = CopClient::new(Arc::new(FakeFactory {
             region: Arc::clone(&region),
         }));
         let mut count_type = FieldType::new(FieldTypeCode::LongLong);
@@ -645,8 +647,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
                 ..PushdownStatementContext::default()
             },
         };
-        let mut stream = scanner
-            .open(&request)
+        let mut stream = open_cop_scan(&client, &request)
             .expect("the partial count is served by the coprocessor");
         assert_eq!(
             stream.next_row().expect("the partial count row"),
@@ -694,7 +695,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
 #[test]
 fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
     let region = Arc::new(FakeRegion::default());
-    let scanner = CopScanSource::new(Arc::new(FakeFactory {
+    let client = CopClient::new(Arc::new(FakeFactory {
         region: Arc::clone(&region),
     }));
     let request = PushdownScanRequest {
@@ -727,8 +728,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         range_hints: Vec::new(),
         statement: PushdownStatementContext::default(),
     };
-    let mut stream = scanner
-        .open(&request)
+    let mut stream = open_cop_scan(&client, &request)
         .expect("the descending scan is served by the coprocessor");
     assert!(stream.next_row().expect("the first row").is_some());
     stream.close();

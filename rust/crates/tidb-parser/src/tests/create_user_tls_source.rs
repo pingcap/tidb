@@ -58,10 +58,10 @@ fn create_user_with_resource_options_is_typed_before_password_policy_tail() {
         r(sql),
         "CREATE USER `ttt`@`%` REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 10 MAX_CONNECTIONS_PER_HOUR 20 MAX_USER_CONNECTIONS 30 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
     );
-    let Stmt::Ddl(ddl) = parse(sql).expect("parse Go CREATE USER source row") else {
+    let Stmt::Admin(ddl) = parse(sql).expect("parse Go CREATE USER source row") else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::CreateUser {
+    let tidb_ast::AdminStmt::CreateUser {
         tls_options,
         resource_options,
         password_options,
@@ -126,10 +126,10 @@ fn create_user_statement_global_resource_group_matches_go() {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }
 
-    let Stmt::Ddl(ddl) = parse("CREATE USER usr1 RESOURCE GROUP rg1").expect("parse") else {
+    let Stmt::Admin(ddl) = parse("CREATE USER usr1 RESOURCE GROUP rg1").expect("parse") else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::CreateUser { resource_group, .. } = ddl.into_inner() else {
+    let tidb_ast::AdminStmt::CreateUser { resource_group, .. } = ddl.into_inner() else {
         panic!("expected CREATE USER");
     };
     assert_eq!(resource_group.as_deref(), Some("rg1"));

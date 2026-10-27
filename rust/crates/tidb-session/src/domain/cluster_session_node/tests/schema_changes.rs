@@ -3,15 +3,15 @@
 //! that runs -- the node's immediately, the connection's at its next
 //! statement, and never inside an explicit transaction.
 
+use crate::privilege::PrivilegeTypeExt;
 use super::super::*;
 use super::node_fixture::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::session_api::{cluster_ddl_error, SqlQueryError};
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::real_tikv_ddl::classify_session_ddl_commit_error;
-use crate::privilege::GlobalPriv;
+use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_ddl::real_tikv_ddl::classify_session_ddl_commit_error;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
@@ -26,10 +26,15 @@ struct ReportDdl {
 }
 
 impl ClusterDdl for ReportDdl {
+    // A cluster without TiFlash stores.
+    fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
+        Ok(0)
+    }
+
     fn execute(
         &self,
         statement: &DdlStatement,
-        _job_context: &tidb_executor::StmtContext,
+        _job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         match (statement, &self.statement) {
             (
@@ -66,12 +71,12 @@ impl ClusterDdl for ReportDdl {
 
 #[test]
 fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
-    use tidb_exec::real_tikv_ddl::DdlWarningLevel::{Note, Warning};
+    use tidb_ddl::real_tikv_ddl::DdlWarningLevel::{Note, Warning};
 
     let node = MockNode::start();
     let notes = vec![
-        (Note, 1051, "Unknown table 'app.absent_a'".to_owned()),
-        (Note, 1051, "Unknown table 'app.absent_b'".to_owned()),
+        tidb_util::context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_a'"),
+        tidb_util::context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_b'"),
     ];
     // An applied multi-drop and an entirely suppressed multi-drop carry the
     // same ordered notes. Neither report variant determines the level.
@@ -111,11 +116,11 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
         session.execute_write(sql).expect("route multi-table DROP");
         let expected: Vec<_> = notes
             .iter()
-            .map(|(_, code, message)| {
+            .map(|note| {
                 vec![
                     Datum::new_string("Note"),
-                    Datum::UInt(u64::from(*code)),
-                    Datum::new_string(message.as_str()),
+                    Datum::UInt(u64::from(note.code())),
+                    Datum::new_string(note.message()),
                 ]
             })
             .collect();
@@ -136,7 +141,7 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
             },
             report: ClusterDdlReport::AlreadySatisfied {
                 detail: "no change".to_owned(),
-                warnings: vec![(Warning, 8200, message.clone())],
+                warnings: vec![tidb_util::context::SqlWarn::with_code(Warning, 8200, message.clone())],
             },
         }),
     );
@@ -158,10 +163,15 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {
+    // A cluster without TiFlash stores.
+    fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
+        Ok(0)
+    }
+
     fn execute(
         &self,
         _: &DdlStatement,
-        _: &tidb_executor::StmtContext,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         Err(self.0.clone())
     }
@@ -212,8 +222,8 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
 
 #[test]
 fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
-    let invalid = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_exec::cluster_ddl::DdlPlanError::InvalidAutoRandom(
+    let invalid = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
+        tidb_ddl::cluster_ddl::DdlPlanError::InvalidAutoRandom(
             "alter auto_random_base of a non auto_random table".to_owned(),
         ),
     ));
@@ -223,8 +233,8 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
         "Invalid auto random: alter auto_random_base of a non auto_random table",
     );
 
-    let zero = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_exec::cluster_ddl::DdlPlanError::AutoIdReadFailed,
+    let zero = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
+        tidb_ddl::cluster_ddl::DdlPlanError::AutoIdReadFailed,
     ));
     assert_query_error_packet(
         &zero,
@@ -233,33 +243,11 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     );
 }
 
-/// A stored-schema change the cluster DDL path cannot express keeps a
-/// precise refusal -- and it names its own reason rather than a generic
-/// unsupported error.
+/// Every stored-schema change shape, single or bundled, reaches the catalog
+/// writer rather than a generic unsupported route.
 #[test]
-fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
+fn ddl_shapes_reach_the_catalog_writer() {
     let (mut session, node) = open_session();
-    for (sql, expected) in [
-        // Column, index, and mixed column+index bundles all moved to the
-        // catalog writer as their courses landed; a bundle that RENAMES the
-        // table remains genuinely inexpressible in one fold.
-        (
-            "ALTER TABLE t ADD COLUMN w BIGINT, RENAME TO t2",
-            "one atomic multi-schema DDL job",
-        ),
-        // CREATE TABLE ... FOREIGN KEY is expressible now (Go
-        // `checkTableForeignKeysValid`); see
-        // `cluster_create_table_foreign_key_resolves_parent_like_go`.
-    ] {
-        let error = session
-            .execute_write(sql)
-            .expect_err("an inexpressible schema change must be refused");
-        let message = error.message.clone();
-        assert!(
-            message.contains(expected),
-            "unexpected refusal for {sql}: {message}"
-        );
-    }
     // Go gives standalone and single-action ALTER index changes the same DDL
     // job. Both spellings must therefore reach the catalog writer rather than
     // the generic unsupported route. This mock has no rows to walk, so its
@@ -273,6 +261,10 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
         "ALTER TABLE t ADD COLUMN w BIGINT",
         "ALTER TABLE t ADD COLUMN w BIGINT, DROP COLUMN v",
         "ALTER TABLE t ADD COLUMN w BIGINT, ADD INDEX iw (w)",
+        // Go runs every spec's executor function before `DoDDLJob` refuses
+        // the RENAME's job beside the column's sub-job; see
+        // `multi_schema_change_refuses_a_rename_beside_another_spec`.
+        "ALTER TABLE t ADD COLUMN w BIGINT, RENAME TO t2",
         "TRUNCATE TABLE t",
     ] {
         let routed = session
@@ -298,7 +290,7 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
 /// A coded DEFAULT refusal keeps its errno, SQLSTATE, and source message when
 /// the full cluster session turns DDL admission into its client-facing error.
 #[test]
-fn cluster_create_default_errors_cross_the_schema_route_unchanged() {
+fn cluster_create_default_errors_reach_the_client_unchanged() {
     let (mut session, node) = open_session();
     for (sql, code, state, message) in [
         (
@@ -314,14 +306,12 @@ fn cluster_create_default_errors_cross_the_schema_route_unchanged() {
             "Invalid default value for 'ts'",
         ),
     ] {
-        let parsed = session
-            .store
-            .session
-            .parse_statement(sql)
-            .expect("the CREATE TABLE text parses");
-        let Err(error) = session.schema_route(&parsed) else {
-            panic!("the invalid default must be refused before catalog publication: {sql}");
-        };
+        // Go refuses the DEFAULT in the DDL executor (`BuildTableInfoWithStmt`
+        // via `executor.CreateTable`), after `DDLExec.Next`'s implicit commit
+        // and before any job is published.
+        let error = session
+            .execute_write(sql)
+            .expect_err("the invalid default is refused before catalog publication");
         assert_eq!((error.code, error.state), (code, state), "{sql}");
         assert_eq!(error.message, message, "{sql}");
     }
@@ -601,7 +591,7 @@ fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them
     // Make `app` visible without granting CREATE or DROP.
     node.accounts
         .live
-        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
     let normal_store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let normal_identity = normal_store
         .authenticate_native("low", "127.0.0.1", &SALT, &[])
@@ -685,10 +675,10 @@ fn a_transaction_keeps_the_schema_its_begin_saw() {
 /// switches on. `pkg/errno` names each; these pin the pairing.
 #[test]
 fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
-    use tidb_exec::cluster_ddl::DdlPlanError;
+    use tidb_ddl::cluster_ddl::DdlPlanError;
 
     let coded = |error: DdlPlanError| {
-        let query_error = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(error));
+        let query_error = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(error));
         (query_error.code, query_error.message)
     };
 
@@ -834,7 +824,7 @@ fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
     assert!(node.accounts.live.create_user("low", "%", ""));
     node.accounts
         .live
-        .grant_db("low", "%", "app", GlobalPriv::Select.mask());
+        .grant_db("low", "%", "app", tidb_mysql::SelectPriv.mask());
     // The mock node's `app` schema already holds a table `t`.
     let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let identity = store
@@ -868,7 +858,7 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
     assert!(node.accounts.live.create_user("low", "%", ""));
     node.accounts
         .live
-        .grant_db("low", "%", "app", GlobalPriv::Select.mask());
+        .grant_db("low", "%", "app", tidb_mysql::SelectPriv.mask());
     assert!(node.accounts.live.create_user("none", "%", ""));
     let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let mut low = open_session_on_with_context(

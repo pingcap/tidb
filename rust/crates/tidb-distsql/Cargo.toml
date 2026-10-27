@@ -21,6 +21,7 @@ tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-error = { path = "../tidb-error" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 tikv-client.workspace = true

@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::{KeyRange, PartitionIdAndRanges};
 pub use tidb_proto::MppTaskMeta;
@@ -209,80 +209,107 @@ pub struct CancelMppTasksParam {
     pub requests: Vec<MppDispatchRequest>,
 }
 
-/// Parameters for establishing one MPP stream.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EstablishMppConnsParam<C, B> {
-    /// Request context/cancellation owner.
-    pub context: C,
-    /// Dispatch request.
-    pub request: MppDispatchRequest,
-    /// Target task metadata.
-    pub task_meta: MppTaskMeta,
-    /// Retry backoffer.
-    pub backoffer: B,
+/// What one MPP call runs under: Go's `ctx`, which the statement's killer
+/// cancels, and the statement memory tracker the buffered packets charge.
+pub trait MppContext: Send + Sync {
+    /// Go `ctx.Err()` under the SQL killer: the statement's kill or
+    /// memory-quota stop, with its SQL identity, once raised.
+    fn check(&self) -> Result<(), tidb_error::mysql::MysqlError>;
+
+    /// Charges `bytes` (or, negative, releases them) to the statement.
+    fn consume(&self, bytes: i64);
 }
 
-/// Parameters for dispatching one MPP task.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DispatchMppTaskParam<C, B> {
-    /// Request context/cancellation owner.
-    pub context: C,
-    /// Dispatch request.
-    pub request: MppDispatchRequest,
-    /// Whether execution information is collected.
-    pub collect_execution_info: bool,
-    /// Retry backoffer.
-    pub backoffer: B,
+/// An MPP call's failure as the reader reports it.
+#[derive(Clone, Debug)]
+pub enum MppError {
+    /// An error with its SQL identity: the statement's own stop, or a store
+    /// answer that carries a MySQL code.
+    Sql(tidb_error::mysql::MysqlError),
+    /// Any other failure, rendered.
+    Other(String),
 }
 
-/// MPP store client contract.
-pub trait MppClient {
-    /// Request context type.
-    type Context;
-    /// Error type.
-    type Error;
-    /// Backoffer type.
-    type Backoffer;
-    /// Dispatch policy.
-    type DispatchPolicy;
-    /// TiFlash replica-read policy.
-    type ReplicaRead;
-    /// Dispatch response.
-    type DispatchResponse;
-    /// Established stream response.
-    type StreamResponse;
+impl std::fmt::Display for MppError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sql(error) => formatter.write_str(&error.message),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
 
-    /// Schedules task locations for one plan fragment.
+impl MppError {
+    /// Go's precedence after a failed MPP setup step: a statement that was
+    /// stopped reports the stop, whatever the step's own error was.
+    #[must_use]
+    pub fn after_stop(ctx: &dyn MppContext, message: String) -> Self {
+        match ctx.check() {
+            Err(error) => Self::Sql(error),
+            Ok(()) => Self::Other(message),
+        }
+    }
+}
+
+/// One store's task of a fragment (Go `batchCopTask` as a `kv.MPPTaskMeta`):
+/// the store's address and the regions it reads there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MppStoreTask {
+    /// The TiFlash (or TiFlash compute) store's address.
+    pub address: String,
+    /// The regions, clipped to the request's ranges.
+    pub regions: Vec<tidb_proto::coprocessor::RegionInfo>,
+}
+
+/// Go `tikvrpc.MPPStreamResponse` as the gather reads it: a raw response
+/// whose received packet is charged to the statement until it is handed on.
+pub trait MppStreamResponse: crate::Response + Send {
+    /// Releases the charge for the packet the last `next` returned; the
+    /// gather that holds the packet charges it itself.
+    fn release_packet_memory(&mut self);
+}
+
+/// Go `kv.MPPClient` (`pkg/store/copr/mpp.go`): where a fragment's tasks run,
+/// their dispatch, and the coordinator's stream from a root task. Cancelling
+/// a gather is the stream's own close.
+pub trait MppClient: std::fmt::Debug + Send + Sync {
+    /// Go `ConstructMPPTasks`: the stores one fragment's tasks run on, each
+    /// with the regions of `request` it reads, located under `kv_context`.
     fn construct_mpp_tasks(
-        &mut self,
-        context: &Self::Context,
+        &self,
+        ctx: &Arc<dyn MppContext>,
         request: &MppBuildTasksRequest,
-        timeout: Duration,
-        policy: Self::DispatchPolicy,
-        replica_read: Self::ReplicaRead,
-        on_error: &mut dyn FnMut(&Self::Error),
-    ) -> Result<Vec<MppTaskMeta>, Self::Error>;
+        kv_context: &crate::StatementKvContext,
+        dispatch_policy: tidb_util::tiflashcompute::DispatchPolicy,
+        replica_read: crate::ReplicaRead,
+        append_warning: &mut dyn FnMut(String),
+    ) -> Result<Vec<MppStoreTask>, MppError>;
 
-    /// Dispatches one task; `retry` is true only when the response is unusable.
+    /// Go `DispatchMPPTask`: sends `encoded_plan` as the task `meta` names
+    /// to `task`'s store. The schema version the dispatch carries is the
+    /// node's current one.
     fn dispatch_mpp_task(
-        &mut self,
-        parameters: DispatchMppTaskParam<Self::Context, Self::Backoffer>,
-    ) -> Result<(Self::DispatchResponse, bool), Self::Error>;
+        &self,
+        ctx: &Arc<dyn MppContext>,
+        task: MppStoreTask,
+        meta: tidb_proto::mpp::TaskMeta,
+        encoded_plan: Vec<u8>,
+        kv_context: &crate::StatementKvContext,
+        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    ) -> Result<(), MppError>;
 
-    /// Establishes one MPP connection.
-    fn establish_mpp_connections(
-        &mut self,
-        parameters: EstablishMppConnsParam<Self::Context, Self::Backoffer>,
-    ) -> Result<(Self::StreamResponse, bool), Self::Error>;
-
-    /// Cancels the selected tasks.
-    fn cancel_mpp_tasks(&mut self, parameters: CancelMppTasksParam);
-
-    /// Checks whether `start_ts` is visible.
-    fn check_visibility(&self, start_ts: u64) -> Result<(), Self::Error>;
-
-    /// Returns the number of TiFlash stores.
-    fn mpp_store_count(&self) -> Result<usize, Self::Error>;
+    /// Go `EstablishMPPConns`: the coordinator's (`receiver`) stream from the
+    /// root task `sender` at `address`. Closing it before its end cancels
+    /// the gather.
+    fn establish_mpp_conns(
+        &self,
+        ctx: Arc<dyn MppContext>,
+        address: &str,
+        sender: tidb_proto::mpp::TaskMeta,
+        receiver: tidb_proto::mpp::TaskMeta,
+        kv_context: &crate::StatementKvContext,
+        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    ) -> Result<Box<dyn MppStreamResponse>, MppError>;
 }
 
 /// MPP execution coordinator contract.

@@ -32,6 +32,7 @@ pub mod domainutil;
 /// Complete Go `pkg/domain/globalconfigsync` queue/store contract.
 pub mod globalconfigsync;
 pub mod historical_stats;
+pub mod label_manager;
 pub mod metrics;
 pub mod plan_replayer;
 pub mod replayer;
@@ -43,4 +44,5 @@ pub mod serverinfo;
 pub mod serverinfo_syncer;
 pub mod status_endpoint_claim;
 pub mod sysvar_cache;
+pub mod global_sysvars;
 pub mod topn_slow_query;

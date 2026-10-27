@@ -16,14 +16,16 @@
 
 use super::*;
 
+/// Go's account statements embed `stmtNode`, not `ddlNode`
+/// (`pkg/parser/ast/misc.go`): they are not `ast.DDLNode`.
 #[test]
-fn account_ddl_statements_use_the_ddl_envelope() {
+fn account_statements_are_not_ddl_nodes() {
     for sql in [
         "create user ddl_envelope",
         "alter user ddl_envelope identified by 'p'",
         "drop user ddl_envelope",
     ] {
-        assert!(matches!(parse(sql), Ok(Stmt::Ddl(_))), "{sql}");
+        assert!(matches!(parse(sql), Ok(Stmt::Admin(_))), "{sql}");
     }
 }
 
@@ -52,10 +54,10 @@ fn create_user_auth_restore_and_scope() {
 
     let stmt = parse("create user u identified by 'p', v identified with plugin as 'h'")
         .expect("CREATE USER parses");
-    let Stmt::Ddl(ddl) = stmt else {
+    let Stmt::Admin(ddl) = stmt else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::CreateUser {
+    let tidb_ast::AdminStmt::CreateUser {
         if_not_exists,
         users,
         tls_options,
@@ -142,10 +144,10 @@ fn alter_user_resource_group_restore_and_scope() {
         r("alter user if exists 'app'@'localhost', app2 resource group 'rg 2'"),
         "ALTER USER IF EXISTS `app`@`localhost`, `app2`@`%` RESOURCE GROUP `rg 2`"
     );
-    let Stmt::Ddl(ddl) = parse("alter user app resource group rg1").unwrap() else {
+    let Stmt::Admin(ddl) = parse("alter user app resource group rg1").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
+    let tidb_ast::AdminStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload");
     };
     assert_eq!(statement.users.len(), 1);
@@ -172,10 +174,10 @@ fn rename_user_restore_and_scope() {
         "RENAME USER `u1`@`%` TO `u2`@`%`, `u3`@`localhost` TO `u4`@`localhost`"
     );
 
-    let Stmt::Ddl(ddl) = parse("rename user u1 to u2, u3 to u4").unwrap() else {
+    let Stmt::Admin(ddl) = parse("rename user u1 to u2, u3 to u4").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::RenameUser { pairs } = ddl.into_inner() else {
+    let tidb_ast::AdminStmt::RenameUser { pairs } = ddl.into_inner() else {
         panic!("expected RENAME USER payload");
     };
     assert_eq!(pairs.len(), 2);
@@ -214,10 +216,10 @@ fn alter_user_password_expire_restore_and_scope() {
         "ALTER USER `app`@`%` IDENTIFIED BY 'secret' PASSWORD EXPIRE INTERVAL 3 DAY"
     );
 
-    let Stmt::Ddl(ddl) = parse("alter user app password expire interval 7 day").unwrap() else {
+    let Stmt::Admin(ddl) = parse("alter user app password expire interval 7 day").unwrap() else {
         panic!("expected DDL envelope")
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
+    let tidb_ast::AdminStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload")
     };
     assert_eq!(statement.users.len(), 1);
@@ -269,10 +271,10 @@ fn alter_user_full_source_order_and_typed_options() {
         "ALTER USER IF EXISTS `dpm1`@`%` DISCARD OLD PASSWORD, `dpm3`@`%` REQUIRE ISSUER 'issuer' AND SUBJECT 'subject' AND CIPHER 'cipher' WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 2 MAX_CONNECTIONS_PER_HOUR 3 MAX_USER_CONNECTIONS 5 PASSWORD HISTORY 7 PASSWORD REUSE INTERVAL 8 DAY FAILED_LOGIN_ATTEMPTS 9 PASSWORD_LOCK_TIME UNBOUNDED ACCOUNT UNLOCK COMMENT 'rotation finished' RESOURCE GROUP `rg1`"
     );
 
-    let Stmt::Ddl(ddl) = parse(sql).unwrap() else {
+    let Stmt::Admin(ddl) = parse(sql).unwrap() else {
         panic!("expected DDL envelope")
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
+    let tidb_ast::AdminStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload")
     };
     assert!(statement.if_exists);
@@ -336,10 +338,10 @@ fn create_role_restore_uses_strict_role_identity() {
         r("create role if not exists role1, 'role2'@LOCALHOST"),
         "CREATE ROLE IF NOT EXISTS `role1`@`%`, `role2`@`localhost`"
     );
-    let Stmt::Ddl(ddl) = parse("create role r1, r2@localhost").unwrap() else {
+    let Stmt::Admin(ddl) = parse("create role r1, r2@localhost").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::CreateRole {
+    let tidb_ast::AdminStmt::CreateRole {
         if_not_exists,
         roles,
     } = ddl.into_inner()

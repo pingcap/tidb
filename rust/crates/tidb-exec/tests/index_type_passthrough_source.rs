@@ -34,7 +34,7 @@
 //! `Invalid=0, Btree=1, Hash=2, Rtree=3, Hypo=4, Vector=5, Inverted=6,
 //! HNSW=7, Fulltext=8`.
 
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 
 fn build(sql: &str) -> TableInfo {
@@ -45,7 +45,7 @@ fn build(sql: &str) -> TableInfo {
     let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("the fixture is a CREATE TABLE");
     };
-    build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On)
+    build_table_info(create, "utf8mb4", "utf8mb4_bin")
         .expect("the fixture is a table this node can express")
 }
 

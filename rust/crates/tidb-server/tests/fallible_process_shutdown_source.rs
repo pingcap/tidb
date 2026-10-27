@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tidb_exec::real_tikv_read::ReadProcessShutdownError;
+use tidb_cluster::real_tikv_read::ReadProcessShutdownError;
 use tidb_server::{
     run_with_process_shutdown, ProcessReadAuthority, RunConfiguredNodeError, SqlNodeError,
 };

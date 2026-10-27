@@ -22,8 +22,11 @@
 //! distinguishes. Go's `errors.Cause` unwrapping of `errors.Trace` layers has
 //! no Rust counterpart because wrapper layers don't exist here.
 
+mod collector;
 mod plancache;
 mod warn;
+
+pub use collector::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub use plancache::{PlanCacheTracker, PlanCacheType, RangeFallbackHandler};
 pub use warn::{

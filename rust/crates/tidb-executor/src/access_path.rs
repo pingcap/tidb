@@ -52,6 +52,9 @@
 //! count is exactly the row count a materializing path would have reported;
 //! with one it reports the truncation, as Go's does.
 
+use crate::KvTableReader;
+#[allow(unused_imports)]
+use crate::RowDecodeContextExt;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -308,8 +311,7 @@ mod common_handle_shape_tests {
     // the first read, not a transport test.
     #[test]
     fn common_handle_point_read_is_admitted() {
-        let mut table = crate::driver::Catalog::default();
-        table.create_database("test");
+        let mut table = crate::driver::Catalog::mock();
         let mut kv = crate::kv_table::KvTable::new(
             1,
             vec![
@@ -352,8 +354,7 @@ mod common_handle_shape_tests {
 
     #[test]
     fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
-        let mut table = crate::driver::Catalog::default();
-        table.create_database("test");
+        let mut table = crate::driver::Catalog::mock();
         let mut kv = crate::kv_table::KvTable::new(
             1,
             vec![
@@ -432,7 +433,7 @@ mod common_handle_shape_tests {
     /// confused with the max-ts point-get shortcut used by SELECT.
     #[test]
     fn update_and_delete_use_the_prefetchable_write_shape() {
-        let catalog = crate::driver::Catalog::default();
+        let catalog = crate::driver::Catalog::mock();
         for sql in [
             "UPDATE t SET v = 1 WHERE k = 'x'",
             "DELETE FROM t WHERE k = 'x'",
@@ -3347,14 +3348,14 @@ impl IndexRangeSourceExec {
                         PushdownAggregateKind::Min => PartialValue::Extreme {
                             value: None,
                             is_max: false,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
                         PushdownAggregateKind::Max => PartialValue::Extreme {
                             value: None,
                             is_max: true,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -3362,7 +3363,7 @@ impl IndexRangeSourceExec {
                             value: None,
                             count: 0,
                             is_max: false,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -3370,7 +3371,7 @@ impl IndexRangeSourceExec {
                             value: None,
                             count: 0,
                             is_max: true,
-                            collation: crate::remote_scan::extreme_collation(
+                            collation: crate::aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -3441,7 +3442,7 @@ impl IndexRangeSourceExec {
                                 Some(candidate),
                             ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
-                                    crate::remote_scan::extreme_replaces(
+                                    crate::aggfuncs::extreme_replaces(
                                         &candidate, current, *is_max, *collation,
                                     )
                                 });
@@ -3541,14 +3542,14 @@ impl IndexRangeSourceExec {
                             PushdownAggregateKind::Min => PartialValue::Extreme {
                                 value: None,
                                 is_max: false,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
                             PushdownAggregateKind::Max => PartialValue::Extreme {
                                 value: None,
                                 is_max: true,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -3556,7 +3557,7 @@ impl IndexRangeSourceExec {
                                 value: None,
                                 count: 0,
                                 is_max: false,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -3564,7 +3565,7 @@ impl IndexRangeSourceExec {
                                 value: None,
                                 count: 0,
                                 is_max: true,
-                                collation: crate::remote_scan::extreme_collation(
+                                collation: crate::aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -3672,7 +3673,7 @@ impl IndexRangeSourceExec {
                                     Some(candidate),
                                 ) => {
                                     let replace = value.as_ref().is_none_or(|current| {
-                                        crate::remote_scan::extreme_replaces(
+                                        crate::aggfuncs::extreme_replaces(
                                             &candidate, current, *is_max, *collation,
                                         )
                                     });
@@ -4515,8 +4516,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         if (self.filter.is_some() || self.index_probe.is_some()) && index_is_prefix {
             return false;
         }
-        if aggregate
-            .input_offsets()
+        if crate::remote_scan::partial_aggregate_input_offsets(aggregate)
             .into_iter()
             .any(|offset| offset >= self.keep.len())
             || !supported
@@ -5154,7 +5154,7 @@ impl IndexJoinLookupExec {
         object: LookupObject,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
-        let statement = PushdownStatementContext::from_stmt(decode_context.expression());
+        let statement = crate::remote_scan::pushdown_statement_context(crate::stmt_context::stmt_context_of(decode_context.expression()));
         Self::new_with_statement(meta, table, object, decode_context, statement)
     }
 
@@ -5628,7 +5628,7 @@ impl IndexJoinLookupExec {
             .probe_key_prefix_lengths
             .get(key.len())
             .copied()
-            .unwrap_or(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+            .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
         let ranges = tidb_planner::ranger::ranger::build_column_range(
             &conditions,
             target_type,
@@ -6526,7 +6526,8 @@ impl Executor for IndexJoinLookupExec {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use crate::KvTableDdl;
+use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -6574,56 +6575,123 @@ mod tests {
         require_closed_before_get: Arc<std::sync::atomic::AtomicBool>,
         inner: MemTableStorage,
         gets: Arc<AtomicUsize>,
-        request: Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
+        /// The last index-side request (or the last request the injected
+        /// failure applies to), as the region received it.
+        request: Arc<std::sync::Mutex<Option<crate::test_region::SentRequest>>>,
+        /// Table-side requests the region answered.
+        table_requests: Arc<AtomicUsize>,
     }
 
-    struct CoveringIndexRows {
-        failure: Option<LookupReadFailure>,
-        closed: Arc<std::sync::atomic::AtomicBool>,
-        rows: std::collections::VecDeque<Vec<Datum>>,
-        returned: u64,
+    /// The region behind [`CoveringIndexStorage`]'s `kv.Client`: unistore
+    /// over the table's committed bytes, or -- for the side the injected
+    /// failure names -- the row Go's reader would read there followed by the
+    /// failure.
+    #[derive(Debug)]
+    struct CoveringIndexRegion {
+        store: CoveringIndexStorage,
+        data: Vec<(Vec<u8>, Vec<u8>)>,
     }
 
-    impl crate::remote_scan::PushdownRowStream for CoveringIndexRows {
-        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-            if let Some(failure) = &self.failure {
-                if failure
-                    .after_rows
-                    .is_some_and(|after| self.returned >= after)
-                {
-                    return Err(failure.error.clone());
-                }
-            }
-            let row = self.rows.pop_front();
-            self.returned += u64::from(row.is_some());
-            Ok(row)
-        }
+    /// Closing a response the test watches marks it closed.
+    struct WatchedResponse {
+        inner: Box<crate::test_region::Subsets>,
+        closed: Option<Arc<std::sync::atomic::AtomicBool>>,
+    }
 
-        fn supports_chunks(&self) -> bool {
-            self.failure.as_ref().is_some_and(|failure| failure.chunks)
-        }
-
-        fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
-            let Some(row) = self.next_row()? else {
-                return Ok(None);
-            };
-            let mut chunk = Chunk::new_with_capacity(&vec![long(); row.len()], 1);
-            for (offset, value) in row.iter().enumerate() {
-                chunk.append_datum(offset, value);
-            }
-            Ok(Some(chunk))
-        }
-
-        fn rows_returned(&self) -> u64 {
-            self.returned
-        }
-
-        fn predicates_applied(&self) -> bool {
-            true
+    impl tidb_txnkv::Response for WatchedResponse {
+        fn next(
+            &mut self,
+        ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+            self.inner.next()
         }
 
         fn close(&mut self) {
-            self.closed.store(true, Ordering::SeqCst);
+            self.inner.close();
+            if let Some(closed) = &self.closed {
+                closed.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    impl tidb_txnkv::Client for CoveringIndexRegion {
+        fn send(
+            &self,
+            request: &tidb_txnkv::TransportRequest,
+        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+            use prost::Message;
+            let sent = crate::test_region::SentRequest::decode(request);
+            let failure = self
+                .store
+                .failure
+                .as_ref()
+                .filter(|failure| failure.index == sent.is_index())
+                .cloned();
+            if !sent.is_index() && failure.is_none() {
+                if self.store.require_closed_before_get.load(Ordering::SeqCst) {
+                    assert!(
+                        self.store.closed.load(Ordering::SeqCst),
+                        "exhausted pushed-limit index stream must close before inline table lookup"
+                    );
+                }
+                self.store.table_requests.fetch_add(1, Ordering::Relaxed);
+            } else {
+                *self
+                    .store
+                    .request
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()) = Some(sent.clone());
+            }
+            let watched = (sent.is_index() || failure.is_some())
+                .then(|| Arc::clone(&self.store.closed));
+            let subsets = match &failure {
+                Some(failure) => {
+                    let row: Vec<Datum> = sent
+                        .column_ids()
+                        .iter()
+                        .map(|id| match *id {
+                            1 => Datum::Int(42),
+                            2 => Datum::Int(7),
+                            crate::remote_scan::EXTRA_HANDLE_COLUMN_ID => Datum::Int(101),
+                            id => panic!("unexpected fixture column {id}"),
+                        })
+                        .collect();
+                    let row: Vec<Datum> = sent
+                        .dag
+                        .output_offsets
+                        .iter()
+                        .map(|offset| row[*offset as usize].clone())
+                        .collect();
+                    let StorageError::Sql(error) = &failure.error else {
+                        panic!("the injected failure carries its SQL identity");
+                    };
+                    let mut subsets = vec![
+                        Ok(crate::test_region::canned_rows(std::slice::from_ref(&row)));
+                        failure.after_rows.unwrap_or(0) as usize
+                    ];
+                    subsets.push(Err(tidb_txnkv::QueryResponseError::Sql {
+                        code: error.code,
+                        message: error.message.clone(),
+                    }));
+                    subsets
+                }
+                None => {
+                    let mut store = crate::test_region::committed_store(self.data.clone());
+                    vec![crate::test_region::run_dag(&mut store, &sent.dag, &sent.ranges, 100)
+                        .map(|answer| tidb_txnkv::QueryResultSubset {
+                            data: answer.select.encode_to_vec().into(),
+                            runtime: None,
+                        })
+                        .map_err(tidb_txnkv::QueryResponseError::Source)]
+                }
+            };
+            Ok(Box::new(WatchedResponse {
+                inner: crate::test_region::Subsets::new(subsets, None),
+                closed: watched,
+            }))
+        }
+
+        fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+            true
         }
     }
 
@@ -6674,56 +6742,16 @@ mod tests {
             self.inner.iter_reverse(upper_bound, lower_bound)
         }
 
-        fn open_remote_scan(
-            &mut self,
-            request: &crate::remote_scan::PushdownScanRequest,
-        ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
-            let failure = self
-                .failure
-                .as_ref()
-                .filter(|failure| failure.index == request.index.is_some())
-                .cloned();
-            if request.index.is_none() && failure.is_none() {
-                return None;
-            }
-            *self
-                .request
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
-            if let Some(failure) = &failure {
-                if failure.after_rows.is_none() {
-                    return Some(Err(failure.error.clone()));
-                }
-            }
-            let row = if request.index.is_some() {
-                vec![Datum::Int(7), Datum::Int(101)]
-            } else {
-                request
-                    .columns
-                    .iter()
-                    .map(|column| match column.id {
-                        1 => Datum::Int(42),
-                        2 => Datum::Int(7),
-                        crate::remote_scan::EXTRA_HANDLE_COLUMN_ID => Datum::Int(101),
-                        id => panic!("unexpected fixture column {id}"),
-                    })
-                    .collect()
-            };
-            let row = request
-                .output_offsets
-                .as_ref()
-                .map_or(row.clone(), |offsets| {
-                    offsets.iter().map(|offset| row[*offset].clone()).collect()
-                });
-            Some(Ok(crate::remote_scan::PushdownScan {
-                stream: Box::new(CoveringIndexRows {
-                    failure,
-                    closed: Arc::clone(&self.closed),
-                    rows: std::collections::VecDeque::from([row]),
-                    returned: 0,
-                }),
-                staged: Vec::new(),
+        fn client(&self) -> Option<Arc<dyn tidb_txnkv::Client>> {
+            let mut inner = self.inner.clone();
+            Some(Arc::new(CoveringIndexRegion {
+                store: self.clone(),
+                data: crate::test_region::storage_pairs(&mut inner),
             }))
+        }
+
+        fn start_ts(&self) -> u64 {
+            100
         }
 
         fn key_count(&self) -> usize {
@@ -6848,7 +6876,7 @@ mod tests {
                 .insert_row(&[Datum::Int(value)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("routed_batch", table);
         gets.store(0, Ordering::Relaxed);
         let mut rows = run_select_on(
@@ -7133,7 +7161,7 @@ mod tests {
                         comment: String::new(),
                         unique: false,
                         column_offsets: vec![1],
-                        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                        prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                         visible: true,
                         global: false,
                         global_index_version: 0,
@@ -7152,7 +7180,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         // Only the reads the query performs are interesting.
         entries.store(0, Ordering::Relaxed);
@@ -7173,7 +7201,7 @@ mod tests {
     fn prefix_limit_resets_after_partial_reads_and_retains_a_group_across_batches() {
         use crate::table_access::TableAccess;
         let ctx = crate::StmtContext::for_query();
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on(
             "CREATE TABLE p (a VARCHAR(20), KEY idx(a(2)))",
             &mut catalog,
@@ -7261,7 +7289,7 @@ mod tests {
                 ],
             ),
         ] {
-            let mut catalog = Catalog::default();
+            let mut catalog = Catalog::mock();
             crate::run_create_table_on(ddl, &mut catalog).unwrap();
             let store = CountingStorage::default();
             let gets = Arc::clone(&store.gets);
@@ -7325,6 +7353,7 @@ mod tests {
     #[test]
     fn a_covering_index_join_inner_reads_the_planner_selected_index_reader() {
         let gets = Arc::new(AtomicUsize::new(0));
+        let table_requests = Arc::new(AtomicUsize::new(0));
         let request = Arc::new(std::sync::Mutex::new(None));
         let mut table = KvTable::with_storage(
             89,
@@ -7336,6 +7365,7 @@ mod tests {
                 inner: MemTableStorage::new(),
                 gets: Arc::clone(&gets),
                 request: Arc::clone(&request),
+                table_requests: Arc::clone(&table_requests),
             }),
         );
         table.add_index(
@@ -7345,7 +7375,7 @@ mod tests {
                 comment: String::new(),
                 unique: false,
                 column_offsets: vec![1],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
                 global_index_version: 0,
@@ -7392,7 +7422,7 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 7);
         assert_eq!(
-            gets.load(Ordering::Relaxed),
+            gets.load(Ordering::Relaxed) + table_requests.load(Ordering::Relaxed),
             0,
             "PhysicalIndexReader must not open a table-side handle lookup"
         );
@@ -7402,14 +7432,17 @@ mod tests {
             .clone()
             .expect("the covering index request was opened");
         assert!(
-            captured.output_offsets.is_none(),
+            captured.narrowed_output().is_none(),
             "the index response retains covered values instead of projecting handles only"
         );
         assert!(
             captured.keep_order,
             "the physical scan order must reach TiKV"
         );
-        assert!(captured.desc, "the physical scan direction must reach TiKV");
+        assert!(
+            captured.desc && captured.scan_desc(),
+            "the physical scan direction must reach TiKV"
+        );
         assert_eq!(captured.ranges.len(), 3);
         assert!(
             captured.ranges.windows(2).all(|pair| pair[0].0 < pair[1].0),
@@ -7445,9 +7478,13 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         let captured = request.lock().unwrap().clone().unwrap();
-        assert_eq!(captured.conditions.len(), 1);
-        assert_eq!(captured.output_offsets, Some(vec![1]));
-        assert_eq!(gets.load(Ordering::Relaxed), 1);
+        assert_eq!(captured.conditions().len(), 1);
+        assert_eq!(captured.narrowed_output(), Some(vec![1]));
+        assert_eq!(
+            gets.load(Ordering::Relaxed) + table_requests.load(Ordering::Relaxed),
+            1,
+            "the double read fetches the one matching row once"
+        );
         source.close().unwrap();
     }
 
@@ -7493,6 +7530,7 @@ mod tests {
                                 inner: MemTableStorage::new(),
                                 gets: Arc::clone(&gets),
                                 request: Arc::default(),
+                                table_requests: Arc::default(),
                             }),
                         );
                         if reader == "common" {
@@ -7575,7 +7613,10 @@ mod tests {
                             drain(&mut source)
                         })();
                         source.close().unwrap();
-                        if !matches!(&outcome, Err(ExecError::Mysql(error)) if error == &expected)
+                        // The wire carries the error's code and message, not
+                        // the Go class it was raised under.
+                        if !matches!(&outcome, Err(ExecError::Mysql(error))
+                            if error.code == expected.code && error.message == expected.message)
                             || gets.load(Ordering::Relaxed) != 0
                             || (after_rows.is_some() && !closed.load(Ordering::SeqCst))
                         {
@@ -7727,6 +7768,7 @@ mod tests {
                 inner: MemTableStorage::new(),
                 gets: Arc::default(),
                 request: Arc::clone(&request),
+                table_requests: Arc::default(),
                 closed: Arc::default(),
                 require_closed_before_get: Arc::clone(&check_close),
             }),
@@ -7738,7 +7780,7 @@ mod tests {
                 comment: String::new(),
                 unique: false,
                 column_offsets: vec![1],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
                 global_index_version: 0,
@@ -7794,9 +7836,9 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         let first_request = request.lock().unwrap().clone().unwrap();
-        assert_eq!(first_request.conditions.len(), 1);
-        assert_eq!(first_request.output_offsets, Some(vec![1]));
-        assert_eq!(first_request.limit, Some(1));
+        assert_eq!(first_request.conditions().len(), 1);
+        assert_eq!(first_request.narrowed_output(), Some(vec![1]));
+        assert_eq!(first_request.limit(), Some(1));
         source.close().unwrap();
 
         let filter = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
@@ -7810,7 +7852,7 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         assert_eq!(
-            request.lock().unwrap().as_ref().unwrap().conditions.len(),
+            request.lock().unwrap().as_ref().unwrap().conditions().len(),
             2,
             "later accepted index conditions must not replace the physical Selection"
         );
@@ -7863,8 +7905,8 @@ mod tests {
                 unique: false,
                 column_offsets: vec![0, 1],
                 prefix_lengths: vec![
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
                 ],
                 visible: true,
                 global: false,
@@ -7882,8 +7924,8 @@ mod tests {
         );
         source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
         source.set_probe_key_prefix_lengths(vec![
-            crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-            crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+            tidb_datatype::UNSPECIFIED_LENGTH,
+            tidb_datatype::UNSPECIFIED_LENGTH,
         ]);
         source.set_probe_bound_ops(vec![LookupProbeBoundOp::Gt, LookupProbeBoundOp::Ge]);
 
@@ -8223,7 +8265,7 @@ mod tests {
                     comment: String::new(),
                     unique: true,
                     column_offsets: vec![0, 1, 2],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 3],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -8241,7 +8283,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("new_order", table);
         entries.store(0, Ordering::Relaxed);
 
@@ -8288,7 +8330,7 @@ mod tests {
                     comment: String::new(),
                     unique: true,
                     column_offsets: vec![0, 1, 2, 3],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 4],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -8316,7 +8358,7 @@ mod tests {
                 }
             }
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("order_line", table);
         entries.store(0, Ordering::Relaxed);
 
@@ -8421,7 +8463,7 @@ mod tests {
                     clustered_primary: false,
                     primary: false,
                     column_offsets: vec![0, 1, 3],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 3],
                     visible: true,
                     global: false,
                     global_index_version: 0,
@@ -8444,7 +8486,7 @@ mod tests {
             1,
             vec![IndexRange::full()],
             crate::kv_table::RowDecodeContext::for_test_query_utc(),
-            crate::remote_scan::PushdownStatementContext::from_stmt(
+            crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
         );
@@ -8473,7 +8515,7 @@ mod tests {
             1,
             vec![IndexRange::full()],
             crate::kv_table::RowDecodeContext::for_test_query_utc(),
-            crate::remote_scan::PushdownStatementContext::from_stmt(
+            crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
         );
@@ -8614,8 +8656,8 @@ mod tests {
                     unique: false,
                     column_offsets: vec![1, 2],
                     prefix_lengths: vec![
-                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
                     ],
                     visible: true,
                     global: false,
@@ -8768,7 +8810,7 @@ mod tests {
     #[test]
     fn the_driver_offers_keep_order_to_an_order_by_the_index_produces() {
         let ctx = crate::StmtContext::for_query();
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", paired_order_table(200));
         let rows =
             run_select_on("SELECT a FROM t WHERE b = 50 ORDER BY b", &catalog, &ctx).unwrap();
@@ -8793,8 +8835,8 @@ mod tests {
                     unique: false,
                     column_offsets: vec![1, 2],
                     prefix_lengths: vec![
-                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
                     ],
                     visible: true,
                     global: false,

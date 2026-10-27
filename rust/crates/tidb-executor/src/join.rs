@@ -1093,7 +1093,7 @@ fn index_task_probes<C: Columns>(
                     break;
                 };
                 *value = converted;
-                crate::index_prefix_cut::cut_datum_by_prefix_len(
+                tidb_tablecodec::cut_datum_by_prefix_len(
                     value,
                     domain.prefix_length,
                     &domain.field_type,
@@ -1173,7 +1173,7 @@ impl PreparedIndexInner {
         let bytes = self.rows.mem_tracker().bytes_consumed();
         self.tracker.consume(bytes - self.bytes);
         self.bytes = bytes;
-        memory.check()
+        memory.check().map_err(ExecError::from)
     }
 
     fn append<C: Columns>(
@@ -1247,7 +1247,7 @@ fn fetch_index_inner<C: Columns>(
         };
         let mut rows = 0;
         let done = loop {
-            shared.memory.check()?;
+            shared.memory.check().map_err(ExecError::from)?;
             let mut chunk = inner.rows.alloc_chunk();
             source.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
@@ -1908,7 +1908,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 rows.push(row);
             }
             tracker.consume(bytes);
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
         }
         Ok(rows)
     }
@@ -2530,7 +2530,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         }
                         state.outer = outer;
                         inner.install(state);
-                        memory.check()
+                        memory.check().map_err(ExecError::from)
                     }
                     IndexTaskOutcome::Unforked { outer, probes } => {
                         // The session's reader serves this batch, and the
@@ -2627,7 +2627,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     source,
                 });
             }
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             if synchronous {
                 break;
             }
@@ -2971,7 +2971,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             tracker.consume(current_bytes - side.chunk_bytes);
             side.chunk_bytes = current_bytes;
             result?;
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             if side.chunk.num_rows() == 0 {
                 side.done = true;
                 return Ok(());
@@ -2988,7 +2988,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         side.group_start = begin;
         side.group_end = end;
         side.group_len = end - begin;
-        memory.check()
+        memory.check().map_err(ExecError::from)
     }
 
     /// Go fetchNextInnerGroup: retain the current chunk's equal-key range,
@@ -3011,14 +3011,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
                 if group.child_start < group.child_end {
                     group.retain_child(side, tracker)?;
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                 }
                 let result = child.next(&mut side.chunk);
                 let current_bytes = side.chunk.memory_usage();
                 tracker.consume(current_bytes - side.chunk_bytes);
                 side.chunk_bytes = current_bytes;
                 result?;
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 if side.chunk.num_rows() == 0 {
                     side.done = true;
                     break;
@@ -3042,7 +3042,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 break;
             }
         }
-        memory.check()
+        memory.check().map_err(ExecError::from)
     }
 
     /// Drains as much of the current merge cross product as the caller's
@@ -3287,7 +3287,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 pending: None,
             });
             self.tracker.consume(inner_scratch_bytes + input_bytes);
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
         }
         let tracker = Arc::clone(&self.tracker);
         let memory = self.memory.clone();
@@ -3298,7 +3298,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .is_some_and(|state| state.pending.is_some())
             {
                 self.drain_merge_pending(req)?;
-                self.memory.check()?;
+                self.memory.check().map_err(ExecError::from)?;
                 // Go's `MergeJoinExec.Next` runs `for !req.IsFull()`: a
                 // finished group does not end the call, the next groups fill
                 // the same chunk. Returning on the first rows handed the
@@ -3520,7 +3520,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     }
                 }
             }
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
             // An empty `req` is the caller's EOF signal, so a call that
             // dropped only unmatched groups must keep going rather than
             // report exhaustion; and Go's `MergeJoinExec.Next` keeps going
@@ -3580,7 +3580,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let grew = (req.memory_usage() - before_bytes).max(0);
             self.tracker
                 .consume(grew + tidb_chunk::row::ROW_SIZE * produced);
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
         }
         self.emitted = true;
         Ok(())
@@ -4810,7 +4810,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     )
                     .map_err(build_error)?;
             }
-            self.memory.check()?;
+            self.memory.check().map_err(ExecError::from)?;
         }
         let probe: &dyn Executor = if build_is_left {
             self.right_exec()

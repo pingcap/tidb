@@ -10,7 +10,7 @@ use super::*;
 fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE hinted_agg (g BIGINT, v BIGINT)", &mut catalog)
         .unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -133,7 +133,7 @@ fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
 fn a_computed_projection_column_explains_as_column_not_its_alias() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE alias_agg (g BIGINT, v BIGINT)", &mut catalog)
         .unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -178,7 +178,7 @@ fn a_computed_projection_column_explains_as_column_not_its_alias() {
 fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE hinted_distinct (g BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -230,7 +230,7 @@ fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
 fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE sbtest1 (id BIGINT PRIMARY KEY, k BIGINT, INDEX k_1(k))",
         &mut catalog,
@@ -284,7 +284,7 @@ fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
 fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (d DATE NOT NULL)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     // The AND is load-bearing: it is a lazy short-circuit parent, which is
@@ -327,7 +327,7 @@ fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
 fn aggregate_push_down_substitutes_child_projection_before_injection() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderdate DATE)",
         &mut catalog,
@@ -494,7 +494,7 @@ fn aggregate_push_down_substitutes_child_projection_before_injection() {
 fn grouped_order_by_projects_visible_fields_below_sort() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderpriority VARCHAR(15))",
         &mut catalog,
@@ -585,7 +585,7 @@ fn grouped_order_by_projects_visible_fields_below_sort() {
 fn grouped_rows_follow_the_reordered_join_tree() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE fact (f_id INT PRIMARY KEY, f_dim_id INT, f_value INT)",
         &mut catalog,
@@ -714,7 +714,7 @@ fn grouped_rows_follow_the_reordered_join_tree() {
 fn grouped_partial_count_carries_the_group_key() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
             ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
@@ -722,26 +722,6 @@ fn grouped_partial_count_carries_the_group_key() {
         &mut catalog,
     )
     .unwrap();
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "order_line").unwrap() else {
-        panic!("order_line is not a KV table");
-    };
-    let table = std::sync::Arc::make_mut(table);
-    table.add_index(
-        crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-            column_offsets: vec![2, 1, 0, 3],
-            visible: true,
-            global: false,
-            global_index_version: 0,
-            clustered_primary: false,
-            primary: true,
-        },
-        false,
-    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)",
@@ -797,7 +777,7 @@ fn grouped_partial_count_carries_the_group_key() {
 fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE s (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))",
         &mut catalog,
@@ -879,7 +859,7 @@ fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
 /// answered an arbitrary row as the extreme.
 #[test]
 fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extreme() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE ox (a VARCHAR(3) NOT NULL, b VARCHAR(8) NOT NULL, c INT NOT NULL, \
          d VARCHAR(2), PRIMARY KEY(a,b,c) CLUSTERED, KEY k4(a,b,d))",
@@ -907,7 +887,7 @@ fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extr
 
 #[test]
 fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE topn_cast (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -935,7 +915,7 @@ fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
 fn derived_aggregate_null_filter_refreshes_source_statistics() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
          d_ytd DECIMAL(12,2), PRIMARY KEY(d_w_id,d_id) CLUSTERED)",
@@ -985,7 +965,7 @@ fn derived_aggregate_null_filter_refreshes_source_statistics() {
 fn a_narrow_covering_index_range_prices_the_common_handle_once() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL,             o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT,             PRIMARY KEY (o_w_id,o_d_id,o_id) CLUSTERED,             KEY idx_order (o_w_id,o_d_id,o_c_id,o_id))",
         &mut catalog,
@@ -1033,7 +1013,7 @@ fn a_narrow_covering_index_range_prices_the_common_handle_once() {
 fn global_sum_expression_uses_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE revenue (\
             id INT PRIMARY KEY, price DECIMAL(10,2), discount DECIMAL(4,2), k INT)",
@@ -1092,7 +1072,7 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
 fn joined_integer_sum_uses_root_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE sum_orders (id INT PRIMARY KEY, customer_id INT, quantity INT)",
         &mut catalog,
@@ -1153,7 +1133,7 @@ fn joined_integer_sum_uses_root_stream_agg() {
 fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE avg_revenue (id INT PRIMARY KEY, price DECIMAL(10,2), k INT)",
         &mut catalog,
@@ -1208,7 +1188,7 @@ fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
 fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE sum_range (id INT PRIMARY KEY, k INT NOT NULL)",
         &mut catalog,
@@ -1264,7 +1244,7 @@ fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
 fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE point_count (\
             id INT NOT NULL AUTO_INCREMENT, \
@@ -1315,7 +1295,7 @@ fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
 fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE count_ranges (id INT PRIMARY KEY, k INT NOT NULL, KEY k_1(k))",
         &mut catalog,
@@ -1644,7 +1624,7 @@ fn aggregate_selects() {
 
 #[test]
 fn float_sum_and_avg_use_the_real_domain() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE f (v FLOAT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO f VALUES (1.25), (2.5), (NULL)",
@@ -1791,7 +1771,7 @@ fn select_distinct() {
     // assertions below therefore pin the serial path, which is what Go selects
     // when both `tidb_hashagg_{partial,final}_concurrency` are 1.
     let ctx = || crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE d2 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO d2 VALUES (1, 1), (1, 2), (1, 1), (2, 2)",
@@ -1883,7 +1863,7 @@ fn select_distinct() {
 fn explain_distinct_scalar_subquery_with_filter() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE date_dim (d_month_seq BIGINT, d_year BIGINT, d_moy BIGINT)",
         &mut catalog,
@@ -1958,7 +1938,7 @@ fn bit_aggregates_are_unsigned() {
     use tidb_datatype::FieldTypeCode;
 
     fn catalog_with(rows: Vec<Vec<Datum>>) -> Catalog {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register(
             "b",
             MemTable {
@@ -2031,7 +2011,7 @@ fn bit_aggregates_are_unsigned() {
 #[test]
 fn aggregates_read_the_arguments_collation() {
     fn catalog_with(values: &[&str]) -> Catalog {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on(
             "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
             &mut catalog,
@@ -2115,7 +2095,7 @@ fn aggregates_read_the_arguments_collation() {
 /// missing group-key emission.
 #[test]
 fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
         &mut catalog,
@@ -2161,7 +2141,7 @@ fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation(
 /// physical planner and agree on the output columns.
 #[test]
 fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE cost_receipt (id INT PRIMARY KEY, k INT, c VARCHAR(20))",
@@ -2209,7 +2189,7 @@ fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
 
 #[test]
 fn grouped_aggregation_enumerates_families_over_one_planned_child() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE shared_child (id INT PRIMARY KEY, k INT, INDEX idx_k(k))",
@@ -2240,7 +2220,7 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
 fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE explain_common_plan (id INT PRIMARY KEY, k INT)",

@@ -97,7 +97,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `appendDynamicVisitInfo(b.visitInfo, privs, withGrant, err)`.
-    fn append_dynamic_visit(&mut self, privs: &[&str], with_grant: bool, error: VisitAuthError) {
+    pub(crate) fn append_dynamic_visit(
+        &mut self,
+        privs: &[&str],
+        with_grant: bool,
+        error: VisitAuthError,
+    ) {
         self.visit_info.push(VisitInfo {
             privilege: tidb_mysql::ExtendedPriv,
             database: String::new(),

@@ -97,7 +97,7 @@ impl ReplaySession for UnistoreSession {
             Ok(stmt) => stmt,
             Err(error) => {
                 self.session
-                    .record_parse_failure(error.code, error.message.clone());
+                    .record_parse_failure(&error);
                 return Err(driver_error(error));
             }
         };

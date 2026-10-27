@@ -109,6 +109,7 @@ pub mod logical_data_source;
 pub mod logical_data_source_task;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
+pub mod optimize;
 pub mod metrics;
 pub mod partidx;
 pub mod physical;

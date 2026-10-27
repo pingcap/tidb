@@ -105,7 +105,7 @@
 //! its own in-memory catalog -- that copy is a *read* of the cluster's schema,
 //! so changing it alone would be a silently wrong answer. They are routed to
 //! the [`ClusterDdl`] seam, which publishes the meta-key mutations through the
-//! same optimistic 2PC the DML path uses ([`tidb_exec::real_tikv_ddl`]), and a
+//! same optimistic 2PC the DML path uses ([`tidb_ddl::real_tikv_ddl`]), and a
 //! Go TiDB then sees the object.
 //!
 //! An index change publishes a second thing in that same transaction: the
@@ -163,8 +163,8 @@
 //! driver's own error where it cannot.
 //!
 //! [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
-//! [`StatementSnapshot`]: tidb_exec::cluster_table_storage::StatementSnapshot
-//! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
+//! [`StatementSnapshot`]: tidb_cluster::cluster_table_storage::StatementSnapshot
+//! [`SessionTransaction`]: tidb_cluster::cluster_table_storage::SessionTransaction
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -173,40 +173,38 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::domain::resultset_source::ResultSetSource;
+use crate::identity::CompiledExecutor;
 use chrono::{Datelike, Timelike, Utc};
 use tidb_ast::Stmt;
 use tidb_domain::historical_stats::{
     HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
     StatsHandle as HistoricalStatsHandle, TableMeta,
 };
-use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
-use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_ddl::DdlStatement;
-use tidb_exec::cluster_load_stats::{
-    prepare_cluster_load_stats, prepare_cluster_load_stats_parsed,
-};
+use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_ddl::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_load_stats::prepare_cluster_load_stats_parsed;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
-use tidb_exec::real_tikv_catalog::SnapshotMetaSnapshot;
-use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_parsed;
+use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_exec::schema_validator::SchemaValidator;
+use tidb_cluster::schema_validator::SchemaValidator;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
-use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{
     classify_transaction_control, classify_transaction_control_stmt, TransactionControl,
 };
 use crate::privilege::PrivilegeRegistry;
 use crate::process::ProcessRegistry;
 use crate::{
-    GlobalSysvars, Session, StmtKind, StmtOutput, StoredStateChange,
+    GlobalSysvars, Session, StmtKind, StmtOutput,
     TableStorageStatsProvider,
 };
 use tidb_txnkv::transaction::SchemaLeaseChecker;
@@ -232,72 +230,6 @@ fn is_analyze_table_sql(sql: &str) -> bool {
     tidb_parser::normalize_digest(sql)
         .0
         .starts_with("analyze table")
-}
-
-/// The three statement shapes go refuses with their own errors before any
-/// catalog work, answered at [`ClusterSessionNode::schema_route_for_change`]
-/// (whose lowering cannot express them): `OPTIMIZE TABLE`'s 8200, `ADMIN
-/// REPAIR TABLE`'s 8215 REPAIR-MODE gate, and the `STATS_PERSISTENT` table
-/// option's unsupported-spec 8200.
-fn schema_shape_refusal(stmt: &tidb_ast::Stmt) -> Option<(u16, String)> {
-    let tidb_ast::Stmt::Ddl(ddl) = stmt else {
-        return None;
-    };
-    match &**ddl {
-        tidb_ast::DdlStmt::OptimizeTable(_) => {
-            Some((8200, "OPTIMIZE TABLE is not supported".to_owned()))
-        }
-        tidb_ast::DdlStmt::RepairTable(_) => Some((
-            8215,
-            "Failed to repair table: TiDB is not in REPAIR MODE".to_owned(),
-        )),
-        tidb_ast::DdlStmt::AlterTable(alter) => {
-            // Go `executor.AlterTable` refuses these partition specs outright
-            // (`pkg/ddl/executor.go:1763`).
-            for action in &alter.actions {
-                if let tidb_ast::AlterTableAction::Partition(partition) = action {
-                    use tidb_ast::{AlterPartitionAction, PartitionMaintenanceOp};
-                    let message = match partition {
-                        AlterPartitionAction::MergeFirstPartitionLessThan { .. } => {
-                            "Unsupported MERGE FIRST PARTITION"
-                        }
-                        AlterPartitionAction::SplitMaxValuePartition { .. } => {
-                            "Unsupported SPLIT LAST PARTITION"
-                        }
-                        AlterPartitionAction::Check { .. } => "Unsupported check partition",
-                        AlterPartitionAction::Maintain { operation, .. } => match operation {
-                            PartitionMaintenanceOp::Rebuild => "Unsupported rebuild partition",
-                            PartitionMaintenanceOp::Optimize => "Unsupported optimize partition",
-                            PartitionMaintenanceOp::Repair => "Unsupported repair partition",
-                        },
-                        _ => continue,
-                    };
-                    return Some((8200, message.to_owned()));
-                }
-            }
-            // `STATS_PERSISTENT` and `PRE_SPLIT_REGIONS` are outside Go's
-            // ALTER TABLE option switch.
-            let unsupported_option = alter.actions.iter().any(|action| match action {
-                tidb_ast::AlterTableAction::SetTableOptions { options } => {
-                    options.iter().any(|option| {
-                        matches!(
-                            option,
-                            tidb_ast::TableOption::StatsPersistent
-                                | tidb_ast::TableOption::PreSplitRegions(_)
-                        )
-                    })
-                }
-                _ => false,
-            });
-            unsupported_option.then(|| {
-                (
-                    8200,
-                    "This type of ALTER TABLE is currently unsupported".to_owned(),
-                )
-            })
-        }
-        _ => None,
-    }
 }
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
@@ -327,11 +259,11 @@ use crate::store_session::StoreSession;
 #[cfg(test)]
 use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
 #[cfg(test)]
-use tidb_exec::cluster_table_storage::LockKeysOutcome;
+use tidb_cluster::cluster_table_storage::LockKeysOutcome;
 #[cfg(test)]
 use crate::StmtResult;
 #[cfg(test)]
-const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+const ERR_WRITE_CONFLICT: u16 = tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 mod non_transactional_dml;
 mod record_set;
@@ -344,27 +276,24 @@ pub mod stats_maintenance;
 use crate::cluster_transactions as transactions;
 
 pub use ddl::{ClusterDdl, RealClusterDdl};
-pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
+pub use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
 use transactions::sql_error;
 pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterTransactions};
 
-/// Which of this node's three paths one statement takes.
-///
-/// The two stored-state changes are named apart rather than lumped into a
-/// boolean because they publish through different tiers -- the catalog through
-/// [`ClusterDdl`], the accounts through
-/// [`crate::domain::cluster_account_seam::ClusterAccountWriter`] -- and each has its
-/// own refusals.
 /// Go `Compile`'s plan kind for one statement, as the node dispatches on
 /// it: [`ClusterServerSession::compile`].
 enum CompiledStatement {
-    /// A stored-state change, lowered (Go `core.DDL`, the account
-    /// `core.Simple` statements, a GLOBAL `core.Set`, `core.Analyze`,
+    /// A stored-state change, lowered (Go `core.DDL`, `core.Analyze`,
     /// `core.LoadStats` and the statistics-lock plans).
     StoredState(StatementRoute),
-    /// Go `core.Set` for session variables.
+    /// Go `core.Set`: `SetExecutor`, whose GLOBAL assignments write through
+    /// the session's domain services.
     Set,
+    /// Go `core.Simple` for an account statement, which the node commits
+    /// ahead of where Go's executor calls `NewTxnInStmt`
+    /// ([`ClusterServerSession::run_account_executor`]).
+    AccountSimple,
     /// A plan with no result schema: Go's Insert/Update/Delete and the other
     /// write plans, answered with an OK packet.
     Write,
@@ -374,25 +303,18 @@ enum CompiledStatement {
     Query,
 }
 
+/// The executor Go's `executorBuilder.build` picks for a compiled plan
+/// ([`ClusterServerSession::route_for`]), where this node runs it rather
+/// than the session's own statement path.
 enum StatementRoute {
     /// Changes nothing stored outside this process.
     Ordinary,
-    /// One catalog change this node can express.
-    Ddl(DdlStatement),
-    /// Go `AlterTable`'s table-option loop: one job per option, in order,
-    /// stopping at the first failure (`cluster_ddl::split_table_option_alter`).
-    DdlSequence(Vec<DdlStatement>),
-    /// DDL owned by this connection's LOCAL temporary-table namespace.
-    LocalTemporaryDdl,
-    /// Only persistent targets reach cluster metadata; local targets follow success.
-    MixedTemporaryDrop {
-        statement: DdlStatement,
-        local: Vec<Vec<String>>,
-    },
-    /// One `mysql.*` account change.
-    Accounts,
-    /// One `SET GLOBAL` change to `mysql.global_variables`.
-    GlobalVars,
+    /// Go `DDLExec`: the implicit commit, the DDL executor's checks and the
+    /// job(s) ([`ClusterServerSession::run_ddl_exec`]).
+    DdlExec,
+    /// DDL the session's `DDLExec` answers without a job (Go
+    /// `DDLExec.Next` over a LOCAL temporary table).
+    SessionDdl,
     /// One `ANALYZE TABLE`, per table it named.
     Analyze(Vec<AnalyzeStatement>),
     /// One LOAD STATS statement awaiting its client-local file bytes.
@@ -406,6 +328,68 @@ enum StatementRoute {
 }
 
 use crate::stats_statement_service::FlushStatsDeltaTargets;
+
+/// What [`ClusterServerSession::lower_ddl_exec`] lowered a DDL to.
+enum LoweredDdl {
+    /// The job(s) to run in order, stopping at the first failure (Go
+    /// `AlterTable`'s table-option loop is several).
+    Jobs(Vec<DdlStatement>),
+    /// Go `DDLExec.Next`'s DROP that also names LOCAL temporary tables: the
+    /// job drops the rest, then `dropLocalTemporaryTables` drops `local`.
+    DropTableJob {
+        statement: DdlStatement,
+        local: Vec<Vec<String>>,
+    },
+    /// Go's executor functions that submit several jobs in order (the
+    /// table-option loop, `AlterSchema`): each part is lowered when its turn
+    /// comes, so a refusal leaves the earlier parts applied, as Go's does.
+    Sequence {
+        parts: Vec<Stmt>,
+        context: tidb_executor::StmtContext,
+    },
+}
+
+impl LoweredDdl {
+    fn one(statement: DdlStatement) -> Self {
+        Self::Jobs(vec![statement])
+    }
+}
+
+/// The statements one Go executor function runs as several jobs in order --
+/// a multi-option `ALTER TABLE ... <table options>` (Go `AlterTable`'s
+/// option loop) and an `ALTER DATABASE` with several changes (Go
+/// `AlterSchema`). `None` for every other statement.
+fn job_sequence_parts(stmt: &Stmt) -> Option<Vec<Stmt>> {
+    let Stmt::Ddl(ddl) = stmt else {
+        return None;
+    };
+    let parts = match &**ddl {
+        tidb_ast::DdlStmt::AlterTable(alter) => tidb_ddl::cluster_ddl::split_table_option_alter(alter)?
+            .into_iter()
+            .map(|part| tidb_ast::DdlStmt::AlterTable(Box::new(part)))
+            .collect(),
+        tidb_ast::DdlStmt::AlterDatabase { name, options } => {
+            tidb_ddl::cluster_ddl::split_alter_database(name, options)?
+        }
+        _ => return None,
+    };
+    Some(
+        parts
+            .into_iter()
+            .map(|part| Stmt::Ddl(tidb_ast::NodeBox::new(part)))
+            .collect(),
+    )
+}
+
+/// A DDL shape this node does not plan.
+fn unplanned_ddl() -> SqlQueryError {
+    SqlQueryError::unknown(
+        "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
+         CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy \
+         changes, index changes, and single-action ALTER INDEX changes only; \
+         run this statement on a TiDB server",
+    )
+}
 
 struct ClusterDataLockWaits {
     transactions: Arc<dyn ClusterTransactions>,
@@ -478,7 +462,7 @@ impl ClusterTableStorageStatsProvider {
     /// both-reads-or-nothing copy contract.
     fn size_reads(
         &self,
-        catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+        catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
         resource_group: &str,
         ids: &[i64],
         need_column_lengths: bool,
@@ -526,7 +510,7 @@ type SizeReads = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);
 
 struct ProviderSizeReads<'a> {
     provider: &'a ClusterTableStorageStatsProvider,
-    catalog: &'a tidb_exec::cluster_catalog::ClusterCatalog,
+    catalog: &'a tidb_cluster::cluster_catalog::ClusterCatalog,
     resource_group: &'a str,
     need_column_lengths: bool,
     reads: RefCell<Option<Result<SizeReads, String>>>,
@@ -981,9 +965,13 @@ pub struct ClusterSessionFactory {
     processes: ProcessRegistry,
     /// Domain lifetime: independent of each connection's rebuilt catalog.
     plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
-    /// The coprocessor this node's sessions serve base-table scans with, when
-    /// it was given one. `None` keeps every scan on the raw key/value path.
-    cop_scans: Option<Arc<dyn PushdownScanner>>,
+    /// Go `kv.Storage.GetMPPClient()`: the TiFlash MPP client this node's
+    /// sessions serve columnar reads with, when the node has one.
+    mpp_client: Option<Arc<dyn tidb_txnkv::MppClient>>,
+    /// Go `kv.Storage.GetClient()`: the coprocessor client this node's
+    /// sessions send built requests through, when it was given one. `None`
+    /// keeps every scan on the raw key/value path.
+    kv_client: Option<Arc<dyn tidb_txnkv::Client>>,
     /// This node's server-info syncer, which
     /// `information_schema.TIDB_SERVERS_INFO` reads. `None` leaves that
     /// table empty, which is the honest answer for a node that never
@@ -1034,6 +1022,9 @@ pub struct ClusterSessionFactory {
     /// storage seam, so building ~700 restored tables happens once per DDL
     /// instead of once per CONNECTION (~30MB retained each before this).
     session_kv_cache: Arc<Mutex<KvTableTemplates>>,
+    /// The store's regions every session of this node reads (Go
+    /// `kv.SplittableStore` and the region cache).
+    region_store: Option<Arc<dyn tidb_executor::region_map::RegionStore>>,
     /// Go Domain's single workload-repository worker.
     workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
@@ -1065,6 +1056,8 @@ pub struct ClusterSessionFactory {
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
+    /// Go `Domain.LoadSigningCertLoop`'s reload thread.
+    signing_cert_loop: std::sync::OnceLock<SigningCertLoop>,
     /// Go's process-global approximate table-count cache.
     approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
     /// Go StatsHandle's one auto-analyze priority queue. The refresher creates
@@ -1089,16 +1082,24 @@ impl ClusterSessionFactory {
         self
     }
 
+    /// The factory behind the `Arc` its internal sessions (restricted SQL,
+    /// the binding and statistics maintenance) are opened through: Go's
+    /// domain owns its session pool for its whole life.
+    #[must_use]
+    pub fn shared(mut self) -> Arc<Self> {
+        Arc::new_cyclic(|factory| {
+            self.binding_session_factory = factory.clone();
+            self
+        })
+    }
+
     /// Install the node-owned global-binding authority before opening sessions.
     pub fn with_bindings(
         mut self,
         bindings: Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>,
     ) -> Arc<Self> {
-        let factory = Arc::new_cyclic(|factory| {
-            self.bindings = Some(Arc::clone(&bindings));
-            self.binding_session_factory = factory.clone();
-            self
-        });
+        self.bindings = Some(Arc::clone(&bindings));
+        let factory = self.shared();
         bindings.attach_session_pool(Arc::new(binding_maintenance::BindingSessions::new(
             &factory,
         )));
@@ -1160,7 +1161,8 @@ impl ClusterSessionFactory {
             processes: ProcessRegistry::default(),
             plan_cache_invalidation: Arc::default(),
             auto_ids,
-            cop_scans: None,
+            mpp_client: None,
+            kv_client: None,
             server_info: None,
             server_identity: None,
             connection_ids: crate::domain::session_api::new_connection_id_allocator(
@@ -1183,6 +1185,7 @@ impl ClusterSessionFactory {
             schema_validator: None,
             stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
+            region_store: None,
             workload_repository: std::sync::OnceLock::new(),
             stats_usage,
             stats_usage_workers: std::sync::OnceLock::new(),
@@ -1196,6 +1199,7 @@ impl ClusterSessionFactory {
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
+            signing_cert_loop: std::sync::OnceLock::new(),
             approximate_table_counts,
             auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),
             auto_analyze_refresher: std::sync::OnceLock::new(),
@@ -1220,7 +1224,8 @@ impl ClusterSessionFactory {
 
     /// What every connection's session gets once it is opened, whoever opens
     /// it (Go `createSessionWithOpt`): its connection id, its process-list
-    /// entry, the privilege cache and the global-binding writer.
+    /// entry, the privilege cache, the domain's services and the
+    /// global-binding writer.
     fn attach_connection(
         &self,
         session: &mut Session,
@@ -1231,6 +1236,19 @@ impl ClusterSessionFactory {
         process.transaction_observer().use_external_owner();
         session.attach_process(connection_id, process);
         session.attach_privileges(self.privileges.clone());
+        session.install_domain_services(crate::domain_services::DomainServices {
+            ddl: Arc::new(ClusterDdlService {
+                ddl: Arc::clone(&self.ddl),
+                catalog: Arc::clone(&self.catalog),
+            }),
+            accounts: Arc::new(ClusterAccountService {
+                accounts: Arc::clone(&self.accounts),
+                factory: self.binding_session_factory.clone(),
+            }),
+            sysvars: Arc::new(ClusterSysvarService(Arc::clone(&self.sysvars))),
+            analyze: self.analyze_service(),
+            stats: self.stats_statement_service(),
+        });
         if let Some(bindings) = &self.bindings {
             session.set_global_binding_cache(bindings.cache());
             session.set_global_binding_writer(Arc::new(InternalBindingWriter {
@@ -1251,7 +1269,9 @@ impl ClusterSessionFactory {
         let connection_id = NEXT_SYSTEM_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
         let mut session = self.open_session(SessionContext {
             connection_id,
-            peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+            peer_addr: crate::domain::client_socket::PeerAddress::Tcp(
+                "127.0.0.1:0".parse().expect("loopback socket address"),
+            ),
             identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
             client_found_rows: false,
             secure_transport: false,
@@ -1281,7 +1301,9 @@ impl ClusterSessionFactory {
                 let session = factory
                     .open_session(SessionContext {
                         connection_id,
-                        peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                        peer_addr: crate::domain::client_socket::PeerAddress::Tcp(
+                "127.0.0.1:0".parse().expect("loopback socket address"),
+            ),
                         identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                         client_found_rows: false,
                         secure_transport: false,
@@ -1354,7 +1376,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         });
         let _ = self
             .historical_stats_runtime
@@ -1362,6 +1384,14 @@ impl ClusterSessionFactory {
                 Arc::clone(&self.historical_stats_worker),
                 handle,
             ));
+    }
+
+    /// Go `Domain.LoadSigningCertLoop`: binds the session-token signing
+    /// certificate and reloads it periodically so a rotated one is picked up.
+    pub fn load_signing_cert_loop(&self, signing_cert: &str, signing_key: &str) {
+        tidb_sessionstates::set_cert_path(signing_cert);
+        tidb_sessionstates::set_key_path(signing_key);
+        let _ = self.signing_cert_loop.get_or_init(SigningCertLoop::start);
     }
 
     /// Pinned Go `StatsHandle.DumpHistoricalStatsBySnapshot` over the live
@@ -1376,7 +1406,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .dump_historical_stats_by_snapshot(database_name, table, snapshot_ts)
     }
@@ -1388,7 +1418,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .clear_outdated_history_stats()
     }
@@ -1400,7 +1430,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_delete_analyze_jobs(
@@ -1443,7 +1473,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
@@ -1481,7 +1511,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
@@ -1501,7 +1531,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
-            auto_ids: Some(Arc::clone(&self.auto_ids)),
+            auto_ids: Arc::clone(&self.auto_ids),
         }
         .gc_stats(stats_lease, ddl_lease);
         self.check_auto_analyze_windows_at(Utc::now());
@@ -1818,7 +1848,7 @@ impl ClusterSessionFactory {
                 );
                 for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&updates) {
                     let ((), mutations) =
-                        tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                        tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
                             &staged,
                             |retry_ts| {
@@ -1826,7 +1856,7 @@ impl ClusterSessionFactory {
                                     Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
                                     None => transaction.snapshot_for(true),
                                 }?;
-                                Ok(tidb_exec::cluster_table_storage::overlay_staged_mutations(
+                                Ok(tidb_cluster::cluster_table_storage::overlay_staged_mutations(
                                     snapshot, &staged,
                                 ))
                             },
@@ -1856,7 +1886,7 @@ impl ClusterSessionFactory {
                             },
                         )
                         .map_err(|error| error.to_string())?;
-                    tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations)
+                    tidb_cluster::cluster_table_storage::stage_mutations(&staged, mutations)
                         .map_err(|error| error.to_string())?;
                 }
                 Ok::<_, String>(updates)
@@ -1898,7 +1928,7 @@ impl ClusterSessionFactory {
                         let staged = MutationBuffer::new();
                         transaction.bind_mutation_buffer(&staged);
                         let ((modify_count, count), lock_mutations) =
-                            tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |read_ts| match read_ts {
@@ -1926,10 +1956,10 @@ impl ClusterSessionFactory {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_exec::cluster_table_storage::stage_mutations(&staged, lock_mutations)
+                        tidb_cluster::cluster_table_storage::stage_mutations(&staged, lock_mutations)
                             .map_err(|error| error.to_string())?;
                         let ((), replace_mutations) =
-                            tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |retry_ts| match retry_ts {
@@ -1961,7 +1991,7 @@ impl ClusterSessionFactory {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_exec::cluster_table_storage::stage_mutations(
+                        tidb_cluster::cluster_table_storage::stage_mutations(
                             &staged,
                             replace_mutations,
                         )
@@ -2056,30 +2086,36 @@ impl ClusterSessionFactory {
         &self.stats
     }
 
-    /// Serves this node's base-table scans through `scanner`, so a `WHERE`
-    /// is evaluated at the region instead of after the range's bytes have
-    /// crossed the network.
+    /// Gives this node's sessions the store's TiFlash MPP client (Go
+    /// `kv.Storage.GetMPPClient()`), which serves their TiFlash reads.
+    #[must_use]
+    pub fn with_mpp_client(mut self, mpp: Arc<dyn tidb_txnkv::MppClient>) -> Self {
+        self.mpp_client = Some(mpp);
+        self
+    }
+
+    /// Gives this node's sessions the store's coprocessor client (Go
+    /// `kv.Storage.GetClient()`), which serves their base-table scans, so a
+    /// `WHERE` is evaluated at the region instead of after the range's bytes
+    /// have crossed the network.
     ///
     /// The staged-write half is untouched: a session's uncommitted rows are
     /// merged client-side and re-tested by the same predicate (see
     /// [`tidb_executor::remote_scan`]).
     #[must_use]
-    pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
-        self.cop_scans = Some(scanner);
+    pub fn with_kv_client(mut self, client: Arc<dyn tidb_txnkv::Client>) -> Self {
+        self.kv_client = Some(client);
         self
     }
 
-    /// Hands every session catalog the store's regions (Go
-    /// `kv.SplittableStore` and the region cache).
+    /// Hands every session the store's regions (Go `kv.SplittableStore`
+    /// and the region cache).
     #[must_use]
     pub fn with_region_store(
-        self,
+        mut self,
         regions: Arc<dyn tidb_executor::region_map::RegionStore>,
     ) -> Self {
-        self.session_kv_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .set_region_store(regions);
+        self.region_store = Some(regions);
         self
     }
 
@@ -2208,7 +2244,7 @@ impl ClusterSessionFactory {
     /// `/schema` routes. Go answers those from `GetLatest()` per request, so
     /// this reads the live pointer rather than a captured snapshot.
     #[must_use]
-    pub fn catalog_snapshot(&self) -> tidb_exec::cluster_catalog::ClusterCatalog {
+    pub fn catalog_snapshot(&self) -> tidb_cluster::cluster_catalog::ClusterCatalog {
         (*self.catalog.load()).clone()
     }
 
@@ -2578,9 +2614,8 @@ struct ClusterHistoricalStatsHandle {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
     global_vars: GlobalSysvars,
-    /// The node's live row-ID allocators for new rows; `None` reserves
-    /// inside each plan instead.
-    auto_ids: Option<Arc<dyn TableAutoIds>>,
+    /// The node's live row-ID allocators for new rows.
+    auto_ids: Arc<dyn TableAutoIds>,
 }
 
 #[derive(Clone, Copy)]
@@ -2599,10 +2634,7 @@ impl ClusterHistoricalStatsHandle {
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let read_ts = snapshot.start_ts();
-        let mut meta = SnapshotMetaSnapshot::new(snapshot);
-        if let Some(ids) = &self.auto_ids {
-            meta = meta.with_row_ids(Arc::clone(ids));
-        }
+        let mut meta = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&self.auto_ids));
         let plan = build(&mut meta, read_ts)?;
         self.transactions
             .commit_optimistic_mutations(
@@ -3134,7 +3166,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let create_time = tidb_exec::mysql_bootstrap::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
             let ((), mutations) =
-                tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
+                tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
                     transaction.start_ts(),
                     &staged,
                     |read_ts| match read_ts {
@@ -3152,10 +3184,8 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                         )
                     },
                     |snapshot, _start_ts| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        if let Some(ids) = &row_ids {
-                            snapshot = snapshot.with_row_ids(Arc::clone(ids));
-                        }
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot)
+                            .with_row_ids(Arc::clone(&row_ids));
                         let plan =
                             tidb_exec::cluster_stats_write::plan_historical_stats_data_block(
                                 &mut snapshot,
@@ -3171,11 +3201,47 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     },
                 )
                 .map_err(|error| error.to_string())?;
-            tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations)
+            tidb_cluster::cluster_table_storage::stage_mutations(&staged, mutations)
                 .map_err(|error| error.to_string())?;
         }
         transaction.commit(&staged).map_err(|error| error.message)?;
         Ok(version)
+    }
+}
+
+/// The thread of Go `Domain.LoadSigningCertLoop`, stopped when the node is
+/// (Go's `do.exit`).
+struct SigningCertLoop {
+    exit: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SigningCertLoop {
+    fn start() -> Self {
+        let (exit, exited) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("load-signing-cert-loop".to_owned())
+            .spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                    exited.recv_timeout(tidb_sessionstates::get_load_cert_interval())
+                {
+                    tidb_sessionstates::reload_signing_cert();
+                }
+            })
+            .ok();
+        Self {
+            exit: Some(exit),
+            thread,
+        }
+    }
+}
+
+impl Drop for SigningCertLoop {
+    fn drop(&mut self) {
+        drop(self.exit.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -3399,7 +3465,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_restricted_sql(identity.is_internal());
         session.set_user(
             format!("{}@{}", identity.username(), identity.host()),
-            format!("{}@{}", identity.username(), context.peer_addr.ip()),
+            format!("{}@{}", identity.username(), context.peer_addr.host()),
         );
         session.set_client_found_rows(context.client_found_rows);
         session.set_secure_transport(context.secure_transport);
@@ -3422,7 +3488,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             self.processes.register(
                 context.connection_id,
                 identity.username().to_owned(),
-                context.peer_addr.to_string(),
+                context.peer_addr.process_host(),
                 session.current_database().to_owned(),
                 Some(Arc::new(ConnectionKillTarget::new(
                     context.cancellation.clone(),
@@ -3458,26 +3524,26 @@ impl QuerySessionFactory for ClusterSessionFactory {
     }
 }
 
-struct ClusterLocalTemporaryIds {
+struct ClusterGlobalIds {
     transactions: Arc<dyn ClusterTransactions>,
     global_vars: GlobalSysvars,
 }
 
-impl std::fmt::Debug for ClusterLocalTemporaryIds {
+impl std::fmt::Debug for ClusterGlobalIds {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ClusterLocalTemporaryIds")
+        f.write_str("ClusterGlobalIds")
     }
 }
 
-impl tidb_executor::driver::LocalTemporaryTableIdAllocator for ClusterLocalTemporaryIds {
-    fn allocate(&self) -> Result<i64, tidb_executor::DriverError> {
+impl crate::GlobalIdGenerator for ClusterGlobalIds {
+    fn gen_global_id(&self) -> Result<i64, tidb_executor::DriverError> {
         let allocate_once = || -> Result<i64, SqlQueryError> {
             let snapshot = self
                 .transactions
                 .open_snapshot("default")
                 .map_err(SqlQueryError::unknown)?;
             let read_ts = snapshot.start_ts();
-            let (id, mutation) = tidb_exec::ddl_job_submit::reserve_global_id(
+            let (id, mutation) = tidb_ddl::ddl_job_submit::reserve_global_id(
                 &mut SnapshotMetaSnapshot::new(snapshot),
             )
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -3527,8 +3593,11 @@ impl ClusterSessionFactory {
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
         let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
-        if let Some(scanner) = self.cop_scans.as_ref() {
-            storage = storage.with_remote_scanner(Arc::clone(scanner));
+        if let Some(mpp) = self.mpp_client.as_ref() {
+            storage = storage.with_mpp_client(Arc::clone(mpp));
+        }
+        if let Some(client) = self.kv_client.as_ref() {
+            storage = storage.with_client(Arc::clone(client));
         }
         let loaded = self.catalog.load();
         // One fully built table set per schema version, shared the same way:
@@ -3561,14 +3630,15 @@ impl ClusterSessionFactory {
                     .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
             ),
         };
-        built
-            .catalog
-            .set_local_temporary_id_allocator(Arc::new(ClusterLocalTemporaryIds {
-                transactions: Arc::clone(&self.transactions),
-                global_vars: self.global_vars.clone(),
-            }));
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
+        session.set_global_id_generator(Arc::new(ClusterGlobalIds {
+            transactions: Arc::clone(&self.transactions),
+            global_vars: self.global_vars.clone(),
+        }));
+        if let Some(regions) = &self.region_store {
+            session.set_region_store(Arc::clone(regions));
+        }
         session.set_restricted_sql(true);
         {
             // Go `Txn(true)`: asking the bound statement snapshot for its
@@ -3674,6 +3744,7 @@ impl ClusterSessionFactory {
         }
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
+        session.set_info_schema(Arc::clone(&loaded));
         let accounts = Arc::clone(&self.accounts);
         session.set_privilege_change_notifier(Arc::new(move || {
             accounts.notify_all_privileges_changed();
@@ -3698,6 +3769,9 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
         }));
+        session.set_approximate_table_count_provider(
+            Arc::clone(&self.approximate_table_counts) as Arc<_>,
+        );
         session.set_analyze_status_provider(Arc::new(ClusterAnalyzeStatusProvider {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
@@ -3760,7 +3834,7 @@ impl ClusterSessionFactory {
         }
 
         session
-            .attach_globals(self.global_vars.clone())
+            .attach_globals(Arc::new(self.global_vars.clone()))
             .map_err(map_error)?;
 
         Ok(ClusterServerSession {
@@ -3778,8 +3852,6 @@ impl ClusterSessionFactory {
                     storage,
                     Arc::clone(&self.auto_ids),
                     statistics_loading,
-                    Arc::clone(&self.transactions),
-                    self.global_vars.clone(),
                     loaded.schema_version,
                     built.skipped,
                 ),
@@ -3797,17 +3869,11 @@ impl ClusterSessionFactory {
                 }),
             ),
             bindings: self.bindings.clone(),
-            stats_usage: Arc::clone(&self.stats_usage),
             global_vars: self.global_vars.clone(),
             buffer,
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
-            accounts: Arc::clone(&self.accounts),
-            system_sessions: self.binding_session_factory.clone(),
-            sysvars: Arc::clone(&self.sysvars),
             analyze: Arc::clone(&self.analyze),
-            approximate_table_counts: Arc::clone(&self.approximate_table_counts),
-            stats_lock: Arc::clone(&self.stats_lock),
             catalog: Arc::clone(&self.catalog),
             stats: Arc::clone(&self.stats),
             auto_ids: Arc::clone(&self.auto_ids),
@@ -3829,10 +3895,10 @@ fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError
 /// read's storage error with a SQL identity (`ErrTxnAbortedByGC` for a
 /// timestamp behind the txn safe point) is returned unwrapped.
 fn historical_catalog_error(
-    error: tidb_exec::cluster_catalog::ClusterCatalogError,
+    error: tidb_cluster::cluster_catalog::ClusterCatalogError,
 ) -> tidb_executor::DriverError {
     match error {
-        tidb_exec::cluster_catalog::ClusterCatalogError::Sql(error) => {
+        tidb_cluster::cluster_catalog::ClusterCatalogError::Sql(error) => {
             tidb_executor::DriverError::Mysql(error)
         }
         other => tidb_executor::DriverError::unsupported(other.to_string()),
@@ -4684,7 +4750,9 @@ impl tidb_workloadrepo::SessionPool for WorkloadRepositorySessionPool {
         let session = factory
             .open_session(SessionContext {
                 connection_id,
-                peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                peer_addr: crate::domain::client_socket::PeerAddress::Tcp(
+                "127.0.0.1:0".parse().expect("loopback socket address"),
+            ),
                 identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                 client_found_rows: false,
                 secure_transport: false,
@@ -4895,8 +4963,6 @@ pub struct ClusterServerSession {
     /// the snapshot slot its tables read through and the catalog follower.
     store: StoreSession<catalog_follower::CatalogFollower>,
     bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
-    /// Go Domain's node-global pending statistics deltas.
-    stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     /// Process-global variables consulted while persisting statistics deltas.
     global_vars: GlobalSysvars,
     /// This connection's staged writes, published by `COMMIT` (or by the end
@@ -4905,22 +4971,9 @@ pub struct ClusterServerSession {
     transactions: Arc<dyn ClusterTransactions>,
     /// The route a stored-schema change takes; see [`ClusterDdl`].
     ddl: Arc<dyn ClusterDdl>,
-    /// The route a stored-account change takes; see
-    /// [`crate::domain::cluster_account_seam`].
-    accounts: Arc<dyn ClusterAccountWriter>,
-    /// This node, whose domain pool an account statement takes its system
-    /// session from (Go `GetSysSession`).
-    system_sessions: Weak<ClusterSessionFactory>,
-    /// The route a `SET GLOBAL` change takes; see
-    /// [`crate::domain::cluster_sysvar_seam`].
-    sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::domain::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
-    /// Go's node-global `pdhelper.GlobalPDHelper`, shared by SHOW and ANALYZE.
-    approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
-    /// The route a persisted statistics-lock operation takes.
-    stats_lock: Arc<dyn ClusterStatsLock>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The node's statistics, republished on its own cadence by the stats
@@ -5170,7 +5223,7 @@ impl ClusterServerSession {
     /// same error is not filed twice.
     fn record_statement_failure(&mut self, error: SqlQueryError) -> SqlQueryError {
         self.store.session
-            .record_ddl_failure(error.code, error.message.clone());
+            .record_ddl_failure(error.code, error.message.clone(), error.identity);
         error
     }
 
@@ -5297,6 +5350,7 @@ impl ClusterServerSession {
         execute: impl FnOnce(&mut Self) -> Result<WriteOutcome, SqlQueryError>,
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.store.session.begin_routed_statement_observation(sql, stmt);
+        self.store.session.observe_precompiled_privilege_tables();
         let result = execute(self);
         self.store.session.finish_routed_statement_observation_with_error(
             result.is_ok(),
@@ -5437,46 +5491,57 @@ impl ClusterServerSession {
         self.store.follower.rebuild(&mut self.store.session);
     }
 
-    /// Decides what this mode does with a statement that changes stored state:
-    /// run it as a cluster catalog change, or refuse it with its own reason.
-    ///
-    /// [`StatementRoute::Ordinary`] means the statement changes nothing stored
-    /// and takes its ordinary path. Every refusal is specific, because the
-    /// reasons are: an `ALTER` is a DDL shape the cluster path cannot express,
-    /// a `CREATE TABLE` with a foreign key is a clause it refuses by name, and
-    /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
-    /// not encode (which it reports at persist time, where it knows).
-    /// Routes one parsed statement. Go parses a command once
-    /// (`session.ParseSQL`) and every question after that -- what stored
-    /// state it changes, which admission it needs -- reads that one node;
-    /// this takes the node the door parsed, never the text again.
-    fn schema_route(&mut self, stmt: &tidb_ast::Stmt) -> Result<StatementRoute, SqlQueryError> {
+    /// Go `Compile` then `executorBuilder.build`: the plan the statement
+    /// compiles to (preprocess, `PlanBuilder.Build`, `CheckPrivilege`) picks
+    /// the executor this node runs it with ([`Self::route_for`]).
+    fn compile_route(&mut self, stmt: &tidb_ast::Stmt) -> Result<StatementRoute, SqlQueryError> {
         self.store.session.restore_statement_variables();
-        let change = Session::stored_state_change_parsed(stmt);
-        self.schema_route_for_change(stmt, change)
+        let executor = self
+            .store
+            .session
+            .compile_statement(stmt)
+            .map_err(map_error)?;
+        self.route_for(stmt, executor)
     }
 
-    fn schema_route_for_change(
+    /// The executor this node runs a compiled statement with: the job-running
+    /// DDL and the statistics executors are the node's; everything else is
+    /// the session's own statement path ([`StatementRoute::Ordinary`]).
+    fn route_for(
         &mut self,
         stmt: &tidb_ast::Stmt,
-        change: StoredStateChange,
+        executor: CompiledExecutor,
     ) -> Result<StatementRoute, SqlQueryError> {
-        match change {
-            StoredStateChange::None => Ok(StatementRoute::Ordinary),
-            StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
-            StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
-            StoredStateChange::Statistics => {
+        // The BDR role lives in the cluster's meta key; the session answers
+        // from the store this node installed. Without one, answering from
+        // the node's own catalog would report or set a role no other node
+        // sees.
+        if matches!(stmt, Stmt::Admin(admin) if matches!(
+            admin.as_ref(),
+            tidb_ast::AdminStmt::SetBdrRole(_)
+                | tidb_ast::AdminStmt::UnsetBdrRole
+                | tidb_ast::AdminStmt::ShowBdrRole
+        )) && !self.store.session.has_bdr_role_store()
+        {
+            return Err(SqlQueryError::unknown(
+                "ADMIN SET/UNSET/SHOW BDR ROLE needs this node's TiKV meta store",
+            ));
+        }
+        match executor {
+            // Go `SimpleExec.Next` switches on the statement node.
+            CompiledExecutor::Simple => {
                 if let Some(targets) = self.store.session.flush_stats_delta_targets(stmt) {
                     return Ok(StatementRoute::FlushStatsDelta(targets));
-                }
-                if prepare_cluster_load_stats_parsed(stmt).is_some() {
-                    return Ok(StatementRoute::LoadStats);
                 }
                 if let Some(physical_ids) =
                     self.store.session.drop_stats_ids(stmt).map_err(map_error)?
                 {
                     return Ok(StatementRoute::DropStats(physical_ids));
                 }
+                Ok(StatementRoute::Ordinary)
+            }
+            CompiledExecutor::LoadStats => Ok(StatementRoute::LoadStats),
+            CompiledExecutor::Analyze => {
                 match prepare_cluster_analyze_parsed(stmt, self.store.session.current_database()) {
                     Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
                     Ok(_) => Err(SqlQueryError::unknown(
@@ -5487,17 +5552,7 @@ impl ClusterServerSession {
                     )),
                 }
             }
-            // The role lives in the cluster's meta key; the session answers
-            // from the store this node installed. Without one, answering from
-            // the node's own catalog would report or set a role no other node
-            // sees.
-            StoredStateChange::BdrRole if self.store.session.has_bdr_role_store() => {
-                Ok(StatementRoute::Ordinary)
-            }
-            StoredStateChange::BdrRole => Err(SqlQueryError::unknown(
-                "ADMIN SET/UNSET/SHOW BDR ROLE needs this node's TiKV meta store",
-            )),
-            StoredStateChange::StatsLock => {
+            CompiledExecutor::StatsLock => {
                 match prepare_cluster_stats_lock_parsed(
                     stmt,
                     self.store.session.current_database(),
@@ -5511,349 +5566,294 @@ impl ClusterServerSession {
                     )),
                 }
             }
-            StoredStateChange::Schema => {
-                self.store.session
-                    .validate_ddl_preprocess(stmt)
+            // Go `DDLExec.Next`: a statement the session's `DDLExec` answers
+            // returns before `NewTxnInStmt`; every other DDL commits the open
+            // transaction first and then meets the DDL executor's checks
+            // ([`Self::run_ddl_exec`]).
+            CompiledExecutor::Ddl => match stmt {
+                Stmt::Ddl(ddl) => match self.store.session.ddl_exec_next(ddl) {
+                    crate::ddl_exec::DdlExecNext::Job
+                    | crate::ddl_exec::DdlExecNext::DropTableJob { .. } => {
+                        Ok(StatementRoute::DdlExec)
+                    }
+                    _ => Ok(StatementRoute::SessionDdl),
+                },
+                _ => Ok(StatementRoute::DdlExec),
+            },
+            CompiledExecutor::Other => Ok(StatementRoute::Ordinary),
+        }
+    }
+
+    /// Go `DDLExec.Next` after its `NewTxnInStmt` (`executor/ddl.go:151`):
+    /// the DDL executor's checks against this node's catalog and the
+    /// statement lowered to the job(s) the cluster runs. Every refusal here
+    /// comes after the implicit commit, as Go's do.
+    fn lower_ddl_exec(&mut self, stmt: &Stmt) -> Result<LoweredDdl, SqlQueryError> {
+        // Go `DDLExec.executeCleanupTableLock` after the planner's
+        // SUPER check: the `IsCleanup` unlock job, none when no named
+        // table is locked.
+        if let Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::CleanupTableLock(cleanup) = ddl.as_ref() {
+                let statement = self
+                    .store.session
+                    .cluster_cleanup_table_lock_statement(&cleanup.tables)
                     .map_err(map_error)?;
-                // Go `DDLExec.executeCleanupTableLock` after the planner's
-                // SUPER check: the `IsCleanup` unlock job, none when no named
-                // table is locked.
-                if let Stmt::Admin(admin) = stmt {
-                    if let tidb_ast::AdminStmt::CleanupTableLock(cleanup) = admin.as_ref() {
-                        self.store.session
-                            .require_statement_table_privileges(stmt)
-                            .map_err(map_error)?;
-                        let statement = self
+                return Ok(LoweredDdl::one(statement.unwrap_or(
+                    DdlStatement::AcceptedNoOp {
+                        schema: String::new(),
+                        table: String::new(),
+                        warning: None,
+                    },
+                )));
+            }
+        }
+        // Go `DDLExec.Next`: the DDL the session answers runs there;
+        // a DROP that also names LOCAL temporary tables runs the job
+        // for the rest and then drops them.
+        if let Stmt::Ddl(ddl) = stmt {
+            match self.store.session.ddl_exec_next(ddl) {
+                crate::ddl_exec::DdlExecNext::Job => {}
+                crate::ddl_exec::DdlExecNext::DropTableJob { persistent, local } => {
+                    let persistent = Stmt::Ddl(tidb_ast::NodeBox::new(
+                        tidb_ast::DdlStmt::DropTable(Box::new(persistent)),
+                    ));
+                    let context = self.store.session.ddl_statement_context();
+                    let ddl_context: tidb_ddl::cluster_ddl::DdlContext =
+                        std::sync::Arc::new(context.clone());
+                    let statement = prepare_cluster_ddl_parsed(
+                        &persistent,
+                        self.store.session.current_database(),
+                        &ddl_context,
+                    )
+                    .map_err(|error| {
+                        SqlQueryError::new(error.code, error.sql_state(), error.to_string())
+                            .with_identity(error.identity)
+                    })?
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown(
+                            "DROP TABLE has no cluster metadata operation",
+                        )
+                    })?;
+                    return Ok(LoweredDdl::DropTableJob { statement, local });
+                }
+                _ => unreachable!("the router sends session DDL to `run_session_ddl`"),
+            }
+        }
+        // The DDL executor's target checks; the ALTER spec walk's own
+        // refusals are the lowering's (`cluster_ddl`).
+        self.store.session.ddl_target_checks(stmt).map_err(map_error)?;
+        // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
+        // `enable-table-lock` on: the planner's privilege check, then
+        // `executor.LockTables`' checks against this node's catalog
+        // build the lock job; UNLOCK with nothing held submits none.
+        if tidb_config::config_tree::config::table_lock_enabled() {
+            if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+                match &**ddl {
+                    tidb_ast::DdlStmt::LockTables(locks) => {
+                        return self
                             .store.session
-                            .cluster_cleanup_table_lock_statement(&cleanup.tables)
-                            .map_err(map_error)?;
-                        return Ok(StatementRoute::Ddl(statement.unwrap_or(
-                            DdlStatement::AcceptedNoOp {
-                                schema: String::new(),
-                                table: String::new(),
-                                warning: None,
-                            },
-                        )));
+                            .cluster_lock_tables_statement(locks)
+                            .map(LoweredDdl::one)
+                            .map_err(map_error);
                     }
-                }
-                if self.store.session.is_local_temporary_ddl_parsed(stmt) {
-                    return Ok(StatementRoute::LocalTemporaryDdl);
-                }
-                if let Stmt::Ddl(ddl) = stmt {
-                    if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
-                        let (persistent, local) =
-                            self.store.session.split_local_temporary_drop(drop);
-                        if !local.is_empty() {
-                            let split = Stmt::Ddl(tidb_ast::NodeBox::new(
-                                tidb_ast::DdlStmt::DropTable(Box::new(persistent)),
-                            ));
-                            let context = self.store.session.ddl_statement_context();
-                            let statement = prepare_cluster_ddl_parsed(
-                                &split,
-                                self.store.session.current_database(),
-                                &context,
-                            )
-                            .map_err(|error| {
-                                SqlQueryError::new(error.code, error.sql_state(), error.to_string())
-                                    .with_identity(error.identity)
-                            })?
-                            .ok_or_else(|| {
-                                SqlQueryError::unknown(
-                                    "DROP TABLE has no cluster metadata operation",
-                                )
-                            })?;
-                            return Ok(StatementRoute::MixedTemporaryDrop { statement, local });
-                        }
+                    tidb_ast::DdlStmt::UnlockTables => {
+                        return Ok(LoweredDdl::one(
+                            self.store.session.cluster_unlock_tables_statement().unwrap_or(
+                                DdlStatement::AcceptedNoOp {
+                                    schema: String::new(),
+                                    table: String::new(),
+                                    warning: None,
+                                },
+                            ),
+                        ));
                     }
+                    _ => {}
                 }
-                // Go refuses three statement shapes with their OWN errors
-                // before any catalog work: `OPTIMIZE TABLE` (SimpleExec's
-                // `ErrOptimizeTableUnsupported`, 8200), `ADMIN REPAIR TABLE`
-                // outside REPAIR MODE (8215), and the `STATS_PERSISTENT`
-                // table option (the alter-table spec walk's generic
-                // unsupported-spec 8200). The lowering cannot express any
-                // of the three, so their refusals fire here rather than
-                // collapsing into the generic route refusal.
-                // Go's preprocessor, planner privileges and the executor's
-                // target checks all run before a DDL is built or refused for
-                // its shape (an unsupported ALTER spec's 8200 is raised inside
-                // `executor.AlterTable`'s spec loop, after them).
-                self.store.session.ddl_target_checks(stmt).map_err(map_error)?;
-                if let Some((code, message)) = schema_shape_refusal(stmt) {
-                    return Err(SqlQueryError::new(code, *b"HY000", message));
-                }
-                // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
-                // `enable-table-lock` on: the planner's privilege check, then
-                // `executor.LockTables`' checks against this node's catalog
-                // build the lock job; UNLOCK with nothing held submits none.
-                if tidb_config::config_tree::config::table_lock_enabled() {
-                    if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-                        match &**ddl {
-                            tidb_ast::DdlStmt::LockTables(locks) => {
-                                self.store.session
-                                    .require_statement_table_privileges(stmt)
-                                    .map_err(map_error)?;
-                                return self
-                                    .store.session
-                                    .cluster_lock_tables_statement(locks)
-                                    .map(StatementRoute::Ddl)
-                                    .map_err(map_error);
-                            }
-                            tidb_ast::DdlStmt::UnlockTables => {
-                                return Ok(StatementRoute::Ddl(
-                                    self.store.session.cluster_unlock_tables_statement().unwrap_or(
-                                        DdlStatement::AcceptedNoOp {
-                                            schema: String::new(),
-                                            table: String::new(),
-                                            warning: None,
-                                        },
-                                    ),
-                                ));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                // go `SimpleExec.executeLockTables`/`executeUnlockTables`:
-                // with the experimental table lock disabled
-                // (`enable-table-lock=false`), both statements answer OK
-                // with Warning 1235 pointing at the configuration
-                // (`pkg/ddl/tests/serial/serial_test.go:1057`).
-                if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-                    let notice = match &**ddl {
-                        // Go's preprocessor resolves every named table, each
-                        // under its own schema, before the warning: the first
-                        // missing one is 1146 and no current database 1046.
-                        tidb_ast::DdlStmt::LockTables(locks) => {
-                            for lock in locks.iter() {
-                                self.store.session
-                                    .require_table_exists(&lock.table)
-                                    .map_err(map_error)?;
-                            }
-                            Some((
-                                String::new(),
-                                String::new(),
-                                "LOCK TABLES is not supported. To enable this experimental \
-                                 feature, set 'enable-table-lock' in the configuration file."
-                                    .to_owned(),
-                            ))
-                        }
-                        tidb_ast::DdlStmt::UnlockTables => Some((
-                            String::new(),
-                            String::new(),
-                            "UNLOCK TABLES is not supported. To enable this experimental \
-                             feature, set 'enable-table-lock' in the configuration file."
-                                .to_owned(),
-                        )),
-                        _ => None,
-                    };
-                    if let Some((schema, table, message)) = notice {
-                        return Ok(StatementRoute::Ddl(DdlStatement::AcceptedNoOp {
-                            schema,
-                            table,
-                            warning: Some((1235, message)),
-                        }));
-                    }
-                }
-                // Go `executor.AddResourceGroup` / `AlterResourceGroup` /
-                // `DropResourceGroup` check against the session's schema
-                // before the job; an `IF [NOT] EXISTS` that suppressed its
-                // error submits none.
-                if let Stmt::Ddl(ddl) = stmt {
-                    if matches!(
-                        &**ddl,
-                        tidb_ast::DdlStmt::CreateResourceGroup(_)
-                            | tidb_ast::DdlStmt::AlterResourceGroup(_)
-                            | tidb_ast::DdlStmt::DropResourceGroup(_)
-                    ) {
+            }
+        }
+        // go `SimpleExec.executeLockTables`/`executeUnlockTables`:
+        // with the experimental table lock disabled
+        // (`enable-table-lock=false`), both statements answer OK
+        // with Warning 1235 pointing at the configuration
+        // (`pkg/ddl/tests/serial/serial_test.go:1057`).
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            let notice = match &**ddl {
+                // Go's preprocessor resolves every named table, each
+                // under its own schema, before the warning: the first
+                // missing one is 1146 and no current database 1046.
+                tidb_ast::DdlStmt::LockTables(locks) => {
+                    for lock in locks.iter() {
                         self.store.session
-                            .require_statement_table_privileges(stmt)
+                            .require_table_exists(&lock.table)
                             .map_err(map_error)?;
-                        // DROP reads `mysql.user` for an account bound to the
-                        // group (Go `MatchUserResourceGroupName`), so the
-                        // admission reads through a statement snapshot.
-                        let resource_group = self.store.session.current_resource_group().to_owned();
-                        let statement = self.probe_statement(
-                            StatementReadShape::Unknown,
-                            &resource_group,
-                            |session| {
-                                session
-                                    .cluster_resource_group_statement(ddl)
-                                    .map_err(map_error)
-                            },
-                        )?;
-                        return Ok(StatementRoute::Ddl(statement.unwrap_or(
-                            DdlStatement::AcceptedNoOp {
-                                schema: String::new(),
-                                table: String::new(),
-                                warning: None,
-                            },
-                        )));
                     }
+                    Some((
+                        String::new(),
+                        String::new(),
+                        "LOCK TABLES is not supported. To enable this experimental \
+                         feature, set 'enable-table-lock' in the configuration file."
+                            .to_owned(),
+                    ))
                 }
-                // A CREATE VIEW resolves its body against this node's own
-                // catalog FIRST — a bad body fails here, at CREATE time,
-                // exactly where Go's `executeCreateView` preprocess fails —
-                // and the finished definition becomes the published
-                // `TableInfo`.
-                // The body's meta run reads through cluster storage, so it
-                // needs the same statement-snapshot lifecycle the PREPARE
-                // probe uses — work the client did not ask to run, reading
-                // at a fresh timestamp and unbinding afterwards.
+                tidb_ast::DdlStmt::UnlockTables => Some((
+                    String::new(),
+                    String::new(),
+                    "UNLOCK TABLES is not supported. To enable this experimental \
+                     feature, set 'enable-table-lock' in the configuration file."
+                        .to_owned(),
+                )),
+                _ => None,
+            };
+            if let Some((schema, table, message)) = notice {
+                return Ok(LoweredDdl::one(DdlStatement::AcceptedNoOp {
+                    schema,
+                    table,
+                    warning: Some((1235, message)),
+                }));
+            }
+        }
+        // Go `executor.AddResourceGroup` / `AlterResourceGroup` /
+        // `DropResourceGroup` check against the session's schema
+        // before the job; an `IF [NOT] EXISTS` that suppressed its
+        // error submits none.
+        if let Stmt::Ddl(ddl) = stmt {
+            if matches!(
+                &**ddl,
+                tidb_ast::DdlStmt::CreateResourceGroup(_)
+                    | tidb_ast::DdlStmt::AlterResourceGroup(_)
+                    | tidb_ast::DdlStmt::DropResourceGroup(_)
+            ) {
+                // DROP reads `mysql.user` for an account bound to the
+                // group (Go `MatchUserResourceGroupName`), so the
+                // admission reads through a statement snapshot.
                 let resource_group = self.store.session.current_resource_group().to_owned();
-                let resolved = self.probe_statement(
+                let statement = self.probe_statement(
                     StatementReadShape::Unknown,
                     &resource_group,
-                    |session| session.resolve_cluster_view_parsed(stmt).map_err(map_error),
+                    |session| {
+                        session
+                            .cluster_resource_group_statement(ddl)
+                            .map_err(map_error)
+                    },
                 )?;
-                if let Some((database, name, or_replace, view)) = resolved {
-                    let info = tidb_exec::cluster_ddl::build_view_table_info(&name, &view);
-                    return Ok(StatementRoute::Ddl(DdlStatement::CreateView {
-                        schema: database,
-                        name,
-                        or_replace,
-                        info: Box::new(info),
-                    }));
+                return Ok(LoweredDdl::one(statement.unwrap_or(
+                    DdlStatement::AcceptedNoOp {
+                        schema: String::new(),
+                        table: String::new(),
+                        warning: None,
+                    },
+                )));
+            }
+        }
+        // A CREATE VIEW resolves its body against this node's own
+        // catalog FIRST — a bad body fails here, at CREATE time,
+        // exactly where Go's `executeCreateView` preprocess fails —
+        // and the finished definition becomes the published
+        // `TableInfo`.
+        // The body's meta run reads through cluster storage, so it
+        // needs the same statement-snapshot lifecycle the PREPARE
+        // probe uses — work the client did not ask to run, reading
+        // at a fresh timestamp and unbinding afterwards.
+        let resource_group = self.store.session.current_resource_group().to_owned();
+        let resolved = self.probe_statement(
+            StatementReadShape::Unknown,
+            &resource_group,
+            |session| session.resolve_cluster_view_parsed(stmt).map_err(map_error),
+        )?;
+        if let Some((database, name, or_replace, view)) = resolved {
+            let info = tidb_executor::view::build_view_table_info(&name, &view);
+            return Ok(LoweredDdl::one(DdlStatement::CreateView {
+                schema: database,
+                name,
+                or_replace,
+                info: Box::new(info),
+            }));
+        }
+        let context = self.store.session.ddl_statement_context();
+        let ddl_context: tidb_ddl::cluster_ddl::DdlContext = std::sync::Arc::new(context.clone());
+        match prepare_cluster_ddl_parsed(
+            stmt,
+            self.store.session.current_database(),
+            &ddl_context,
+        ) {
+            Ok(Some(statement)) => {
+                // Warnings the LOWERING produced (an ignored CHECK
+                // constraint, Go ddl/create_table.go:1470) belong to
+                // this statement; Go appends them to the session's
+                // own context, so drain the lowering context's here.
+                self.store.session.begin_routed_statement_warnings();
+                self.store.session.drain_context_warnings(&context);
+                Ok(LoweredDdl::one(statement))
+            }
+            Ok(None) => {
+                if let Some(parts) = job_sequence_parts(stmt) {
+                    self.store.session.begin_routed_statement_warnings();
+                    self.store.session.drain_context_warnings(&context);
+                    return Ok(LoweredDdl::Sequence { parts, context });
                 }
-                let context = self.store.session.ddl_statement_context();
-                match prepare_cluster_ddl_parsed(
-                    stmt,
+                // Go's executor refuses a cached table before any
+                // shape this node does not plan.
+                tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
+                    &self.catalog.load(),
                     self.store.session.current_database(),
-                    &context,
-                ) {
-                    Ok(Some(statement)) => {
-                        // Warnings the LOWERING produced (an ignored CHECK
-                        // constraint, Go ddl/create_table.go:1470) belong to
-                        // this statement; Go appends them to the session's
-                        // own context, so drain the lowering context's here.
-                        self.store.session.begin_routed_statement_warnings();
-                        self.store.session.drain_context_warnings(&context);
-                        Ok(StatementRoute::Ddl(statement))
-                    }
-                    Ok(None) => {
-                        if let Some(parts) = self.lower_table_option_sequence(stmt, &context)? {
-                            self.store.session.begin_routed_statement_warnings();
-                            self.store.session.drain_context_warnings(&context);
-                            return Ok(StatementRoute::DdlSequence(parts));
-                        }
-                        // A missing cluster executor must not bypass Go's
-                        // shared DDL privilege admission. Keep the capability
-                        // refusal for callers that hold the required grants.
-                        self.store.session
-                            .require_statement_table_privileges(stmt)
-                            .map_err(map_error)?;
-                        // Go's executor refuses a cached table before any
-                        // shape this node does not plan.
-                        self.store.session
-                            .validate_cached_table_ddl(stmt)
-                            .map_err(map_error)?;
-                        Err(SqlQueryError::unknown(
-                            "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
-                             CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy \
-                             changes, index changes, and single-action ALTER INDEX changes only; \
-                             run this statement on a TiDB server",
-                        ))
-                    }
-                    // The refusal carries Go's own errno where it has one
-                    // (`Unsupported ...` is 8200), so a client can tell a
-                    // shape this server will not do from an internal failure.
-                    // Warnings the lowering raised BEFORE the refusal (a
-                    // 1681 display-width warning beside an 8216 auto-random
-                    // refusal) survive it: go's failed DDL leaves both in
-                    // the warning buffer.
-                    Err(refusal) => {
-                        self.store.session.begin_routed_statement_warnings();
-                        self.store.session.drain_context_warnings(&context);
-                        self.store.session
-                            .require_statement_table_privileges(stmt)
-                            .map_err(map_error)?;
-                        self.store.session
-                            .validate_cached_table_ddl(stmt)
-                            .map_err(map_error)?;
-                        Err(SqlQueryError::new(
-                            refusal.code,
-                            refusal.sql_state(),
-                            refusal.to_string(),
-                        ))
-                    }
-                }
+                    stmt,
+                )
+                .map_err(|error| {
+                    SqlQueryError::new(error.code, error.state, error.message)
+                        .with_identity(error.identity)
+                })?;
+                Err(unplanned_ddl())
+            }
+            // The refusal carries Go's own errno where it has one
+            // (`Unsupported ...` is 8200), so a client can tell a
+            // shape this server will not do from an internal failure.
+            // Warnings the lowering raised BEFORE the refusal (a
+            // 1681 display-width warning beside an 8216 auto-random
+            // refusal) survive it: go's failed DDL leaves both in
+            // the warning buffer.
+            Err(refusal) => {
+                self.store.session.begin_routed_statement_warnings();
+                self.store.session.drain_context_warnings(&context);
+                tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
+                    &self.catalog.load(),
+                    self.store.session.current_database(),
+                    stmt,
+                )
+                .map_err(|error| {
+                    SqlQueryError::new(error.code, error.state, error.message)
+                        .with_identity(error.identity)
+                })?;
+                Err(SqlQueryError::new(
+                    refusal.code,
+                    refusal.sql_state(),
+                    refusal.to_string(),
+                ))
             }
         }
     }
 
-    /// Performs one cluster account change.
-    ///
-    /// The statement itself is run by the session driver, against a *scratch*
-    /// account table read from the cluster inside this change's own
-    /// transaction -- so the driver's own validation and error messages are
-    /// what the client sees, and a statement that fails never reaches storage
-    /// nor the node's live table. See [`crate::domain::cluster_account_seam`] for why
-    /// that ordering is the whole failure story.
-    ///
-    /// An open transaction is committed first, for the same reason a DDL
-    /// commits one: MySQL and Go both commit implicitly before a statement
-    /// that changes stored state outside it.
-    fn run_account_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        if self.store.txn.explicit.is_some() || self.store.session.in_transaction() {
-            self.control_transaction("COMMIT")?;
+    /// Go `ExecStmt.handleNoDelayExecutor` for an account statement's
+    /// `Simple` plan, which `Compile` has checked
+    /// ([`Self::compile`]): where Go's executor calls `NewTxnInStmt`
+    /// (`GrantExec`, `RevokeExec`, `SimpleExec.autoNewTxn`) the node commits
+    /// the open transaction first, then the session runs the executor over
+    /// the domain's privilege tables (`Session::with_account_service`). SET
+    /// PASSWORD and SET DEFAULT ROLE leave the transaction open.
+    fn run_account_executor(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        if Session::simple_exec_new_txn_in_stmt(stmt) {
+            self.store.new_txn_in_stmt()?;
+            self.record_new_txn_in_stmt();
         }
-        self.record_new_txn_in_stmt();
-        // Go logs nothing for a successful account statement.
-        self.store.session
-            .run_account_statement_with(
-                sql,
-                &ClusterAccountService {
-                    accounts: Arc::clone(&self.accounts),
-                    factory: self.system_sessions.clone(),
-                },
-            )
+        self.store
+            .session
+            .run_parsed(stmt.clone(), sql)
             .map_err(map_error)?;
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
-    }
-
-    /// Performs one `SET GLOBAL` change.
-    ///
-    /// Mirrors [`Self::run_account_statement`] exactly, against the sysvar
-    /// seam instead of the account one: the assignments run through
-    /// [`crate::Session::apply_set`] against a *scratch*
-    /// [`GlobalSysvars`] read from the cluster inside this change's own
-    /// transaction, so an unknown variable, a wrong scope or a wrong value
-    /// is refused before anything is persisted, and a statement that fails
-    /// never reaches storage nor the node's live table.
-    ///
-    /// An open transaction stays open: Go's `SetGlobalSysVar` writes
-    /// `mysql.global_variables` through an internal session, so a
-    /// `SET GLOBAL` inside a transaction neither commits it nor loses its
-    /// `@@tidb_current_ts` (unlike a DDL or account statement, which commit).
-    fn run_global_var_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        let changed = self
-            .store.session
-            .run_global_var_statement_with(sql, &ClusterSysvarService(Arc::clone(&self.sysvars)))
-            .map_err(map_error)?;
-        // Go `SetExecutor.setSysVariable`'s line for each global assignment.
-        for name in &changed {
-            let mut value = self.store.session.vars().get_global(name).unwrap_or_default();
-            if name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI {
-                value = tidb_ast::redact_url(&value);
-            }
-            tidb_util::logutil::bg_logger().info(
-                "set global var",
-                &[
-                    tidb_log::Field::new(
-                        "conn",
-                        tidb_log::Value::U64(self.store.session.connection_id()),
-                    ),
-                    tidb_log::Field::new("name", tidb_log::Value::Str(name.clone())),
-                    tidb_log::Field::new("val", tidb_log::Value::Str(value)),
-                ],
-            );
-        }
-        // Go answers a `SET` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
@@ -6062,7 +6062,7 @@ impl ClusterServerSession {
                 let snapshot = transaction
                     .snapshot_for(false)
                     .map_err(SqlQueryError::unknown)?;
-                let snapshot = tidb_exec::cluster_table_storage::overlay_staged_mutations(
+                let snapshot = tidb_cluster::cluster_table_storage::overlay_staged_mutations(
                     snapshot,
                     &self.buffer,
                 );
@@ -6085,7 +6085,7 @@ impl ClusterServerSession {
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
             let snapshot =
-                tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+                tidb_cluster::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
                 &mut snapshot,
@@ -6191,7 +6191,7 @@ impl ClusterServerSession {
             .snapshot_for(false)
             .map_err(SqlQueryError::unknown)?;
         let snapshot =
-            tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+            tidb_cluster::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -6263,7 +6263,7 @@ impl ClusterServerSession {
                     None
                 } else {
                     Some(
-                        tidb_exec::system_row_write::origin_default(column, table.name.original())
+                        tidb_cluster::system_row_write::origin_default(column, table.name.original())
                             .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
                     )
                 };
@@ -6275,7 +6275,7 @@ impl ClusterServerSession {
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
             let snapshot =
-                tidb_exec::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
+                tidb_cluster::cluster_table_storage::overlay_staged_mutations(snapshot, &self.buffer);
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let Some((_, _, _, count, _)) = loader
                 .load_meta(&mut snapshot, physical_id)
@@ -6492,47 +6492,26 @@ impl ClusterServerSession {
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
     }
 
-    /// The single-option statements a multi-option `ALTER TABLE ... <table
-    /// options>` runs as, each lowered by the ordinary path; `None` unless
-    /// every part lowers, so a shape the node cannot run keeps its refusal.
-    fn lower_table_option_sequence(
-        &self,
-        stmt: &tidb_ast::Stmt,
+    /// One part of a [`LoweredDdl::Sequence`], lowered by the ordinary path
+    /// when its turn comes; its warnings join the statement's.
+    fn lower_sequence_part(
+        &mut self,
+        part: &Stmt,
         context: &tidb_executor::StmtContext,
-    ) -> Result<Option<Vec<DdlStatement>>, SqlQueryError> {
-        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
-            return Ok(None);
-        };
-        let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl else {
-            return Ok(None);
-        };
-        let Some(parts) = tidb_exec::cluster_ddl::split_table_option_alter(alter) else {
-            return Ok(None);
-        };
-        let mut lowered = Vec::with_capacity(parts.len());
-        for part in parts {
-            let part = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::AlterTable(
-                Box::new(part),
-            )));
-            match prepare_cluster_ddl_parsed(
-                &part,
-                self.store.session.current_database(),
-                context,
-            ) {
-                Ok(Some(statement)) => lowered.push(statement),
-                Ok(None) => return Ok(None),
-                // Lowering refuses before any part runs, where Go's loop
-                // would already have applied the earlier options.
-                Err(refusal) => {
-                    return Err(SqlQueryError::new(
-                        refusal.code,
-                        refusal.sql_state(),
-                        refusal.to_string(),
-                    ))
-                }
-            }
+    ) -> Result<DdlStatement, SqlQueryError> {
+        let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
+        let lowered =
+            prepare_cluster_ddl_parsed(part, self.store.session.current_database(), &ddl_context);
+        self.store.session.drain_context_warnings(context);
+        match lowered {
+            Ok(Some(statement)) => Ok(statement),
+            Ok(None) => Err(unplanned_ddl()),
+            Err(refusal) => Err(SqlQueryError::new(
+                refusal.code,
+                refusal.sql_state(),
+                refusal.to_string(),
+            )),
         }
-        Ok(Some(lowered))
     }
 
     /// Runs a statement whose stored-state change takes a route of its own
@@ -6550,25 +6529,11 @@ impl ClusterServerSession {
             // Go's DDL returns once this domain has loaded the new schema,
             // so the issuing session sees it at once, not at its next
             // statement.
-            StatementRoute::Ddl(statement) => self
-                .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
+            StatementRoute::DdlExec => self
+                .observe_routed_write(sql, stmt, |node| node.run_ddl_exec(sql, stmt))
                 .inspect(|_| self.rebuild_catalog_if_stale()),
-            StatementRoute::DdlSequence(statements) => self
-                .observe_routed_write(sql, stmt, |node| {
-                    node.run_ddl_sequence(sql, stmt, &statements)
-                })
-                .inspect(|_| self.rebuild_catalog_if_stale()),
-            StatementRoute::MixedTemporaryDrop { statement, local } => self
-                .observe_routed_write(sql, stmt, |node| {
-                    node.run_mixed_temporary_drop(sql, stmt, &statement, local)
-                }),
-            StatementRoute::LocalTemporaryDdl => self
-                .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt)),
-            StatementRoute::Accounts => {
-                self.observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))
-            }
-            StatementRoute::GlobalVars => {
-                self.observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))
+            StatementRoute::SessionDdl => {
+                self.observe_routed_write(sql, stmt, |node| node.run_session_ddl(sql, stmt))
             }
             StatementRoute::Analyze(tables) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
@@ -6600,58 +6565,225 @@ impl ClusterServerSession {
         outcome.map(Some)
     }
 
-    /// Runs a [`StatementRoute::DdlSequence`] the way Go's loop does: each
-    /// part is its own DDL, and the first failure ends the statement with
-    /// the earlier parts already applied.
-    fn run_ddl_sequence(
-        &mut self,
-        sql: &str,
-        parsed: &tidb_ast::Stmt,
-        statements: &[DdlStatement],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        let mut outcome = None;
-        for statement in statements {
-            outcome = Some(self.run_ddl(sql, parsed, statement)?);
-        }
-        Ok(outcome.expect("a table-option sequence has at least one part"))
-    }
-
-    fn run_ddl(
-        &mut self,
-        sql: &str,
-        parsed: &tidb_ast::Stmt,
-        statement: &DdlStatement,
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        // Go plans and checks DDL privileges before its implicit-commit
-        // executor boundary. Do the same while this connection's transaction
-        // is still intact: a denial must neither publish staged writes nor
-        // reach the cluster catalog authority.
+    /// Go `DDLExec.Next` for a DDL that runs as a job: `Compile` checked the
+    /// plan and its privileges and `ExecStmt` the `tidb_snapshot` write while
+    /// this connection's transaction was intact; `NewTxnInStmt` then commits
+    /// it, and only then does the DDL executor check the statement against
+    /// the catalog, lower it and run its job(s) -- a refusal from here on
+    /// leaves the earlier writes committed, as Go's does.
+    fn run_ddl_exec(&mut self, sql: &str, parsed: &Stmt) -> Result<WriteOutcome, SqlQueryError> {
         self.store.session
             .begin_ddl_statement(parsed)
             .map_err(map_error)?;
-        if self.store.txn.explicit.is_some() || self.store.session.in_transaction() {
-            self.control_transaction("COMMIT")?;
-        }
+        // Go `DDLExec.Next`'s `NewTxnInStmt` (`executor/ddl.go:151`).
+        self.store.new_txn_in_stmt()?;
         self.record_new_txn_in_stmt();
-        // The session owns the rest of the DDL path; this node supplies the
-        // service that publishes to the cluster.
-        let service = ClusterDdlService::new(Arc::clone(&self.ddl));
-        self.store.session
-            .run_ddl_statement(sql, parsed, statement, &service)
-            .map_err(map_error)?;
-        let created = std::mem::take(
-            &mut *service
-                .created_tables
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        self.pre_split_created_tables(&created);
+        match self.lower_ddl_exec(parsed)? {
+            LoweredDdl::Jobs(statements) => {
+                for statement in &statements {
+                    self.run_ddl_job(sql, parsed, statement)?;
+                }
+            }
+            LoweredDdl::Sequence { parts, context } => {
+                for part in &parts {
+                    let statement = self.lower_sequence_part(part, &context)?;
+                    self.run_ddl_job(sql, parsed, &statement)?;
+                }
+            }
+            LoweredDdl::DropTableJob { statement, local } => {
+                self.run_ddl_job(sql, parsed, &statement)?;
+                self.store
+                    .session
+                    .drop_local_temporary_tables(&local)
+                    .map_err(map_error)?;
+            }
+        }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
         })
+    }
+
+    /// One job through the DDL executor (`ddlExecutor.DoDDLJob`).
+    fn run_ddl_job(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        statement: &DdlStatement,
+    ) -> Result<(), SqlQueryError> {
+        if let DdlStatement::ModifySchemaSetTiFlashReplica {
+            name,
+            count,
+            labels,
+        } = statement
+        {
+            return self.modify_schema_set_tiflash_replica(sql, parsed, name, *count, labels);
+        }
+        // The session owns the rest of the DDL path; this node installed
+        // the service that publishes to the cluster.
+        let service = Arc::clone(&self.domain_services().ddl);
+        let created = self
+            .store
+            .session
+            .run_ddl_statement(sql, parsed, statement, service.as_ref())
+            .map_err(map_error)?;
+        // Go's executor pre-splits the table a CREATE TABLE published and
+        // the new identity `onTruncateTable` gave.
+        if matches!(
+            statement,
+            DdlStatement::CreateTable { .. }
+                | DdlStatement::CreateTableLike { .. }
+                | DdlStatement::TruncateTable { .. }
+        ) {
+            self.pre_split_created_tables(created.as_slice());
+        }
+        Ok(())
+    }
+
+    /// Go `ModifySchemaSetTiFlashReplica`: an `ActionSetTiFlashReplica` job
+    /// for each table of the database whose replica changes. A table TiFlash
+    /// cannot carry is a note and is skipped; a failed job is counted, not
+    /// returned; every 100 jobs (and after a timed-out wait) the loop waits
+    /// for the unavailable replicas to drop below
+    /// `tidb_batch_pending_tiflash_count`; a killed session stops it. The
+    /// totals are the statement's message.
+    fn modify_schema_set_tiflash_replica(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        name: &str,
+        count: u64,
+        labels: &[String],
+    ) -> Result<(), SqlQueryError> {
+        const CHECK_PENDING_TABLES_LIMIT: usize = 100;
+        let catalog = self.catalog.load();
+        let (schema, tables) =
+            tidb_ddl::cluster_ddl::alter_schema::schema_tiflash_replica_tables(&catalog, name)
+                .map_err(|error| map_error(crate::ddl_exec::ddl_error(&error)))?;
+        let ddl = Arc::clone(&self.domain_services().ddl);
+        tidb_ddl::cluster_ddl::alter_table::check_tiflash_replica_count(count, &|| {
+            ddl.tiflash_store_count()
+        })
+        .map_err(|error| map_error(crate::ddl_exec::ddl_error(&error)))?;
+        let total = tables.len();
+        let (mut succeeded, mut failed, mut skipped, mut one_fail) = (0_usize, 0_usize, 0_usize, 0_i64);
+        let threshold = self
+            .store
+            .session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_BATCH_PENDING_TIFLASH_COUNT)
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(4000);
+        let killer = self.store.session.sql_killer();
+        let (mut origin_version, mut pending_count, mut force_check) = (0_i64, 0_u32, false);
+        for table in tables {
+            if tidb_ddl_build::ddl_executor::is_session_done(&killer).0 {
+                return Ok(());
+            }
+            let current = table
+                .tiflash_replica
+                .as_ref()
+                .map(|replica| replica.read().clone());
+            if !tidb_ddl_build::ddl_executor::should_modify_tiflash_replica(
+                current.as_ref(),
+                count,
+                labels,
+            ) {
+                skipped += 1;
+                continue;
+            }
+            if let Err(error) = tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, table)
+            {
+                self.store.session.append_warning(
+                    tidb_util::context::WarningLevel::Note,
+                    error.code,
+                    error.message,
+                );
+                skipped += 1;
+                continue;
+            }
+            if (succeeded + failed) % CHECK_PENDING_TABLES_LIMIT == 0 || force_check {
+                let finished;
+                (finished, origin_version, pending_count, force_check) = self
+                    .wait_pending_tiflash_table_threshold(
+                        &killer,
+                        origin_version,
+                        pending_count,
+                        threshold,
+                    );
+                if finished {
+                    return Ok(());
+                }
+            }
+            let job = DdlStatement::SetTiFlashReplica {
+                schema: schema.clone(),
+                table: table.name.original().to_owned(),
+                count,
+                labels: labels.to_vec(),
+                reset_available: false,
+                hypo: false,
+            };
+            match self.run_ddl_job(sql, parsed, &job) {
+                Ok(()) => succeeded += 1,
+                Err(_) => {
+                    one_fail = table.id;
+                    failed += 1;
+                }
+            }
+        }
+        let fail_stmt = if failed > 0 {
+            format!("(including table {one_fail})")
+        } else {
+            String::new()
+        };
+        self.store.session.set_statement_message(format!(
+            "In total {total} tables: {succeeded} succeed, {failed} failed{fail_stmt}, {skipped} skipped"
+        ));
+        Ok(())
+    }
+
+    /// Go `waitPendingTableThreshold`: up to seven checks, three seconds
+    /// apart, of the unavailable TiFlash replicas in the latest schema
+    /// (`getPendingTiFlashTableCount`, recounted only on a new schema
+    /// version). Answers whether the session is done, the version and count
+    /// seen, and whether the wait timed out (a forced check next time).
+    fn wait_pending_tiflash_table_threshold(
+        &self,
+        killer: &tidb_util::sqlkiller::SqlKiller,
+        mut origin_version: i64,
+        mut pending_count: u32,
+        threshold: u32,
+    ) -> (bool, i64, u32, bool) {
+        const RETRY: usize = 7;
+        const WAIT: std::time::Duration = std::time::Duration::from_millis(3000);
+        for _ in 0..RETRY {
+            if tidb_ddl_build::ddl_executor::is_session_done(killer).0 {
+                return (true, origin_version, pending_count, false);
+            }
+            let latest = self.catalog.load();
+            if latest.schema_version != origin_version {
+                origin_version = latest.schema_version;
+                pending_count =
+                    tidb_ddl::cluster_ddl::alter_schema::pending_tiflash_table_count(&latest);
+            }
+            if pending_count < threshold {
+                return (false, origin_version, pending_count, false);
+            }
+            std::thread::sleep(WAIT);
+        }
+        (false, origin_version, pending_count, true)
+    }
+
+    /// The services [`ClusterSessionFactory::attach_connection`] installed on
+    /// this connection's session.
+    fn domain_services(&self) -> &crate::domain_services::DomainServices {
+        self.store
+            .session
+            .domain_services()
+            .expect("attach_connection installs the domain's services")
     }
 
     /// Go `sessiontxn.NewTxnInStmt` (`executor/ddl.go:151`, `simple.go:153`,
@@ -6673,9 +6805,7 @@ impl ClusterServerSession {
         {
             return;
         }
-        let Ok(regions) = self.store.session.region_store() else {
-            return;
-        };
+        let regions = self.store.session.region_store();
         let scatter_scope = self
             .store.session
             .vars()
@@ -6698,40 +6828,23 @@ impl ClusterServerSession {
         }
     }
 
-    fn run_mixed_temporary_drop(
-        &mut self,
-        sql: &str,
-        parsed: &Stmt,
-        statement: &DdlStatement,
-        local: Vec<Vec<String>>,
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        let outcome = self.run_ddl(sql, parsed, statement)?;
-        self.store.session
-            .drop_local_temporary_targets(local)
-            .map_err(map_error)?;
-        Ok(outcome)
-    }
-
     /// Executes DDL whose metadata belongs to this connection rather than to
     /// the cluster catalog.
-    fn run_local_temporary_ddl(
+    fn run_session_ddl(
         &mut self,
         sql: &str,
         parsed: &tidb_ast::Stmt,
     ) -> Result<WriteOutcome, SqlQueryError> {
         // Go returns before NewTxnInStmt for local CREATE and local-only DROP.
-        // Check before committing the cluster transaction; Session::run then
-        // owns the session-local table operation and observation.
+        // Check before committing the cluster transaction (the staleness
+        // check preceded `Compile`, which checked its privileges);
+        // Session::run then owns the session-local table operation and
+        // observation, its compile taking the node's plan.
         self.store.session
-            .validate_snapshot_statement(parsed)
+            .validate_snapshot_write(parsed)
             .map_err(map_error)?;
-        self.store.session
-            .require_statement_table_privileges(parsed)
-            .map_err(map_error)?;
-        if !self.store.session.ddl_preserves_transaction(parsed)
-            && (self.store.txn.explicit.is_some() || self.store.session.in_transaction())
-        {
-            self.control_transaction("COMMIT")?;
+        if !self.store.session.ddl_preserves_transaction(parsed) {
+            self.store.new_txn_in_stmt()?;
         }
         match self
             .store.session
@@ -6758,8 +6871,12 @@ impl QuerySession for ClusterServerSession {
         Some(&mut self.store.session)
     }
 
-    fn record_parse_failure(&mut self, code: u16, message: String) {
-        self.store.session.record_parse_failure_coded(code, message);
+    fn record_parse_failure(&mut self, error: &SqlQueryError) {
+        self.store.session.record_parse_failure_coded(
+            error.code,
+            error.message.clone(),
+            error.identity,
+        );
     }
 
     fn metrics_resource_group(&self) -> &str {
@@ -6845,7 +6962,7 @@ impl QuerySession for ClusterServerSession {
                 {
                     self.store
                         .session
-                        .record_ddl_failure(error.code, error.message.clone());
+                        .record_ddl_failure(error.code, error.message.clone(), error.identity);
                 }
                 Err(error)
             }
@@ -6968,7 +7085,7 @@ impl QuerySession for ClusterServerSession {
         self.store.session
             .warnings()
             .iter()
-            .map(|warning| warning.code)
+            .map(|warning| warning.code())
             .collect()
     }
 
@@ -7036,7 +7153,14 @@ impl QuerySession for ClusterServerSession {
             // Go's execution-time ones: PREPARE shows only its plan-cache
             // note, and EXECUTE routes the statement again.
             let warnings_before = self.store.session.warnings().len();
-            self.schema_route(prepared_ast.statement())?;
+            // Go's PREPARE preprocesses and builds the statement; its
+            // privileges are EXECUTE's.
+            let executor = self
+                .store
+                .session
+                .compile_statement_for_prepare(prepared_ast.statement())
+                .map_err(map_error)?;
+            self.route_for(prepared_ast.statement(), executor)?;
             self.store.session.truncate_warnings(warnings_before);
             // Keep ordinary DML's parsed tree as well.  The MySQL binary
             // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
@@ -7390,10 +7514,6 @@ impl QuerySession for ClusterServerSession {
 /// [`QuerySession::execute_stmt`] and by internal callers that know the
 /// statement's kind.
 impl ClusterServerSession {
-    pub(crate) fn record_write_failure(&mut self, code: u16, message: String) {
-        self.store.session.record_ddl_failure(code, message);
-    }
-
     pub(crate) fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
         let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
         self.local_infile_path_parsed(sql, &stmt)
@@ -7587,6 +7707,8 @@ impl ClusterServerSession {
             self.store.session.start_statement_transaction_scope();
         }
         self.store.session.clear_statement_message();
+        // No plan the previous statement compiled outlives it.
+        self.store.session.clear_precompiled_statement();
         // A statement without a query result leaves no result field names.
         self.store.session.last_result_output_names.clear();
         // Go resolves and plans against the current infoschema before it
@@ -7597,16 +7719,42 @@ impl ClusterServerSession {
 
     /// Go `executor.Compiler.Compile` as this node runs it: the plan kind
     /// that decides which executor runs the statement, as Go's
-    /// `executorBuilder.build` switches on the plan's type. Starts with
-    /// `checkSEMStmt`, as Go's `PlanBuilder.Build` does for every statement.
+    /// `executorBuilder.build` switches on the plan's type. Preceded by
+    /// `ExecuteStmt`'s `validateStatementReadOnlyInStaleness`
+    /// (`session.go:2485`), and starts with `checkSEMStmt`, as Go's
+    /// `PlanBuilder.Build` does for every statement.
     fn compile(&mut self, sql: &str, stmt: &Stmt) -> Result<CompiledStatement, SqlQueryError> {
+        self.store
+            .session
+            .validate_statement_read_only_in_staleness(stmt)
+            .map_err(map_error)?;
         self.store
             .session
             .check_sem_stmt(sql, stmt)
             .map_err(map_error)?;
-        // A stored-state change compiles to its lowered statement whatever
-        // answer shape it would otherwise have.
-        let route = self.schema_route(stmt)?;
+        self.store.session.restore_statement_variables();
+        // Go `buildDDL` builds a CREATE VIEW body, whose non-correlated
+        // subqueries `Build` evaluates (`EvalSubqueryFirstRow`), so that one
+        // DDL compiles with a statement snapshot to read through.
+        let executor = if matches!(stmt, Stmt::Ddl(ddl) if matches!(**ddl, tidb_ast::DdlStmt::CreateView(_)))
+        {
+            let resource_group = self.store.session.current_resource_group().to_owned();
+            self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
+                session.compile_statement(stmt).map_err(map_error)
+            })?
+        } else {
+            self.store
+                .session
+                .compile_statement(stmt)
+                .map_err(map_error)?
+        };
+        // An account statement's `SimpleExec` commits the user's transaction
+        // after `Compile` ([`Self::run_account_executor`]).
+        if executor == CompiledExecutor::Simple && Session::is_account_statement(stmt) {
+            return Ok(CompiledStatement::AccountSimple);
+        }
+        // The node's own executors answer whatever shape the plan has.
+        let route = self.route_for(stmt, executor)?;
         if !matches!(route, StatementRoute::Ordinary) {
             return Ok(CompiledStatement::StoredState(route));
         }
@@ -7638,6 +7786,9 @@ impl ClusterServerSession {
             // Go runs `SetExecutor` through the ordinary statement
             // lifecycle: a value's subquery reads the statement snapshot,
             // and a failure is recorded as the statement's error.
+            CompiledStatement::AccountSimple => self.observe_routed_write(sql, stmt, |node| {
+                node.run_account_executor(sql, stmt)
+            }),
             CompiledStatement::Set => self.observe_routed_write(sql, stmt, |node| {
                 let outcome = node.execute_ordinary_write_parsed(sql, stmt)?;
                 // SET autocommit=1 may commit the open transaction.
@@ -7714,7 +7865,24 @@ impl ClusterServerSession {
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        let route = self.schema_route(stmt)?;
+        self.store.session.clear_precompiled_statement();
+        self.store
+            .session
+            .validate_statement_read_only_in_staleness(stmt)
+            .map_err(map_error)?;
+        self.store.session.restore_statement_variables();
+        let executor = self
+            .store
+            .session
+            .compile_statement(stmt)
+            .map_err(map_error)?;
+        if executor == CompiledExecutor::Simple && Session::is_account_statement(stmt) {
+            self.observe_routed_write(sql, stmt, |node| node.run_account_executor(sql, stmt))?;
+            return Ok(QueryResult::new(Box::new(
+                crate::domain::pipeline_session::affected_rows_source(0),
+            )));
+        }
+        let route = self.route_for(stmt, executor)?;
         if self.run_routed_statement(route, sql, stmt)?.is_some() {
             return Ok(QueryResult::new(Box::new(
                 crate::domain::pipeline_session::affected_rows_source(0),
@@ -7883,18 +8051,8 @@ fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_executor::DriverError
 
 struct ClusterDdlService {
     ddl: Arc<dyn ClusterDdl>,
-    /// The tables a CREATE TABLE published, by id: Go's executor pre-splits
-    /// each once `DoDDLJob` succeeded (`preSplitAndScatterTable`).
-    created_tables: Mutex<Vec<i64>>,
-}
-
-impl ClusterDdlService {
-    fn new(ddl: Arc<dyn ClusterDdl>) -> Self {
-        Self {
-            ddl,
-            created_tables: Mutex::new(Vec::new()),
-        }
-    }
+    /// The node's latest schema (Go the DDL's `infoCache.GetLatest()`).
+    catalog: Arc<SharedClusterCatalog>,
 }
 
 impl crate::ddl_service::DdlService for ClusterDdlService {
@@ -7902,30 +8060,30 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         &self,
         statement: &DdlStatement,
         job_context: &tidb_executor::StmtContext,
-    ) -> Result<tidb_exec::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
-        let report = self.ddl.execute(statement, job_context).map_err(|error| {
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
+        self.ddl.execute(statement, job_context).map_err(|error| {
             tidb_executor::DriverError::Mysql(
                 tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
                     .with_identity_opt(error.identity),
             )
-        })?;
-        if let (
-            DdlStatement::CreateTable { .. }
-            | DdlStatement::CreateTableLike { .. }
-            // Go `onTruncateTable` pre-splits the new identity.
-            | DdlStatement::TruncateTable { .. },
-            tidb_exec::real_tikv_ddl::ClusterDdlReport::Applied {
-                created_id: Some(id),
-                ..
-            },
-        ) = (statement, &report)
-        {
-            self.created_tables
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(*id);
-        }
-        Ok(report)
+        })
+    }
+
+    fn check_cached_table_ddl(
+        &self,
+        stmt: &Stmt,
+        current_db: &str,
+    ) -> Result<(), tidb_executor::DriverError> {
+        tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
+            &self.catalog.load(),
+            current_db,
+            stmt,
+        )
+        .map_err(tidb_executor::DriverError::Mysql)
+    }
+
+    fn tiflash_store_count(&self) -> Result<u64, String> {
+        self.ddl.tiflash_store_count().map_err(|error| error.message)
     }
 }
 
@@ -7943,17 +8101,16 @@ fn detached_storage() -> ClusterTableStorage {
     ClusterTableStorage::new(MutationBuffer::new(), slot)
 }
 
-/// Builds MPP over the node's store (Go's `copr.MPPClient` over the
-/// `KVStore`).
+/// Go `copr.MPPClient` over the node's `KVStore`.
 #[must_use]
-pub fn build_tiflash_mpp_source(
-    authority: &tidb_exec::real_tikv_read::ProductionReadProcessAuthority,
+pub fn build_mpp_client(
+    authority: &tidb_cluster::real_tikv_read::ProductionReadProcessAuthority,
     schema_version: impl Fn() -> i64 + Send + Sync + 'static,
-) -> Option<tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource> {
-    Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
+) -> tidb_exec::mpp_client::TiFlashMppClient {
+    tidb_exec::mpp_client::TiFlashMppClient::new(
         authority.tikv_store().clone(),
         schema_version,
-    ))
+    )
 }
 
 /// Spawns the TiFlash replica availability poller over the node's catalog
@@ -7963,13 +8120,13 @@ pub fn build_tiflash_mpp_source(
 /// accordingly.
 #[must_use]
 pub fn build_tiflash_replica_poll(
-    catalog: std::sync::Arc<tidb_exec::catalog_watch::SharedCatalog>,
+    catalog: std::sync::Arc<tidb_cluster::catalog_watch::SharedCatalog>,
     pd_http_client: Option<tikv_client::pd_http::Client>,
     security: &tidb_pd_client::ClusterSecurity,
-    ddl: Arc<dyn tidb_exec::tiflash_replica_manager::TiFlashReplicaControl>,
-) -> Option<tidb_exec::tiflash_replica_manager::TiFlashReplicaPoller> {
+    ddl: Arc<dyn tidb_ddl::tiflash_replica_manager::TiFlashReplicaControl>,
+) -> Option<tidb_ddl::tiflash_replica_manager::TiFlashReplicaPoller> {
     let pd_http_client = pd_http_client?;
-    let result = tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::with_pd_http_client(
+    let result = tidb_ddl::tiflash_replica_manager::TiFlashReplicaManager::with_pd_http_client(
         catalog,
         ddl,
         pd_http_client,

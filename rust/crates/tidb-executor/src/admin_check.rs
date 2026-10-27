@@ -44,10 +44,11 @@
 //! ROW -> INDEX; index-heavy mismatches and equal counts use INDEX -> ROW.
 //! `ADMIN CHECK INDEX` reports a count mismatch as 8003 before either scan.
 
+pub use crate::kv_table::index_key_bounds;
+use crate::KvTablePartitionMaintenance;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use tidb_codec::table_key::encode_index_seek_key;
 use tidb_datatype::Datum;
 
 use crate::kv_table::{KvIndex, KvTable, RowDecodeContext, TableHandle};
@@ -249,7 +250,7 @@ pub fn check_table(
                 .cloned()
                 .ok_or_else(|| AdminCheckError::UnknownIndex {
                     index: name.to_owned(),
-                    table: table.name.clone(),
+                    table: table.name(),
                 })?;
             // Go's `buildPhysicalIndexLookUpReaders` skips the clustered
             // PRIMARY KEY: its key is the record key, not a stored `_i`
@@ -301,7 +302,7 @@ pub fn check_table(
         }
     }
 
-    let table_name = table.name.clone();
+    let table_name = table.name();
     let mut checked = 0usize;
     for index in &selected {
         // Go chooses the direction from the count comparison. Equal counts
@@ -402,7 +403,7 @@ pub fn check_table(
                     // back whole. A failed comparison reports the cut value,
                     // an unequal one the value as decoded.
                     let mut cut = index_value.clone();
-                    crate::index_prefix_cut::cut_index_value(
+                    tidb_tablecodec::cut_datum_by_prefix_len(
                         &mut cut,
                         index.prefix_length(position),
                         &column.field_type,
@@ -474,7 +475,7 @@ fn check_mv_index(
             .index_entry_values_for_check(index, &entry.key, &entry.value, context.zone())
             .map_err(decode)?;
         return Err(AdminCheckError::Inconsistent {
-            table: table.name.clone(),
+            table: table.name(),
             index: index.name.clone(),
             handle: render_handle(&entry.handle),
             index_values: render_record(&entry.handle, &indexed),
@@ -495,7 +496,7 @@ fn check_mv_index(
             continue;
         }
         return Err(AdminCheckError::Inconsistent {
-            table: table.name.clone(),
+            table: table.name(),
             index: index.name.clone(),
             handle: render_handle(handle),
             index_values: String::new(),
@@ -536,7 +537,7 @@ pub fn check_index_ranges(
         .find(|index| index.name.go_lower_eq(index_name))
         .ok_or_else(|| AdminCheckError::UnknownIndex {
             index: index_name.to_owned(),
-            table: table.name.clone(),
+            table: table.name(),
         })?;
 
     // Go `buildCheckIndexSchema`: each indexed column under its own type,
@@ -577,7 +578,7 @@ pub fn check_index_ranges(
             // `CheckIndexRangeExec` takes its bounds as integer handles.
             return Err(AdminCheckError::NotStored(format!(
                 "{}: ADMIN CHECK INDEX with handle ranges needs an integer row handle",
-                table.name
+                table.name()
             )));
         };
         if !ranges
@@ -595,20 +596,6 @@ pub fn check_index_ranges(
         out.push(emitted);
     }
     Ok((columns, out))
-}
-
-/// The key range one index occupies: `t{tid}_i{iid}` and its `PrefixNext`.
-///
-/// Kept here rather than in `kv_table` because the whole-index sweep is this
-/// check's need; every other reader of an index has datum bounds.
-#[must_use]
-pub fn index_key_bounds(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
-    let low = encode_index_seek_key(table_id, index_id, &[]);
-    let high = tidb_txnkv::Key::from_bytes(low.clone())
-        .prefix_next()
-        .as_bytes()
-        .to_vec();
-    (low, high)
 }
 
 #[cfg(test)]
@@ -632,8 +619,8 @@ mod source_tests {
                 vec![Datum::Int(1), Datum::new_string("some string")],
                 vec![Datum::Int(1), Datum::new_string("some string")],
                 [
-                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
-                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
                 ],
                 true,
             ),
@@ -641,15 +628,15 @@ mod source_tests {
                 vec![Datum::Int(1), Datum::new_string("some string")],
                 vec![Datum::Int(1), Datum::new_string("some string2")],
                 [
-                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
-                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
                 ],
                 false,
             ),
             (
                 vec![Datum::Int(1), Datum::new_string("some string")],
                 vec![Datum::Int(1), Datum::new_string("some string2")],
-                [crate::index_prefix_cut::UNSPECIFIED_LENGTH, 11],
+                [tidb_datatype::UNSPECIFIED_LENGTH, 11],
                 true,
             ),
         ];
@@ -657,7 +644,7 @@ mod source_tests {
         for (index_data, mut row_data, lengths, expected) in cases {
             for ((value, length), field_type) in row_data.iter_mut().zip(lengths).zip(&field_types)
             {
-                crate::index_prefix_cut::cut_index_value(value, length, field_type);
+                tidb_tablecodec::cut_datum_by_prefix_len(value, length, field_type);
             }
             assert_eq!(index_data == row_data, expected);
         }

@@ -12,7 +12,7 @@ fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
     // Go `executeSetResourceGroupName`: an unknown group is 8249.
     assert_eq!(
         session
-            .apply_set("SET RESOURCE GROUP analytics")
+            .run("SET RESOURCE GROUP analytics")
             .unwrap_err()
             .to_mysql_error()
             .message,
@@ -20,20 +20,12 @@ fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
     );
     for name in ["analytics", "burst"] {
         session
-            .catalog
-            .lock()
-            .unwrap()
-            .put_resource_group(tidb_model::ResourceGroupInfo {
-                settings: Some(Box::new(tidb_model::ResourceGroupSettings::new())),
-                name: tidb_ast::CiString::new(name),
-                ..tidb_model::ResourceGroupInfo::default()
-            });
+            .run(&format!("CREATE RESOURCE GROUP {name} RU_PER_SEC = 1000"))
+            .unwrap();
     }
 
-    assert_eq!(
-        session.apply_set("SET RESOURCE GROUP analytics").unwrap(),
-        Some(())
-    );
+    // Go `SimpleExec.executeSetResourceGroupName`.
+    session.run("SET RESOURCE GROUP analytics").unwrap();
     assert_eq!(session.current_resource_group(), "analytics");
 
     let hinted = session
@@ -554,8 +546,8 @@ fn noop_function_gate() {
         .unwrap();
     session.run("SELECT b FROM t LOCK IN SHARE MODE").unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1235);
-    assert!(session.warnings()[0].message.contains("LOCK IN SHARE MODE"));
+    assert_eq!(session.warnings()[0].code(), 1235);
+    assert!(session.warnings()[0].message().contains("LOCK IN SHARE MODE"));
     // The warnings belong to the last statement only.
     session.run("SELECT b FROM t").unwrap();
     assert!(session.warnings().is_empty());
@@ -624,12 +616,15 @@ fn read_only_noop_variables_need_the_noop_gate() {
         ["Int(0)", "Int(0)"]
     );
     for sql in ["SET tx_read_only = 1", "SET transaction_read_only = 1"] {
-        assert!(
-            matches!(
-                session.run(sql),
-                Err(DriverError::FunctionsNoopImpl("READ ONLY"))
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                1235,
+                "function READ ONLY has only noop implementation in tidb now, use \
+                 tidb_enable_noop_functions to enable these functions"
             ),
-            "expected 1235 from {sql}"
+            "{sql}"
         );
     }
     // The refusal leaves the value alone -- including the alias's copy.
@@ -650,8 +645,8 @@ fn read_only_noop_variables_need_the_noop_gate() {
         .unwrap();
     session.run("SET tx_read_only = 1").unwrap();
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1235);
-    assert!(session.warnings()[0].message.contains("READ ONLY"));
+    assert_eq!(session.warnings()[0].code(), 1235);
+    assert!(session.warnings()[0].message().contains("READ ONLY"));
     assert_eq!(
         read(
             &mut session,
@@ -1045,9 +1040,9 @@ fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
     }
     assert_eq!(session.warnings().len(), u16::MAX as usize);
     // The FIRST entries survive: Go appends until the limit and then drops.
-    assert_eq!(session.warnings()[0].message, "value 0");
+    assert_eq!(session.warnings()[0].message(), "value 0");
     assert_eq!(
-        session.warnings()[u16::MAX as usize - 1].message,
+        session.warnings()[u16::MAX as usize - 1].message(),
         "value 65534"
     );
 }
@@ -1079,9 +1074,9 @@ fn a_coprocessor_warning_reaches_both_the_show_warnings_buffer_and_the_wire_coun
     session.drain_eval_warnings(&ctx);
 
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Truncated incorrect DOUBLE value: '12abc'"
     );
     assert_eq!(
@@ -1148,8 +1143,8 @@ fn only_the_parsed_reporting_nodes_inherit_the_warning_buffer() {
     warn_once(&mut session);
     assert!(session.run("SELCT 1").is_err());
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].level, WarningLevel::Error);
-    assert_ne!(session.warnings()[0].code, 1235);
+    assert_eq!(session.warnings()[0].warning_level(), WarningLevel::Error);
+    assert_ne!(session.warnings()[0].code(), 1235);
 }
 
 #[test]
@@ -1187,6 +1182,41 @@ fn session_migration_exports_and_restores_variables_and_prepared_statements() {
     assert_eq!(rows[0][0], Datum::Int(42));
 }
 
+/// Go `EncodeSessionStates` / `DecodeSessionStates` carry
+/// `SessionVars.HypoIndexes` and `HypoTiFlashReplicas`: a migrated session
+/// keeps the hypothetical indexes it created.
+#[test]
+fn session_migration_carries_hypothetical_indexes() {
+    let mut source = Session::new();
+    source.run("CREATE DATABASE hypo_migration").unwrap();
+    source.run("USE hypo_migration").unwrap();
+    source.run("CREATE TABLE t (a INT, b INT, c INT)").unwrap();
+    source.run("CREATE INDEX hypo_bc TYPE HYPO ON t (b, c)").unwrap();
+    let StmtOutput::Rows { rows, .. } = source.run_with_columns("SHOW SESSION_STATES").unwrap()
+    else {
+        panic!("migration must return state and token columns")
+    };
+    let state = crate::datum_text(&rows[0][0]).unwrap();
+    assert!(state.contains("hypo-indexes"), "{state}");
+    let mut target = Session::with_catalog(source.catalog.clone());
+    target
+        .run(&format!(
+            "SET SESSION_STATES '{}'",
+            state.replace('\\', "\\\\").replace('\'', "''")
+        ))
+        .unwrap();
+    let StmtOutput::Rows { rows, .. } =
+        target.run_with_columns("SHOW CREATE TABLE t").unwrap()
+    else {
+        panic!("rows expected")
+    };
+    let create = crate::datum_text(&rows[0][1]).unwrap();
+    assert!(
+        create.contains("KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */"),
+        "{create}"
+    );
+}
+
 #[test]
 fn session_migration_refuses_nonportable_session_resources() {
     for (setup, reason) in [
@@ -1208,6 +1238,25 @@ fn session_migration_refuses_nonportable_session_resources() {
     }
 }
 
+/// Go `TestShowStateFail`'s "hold table locks" / "unlock the tables" cases:
+/// a session holding `LOCK TABLES` cannot migrate, one that released them can.
+#[test]
+fn session_migration_refuses_held_table_locks() {
+    use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
+    let previous = get_global_config();
+    update_global(|config| config.enable_table_lock = true);
+    let mut session = Session::new();
+    session.run("CREATE DATABASE IF NOT EXISTS test").unwrap();
+    session.run("CREATE TABLE test.t1 (id INT)").unwrap();
+    session.run("LOCK TABLES test.t1 WRITE").unwrap();
+    let error = session.run("SHOW SESSION_STATES").unwrap_err();
+    session.run("UNLOCK TABLES").unwrap();
+    let after_unlock = session.run("SHOW SESSION_STATES");
+    store_global_config((*previous).clone());
+    assert!(error.to_string().contains("session has locked tables"), "{error}");
+    after_unlock.unwrap();
+}
+
 #[test]
 fn session_migration_restores_dependency_order_rng_warnings_and_bindings() {
     let mut source = Session::new();
@@ -1221,7 +1270,7 @@ fn session_migration_restores_dependency_order_rng_warnings_and_bindings() {
         .unwrap();
     source.run("SELECT RAND()").unwrap();
     source.append_warning(WarningLevel::Warning, 1292, "retained warning".into());
-    let mut state = source.encode_session_states().unwrap();
+    let mut state = serde_json::to_value(source.encode_session_states().unwrap()).unwrap();
     state["sys-vars"]["tidb_allow_mpp"] = serde_json::json!("ON");
     state["sys-vars"]["tidb_enforce_mpp"] = serde_json::json!("ON");
     state["sys-vars"]["future_removed_variable"] = serde_json::json!("1");
@@ -1242,6 +1291,51 @@ fn session_migration_restores_dependency_order_rng_warnings_and_bindings() {
     );
 }
 
+/// Go `executeSetSessionStates` decodes what Go's `SHOW SESSION_STATES`
+/// encoded (captured with gorun after `set @a = 1; set @b = 'x'; prepare s
+/// from 'select ?'; select 1/0`, its system variables trimmed): user
+/// variables with their types, the database, the counters and the warning.
+#[test]
+fn session_states_restore_what_go_encoded() {
+    let go_states = r#"{"affected-rows": -1, "current-db": "test", "found-rows": 1, "prepared-stmt-id": 1, "rs-group": "default", "status": 2, "sys-vars": {"div_precision_increment": "7"}, "user-var-types": {"a": {"Array": false, "Charset": "binary", "Collate": "binary", "Decimal": 0, "Elems": null, "ElemsIsBinaryLit": null, "Flag": 129, "Flen": 1, "Tp": 8}, "b": {"Array": false, "Charset": "utf8mb4", "Collate": "utf8mb4_bin", "Decimal": -1, "Elems": null, "ElemsIsBinaryLit": null, "Flag": 1, "Flen": 1, "Tp": 253}}, "user-var-values": {"a": {"i": 1, "k": 1, "time": 0}, "b": {"b": "eA==", "collation": "utf8mb4_bin", "k": 5, "time": 0}}, "warnings": [{"err": {"class": 6, "code": 1365, "message": "Division by 0", "rfccode": "expression:1365"}, "level": "Warning"}]}"#;
+    let mut target = Session::new();
+    target.decode_session_states(go_states).unwrap();
+    // The warning keeps Go's error: it encodes back as Go wrote it.
+    let encoded = serde_json::to_value(target.encode_session_states().unwrap()).unwrap();
+    assert_eq!(
+        encoded["warnings"],
+        serde_json::json!([{
+            "err": {"class": 6, "code": 1365, "message": "Division by 0", "rfccode": "expression:1365"},
+            "level": "Warning"
+        }])
+    );
+    assert_eq!(
+        target.warnings[0].parts(),
+        (WarningLevel::Warning, 1365, "Division by 0".to_owned())
+    );
+    assert_eq!(target.current_database(), "test");
+    assert_eq!(target.vars.prev_row_count, -1);
+    assert_eq!(target.vars.last_found_rows, 1);
+    assert_eq!(target.vars().get_system("div_precision_increment").unwrap(), "7");
+    assert_eq!(
+        crate::tests_support::row_text(target.run("SELECT @a, @b")),
+        vec![vec!["1".to_owned(), "x".to_owned()]]
+    );
+}
+
+/// Go's `SessionVars.LastQueryInfo` starts as the zero `QueryInfo`: the
+/// first read in a session sees an empty scope (gorun).
+#[test]
+fn last_query_info_starts_as_gos_zero_value() {
+    let mut session = Session::new();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT @@tidb_last_query_info")),
+        vec![vec![
+            r#"{"txn_scope":"","start_ts":0,"for_update_ts":0,"ru_consumption":0}"#.to_owned()
+        ]]
+    );
+}
+
 #[test]
 fn session_migration_preserves_prepare_database_and_cleans_up_after_restore_error() {
     let mut source = Session::new();
@@ -1251,7 +1345,7 @@ fn session_migration_preserves_prepare_database_and_cleans_up_after_restore_erro
     source.run("INSERT INTO t VALUES (7)").unwrap();
     source.run("PREPARE saved FROM 'SELECT a FROM t'").unwrap();
     source.run("USE test").unwrap();
-    let state = source.encode_session_states().unwrap();
+    let state = serde_json::to_value(source.encode_session_states().unwrap()).unwrap();
     let mut target = Session::with_catalog(source.catalog.clone());
     target.decode_session_states(&state.to_string()).unwrap();
     assert_eq!(target.current_database(), "test");
@@ -1297,10 +1391,20 @@ fn session_migration_restored_timestamp_uses_shared_historical_read_owner() {
     source.run("UPDATE migrated_snapshot SET a=8").unwrap();
     // Go validates the snapshot against the seeded safe point (oracle:
     // 8055 for a timestamp older than it).
-    crate::tests_support::assert_err(
-        source.run("SET tidb_snapshot=100"),
-        8055,
-        "snapshot is older than GC safe point 2006-01-02 14:04:05 -0800 PST",
+    // Go prints the safe point with `time.Local` (`TSConvert2Time(..).String()`),
+    // so the text names this machine's zone; the instant is what is fixed.
+    let error = source.run("SET tidb_snapshot=100").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8055);
+    let printed = error
+        .message
+        .strip_prefix("snapshot is older than GC safe point ")
+        .unwrap_or_else(|| panic!("{}", error.message));
+    let (stamp, _zone_name) = printed.rsplit_once(' ').expect("Go's time.String layout");
+    let instant = chrono::DateTime::parse_from_str(stamp, "%Y-%m-%d %H:%M:%S %z")
+        .unwrap_or_else(|parse| panic!("{printed}: {parse}"));
+    assert_eq!(
+        instant,
+        chrono::DateTime::parse_from_rfc3339("2006-01-02T15:04:05-07:00").unwrap()
     );
 }
 
@@ -1352,4 +1456,141 @@ fn session_migration_batch_grant_executors_have_no_result_set() {
             "{sql}"
         );
     }
+}
+
+/// Go's `StmtCtx` keeps a warning's error, so `SHOW SESSION_STATES` encodes
+/// its class and RFC code (`SQLWarn.MarshalJSON`): the note `CREATE DATABASE
+/// IF NOT EXISTS` files is `infoschema.ErrDatabaseExists` (gorun).
+#[test]
+fn session_states_carry_a_warnings_go_error() {
+    let mut session = Session::new();
+    session.run("create database if not exists test").unwrap();
+    let states = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
+    assert_eq!(
+        states["warnings"],
+        serde_json::json!([{
+            "err": {
+                "class": 14,
+                "code": 1007,
+                "message": "Can't create database 'test'; database exists",
+                "rfccode": "schema:1007"
+            },
+            "level": "Note"
+        }])
+    );
+}
+
+/// Go `handleDivisionByZeroError` appends `expression.ErrDivisionByZero`
+/// itself, so `select 1/0`'s warning encodes Go's class and RFC code
+/// (captured with gorun).
+#[test]
+fn a_division_by_zero_warning_keeps_its_go_error() {
+    let mut session = Session::new();
+    session.run("select 1/0").unwrap();
+    let states = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
+    assert_eq!(
+        states["warnings"],
+        serde_json::json!([{
+            "err": {"class": 6, "code": 1365, "message": "Division by 0", "rfccode": "expression:1365"},
+            "level": "Warning"
+        }])
+    );
+}
+
+/// A pushed-down filter's warning comes back from TiKV as a code and a
+/// message, which Go's `selectResult` appends as
+/// `dbterror.ClassTiKV.Synthesize(code, msg)` (captured with gorun).
+#[test]
+fn a_coprocessor_warning_is_a_tikv_class_error_like_go() {
+    let mut session = Session::new();
+    session.run("create table tw (a varchar(10))").unwrap();
+    session.run("insert into tw values ('x')").unwrap();
+    session.run("select * from tw where a = 1").unwrap();
+    let states = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
+    assert_eq!(
+        states["warnings"],
+        serde_json::json!([{
+            "err": {
+                "class": 24,
+                "code": 1292,
+                "message": "Truncated incorrect DOUBLE value: 'x'",
+                "rfccode": "tikv:1292"
+            },
+            "level": "Warning"
+        }])
+    );
+}
+
+/// The same code is two Go errors: a cast's truncation is
+/// `types.ErrTruncatedWrongVal` and `WEIGHT_STRING`'s is the expression
+/// package's `errTruncatedWrongValue`, which `SHOW SESSION_STATES` tells
+/// apart (captured with gorun).
+#[test]
+fn a_truncation_warning_keeps_the_class_of_its_go_error() {
+    for (sql, class, message, rfc_code) in [
+        ("select cast('1x' as signed)", 20, "Truncated incorrect INTEGER value: '1x'", "types:1292"),
+        (
+            "select weight_string('abc' as binary(1))",
+            6,
+            "Truncated incorrect BINARY(1) value: 'abc'",
+            "expression:1292",
+        ),
+    ] {
+        let mut session = Session::new();
+        session.run(sql).unwrap();
+        let states = serde_json::to_value(session.encode_session_states().unwrap()).unwrap();
+        assert_eq!(
+            states["warnings"],
+            serde_json::json!([{
+                "err": {"class": class, "code": 1292, "message": message, "rfccode": rfc_code},
+                "level": "Warning"
+            }]),
+            "{sql}"
+        );
+    }
+}
+
+/// Go `fetchShowSessionStates`: with a signing certificate configured, the
+/// second column is a token for the logged-in user, which validates for that
+/// user only; a session with no user gets none.
+#[test]
+fn show_session_states_signs_a_token_for_the_logged_in_user_like_go() {
+    let dir = std::env::temp_dir().join(format!("session-token-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cert_path, key_path) = (dir.join("cert.pem"), dir.join("key.pem"));
+    let key = openssl::pkey::PKey::from_rsa(openssl::rsa::Rsa::generate(2048).unwrap()).unwrap();
+    let mut builder = openssl::x509::X509Builder::new().unwrap();
+    builder.set_pubkey(&key).unwrap();
+    builder
+        .set_not_before(&openssl::asn1::Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&openssl::asn1::Asn1Time::days_from_now(90).unwrap())
+        .unwrap();
+    builder.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
+    std::fs::write(&cert_path, builder.build().to_pem().unwrap()).unwrap();
+    std::fs::write(&key_path, key.private_key_to_pem_pkcs8().unwrap()).unwrap();
+    tidb_sessionstates::set_cert_path(cert_path.to_str().unwrap());
+    tidb_sessionstates::set_key_path(key_path.to_str().unwrap());
+    tidb_sessionstates::reload_signing_cert();
+
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut session = authenticated_session(&privileges, "migrated", "%");
+    let StmtOutput::Rows { rows, .. } = session.run_with_columns("SHOW SESSION_STATES").unwrap()
+    else {
+        panic!("SHOW SESSION_STATES returns rows")
+    };
+    let token = crate::datum_text(&rows[0][1]).expect("a token for the logged-in user");
+    tidb_sessionstates::validate_session_token(token.as_bytes(), "migrated").unwrap();
+    let error =
+        tidb_sessionstates::validate_session_token(token.as_bytes(), "another_user").unwrap_err();
+    assert!(error.contains("username does not match"), "{error}");
+
+    let mut anonymous = Session::new();
+    let StmtOutput::Rows { rows, .. } = anonymous.run_with_columns("SHOW SESSION_STATES").unwrap()
+    else {
+        panic!("SHOW SESSION_STATES returns rows")
+    };
+    assert_eq!(rows[0][1], Datum::Null);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

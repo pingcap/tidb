@@ -22,21 +22,13 @@
 //! the client's bytes to [`crate::Session::set_local_infile_data`] and runs
 //! the statement, whose dispatch arm takes them.
 
+use crate::privilege::PrivilegeTypeExt;
 use tidb_ast::{LoadDataOnDuplicate, LoadDataStmt, Stmt};
 use tidb_executor::load_data::{LoadDataEnv, PreparedLoadData};
 
-use crate::privilege::GlobalPriv;
 use crate::{DriverError, StmtOutput};
 
 impl crate::Session {
-    /// The store's regions this session's catalog reaches (Go
-    /// `kv.SplittableStore`).
-    pub fn region_store(
-        &mut self,
-    ) -> Result<std::sync::Arc<dyn tidb_executor::region_map::RegionStore>, DriverError> {
-        self.with_catalog_mut(|catalog| Ok(catalog.region_store()))
-    }
-
     fn load_data_env(&self) -> LoadDataEnv {
         LoadDataEnv {
             charset_database: self
@@ -62,9 +54,9 @@ impl crate::Session {
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };
-        let mut required = vec![GlobalPriv::Insert];
+        let mut required = vec![tidb_mysql::InsertPriv];
         if on_duplicate == LoadDataOnDuplicate::Replace {
-            required.push(GlobalPriv::Delete);
+            required.push(tidb_mysql::DeletePriv);
         }
         for privilege in required {
             let granted = crate::table_privilege::mem_db_verdict_mask(schema, privilege.bit())
@@ -123,7 +115,7 @@ impl crate::Session {
         if let Err(error) = &prepared {
             self.local_infile_accepted = false;
             let reported = error.clone().to_mysql_error();
-            self.record_parse_failure_coded(reported.code, reported.message);
+            self.record_parse_failure_coded(reported.code, reported.message, reported.identity);
         }
         prepared.map(|_| ())
     }

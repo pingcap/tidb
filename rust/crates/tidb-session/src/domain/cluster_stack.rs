@@ -24,11 +24,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::cop_scan::CopScanSource;
-use tidb_exec::ddl_systable::MinJobIdRefresher;
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at;
-use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
-use tidb_executor::remote_scan::PushdownScanner;
+use tidb_ddl::ddl_systable::MinJobIdRefresher;
+use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at;
+use tidb_cluster::real_tikv_read::ProductionReadProcessAuthority;
 
 use crate::domain::cluster_account_seam::RealClusterAccountWriter;
 use crate::domain::cluster_analyze_seam::RealClusterAnalyze;
@@ -166,18 +164,18 @@ pub fn cluster_session_stack(
             if !accounts.bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
                 let (outcome, schema_version, bootstrap_splits) =
-                    tidb_ddl::bootstrap_publish::publish_bootstrap_with_splits(
+                    tidb_exec::bootstrap_publish::publish_bootstrap_with_splits(
                         opener,
                         COPROCESSOR_QUERY_TIMEOUT,
                     )
                     .map_err(|error| error.to_string())?;
-                tidb_ddl::bootstrap_publish::notify_committed_bootstrap(
+                tidb_exec::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
                     schema_version,
                     None,
                 )
                 .map_err(|error| error.to_string())?;
-                tidb_ddl::bootstrap_publish::log_bootstrap_successful(started);
+                tidb_exec::bootstrap_publish::log_bootstrap_successful(started);
                 // Go `EnableSplitTableRegion`: the bootstrap cut every system
                 // table's region (re-cutting an existing boundary is a no-op).
                 if tidb_config::config_tree::config::get_global_config().split_table {
@@ -214,14 +212,35 @@ pub fn cluster_session_stack(
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
     // privilege-cache policy.
-    // Filled once the node's allocator registry exists below.
-    let reload_row_ids = Arc::new(std::sync::OnceLock::new());
+    let auto_id_etcd = etcd.clone().ok_or_else(|| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "cluster AutoID discovery requires its configured etcd client",
+        ))
+    })?;
+    let auto_id_service = Arc::new(
+        tidb_cluster::auto_id_client::AutoIdClient::new(
+            Arc::new(tidb_cluster::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
+            config.cluster_security.clone(),
+        )
+        .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
+    );
+    // One registry for the whole node, so every connection inserting into a
+    // table allocates from the one range this node reserved -- Go's
+    // per-`tidb-server` allocator, not a per-session one. The statistics
+    // writers allocate their `mysql.*` rows from it too.
+    let node_auto_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds> = Arc::new(
+        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(
+            authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )
+        .with_service(auto_id_service.clone()),
+    );
     let (catalog, reloader, schema_validator) = spawn_catalog_reloader(
         startup,
         startup_lease_grant_ts,
         authority.transaction_opener(),
         config.schema_lease,
-        Arc::clone(&reload_row_ids),
+        Arc::clone(&node_auto_ids),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // Statistics always resolve targets from this published catalog, so the
@@ -274,18 +293,12 @@ pub fn cluster_session_stack(
     //
     // TiFlash discovery and range lookup retain the node's existing PD and
     // canonical region-cache capabilities (Go MPPClient.ConstructMPPTasks).
-    let cop_scans: Arc<dyn PushdownScanner> = {
+    let mpp_client: Arc<dyn tidb_txnkv::MppClient> = {
         let catalog = Arc::clone(&catalog);
-        let tiflash_mpp =
-            crate::domain::cluster_session_node::build_tiflash_mpp_source(&authority, move || {
-                catalog.load().schema_version
-            });
-        match tiflash_mpp {
-            Some(source) => {
-                Arc::new(CopScanSource::new(authority.transport_factory()).with_tiflash_mpp(source))
-            }
-            None => Arc::new(CopScanSource::new(authority.transport_factory())),
-        }
+        Arc::new(crate::domain::cluster_session_node::build_mpp_client(
+            &authority,
+            move || catalog.load().schema_version,
+        ))
     };
     // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
     // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
@@ -450,30 +463,6 @@ pub fn cluster_session_stack(
     let schema_version_syncer = schema_sync_ack
         .as_ref()
         .map(crate::domain::cluster_session_node::schema_sync::SchemaSyncAck::syncer);
-    let auto_id_etcd = etcd.clone().ok_or_else(|| {
-        RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            "cluster AutoID discovery requires its configured etcd client",
-        ))
-    })?;
-    let auto_id_service = Arc::new(
-        tidb_exec::auto_id_client::AutoIdClient::new(
-            Arc::new(tidb_exec::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
-            config.cluster_security.clone(),
-        )
-        .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
-    );
-    // One registry for the whole node, so every connection inserting into a
-    // table allocates from the one range this node reserved -- Go's
-    // per-`tidb-server` allocator, not a per-session one. The statistics
-    // writers allocate their `mysql.*` rows from it too.
-    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
-        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
-        )
-        .with_service(auto_id_service.clone()),
-    );
-    let _ = reload_row_ids.set(Arc::clone(&node_auto_ids));
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -485,14 +474,15 @@ pub fn cluster_session_stack(
             Arc::clone(&schema_validator),
             config.run_ddl,
             min_job_id_refresher,
+            Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
                 "campaign DDL owner failed: {error}"
             )))
         })?
-        .with_auto_ids(auto_id_service.clone())
-        .with_row_ids(Arc::clone(&node_auto_ids)),
+        .with_auto_ids(auto_id_service.clone()),
     );
     // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
     // info syncer's managers share the store's PD HTTP client.
@@ -506,9 +496,9 @@ pub fn cluster_session_stack(
     }));
     // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
     // the DDL job workers write and `information_schema.attributes` reads.
-    tidb_executor::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
+    tidb_domain::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
         Arc::new(tidb_exec::label_delivery::PdLabelManager::new(client))
-            as Arc<dyn tidb_executor::label_manager::LabelRuleManager>
+            as Arc<dyn tidb_domain::label_manager::LabelRuleManager>
     }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::domain::cluster_session_node::build_tiflash_replica_poll(
@@ -559,8 +549,8 @@ pub fn cluster_session_stack(
                 // data-plane deadline.
                 COPROCESSOR_QUERY_TIMEOUT,
                 config.stats_lease.slow_save_interval(),
-            )
-            .with_row_ids(Arc::clone(&node_auto_ids)),
+                Arc::clone(&node_auto_ids),
+            ),
         ),
         Arc::new(RealClusterStatsLock::new(
             Arc::new(authority.transaction_opener()),
@@ -573,7 +563,10 @@ pub fn cluster_session_stack(
         Arc::clone(&node_auto_ids),
     )
     .with_global_config_syncer(global_config_keeper.syncer())
-    .with_cop_scans(cop_scans)
+    .with_mpp_client(mpp_client)
+    .with_kv_client(Arc::new(tidb_exec::cop_client::CopClient::new(
+        authority.transport_factory(),
+    )))
     .with_region_store(region_store)
     .with_server_info(Arc::clone(&server_info))
     .with_connection_ids(crate::domain::session_api::new_connection_id_allocator(
@@ -663,6 +656,10 @@ pub fn cluster_session_stack(
     factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
+    factory.load_signing_cert_loop(
+        &config.global_config.security.session_token_signing_cert,
+        &config.global_config.security.session_token_signing_key,
+    );
     // Go `Domain.Start` runs `requestUnitsWriterLoop` beside the other domain
     // loops (`pkg/domain/domain.go:830`). This node serves the null keyspace,
     // which the ResourceManager request names as Go's `NullKeyspaceID`.

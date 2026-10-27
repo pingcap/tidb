@@ -19,7 +19,7 @@
 
 use super::*;
 fn create_error(sql: &str) -> DriverError {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(sql, &mut catalog).expect_err("this statement must be refused")
 }
 
@@ -36,8 +36,9 @@ fn a_length_on_a_type_that_has_no_prefix_is_1089() {
         "CREATE TABLE t (a VARCHAR(5), KEY idx (a(10)))",
         "CREATE TABLE t (a CHAR(5), KEY idx (a(6)))",
     ] {
-        assert!(
-            matches!(create_error(sql), DriverError::IncorrectPrefixKey),
+        assert_eq!(
+            create_error(sql).to_mysql_error(),
+            tidb_ddl_build::errors::incorrect_prefix_key(),
             "{sql}"
         );
     }
@@ -54,10 +55,11 @@ fn a_blob_or_text_key_part_without_a_length_is_1170() {
         ("CREATE TABLE t (a LONGTEXT, UNIQUE KEY idx (a))", "a"),
         ("CREATE TABLE t (x INT, b MEDIUMBLOB, KEY idx (x, b))", "b"),
     ] {
-        match create_error(sql) {
-            DriverError::BlobKeyWithoutLength(named) => assert_eq!(named, column, "{sql}"),
-            other => panic!("{sql}: {other:?}"),
-        }
+        assert_eq!(
+            create_error(sql).to_mysql_error(),
+            tidb_ddl_build::errors::blob_key_without_length(column),
+            "{sql}"
+        );
     }
 }
 
@@ -71,10 +73,11 @@ fn a_zero_length_key_part_is_1391() {
         "CREATE TABLE t (a CHAR(20), KEY idx (a(0)))",
         "CREATE TABLE t (a BLOB, KEY idx (a(0)))",
     ] {
-        match create_error(sql) {
-            DriverError::KeyPart0(column) => assert_eq!(column, "a", "{sql}"),
-            other => panic!("{sql}: {other:?}"),
-        }
+        assert_eq!(
+            create_error(sql).to_mysql_error(),
+            tidb_ddl_build::errors::key_part0("a"),
+            "{sql}"
+        );
     }
 }
 
@@ -83,16 +86,14 @@ fn a_zero_length_key_part_is_1391() {
 /// multiplied one.
 #[test]
 fn a_key_part_longer_than_the_limit_is_1071() {
-    match create_error("CREATE TABLE t (a VARCHAR(2000), KEY idx (a(1000)))") {
-        DriverError::TooLongKey { length, max } => {
-            assert_eq!((length, max), (4000, 3072));
-        }
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(
+        create_error("CREATE TABLE t (a VARCHAR(2000), KEY idx (a(1000)))").to_mysql_error(),
+        tidb_ddl_build::errors::too_long_key(4000, 3072)
+    );
     // 1000 latin1 characters are 1000 bytes, so the length is legal and the
     // statement SUCCEEDS -- which is what proves the limit counts bytes
     // rather than characters.
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(2000) CHARACTER SET latin1, KEY idx (a(1000)))",
         &mut catalog,
@@ -106,7 +107,7 @@ fn a_key_part_longer_than_the_limit_is_1071() {
 /// serve it precisely because the stored index is not a prefix index.
 #[test]
 fn a_full_length_char_prefix_is_an_ordinary_index() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(10), KEY idx (a(10)))",
         &mut catalog,
@@ -153,7 +154,7 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
             vec![-1, 4],
         ),
     ] {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         crate::run_create_table_on(sql, &mut catalog).expect(sql);
         let crate::TableEntry::Kv(table) = catalog.table_in("test", "t").expect(sql) else {
             panic!("{sql}: the table is not storage-backed");
@@ -172,7 +173,7 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
 /// metadata retains the prefix length needed by reads and index encoding.
 #[test]
 fn a_prefix_primary_key_is_stored_on_the_common_handle() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, PRIMARY KEY (a(3), b) CLUSTERED)",
         &mut catalog,
@@ -189,52 +190,4 @@ fn a_prefix_primary_key_is_stored_on_the_common_handle() {
         .find(|index| index.name == "PRIMARY")
         .expect("clustered primary metadata is present");
     assert_eq!(primary.prefix_lengths, [3, -1]);
-}
-
-/// `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` reach the same rules, so a
-/// length illegal in `CREATE TABLE` is illegal there too -- and reported with
-/// the same code rather than a generic refusal.
-#[test]
-fn create_index_validates_the_length_the_same_way() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE t (a INT, b VARCHAR(10), c BLOB)",
-        &mut catalog,
-    )
-    .unwrap();
-
-    assert!(matches!(
-        crate::ddl::run_create_index_in(
-            "CREATE INDEX i ON t (a(3))",
-            &mut catalog,
-            "test",
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::IncorrectPrefixKey)
-    ));
-    assert!(matches!(
-        crate::ddl::run_create_index_in(
-            "CREATE INDEX i ON t (b(20))",
-            &mut catalog,
-            "test",
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::IncorrectPrefixKey)
-    ));
-    assert!(matches!(
-        crate::ddl::run_create_index_in("CREATE INDEX i ON t (c)", &mut catalog, "test", &crate::StmtContext::for_query()),
-        Err(DriverError::BlobKeyWithoutLength(ref column)) if column == "c"
-    ));
-    assert!(matches!(
-        crate::ddl::run_create_index_in("CREATE INDEX i ON t (b(0))", &mut catalog, "test", &crate::StmtContext::for_query()),
-        Err(DriverError::KeyPart0(ref column)) if column == "b"
-    ));
-    // A full-length prefix is an ordinary index here too, so it SUCCEEDS.
-    crate::ddl::run_create_index_in(
-        "CREATE INDEX i ON t (b(10))",
-        &mut catalog,
-        "test",
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
 }

@@ -194,7 +194,7 @@ fn used_stats_suffix_for_scan(
         let statistics = crate::access_cost::get_stats_table(context, catalog, physical_table_id);
         crate::driver::planner_bridge::record_used_item_stats_status(
             context,
-            &table.name,
+            &table.name(),
             physical_table_id,
             statistics.as_deref(),
             table.indexes().iter().any(|index| index.id == index_id),
@@ -749,7 +749,7 @@ fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
         || {
             catalog
                 .physical_kv_table_by_id(table_id)
-                .map_or_else(|| table_id.to_string(), |table| table.name.clone())
+                .map_or_else(|| table_id.to_string(), |table| table.name())
         },
         str::to_owned,
     )
@@ -801,13 +801,14 @@ fn index_access(
     let hypo_index = || {
         let database = catalog.physical_kv_table_database_by_id(table_id)?;
         hypo_indexes?
-            .table_indexes(database, &table.name)
+            .table_kv_indexes(database, &table)
             .into_iter()
             .find(|index| index.id == index_id)
     };
     let Some(index) = table
         .plan_indexes()
         .find(|index| index.id == index_id)
+        .cloned()
         .or_else(hypo_index)
     else {
         if let Some(name) = index_name {
@@ -2655,7 +2656,7 @@ fn collect_executor_process_fields(
                         if let Some(primary) =
                             table.indexes().iter().find(|index| index.clustered_primary)
                         {
-                            index_names.push(format!("{}:{}", table.name, primary.name));
+                            index_names.push(format!("{}:{}", table.name(), primary.name));
                         }
                     }
                 }
@@ -2668,7 +2669,7 @@ fn collect_executor_process_fields(
             if let Some(index_id) = point.index_id {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
                     if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
-                        index_names.push(format!("{}:{}", table.name, index.name));
+                        index_names.push(format!("{}:{}", table.name(), index.name));
                     }
                 }
             }
@@ -2677,7 +2678,7 @@ fn collect_executor_process_fields(
             if let Some(index_id) = point.index_id {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
                     if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
-                        index_names.push(format!("{}:{}", table.name, index.name));
+                        index_names.push(format!("{}:{}", table.name(), index.name));
                     }
                 }
             }
@@ -3432,7 +3433,7 @@ impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
     fn table_name(&self, table_id: i64) -> Option<String> {
         self.0
             .physical_kv_table_by_id(table_id)
-            .map(|table| table.name.clone())
+            .map(|table| table.name())
     }
 
     fn has_clustered_primary_key(&self, table_id: i64) -> bool {
@@ -4259,7 +4260,7 @@ mod tests {
     #[test]
     fn dynamic_partitions_belong_to_readers_not_scans() {
         use tidb_planner::physical::*;
-        let catalog = Catalog::default();
+        let catalog = Catalog::mock();
         for (all_partitions, names, expected) in [
             (true, Vec::new(), "partition:all"),
             (
@@ -4391,7 +4392,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &index_join,
-            &Catalog::default(),
+            &Catalog::mock(),
             false,
             None,
         );
@@ -4420,7 +4421,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::IndexJoin(index),
-            &Catalog::default(),
+            &Catalog::mock(),
             false,
             None,
         );
@@ -4439,7 +4440,7 @@ mod tests {
         let access_conditions: [tidb_expr::expression::Expression; 0] = [];
         let eval_ctx = crate::StmtContext::default();
         let scan = PhysicalTableScan::default();
-        let catalog = Catalog::default();
+        let catalog = Catalog::mock();
 
         for (range_bare, expected) in [
             (true, "range: decided by [Column#2]"),
@@ -4487,7 +4488,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::MergeJoin(merge),
-            &Catalog::default(),
+            &Catalog::mock(),
             true,
             None,
         );
@@ -4514,7 +4515,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(outer),
-            &Catalog::default(),
+            &Catalog::mock(),
             true,
             None,
         );
@@ -4535,7 +4536,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(inner),
-            &Catalog::default(),
+            &Catalog::mock(),
             true,
             None,
         );
@@ -4554,7 +4555,7 @@ mod tests {
                 &crate::StmtContext::default(),
                 &crate::StmtContext::default(),
                 &PhysicalPlan::HashJoin(join),
-                &Catalog::default(),
+                &Catalog::mock(),
                 true,
                 None
             ),
@@ -4578,7 +4579,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(join),
-            &Catalog::default(),
+            &Catalog::mock(),
             true,
             None,
         );
@@ -4600,6 +4601,6 @@ mod tests {
             conditions: vec![tidb_expr::expression::Expression::Constant(parameter)],
             ..Default::default()
         });
-        assert!(!super::brief_binary_plan(&ctx, &plan, &Catalog::default()).is_empty());
+        assert!(!super::brief_binary_plan(&ctx, &plan, &Catalog::mock()).is_empty());
     }
 }

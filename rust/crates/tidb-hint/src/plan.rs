@@ -348,11 +348,10 @@ pub fn parse_plan_hints(
             )),
             // go `parser`'s SM_JOIN spelling is NOT supported by TiDB: the
             // hint is ignored with ErrOptimizerHintUnsupported (8061).
-            "sm_join" => warnings.push(HintWarning {
-                code: 8061,
-                message: "Optimizer hint SM_JOIN is not supported by TiDB and is ignored"
-                    .to_owned(),
-            }),
+            "sm_join" => warnings.push(HintWarning::of(
+                &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
+                "Optimizer hint SM_JOIN is not supported by TiDB and is ignored".to_owned(),
+            )),
             "tidb_bcj" | "broadcast_join" => plan.broadcast_join.extend(table_infos(
                 current_database,
                 &name,

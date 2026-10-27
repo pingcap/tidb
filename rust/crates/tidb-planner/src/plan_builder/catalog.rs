@@ -238,16 +238,36 @@ pub struct SourceTable {
     /// Go `CommonHandleLens`, index-parallel to
     /// [`Self::common_handle_col_offsets`].
     pub common_handle_lens: Vec<i64>,
-    /// Whether Go `TableInfo.TiFlashReplica` exists and is available.
-    /// `READ_FROM_STORAGE` is resolved by the planner from this fact and the
-    /// active query-block hints; it is not pre-resolved by the catalog.
-    pub has_tiflash_replica: bool,
+    /// Go `TableInfo.TiFlashReplica`. `READ_FROM_STORAGE` is resolved by the
+    /// planner from it and the active query-block hints; it is not
+    /// pre-resolved by the catalog.
+    pub tiflash_replica: Option<tidb_model::TiFlashReplicaInfo>,
 }
 
 impl SourceTable {
+    /// Whether the table has an available TiFlash replica, the one Go
+    /// `getPossibleAccessPaths` generates a TiFlash path for.
+    #[must_use]
+    pub fn has_tiflash_replica(&self) -> bool {
+        self.tiflash_replica
+            .as_ref()
+            .is_some_and(|replica| replica.available)
+    }
+
     /// Attaches the metadata objects that Go's preprocessor records in
-    /// `resolve.Context` for this infoschema table.
-    pub fn attach_resolve_metadata(&mut self, db_info: GoShared<DBInfo>) {
+    /// `resolve.Context` for this infoschema table: the table's own
+    /// `TableInfo` (Go `Table.Meta()`) when it has one, else one built from
+    /// this source's columns and indexes.
+    pub fn attach_resolve_metadata(
+        &mut self,
+        db_info: GoShared<DBInfo>,
+        table_info: Option<GoShared<TableInfo>>,
+    ) {
+        self.db_info = Some(db_info);
+        if let Some(table_info) = table_info {
+            self.table_info = Some(table_info);
+            return;
+        }
         let columns = self
             .columns
             .iter()
@@ -302,7 +322,6 @@ impl SourceTable {
                 }))
             })
             .collect();
-        self.db_info = Some(db_info);
         self.table_info = Some(GoShared::new(TableInfo {
             id: self.table_id,
             name: tidb_ast::CiString::new(self.table_name.clone()),
@@ -311,12 +330,7 @@ impl SourceTable {
             state: SchemaState::PUBLIC,
             pk_is_handle: self.pk_is_handle,
             is_common_handle: self.is_common_handle,
-            tiflash_replica: self.has_tiflash_replica.then(|| {
-                GoShared::new(tidb_model::TiFlashReplicaInfo {
-                    available: true,
-                    ..tidb_model::TiFlashReplicaInfo::default()
-                })
-            }),
+            tiflash_replica: self.tiflash_replica.clone().map(GoShared::new),
             ..TableInfo::default()
         }));
     }

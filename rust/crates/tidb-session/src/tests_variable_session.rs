@@ -22,7 +22,7 @@ use tidb_vardef::{defaults, tidb_vars as names};
 
 #[test]
 fn setter_scope_contract_matches_go() {
-    let mut vars = crate::vars::SessionVars::new();
+    let mut vars = mock_session_vars();
     for definition in SYS_VARS {
         if !definition.has_session_scope() {
             let error = vars
@@ -68,7 +68,7 @@ mod closure_tests {
     // executor concurrency.
     #[test]
     fn set_system_var_drives_the_derived_concurrency() {
-        let mut vars = SessionVars::new();
+        let mut vars = mock_session_vars();
 
         // Untouched session derives exactly NewSessionVars' defaults.
         assert_eq!(Concurrency::from_vars(&vars), Concurrency::default());
@@ -103,7 +103,7 @@ mod closure_tests {
     // Go defaults as the fallback.
     #[test]
     fn set_system_var_drives_quotas_and_batch_sizes() {
-        let mut vars = SessionVars::new();
+        let mut vars = mock_session_vars();
         vars.set_system(names::TIDB_MEM_QUOTA_QUERY, "2097152".to_owned())
             .unwrap();
         vars.set_system(names::TIDB_INDEX_JOIN_BATCH_SIZE, "123".to_owned())
@@ -134,7 +134,7 @@ fn sem_enable_and_disable_change_new_session_defaults() {
     let _reset = DisableSemOnDrop;
 
     tidb_util::sem::enable();
-    let enabled = SessionVars::new();
+    let enabled = mock_session_vars();
     assert_eq!(
         enabled.get_system("tidb_enable_enhanced_security").unwrap(),
         "ON"
@@ -152,11 +152,23 @@ fn sem_enable_and_disable_change_new_session_defaults() {
     );
 
     tidb_util::sem::disable();
-    let disabled = SessionVars::new();
+    let disabled = mock_session_vars();
     assert_eq!(
         disabled
             .get_system("tidb_enable_enhanced_security")
             .unwrap(),
         "OFF"
     );
+}
+
+/// `SessionVars` over a fresh domain's GLOBAL tier (Go's
+/// `GlobalVarsAccessor`, with its scope checks and SetGlobal hooks), as a
+/// session installs it.
+fn mock_session_vars() -> crate::vars::SessionVars {
+    let mut vars = crate::vars::SessionVars::new();
+    vars.seed_from_globals(std::sync::Arc::new(
+        tidb_domain::global_sysvars::GlobalSysvars::new(),
+    ))
+    .expect("the domain's GLOBAL tier seeds a session");
+    vars
 }

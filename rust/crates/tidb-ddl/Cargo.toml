@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+autotests = false
 description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, the schema-version sync it publishes through, and the embedded store the bootstrap and unit tests run it on."
 
 [lints]
@@ -20,8 +21,12 @@ tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
-tidb-exec = { path = "../tidb-exec" }
-tidb-executor = { path = "../tidb-executor" }
+tidb-cluster = { path = "../tidb-cluster" }
+tidb-table = { path = "../tidb-table" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
@@ -35,14 +40,42 @@ tidb-unistore = { path = "../tidb-unistore" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
+tidb-privilege = { path = "../tidb-privilege" }
+tidb-keydecoder = { path = "../tidb-keydecoder" }
+tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-placement = { path = "../tidb-placement" }
+chrono.workspace = true
+tonic.workspace = true
+tokio = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+fail = { version = "0.4", optional = true }
 [dev-dependencies]
+tidb-planner = { path = "../tidb-planner" }
+chrono-tz.workspace = true
 fail = { version = "0.4", features = ["failpoints"] }
 tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
+# The tests build sessions and data checks over the executor, as the node does.
+tidb-executor = { path = "../tidb-executor" }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
 
 [features]
 failpoints = [
+    "dep:fail",
+    "fail/failpoints",
     "tidb-ddl-serverstate/failpoints",
-    "tidb-exec/failpoints",
+    "tidb-txnkv/failpoints",
     "tidb-util/failpoints",
 ]

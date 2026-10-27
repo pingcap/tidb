@@ -17,102 +17,21 @@
 
 use tidb_datatype::{FieldType, SessionTimeZone};
 
-use crate::distsql_runtime::{LimiterWaitStats, SelectResultMetadata};
-use crate::response_channel::{ResponseRuntimeStats, SelectResponseIter};
-use crate::warning::WarningCollector;
+use crate::distsql_runtime::SelectResultMetadata;
+use crate::response_channel::SelectResponseIter;
+pub use tidb_txnkv::{QueryResponseError, QueryResultSubset};
+use crate::WarningCollector;
 
-/// One response subset returned by a single pull from the transport response.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct QueryResultSubset {
-    /// Raw protobuf response bytes, shared with the transport buffer they
-    /// arrived in. Decoding belongs to the select consumer.
-    pub data: prost::bytes::Bytes,
-    /// Runtime data returned by the same response pull, when present.
-    pub runtime: Option<ResponseRuntimeStats>,
-}
+/// Pull-based raw response owner: Go's `kv.Response` (`tidb_txnkv::Response`)
+/// with what DistSQL's `selectResult` reads off the coprocessor iterator
+/// behind it.
+pub trait QueryResponse: tidb_txnkv::Response {}
 
-/// Error returned while pulling an already-created response owner.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QueryResponseError {
-    /// The deterministic adapter is still open but has no subset available.
-    Pending,
-    /// The response source returned its first terminal error.
-    Source(String),
-    /// A registered storage or SQL error whose identity survives row decoding.
-    Sql {
-        /// MySQL protocol error number.
-        code: u16,
-        /// Source-formatted error message.
-        message: String,
-    },
-    /// The canonical query cancellation interrupted response consumption.
-    Cancelled,
-}
+/// Every `kv.Response`: the optional hooks distsql reads (Go's type
+/// assertions on `kv.Response`, e.g. `copr.CopInfo`) are the kv trait's own.
+impl<R: tidb_txnkv::Response + ?Sized> QueryResponse for R {}
 
-impl std::fmt::Display for QueryResponseError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => formatter.write_str("DistSQL query response is still pending"),
-            Self::Source(message) => formatter.write_str(message),
-            Self::Sql { message, .. } => formatter.write_str(message),
-            Self::Cancelled => formatter.write_str("query cancelled by caller"),
-        }
-    }
-}
-
-impl std::error::Error for QueryResponseError {}
-
-/// Pull-based raw response owner corresponding to Go's `kv.Response`.
-pub trait QueryResponse {
-    /// Pulls one raw result subset, or `None` after natural exhaustion.
-    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError>;
-
-    /// Pulls one raw result subset while forwarding the caller's remaining row
-    /// budget to response owners that can use it.
-    ///
-    /// Existing transports remain source-compatible: the default preserves the
-    /// original unbudgeted pull. Bounded adapters may override this method to
-    /// avoid materializing rows that the executor did not request.
-    fn next_with_required_rows(
-        &mut self,
-        _required_rows: usize,
-    ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
-        self.next()
-    }
-
-    /// Returns request-limiter wait evidence accumulated by this response.
-    ///
-    /// Go's `selectResult.closeImpl` reads `HasLimiterWaitStats` from the
-    /// response after consumption. Most response owners have no limiter and
-    /// therefore keep the zero default; transport owners override this when
-    /// they admit TiKV attempts through a request limiter.
-    #[must_use]
-    fn limiter_wait_stats(&self) -> LimiterWaitStats {
-        LimiterWaitStats::default()
-    }
-
-    /// Go `copr.CopInfo`: the concurrency and task-building time of the
-    /// iterator behind this response, `None` for owners that are not a
-    /// coprocessor iterator.
-    #[must_use]
-    fn cop_info(&self) -> Option<CopInfo> {
-        None
-    }
-
-    /// Closes the response owner and releases any unconsumed subsets.
-    fn close(&mut self);
-}
-
-/// Go `copr.CopInfo` (`GetConcurrency`, `GetBuildTaskElapsed`).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CopInfo {
-    /// Go `copIterator.concurrency`.
-    pub concurrency: usize,
-    /// Go `copIterator.smallTaskConcurrency`.
-    pub extra_concurrency: usize,
-    /// Go `copIterator.buildTaskElapsed`.
-    pub build_task_elapsed: std::time::Duration,
-}
+pub use tidb_txnkv::CopInfo;
 
 /// Go-shaped DistSQL result that owns one raw response until conversion or
 /// close.

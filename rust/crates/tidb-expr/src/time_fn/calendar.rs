@@ -741,7 +741,10 @@ pub(super) fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalE
     const MESSAGE: &str = "Datetime function: datetime field overflow";
     match ctx.truncate_level() {
         ErrorLevel::Ignore => {}
-        ErrorLevel::Warn => ctx.append_warning(1441, MESSAGE),
+        ErrorLevel::Warn => ctx.append_go_warning(
+            &tidb_error::catalog::types::ERR_DATETIME_FUNCTION_OVERFLOW,
+            MESSAGE,
+        ),
         ErrorLevel::Error => {
             return Err(EvalError::Conversion(
                 tidb_datatype::ERR_DATETIME_FUNCTION_OVERFLOW.generate(MESSAGE),
@@ -795,13 +798,22 @@ pub(crate) fn date_add_with_result_fsp(
         // -1) and warn the time-typed text.
         match date {
             Datum::Int(n) => {
-                ctx.append_warning(1292, &format!("Incorrect time value: '{n}'"));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect time value: '{n}'"),
+                );
             }
             Datum::UInt(n) => {
-                ctx.append_warning(1292, &format!("Incorrect time value: '{}'", *n as i64));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect time value: '{}'", *n as i64),
+                );
             }
             _ => {
-                ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect datetime value: '{s}'"),
+                );
             }
         }
         return Ok(Datum::Null);
@@ -970,7 +982,10 @@ fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>
             // wrapped value (-1) names the failure
             // (`Incorrect time value: '-1'`, 1292) before the NULL.
             Err(_) => {
-                cols.append_warning(1292, "Incorrect time value: '-1'");
+                cols.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    "Incorrect time value: '-1'",
+                );
                 return Ok(None);
             }
         },
@@ -1037,7 +1052,10 @@ fn interval_int_text(number: i64, cols: &dyn Columns) -> Result<Option<String>, 
         true,
         &chrono_tz::Tz::UTC,
     ) else {
-        cols.append_warning(1292, &format!("Incorrect time value: '{number}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect time value: '{number}'"),
+        );
         return Ok(None);
     };
     let core = parsed.time.core_time();
@@ -1370,13 +1388,22 @@ fn date_add_composite(
         // -1) and warn the time-typed text.
         match date {
             Datum::Int(n) => {
-                ctx.append_warning(1292, &format!("Incorrect time value: '{n}'"));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect time value: '{n}'"),
+                );
             }
             Datum::UInt(n) => {
-                ctx.append_warning(1292, &format!("Incorrect time value: '{}'", *n as i64));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect time value: '{}'", *n as i64),
+                );
             }
             _ => {
-                ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+                ctx.append_go_warning(
+                    &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                    &format!("Incorrect datetime value: '{s}'"),
+                );
             }
         }
         return Ok(Datum::Null);
@@ -1443,7 +1470,10 @@ pub(crate) fn extract_composite(
         // go `builtinExtractDatetimeSig` converts the unparseable text to the
         // ZERO datetime first and warns `Incorrect datetime value:
         // '0000-00-00 00:00:00'` (1292) on its way to NULL.
-        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            "Incorrect datetime value: '0000-00-00 00:00:00'",
+        );
         return Ok(Datum::Null);
     };
     let (h, mi, sec, microsecond) = time_parts_with_micros(time_suffix).unwrap_or((0, 0, 0, 0));

@@ -34,10 +34,10 @@
 //! rather than making the table silently disappear -- the same choice
 //! [`configure_loaded_table`] makes for the bounded read path.
 //!
-//! [`configure_loaded_table`]: tidb_exec::cluster_catalog::configure_loaded_table
+//! [`configure_loaded_table`]: tidb_cluster::cluster_catalog::configure_loaded_table
 
 use std::sync::{Arc, Mutex};
-use tidb_exec::cluster_catalog::ClusterCatalog;
+use tidb_cluster::cluster_catalog::ClusterCatalog;
 #[cfg(test)]
 use tidb_exec::cluster_stats_load::ClusterStatsItem;
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
@@ -58,9 +58,9 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 // Go `tables.TableFromMeta` and the auto-id seam moved beside the DDL
 // planner; the server keeps reaching them by their old paths.
 #[cfg(test)]
-pub use tidb_exec::table_from_meta::kv_index;
-pub use tidb_exec::table_from_meta::{cluster_table, AutoIdKind};
-pub use tidb_exec::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
+pub use tidb_cluster::table_from_meta::kv_index;
+pub use tidb_cluster::table_from_meta::{cluster_table, AutoIdKind};
+pub use tidb_cluster::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
 
 /// Why one loaded table is not part of the session's catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,10 +146,6 @@ impl tidb_executor::driver::StatisticsSource for SnapshotStatisticsSource {
 pub struct KvTableTemplates {
     schema_version: i64,
     tables: std::collections::HashMap<(String, String), KvTable>,
-    /// The store's regions (see `Catalog::set_region_store`): they belong to
-    /// the node, so they survive the schema-version change that empties
-    /// `tables`. Unset, each catalog keeps its own in-process map.
-    regions: Option<std::sync::Arc<dyn tidb_executor::region_map::RegionStore>>,
 }
 
 impl KvTableTemplates {
@@ -160,14 +156,6 @@ impl KvTableTemplates {
             self.tables.clear();
             self.schema_version = loaded.schema_version;
         }
-    }
-
-    /// The store's regions every catalog built from this set shares.
-    pub fn set_region_store(
-        &mut self,
-        regions: std::sync::Arc<dyn tidb_executor::region_map::RegionStore>,
-    ) {
-        self.regions = Some(regions);
     }
 
     fn get(&self, schema: &str, name: &str) -> Option<&KvTable> {
@@ -195,29 +183,20 @@ pub fn cluster_session_catalog_with_templates(
     template_storage: &ClusterTableStorage,
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::new();
     if let Some(view) = statistics {
         catalog.set_statistics_view(view);
-    }
-    // Go's label rules live in the node's `InfoSyncer`, not in the schema:
-    // `information_schema.attributes` reads the node's manager.
-    catalog.set_label_rule_manager(tidb_executor::label_manager::label_rule_manager());
-    if let Some(regions) = kv_templates
-        .as_deref()
-        .and_then(|templates| templates.regions.as_ref())
-    {
-        catalog.set_region_store(std::sync::Arc::clone(regions));
     }
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
     for group in &loaded.resource_groups {
-        catalog.put_resource_group(group.clone());
+        catalog.set_resource_group(group.clone());
     }
     // Go `infoschema`'s policy map, from meta: a table's, partition's or
     // schema's placement reference resolves against it.
     for policy in &loaded.policies {
-        catalog.put_policy(policy.clone());
+        catalog.set_policy(policy.clone());
     }
     for database in &loaded.databases {
         let schema = database.info.name.original().to_owned();
@@ -320,11 +299,6 @@ pub fn cluster_session_catalog_with_templates(
 /// table version is reported once per process, as a structured warning the
 /// production replay gate fails on.
 fn report_unbuildable_table(schema: &str, table: &TableInfo, reason: &str) {
-    // METRICS_SCHEMA's tables are served from Go's `genColumnInfos` shapes
-    // (`driver/metricsschema.rs`), not built from these column-less entries.
-    if schema.eq_ignore_ascii_case("METRICS_SCHEMA") {
-        return;
-    }
     static REPORTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<(i64, u64)>>> =
         std::sync::LazyLock::new(Default::default);
     let first = REPORTED
@@ -431,7 +405,8 @@ pub fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> Table
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use tidb_executor::KvTableDdl;
+use super::*;
 
     /// The store half of a transaction for a session these tests drive over
     /// storage they own: the test holds the buffer, so committing or rolling
@@ -556,7 +531,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),
@@ -616,7 +591,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),
@@ -971,7 +946,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),
@@ -1172,7 +1147,17 @@ mod tests {
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
         assert_eq!(loaded.next_column_id(), 18);
         assert_eq!(loaded.next_index_id(), 24);
-        let copy = loaded.create_like(303, "copy", &mut || unreachable!());
+        // Go `BuildTableInfoWithLike` keeps the source's id high-water marks.
+        let mut info = tidb_ddl_build::table_info_build::build_table_info_with_like(
+            "app",
+            "copy",
+            &loaded.meta().read(),
+            tidb_ast::CreateTableTemporary::None,
+            false,
+        )
+        .unwrap();
+        info.id = 303;
+        let copy = cluster_table(&info, &storage, &AutoIdSource::Unavailable).unwrap();
         assert_eq!(copy.next_column_id(), 18);
         assert_eq!(copy.next_index_id(), 24);
     }
@@ -1469,7 +1454,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),
@@ -1661,7 +1646,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),

@@ -157,7 +157,7 @@ impl HashJoinV2Exec {
         let build_started = std::time::Instant::now();
         let result = recover_worker_panic(|| {
             self.split_build_chunks(source, context, memory, spill.as_deref_mut(), build_filter)?;
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             let count = if let Some(spill) = spill.as_deref_mut() {
                 self.hash_table_context
                     .merge_row_tables_with_spill(self.ctx.partition_number, spill)?
@@ -165,7 +165,7 @@ impl HashJoinV2Exec {
                 self.hash_table_context
                     .merge_row_tables_to_hash_table(self.ctx.partition_number)
             };
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             self.link_build_tasks(count, memory)?;
             Ok(count)
         });
@@ -273,13 +273,13 @@ impl HashJoinV2Exec {
                                 loop {
                                     let mut chunk = select_biased! {
                                         recv(close) -> _ => return Ok(()),
-                                        recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                                        recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                                         recv(input) -> chunk => match chunk {
                                             Ok(chunk) => chunk,
                                             Err(_) => return Ok(()),
                                         },
                                     };
-                                    memory.check()?;
+                                    memory.check().map_err(ExecError::from)?;
                                     {
                                         let mut state = state
                                             .lock()
@@ -295,11 +295,11 @@ impl HashJoinV2Exec {
                                             .map_err(build_error)?;
                                         cost += started.elapsed();
                                     }
-                                    memory.check()?;
+                                    memory.check().map_err(ExecError::from)?;
                                     chunk.reset();
                                     select_biased! {
                                         recv(close) -> _ => return Ok(()),
-                                        recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                                        recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                                         send(resources, chunk) -> result => {
                                             if result.is_err() { return Ok(()); }
                                         },
@@ -333,7 +333,7 @@ impl HashJoinV2Exec {
                             Err(_) => Ok(resource_rx.try_recv().ok()),
                         },
                         recv(killed) -> _ => {
-                            memory.check()?;
+                            memory.check().map_err(ExecError::from)?;
                             Err(ExecError::internal("build killed without SQL signal"))
                         },
                         recv(resource_rx) -> chunk => Ok(chunk.ok()),
@@ -355,7 +355,7 @@ impl HashJoinV2Exec {
                         spare.push(child.new_chunk());
                     }
                     loop {
-                        memory.check()?;
+                        memory.check().map_err(ExecError::from)?;
                         if let Some(spill) = spill.as_deref_mut() {
                             if spill.action.is_spill_needed() {
                                 while in_flight > 0 {
@@ -397,7 +397,7 @@ impl HashJoinV2Exec {
                                     return Ok(());
                                 }
                             },
-                            recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                            recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                             send(input_tx, chunk) -> sent => {
                                 if sent.is_err() { workers_stopped.set(true); return Ok(()); }
                             },
@@ -441,7 +441,7 @@ impl HashJoinV2Exec {
                     }
                 }
                 if result.is_ok() && workers_stopped.get() {
-                    result = memory.check().and_then(|()| {
+                    result = memory.check().map_err(ExecError::from).and_then(|()| {
                         Err(ExecError::internal(
                             "build workers stopped without an error",
                         ))
@@ -505,10 +505,10 @@ impl HashJoinV2Exec {
                             if disk.as_ref().is_some_and(|disk| restored_index == disk.num_chunks()) { return Ok(()); }
                             let mut chunk = select_biased! {
                                 recv(close) -> _ => return Ok(()),
-                                recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                                recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                                 recv(input) -> chunk => match chunk { Ok(chunk) => chunk, Err(_) => return Ok(()) },
                             };
-                            memory.check()?;
+                            memory.check().map_err(ExecError::from)?;
                             let build_chunk = if let Some(disk) = disk.as_mut() {
                                 let restored_chunk = restored_chunk.as_mut().expect("worker restore buffer");
                                 disk.fill_chunk(restored_index, restored_chunk)
@@ -527,11 +527,11 @@ impl HashJoinV2Exec {
                                 }.map_err(build_error)?;
                                 cost += started.elapsed();
                             }
-                            memory.check()?;
+                            memory.check().map_err(ExecError::from)?;
                             chunk.reset();
                             select_biased! {
                                 recv(close) -> _ => return Ok(()),
-                                recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                                recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                                 send(resources, chunk) -> result => if result.is_err() { return Ok(()); },
                             }
                         }
@@ -555,7 +555,7 @@ impl HashJoinV2Exec {
             let receive_resource = || -> Result<Option<tidb_chunk::chunk::Chunk>, ExecError> {
                 select_biased! {
                     recv(error_rx) -> error => match error { Ok(error) => Err(error), Err(_) => Ok(resource_rx.try_recv().ok()) },
-                    recv(killed) -> _ => { memory.check()?; Err(ExecError::internal("build killed without SQL signal")) },
+                    recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; Err(ExecError::internal("build killed without SQL signal")) },
                     recv(resource_rx) -> chunk => Ok(chunk.ok()),
                 }
             };
@@ -581,7 +581,7 @@ impl HashJoinV2Exec {
                     });
                 }
                 loop {
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                     if let Some(spill) = spill.as_deref_mut() {
                         if spill.action.is_spill_needed() {
                             while in_flight > 0 {
@@ -627,7 +627,7 @@ impl HashJoinV2Exec {
                             Ok(error) => return Err(error),
                             Err(_) => { workers_stopped.set(true); return Ok(()); }
                         },
-                        recv(killed) -> _ => { memory.check()?; return Ok(()); },
+                        recv(killed) -> _ => { memory.check().map_err(ExecError::from)?; return Ok(()); },
                         send(input_tx, chunk) -> sent => if sent.is_err() { workers_stopped.set(true); return Ok(()); },
                     }
                     in_flight += 1;
@@ -672,7 +672,7 @@ impl HashJoinV2Exec {
             // worker publishes its failure. The worker result, not transport
             // closure, owns the error. Join first, as Go waitJobDone does.
             if result.is_ok() && workers_stopped.get() {
-                result = memory.check().and_then(|()| {
+                result = memory.check().map_err(ExecError::from).and_then(|()| {
                     Err(ExecError::internal(
                         "build workers stopped without an error",
                     ))
@@ -744,13 +744,13 @@ impl HashJoinV2Exec {
                     if stopped.load(Ordering::Acquire) {
                         return Ok(());
                     }
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                     task.slots.as_slots().build_segments_with_mode(
                         &mut task.segments,
                         &tag_helper,
                         task.atomic,
                     );
-                    memory.check()
+                    memory.check().map_err(ExecError::from)
                 });
                 // Go `BuildWorkerV2.buildHashTable`'s deferred update; a
                 // task here is one segment range, Go's worker drains several.

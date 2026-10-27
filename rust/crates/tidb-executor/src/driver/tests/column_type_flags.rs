@@ -49,7 +49,7 @@ fn catalog_column_iteration_borrows_visible_metadata() {
 
 /// The five-column table both tests run against, with one row.
 fn flag_table() -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE y (a YEAR, b BIT(8), c INT UNSIGNED, d INT ZEROFILL, e VARCHAR(5))",
         &mut catalog,

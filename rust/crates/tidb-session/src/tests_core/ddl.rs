@@ -94,10 +94,10 @@ fn create_table_if_not_exists_records_one_note() {
         .unwrap();
 
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].level, WarningLevel::Note);
-    assert_eq!(session.warnings()[0].code, 1050);
+    assert_eq!(session.warnings()[0].warning_level(), WarningLevel::Note);
+    assert_eq!(session.warnings()[0].code(), 1050);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Table 'test.once' already exists"
     );
     assert_eq!(session.wire_warning_count(), 1);
@@ -1215,7 +1215,7 @@ fn if_exists_demotes_the_error_it_swallowed_to_a_note() {
         session
             .warnings()
             .iter()
-            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code, w.message))
+            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code(), w.message()))
             .collect()
     };
 
@@ -1320,7 +1320,7 @@ fn an_executor_tier_if_exists_keeps_its_note_level() {
         session
             .warnings()
             .iter()
-            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code, w.message))
+            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code(), w.message()))
             .collect()
     };
     session

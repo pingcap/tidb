@@ -1238,6 +1238,11 @@ fn exhaust_physical_plans(
                         .any(|column| column.unique_id == item.col.unique_id)
                 })
             {
+                if let Some(sink) = ctx.mpp_warning_sink {
+                    sink.raise_mpp_warning(
+                        "MPP mode may be blocked because operator `Apply` is not supported now.",
+                    );
+                }
                 return Ok((Vec::new(), true));
             }
 
@@ -1730,7 +1735,13 @@ fn find_best_task_4_logical_mem_table(
         let mut unordered_prop = direct_prop;
         unordered_prop.sort_items.clear();
         let unordered = find_best_task(logical, &unordered_prop, ctx)?;
-        return enforce_property_in(prop, unordered, ctx.allocator, ctx.expression_evaluator);
+        return enforce_property_in(
+            prop,
+            unordered,
+            ctx.allocator,
+            ctx.expression_evaluator,
+            ctx.mpp_warning_sink,
+        );
     }
 
     if !prop.sort_items.is_empty() {
@@ -2611,7 +2622,13 @@ fn find_best_task_4_logical_data_source(
         unordered_prop.sort_items.clear();
         let unordered =
             find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
-        let enforced = enforce_property_in(prop, unordered, ctx.allocator, ctx.expression_evaluator)?;
+        let enforced = enforce_property_in(
+            prop,
+            unordered,
+            ctx.allocator,
+            ctx.expression_evaluator,
+            ctx.mpp_warning_sink,
+        )?;
         if compare_task_cost(ctx.coster, &direct, &enforced)? {
             return Ok(direct);
         }
@@ -5079,7 +5096,13 @@ fn enumerate_physical_plans_4_task(
                 cur_task = cur_task.convert_to_root_task_in(ctx.allocator, ctx.expression_evaluator)?;
             }
             if add_enforcer {
-                cur_task = enforce_property_in(prop, cur_task, ctx.allocator, ctx.expression_evaluator)?;
+                cur_task = enforce_property_in(
+            prop,
+            cur_task,
+            ctx.allocator,
+            ctx.expression_evaluator,
+            ctx.mpp_warning_sink,
+        )?;
             }
             // A column-only NominalSort returns its ordered child task directly.
             // Rewriting that child here would invalidate the ORDER BY contract
@@ -5388,6 +5411,31 @@ mod tests {
             ids.push(task.plan().expect("physical plan").base().base.id());
         }
         assert_eq!(ids, [2, 3, 4]);
+    }
+
+    /// Go `findBestTask` checks the operator itself first
+    /// (`checkOpSelfSatisfyPropTaskTypeRequirement`): a Lock under the MPP
+    /// property is refused there, with the `SelectLock` warning, before
+    /// `ExhaustPhysicalPlans4LogicalLock`'s own `Lock` warning can run.
+    #[test]
+    fn lock_under_a_tiflash_property_raises_the_select_lock_warning_like_go() {
+        use crate::logical::{LogicalLock, SelectLockType};
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let sink = RecordingMppWarningSink(RefCell::new(Vec::new()));
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_mpp_warning_sink(&sink);
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+        let logical = LogicalPlan::Lock(LogicalLock::new(base, SelectLockType::ForUpdate));
+        let mpp = PhysicalProperty {
+            task_tp: TaskType::Mpp,
+            ..PhysicalProperty::default()
+        };
+        assert!(find_best_task(&logical, &mpp, &mut ctx).expect("a search result").invalid());
+        assert_eq!(
+            sink.0.borrow().as_slice(),
+            ["MPP mode may be blocked because operator `SelectLock` is not supported now."]
+        );
     }
 
     #[test]

@@ -413,6 +413,23 @@ impl SqlKiller {
     }
 }
 
+/// The wire form of `exeerrors.ErrMemoryExceedForQuery` for `conn_id`,
+/// rendered by the SAME path Go's `SQLKiller.getKillError` uses -- a killer
+/// carrying a pending `QueryMemoryExceeded` signal.
+///
+/// Going through the killer rather than formatting the message here keeps one
+/// source for the text, the errno and the SQL state.
+#[must_use]
+pub fn memory_exceed_for_query(conn_id: u64) -> tidb_error::mysql::SqlError {
+    let killer = SqlKiller::default();
+    killer.conn_id.store(conn_id, SeqCst);
+    killer.send_kill_signal(KillSignal::QueryMemoryExceeded);
+    killer
+        .handle_signal()
+        .expect("a pending QueryMemoryExceeded signal always yields its error")
+        .to_sql_error()
+}
+
 #[cfg(test)]
 mod kill_event_channel_tests {
     use super::*;

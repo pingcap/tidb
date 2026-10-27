@@ -26,7 +26,7 @@ fn kv<'a>(catalog: &'a Catalog, name: &str) -> &'a crate::KvTable {
 /// copies `TableInfo`, which never held a row.
 #[test]
 fn like_copies_the_structure_and_none_of_the_rows() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE src (a BIGINT, b VARCHAR(10), KEY k (a), UNIQUE KEY u (b))",
         &mut catalog,
@@ -88,7 +88,7 @@ fn like_copies_the_structure_and_none_of_the_rows() {
 /// counter. This is the reset that a shallow struct copy would silently lose.
 #[test]
 fn like_does_not_copy_the_auto_increment_value() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE src (id BIGINT PRIMARY KEY AUTO_INCREMENT, v BIGINT)",
         &mut catalog,
@@ -126,7 +126,7 @@ fn like_does_not_copy_the_auto_increment_value() {
 /// the source would reject for having no parent is accepted here.
 #[test]
 fn like_does_not_copy_foreign_keys() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE parent (id BIGINT PRIMARY KEY)", &mut catalog)
         .unwrap();
     crate::run_create_table_on(
@@ -147,7 +147,7 @@ fn like_does_not_copy_foreign_keys() {
 /// `ErrWrongObject` (1347), whose third argument here is `BASE TABLE`.
 #[test]
 fn like_a_view_is_wrong_object() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT)", &mut catalog).unwrap();
     catalog
         .register_view_in(
@@ -184,7 +184,7 @@ fn like_a_view_is_wrong_object() {
 /// for an ordinary CREATE.
 #[test]
 fn like_reports_missing_source_and_existing_target() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT)", &mut catalog).unwrap();
 
     assert!(matches!(
@@ -211,7 +211,7 @@ fn like_reports_missing_source_and_existing_target() {
 /// records under one physical id would interleave their rows.
 #[test]
 fn like_copies_partitioning_with_fresh_physical_ids() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE src (a BIGINT) PARTITION BY HASH (a) PARTITIONS 4",
         &mut catalog,

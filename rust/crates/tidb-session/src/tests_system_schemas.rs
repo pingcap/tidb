@@ -272,7 +272,9 @@ fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
     );
 }
 
-/// `DROP DATABASE mysql` is refused before the catalog mutation, matching Go.
+/// `DROP DATABASE mysql` is refused before the catalog mutation, matching Go
+/// `executeDropDatabase` (`pkg/executor/ddl.go:360`), whose guard is
+/// unconditional.
 ///
 /// Captured from Go:
 ///
@@ -282,12 +284,6 @@ fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
 ///
 #[test]
 fn dropping_the_mysql_schema_is_refused() {
-    // Go refuses this only for next-gen's reserved schemas
-    // (`isReservedSchemaObjInNextGen` in `executor.DropSchema`); a classic
-    // kernel drops the system schema like any other.
-    if !tidb_config::kerneltype::is_next_gen() {
-        return;
-    }
     let mut session = Session::new();
     for statement in ["DROP DATABASE mysql", "DROP DATABASE IF EXISTS mysql"] {
         let error = session.run(statement).unwrap_err().to_mysql_error();
@@ -299,6 +295,33 @@ fn dropping_the_mysql_schema_is_refused() {
     }
     // The refusal must leave the bootstrap schema available to the session.
     session.run("USE mysql").unwrap();
+}
+
+/// Go `executeDropDatabase` (`pkg/executor/ddl.go:364-375`): dropping the
+/// current database clears it and resets `character_set_database` /
+/// `collation_database` to the server defaults.
+#[test]
+fn dropping_the_current_database_resets_its_charset_variables() {
+    let mut session = Session::new();
+    session
+        // `latin1_swedish_ci` is 1273 under new collation, Go's default.
+        .run("CREATE DATABASE d_latin1 CHARACTER SET latin1 COLLATE latin1_bin")
+        .unwrap();
+    session.run("USE d_latin1").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@collation_database").as_deref(),
+        Some("latin1_bin")
+    );
+    session.run("DROP DATABASE d_latin1").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@character_set_database").as_deref(),
+        Some("utf8mb4")
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@collation_database").as_deref(),
+        Some("utf8mb4_bin")
+    );
+    assert_eq!(err_code(session.run("CREATE TABLE t (a INT)")), 1046);
 }
 
 /// `information_schema.tables` lists the schema's OWN tables -- all of them,
@@ -1571,7 +1594,11 @@ fn client_errors_summary_uses_the_shared_counters_and_process_rules() {
     );
     assert_eq!(rows, [["1064", "1", "1"], ["1146", "1", "0"]]);
 
-    session.run("FLUSH CLIENT_ERRORS_SUMMARY").unwrap();
+    // Go `buildFlush` needs RELOAD for every FLUSH, which alice lacks; the
+    // counters are the server's, so another session flushes them.
+    let denied = session.run("FLUSH CLIENT_ERRORS_SUMMARY").unwrap_err().to_mysql_error();
+    assert_eq!(denied.code, 1227, "{denied:?}");
+    Session::new().run("FLUSH CLIENT_ERRORS_SUMMARY").unwrap();
     let (_, rows) = query_text(
         &mut session,
         "SELECT * FROM information_schema.CLIENT_ERRORS_SUMMARY_GLOBAL",

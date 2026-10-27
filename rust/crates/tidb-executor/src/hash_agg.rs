@@ -2219,7 +2219,7 @@ impl Partial {
                     // `utf8mb4_general_ci` column holding 'a','B','A' the
                     // answers are max=B, min=a -- NOT the binary a/A
                     // (captured from TiDB).
-                    let ordering = crate::remote_scan::compare_extreme(&input, current, collation)?;
+                    let ordering = crate::aggfuncs::compare_extreme(&input, current, collation)?;
                     if (*is_max && ordering == Ordering::Greater)
                         || (!*is_max && ordering == Ordering::Less)
                     {

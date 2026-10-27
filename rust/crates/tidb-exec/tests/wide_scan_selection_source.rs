@@ -657,7 +657,7 @@ fn the_wide_lowering_preserves_integer_types_and_rejects_invalid_descriptors() {
 }
 
 /// A `VARCHAR` column in a named collation, as a scan descriptor states it:
-/// the REWRITTEN protocol id, which is what `cop_scan::scan_column` puts there.
+/// the REWRITTEN protocol id, which is what `cop_reader::scan_column` puts there.
 fn string_column(collation: &str) -> ScanColumnInfo {
     ScanColumnInfo {
         collation: tidb_datatype::collation_to_proto(collation),

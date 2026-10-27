@@ -303,7 +303,7 @@ impl SortPartition {
             |&(left_chunk, left_row), &(right_chunk, right_row)| {
                 if let Some((memory, checkpoint)) = memory {
                     if compare_count >= checkpoint {
-                        if let Err(error) = memory.check() {
+                        if let Err(error) = memory.check().map_err(ExecError::from) {
                             if sort_err.is_none() {
                                 sort_err = Some(error);
                             }
@@ -413,7 +413,7 @@ impl SortPartition {
                 if let Some(memory) = memory {
                     // Go's `sortPartition.spillToDiskImpl` invokes
                     // `HandleKillSignal` after each full spill chunk.
-                    memory.check()?;
+                    memory.check().map_err(ExecError::from)?;
                 }
             }
         }

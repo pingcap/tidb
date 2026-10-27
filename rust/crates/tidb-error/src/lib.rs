@@ -23,6 +23,7 @@
 
 pub mod catalog;
 pub mod errctx;
+mod go_error_codes;
 pub mod mysql;
 pub mod plannererrors;
 pub mod server_errors;

@@ -236,10 +236,10 @@ fn test_ddl_statements() {
     assert!(!table.columns[1].ty.is_binary());
     assert!(!table.columns[2].ty.is_binary());
     assert!(table.table_options.iter().any(
-        |option| matches!(option, tidb_ast::TableOption::CharacterSet(value) if value == "UTF8")
+        |option| matches!(option, tidb_ast::TableOption::CharacterSet(value) if value == "utf8")
     ));
     assert!(table.table_options.iter().any(
-        |option| matches!(option, tidb_ast::TableOption::Collate(value) if value == "UTF8_BIN")
+        |option| matches!(option, tidb_ast::TableOption::Collate(value) if value == "utf8_bin")
     ));
 
     let table = create_table("CREATE TABLE t (a varbinary(64), b binary(10), c blob)");

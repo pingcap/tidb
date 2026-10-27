@@ -188,6 +188,48 @@ impl PrivilegeType {
     pub fn as_str(self) -> &'static str {
         lookup_forward(PRIVILEGE_NAMES, self)
     }
+    /// Go `strings.ToUpper(mysql.Priv2Str[p])` (`PrivToString`,
+    /// `pkg/privilege/privileges/cache.go:2042`): the text `SHOW GRANTS`
+    /// prints, and the verb an access-denied error names. Empty for
+    /// `USAGE`, `ALL` and an unknown bit, none of which is printed this way.
+    pub fn print_name(self) -> &'static str {
+        match self {
+            SelectPriv => "SELECT",
+            InsertPriv => "INSERT",
+            UpdatePriv => "UPDATE",
+            DeletePriv => "DELETE",
+            CreatePriv => "CREATE",
+            DropPriv => "DROP",
+            ProcessPriv => "PROCESS",
+            ReferencesPriv => "REFERENCES",
+            AlterPriv => "ALTER",
+            ShowDBPriv => "SHOW DATABASES",
+            SuperPriv => "SUPER",
+            ExecutePriv => "EXECUTE",
+            IndexPriv => "INDEX",
+            CreateUserPriv => "CREATE USER",
+            CreateTablespacePriv => "CREATE TABLESPACE",
+            TriggerPriv => "TRIGGER",
+            CreateViewPriv => "CREATE VIEW",
+            ShowViewPriv => "SHOW VIEW",
+            OperateViewPriv => "OPERATE VIEW",
+            CreateRolePriv => "CREATE ROLE",
+            DropRolePriv => "DROP ROLE",
+            CreateTMPTablePriv => "CREATE TEMPORARY TABLES",
+            LockTablesPriv => "LOCK TABLES",
+            CreateRoutinePriv => "CREATE ROUTINE",
+            AlterRoutinePriv => "ALTER ROUTINE",
+            EventPriv => "EVENT",
+            ShutdownPriv => "SHUTDOWN",
+            ReloadPriv => "RELOAD",
+            FilePriv => "FILE",
+            ConfigPriv => "CONFIG",
+            ReplicationClientPriv => "REPLICATION CLIENT",
+            ReplicationSlavePriv => "REPLICATION SLAVE",
+            GrantPriv => "GRANT OPTION",
+            _ => "",
+        }
+    }
     /// mysql.user/mysql.db column name, or empty for an unknown bit.
     pub fn column_string(self) -> &'static str {
         lookup_forward(PRIVILEGE_USER_COLUMNS, self)
@@ -233,8 +275,10 @@ pub fn has_privilege(privileges: &[PrivilegeType], privilege: PrivilegeType) -> 
     privileges.contains(&privilege)
 }
 
-/// All privileges legal in global scope, in source order.
-pub const ALL_GLOBAL_PRIVILEGES: &[PrivilegeType] = &[
+/// Go `mysql.AllGlobalPrivs` (`pkg/parser/mysql/privs.go:322`): every
+/// privilege in global scope, in Go's order -- the order `SHOW GRANTS`
+/// prints and the exact list `GRANT ALL PRIVILEGES` expands to.
+pub const ALL_GLOBAL_PRIVS: &[PrivilegeType] = &[
     SelectPriv,
     InsertPriv,
     UpdatePriv,
@@ -268,8 +312,9 @@ pub const ALL_GLOBAL_PRIVILEGES: &[PrivilegeType] = &[
     ReplicationClientPriv,
     ReplicationSlavePriv,
 ];
-/// All privileges legal in database scope, in source order.
-pub const ALL_DATABASE_PRIVILEGES: &[PrivilegeType] = &[
+/// Go `mysql.AllDBPrivs` (`pkg/parser/mysql/privs.go:325`): every privilege
+/// in database scope, in Go's order.
+pub const ALL_DB_PRIVS: &[PrivilegeType] = &[
     SelectPriv,
     InsertPriv,
     UpdatePriv,
@@ -290,8 +335,9 @@ pub const ALL_DATABASE_PRIVILEGES: &[PrivilegeType] = &[
     OperateViewPriv,
     TriggerPriv,
 ];
-/// All privileges legal in table scope, in source order.
-pub const ALL_TABLE_PRIVILEGES: &[PrivilegeType] = &[
+/// Go `mysql.AllTablePrivs` (`pkg/parser/mysql/privs.go:328`): every
+/// privilege in table scope, in Go's order.
+pub const ALL_TABLE_PRIVS: &[PrivilegeType] = &[
     SelectPriv,
     InsertPriv,
     UpdatePriv,
@@ -306,11 +352,13 @@ pub const ALL_TABLE_PRIVILEGES: &[PrivilegeType] = &[
     OperateViewPriv,
     TriggerPriv,
 ];
-/// All privileges legal in column scope, in source order.
-pub const ALL_COLUMN_PRIVILEGES: &[PrivilegeType] =
+/// Go `mysql.AllColumnPrivs` (`pkg/parser/mysql/privs.go:331`): every
+/// privilege in column scope, in Go's order.
+pub const ALL_COLUMN_PRIVS: &[PrivilegeType] =
     &[SelectPriv, InsertPriv, UpdatePriv, ReferencesPriv];
-/// Static privileges that exist only at global scope, in source order.
-pub const STATIC_GLOBAL_ONLY_PRIVILEGES: &[PrivilegeType] = &[
+/// Go `mysql.StaticGlobalOnlyPrivs` (`pkg/parser/mysql/privs.go:334`):
+/// static privileges that exist only at global scope, in Go's order.
+pub const STATIC_GLOBAL_ONLY_PRIVS: &[PrivilegeType] = &[
     ProcessPriv,
     ShowDBPriv,
     SuperPriv,
@@ -323,3 +371,48 @@ pub const STATIC_GLOBAL_ONLY_PRIVILEGES: &[PrivilegeType] = &[
     ReplicationSlavePriv,
     ConfigPriv,
 ];
+
+/// Go's parser keywords for a static privilege (`PrivType` in the grammar):
+/// the spelling `tidb-parser` restores into `GrantPrivilege::name`. `ALL`
+/// is `AllPriv` and `USAGE` is `UsagePriv`; a dynamic or unknown name is
+/// `None`.
+pub fn privilege_from_grant_name(name: &str) -> Option<PrivilegeType> {
+    Some(match name {
+        "ALL" | "ALL PRIVILEGES" => AllPriv,
+        "USAGE" => UsagePriv,
+        "SELECT" => SelectPriv,
+        "INSERT" => InsertPriv,
+        "UPDATE" => UpdatePriv,
+        "DELETE" => DeletePriv,
+        "CREATE" => CreatePriv,
+        "DROP" => DropPriv,
+        "PROCESS" => ProcessPriv,
+        "REFERENCES" => ReferencesPriv,
+        "ALTER" => AlterPriv,
+        "SHOW DATABASES" => ShowDBPriv,
+        "SUPER" => SuperPriv,
+        "EXECUTE" => ExecutePriv,
+        "INDEX" => IndexPriv,
+        "CREATE USER" => CreateUserPriv,
+        "CREATE TABLESPACE" => CreateTablespacePriv,
+        "TRIGGER" => TriggerPriv,
+        "CREATE VIEW" => CreateViewPriv,
+        "SHOW VIEW" => ShowViewPriv,
+        "OPERATE VIEW" => OperateViewPriv,
+        "CREATE ROLE" => CreateRolePriv,
+        "DROP ROLE" => DropRolePriv,
+        "CREATE TEMPORARY TABLES" => CreateTMPTablePriv,
+        "LOCK TABLES" => LockTablesPriv,
+        "CREATE ROUTINE" => CreateRoutinePriv,
+        "ALTER ROUTINE" => AlterRoutinePriv,
+        "EVENT" => EventPriv,
+        "SHUTDOWN" => ShutdownPriv,
+        "RELOAD" => ReloadPriv,
+        "FILE" => FilePriv,
+        "CONFIG" => ConfigPriv,
+        "REPLICATION CLIENT" => ReplicationClientPriv,
+        "REPLICATION SLAVE" => ReplicationSlavePriv,
+        "GRANT OPTION" => GrantPriv,
+        _ => return None,
+    })
+}

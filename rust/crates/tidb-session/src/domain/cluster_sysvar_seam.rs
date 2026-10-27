@@ -17,7 +17,7 @@
 //!
 //! This is [`crate::domain::cluster_account_seam`]'s twin for the same reason: a
 //! `SET GLOBAL` run only against this node's in-memory
-//! [`crate::vars::GlobalSysvars`] would answer `OK` to a client while
+//! [`crate::GlobalSysvars`] would answer `OK` to a client while
 //! every other node in the cluster -- and this node itself, after a restart
 //! -- never saw the change.
 //!
@@ -46,13 +46,13 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
-use tidb_exec::cluster_sysvar_load::load_cluster_sysvars;
-use tidb_exec::cluster_sysvar_write::plan_sysvar_write;
+use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_cluster::cluster_sysvar_load::load_cluster_sysvars;
+use tidb_cluster::cluster_sysvar_write::plan_sysvar_write;
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
-use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
-use crate::vars::GlobalSysvars;
+use crate::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 
@@ -459,7 +459,7 @@ where
             if enable != tidb_vardef::is_mdl_enabled(false) {
                 let running = {
                     let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-                    tidb_exec::ddl_job_table::DdlJobTable::locate(&self.catalog)
+                    tidb_ddl::ddl_job_table::DdlJobTable::locate(&self.catalog)
                         .and_then(|table| table.has_jobs(&mut snapshot))
                         .map_err(|error| SqlQueryError::unknown(error.to_string()))?
                 };
@@ -470,7 +470,7 @@ where
                     ));
                 }
                 plan.mutations.push(
-                    tidb_exec::cluster_sysvar_write::metadata_lock_mutation(enable)
+                    tidb_cluster::cluster_sysvar_write::metadata_lock_mutation(enable)
                         .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
                 );
             }

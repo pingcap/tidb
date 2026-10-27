@@ -95,8 +95,8 @@ pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> Temporal
 }
 
 fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
-    cols.append_warning(
-        1292,
+    cols.append_go_warning(
+        &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
         &format!(
             "Truncated incorrect time value: '{}'",
             tidb_datatype::warning_subject_byte_cap(value)
@@ -399,12 +399,18 @@ fn str_datetime_add_duration(
                 .parse::<i64>()
                 .map_or(true, |n| n > 99_991_231)
         {
-            cols.append_warning(1292, &format!("Incorrect time value: '{text}'"));
+            cols.append_go_warning(
+                &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                &format!("Incorrect time value: '{text}'"),
+            );
             return Ok(Datum::Null);
         }
         // Go appends the parse error as a warning "regardless of the
         // sql_mode, this is compatible with MySQL" and answers NULL.
-        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect datetime value: '{text}'"),
+        );
         return Ok(Datum::Null);
     };
     let first = GoDateTime {
@@ -471,7 +477,10 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         &cols.time_zone(),
     );
     let Ok(parsed) = parsed else {
-        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect datetime value: '{text}'"),
+        );
         return Ok(Datum::Null);
     };
     let core = parsed.time.core_time();
@@ -525,7 +534,10 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
         return Ok(Datum::Null);
     };
     let Some(base) = parse_datetime(&text) else {
-        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect datetime value: '{text}'"),
+        );
         return Ok(Datum::Null);
     };
     // Go converts the third argument through `Time.GoTime` before calling
@@ -534,7 +546,10 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
     // even though the signed day-number helper could otherwise produce a
     // seemingly valid year-78 result.
     if !base.in_range() {
-        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect datetime value: '{text}'"),
+        );
         return Ok(Datum::Null);
     }
     let unit = unit.to_ascii_uppercase();
@@ -547,8 +562,8 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
         return super::calendar::date_arithmetic_overflow(cols);
     };
     if !result.in_range() {
-        cols.append_warning(
-            1292,
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
             &format!(
                 "Incorrect time value: '{{{} {} {} {} {} {} {}}}'",
                 result.year,
@@ -586,7 +601,10 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
                 Ok(local) => {
                     let seconds = local.timestamp();
                     if !(1..=2_147_483_647).contains(&seconds) {
-                        cols.append_warning(1292, &format!("Incorrect time value: '{core:?}'"));
+                        cols.append_go_warning(
+                            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                            &format!("Incorrect time value: '{core:?}'"),
+                        );
                         return Ok(Datum::Null);
                     }
                 }
@@ -599,7 +617,10 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
                     ));
                 }
                 Err(_) => {
-                    cols.append_warning(1292, &format!("Incorrect time value: '{core:?}'"));
+                    cols.append_go_warning(
+                        &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                        &format!("Incorrect time value: '{core:?}'"),
+                    );
                     return Ok(Datum::Null);
                 }
             }

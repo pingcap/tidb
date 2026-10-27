@@ -44,7 +44,7 @@ fn ctx() -> StmtContext {
 }
 
 fn go_t1_t2_catalog() -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t1(a varchar(20), b int, c float, key(b, a))",
         &mut catalog,

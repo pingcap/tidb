@@ -617,7 +617,7 @@ fn unistore_node_exits_when_the_status_port_cannot_bind() {
     let stdout_path = base.with_extension("stdout");
     let stdout = std::fs::File::create(&stdout_path).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
-        .args(["--store", "unistore", "--host", "127.0.0.1", "-P", "0"])
+        .args(["--store", "unistore", "--host", "127.0.0.1", "-P", "0", "--socket", ""])
         .args(["--status-host", "127.0.0.1", "--status", &status_port])
         .args(["--auth-file", users.0.to_str().unwrap()])
         .args(["--config", file.0.to_str().unwrap()])

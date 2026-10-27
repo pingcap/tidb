@@ -27,14 +27,10 @@
 //!   `effective_sysvar_default` answers. Not repeated here.
 //! * `version` and `version_comment` — initialized from the same process-wide
 //!   package variables Go updates before this function runs.
-//! * The `setInstanceVar` block — the registry's scope table is a static
-//!   catalog in this port; Go MUTATES `SysVar.Scope` at startup to grant
-//!   instance scope. Unported with that mutation, alongside the config
-//!   fields it reads (`cfg.Instance.*`).
-//! * `tidb_force_priority`, distinct/projection push-down switches,
-//!   `datadir`, slow-query file, MPP enforcement, and plan-cache sizing —
-//!   each reads a `NodeConfig` surface this port does not carry yet; they
-//!   follow their config fields.
+//! * `tidb_slow_query_file` — the registry's effective default reads the
+//!   same config field (`effective_default`).
+//! * Plan-cache sizing (`PreparedPlanCacheMaxMemory`) — no prepared-plan
+//!   cache memory bound exists in this port to receive it.
 
 use crate::GlobalSysvars;
 
@@ -50,15 +46,85 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
             tidb_util::versioninfo::tidb_edition()
         ),
     );
+    // Go's `setInstanceVar` block: the `[instance]` values this instance
+    // keeps over the `mysql.global_variables` rows.
+    let instance = &config.global_config.instance;
+    for (name, value) in [
+        (
+            tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_STMT_COUNT,
+            instance.stmt_summary_max_stmt_count.to_string(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
+            instance.server_memory_limit.clone(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE,
+            instance.mem_arbitrator_mode.clone(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT,
+            instance.mem_arbitrator_soft_limit.clone(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER,
+            instance.server_memory_limit_gc_trigger.clone(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE,
+            instance.instance_plan_cache_max_mem_size.clone(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA,
+            instance.stats_cache_mem_quota.to_string(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_BINDING_CACHE,
+            instance.mem_quota_binding_cache.to_string(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE,
+            instance.schema_cache_size.clone(),
+        ),
+    ] {
+        globals.set_instance_var(name, value);
+    }
+    let source = &config.global_config;
+    let on_off = |enabled: bool| if enabled { "ON" } else { "OFF" }.to_owned();
+    // `variable.SetSysVar(vardef.TiDBForcePriority,
+    // mysql.Priority2Str[mysql.Str2Priority(cfg.Instance.ForcePriority)])`.
+    globals.set_startup(
+        tidb_vardef::tidb_vars::TIDB_FORCE_PRIORITY,
+        tidb_mysql::priority_from_str(&instance.force_priority)
+            .as_name()
+            .to_owned(),
+    );
+    globals.set_startup(
+        tidb_vardef::tidb_vars::TIDB_OPT_DISTINCT_AGG_PUSH_DOWN,
+        on_off(source.performance.distinct_agg_push_down),
+    );
+    globals.set_startup(
+        tidb_vardef::tidb_vars::TIDB_OPT_PROJECTION_PUSH_DOWN,
+        on_off(source.performance.projection_push_down),
+    );
     // `variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))`.
     globals.set_startup("port", config.port.to_string());
     // `cfg.Socket` arrives with `{Port}` already substituted (the parse did
     // Go's one `strings.Replace`).
     globals.set_startup("socket", config.socket.clone());
+    globals.set_startup("datadir", source.path.clone());
     // `strings.Join(cfg.IsolationRead.Engines, ",")`.
     globals.set_startup(
         "tidb_isolation_read_engines",
         config.isolation_read_engines.join(","),
+    );
+    globals.set_startup(
+        tidb_vardef::tidb_vars::TIDB_ENFORCE_MPP_EXECUTION,
+        on_off(source.performance.enforce_mpp),
+    );
+    globals.set_startup(
+        tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE_PESSIMISTIC,
+        on_off(source.pessimistic_txn.constraint_check_in_place_pessimistic),
     );
     // Go binds `max_connections` to the LIVE instance config, in the sysvar
     // definition itself rather than in `setGlobalVars`:
@@ -99,8 +165,7 @@ mod tests {
     /// `TestSetGlobalVars` (`cmd/tidb-server/main_test.go:97`), transcreated
     /// over the ported slice. Legs kept, in the source's order: the
     /// isolation-read-engines default and its config override, the
-    /// mem-quota-query default, the socket value, and the hostname. The
-    /// The instance-scope promotion leg is unported with `setInstanceVar`.
+    /// mem-quota-query default, the socket value, and the hostname.
     #[test]
     fn set_global_vars_matches_gos_table() {
         let _restore_alarm_ratio =
@@ -158,7 +223,7 @@ mod tests {
         // VARIABLES LIKE 'socket' reported the stale registry default while
         // `@@socket` reported the configured path).
         let mut vars = crate::SessionVars::default();
-        let _ = vars.swap_globals(globals.clone());
+        let _ = vars.swap_globals(Some(std::sync::Arc::new(globals.clone())));
         assert_eq!(
             vars.get_global("socket").expect("readable"),
             "/tmp/tidb-4157.sock"
@@ -168,6 +233,39 @@ mod tests {
             globals.get("socket").expect("readable"),
             "/tmp/tidb-4157.sock"
         );
+
+        // Go's `setInstanceVar` leg: an `[instance]` value replaces the
+        // registry value, and the instance keeps it over a persisted row
+        // (`IsInitedFromConfig`), while a variable left unset still reads its
+        // row.
+        let globals = GlobalSysvars::new();
+        config.global_config.instance.instance_plan_cache_max_mem_size = "444".to_owned();
+        config.global_config.instance.force_priority = "high_priority".to_owned();
+        config.global_config.performance.distinct_agg_push_down = true;
+        config.global_config.performance.enforce_mpp = true;
+        config.global_config.path = "/data/tidb".to_owned();
+        set_global_vars(&config, &globals);
+        // The rest of Go's `SetSysVar` writes follow their config fields.
+        assert_eq!(globals.get("tidb_force_priority").expect("readable"), "HIGH_PRIORITY");
+        // Go `vardef.ForcePriority`, which every statement then runs at.
+        assert_eq!(
+            tidb_vardef::FORCE_PRIORITY.swap(0, std::sync::atomic::Ordering::SeqCst),
+            tidb_mysql::Priority::High.as_enum()
+        );
+        assert_eq!(globals.get("tidb_opt_distinct_agg_push_down").expect("readable"), "ON");
+        // Go's config default `ProjectionPushDown: true`.
+        assert_eq!(globals.get("tidb_opt_projection_push_down").expect("readable"), "ON");
+        assert_eq!(globals.get("tidb_enforce_mpp").expect("readable"), "ON");
+        assert_eq!(globals.get("datadir").expect("readable"), "/data/tidb");
+        let plan_cache = tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE;
+        let binding_cache = tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_BINDING_CACHE;
+        assert_eq!(globals.get(plan_cache).expect("readable"), "444");
+        globals.replace_from(&GlobalSysvars::from_cluster_rows([
+            (plan_cache.to_owned(), "209715200".to_owned()),
+            (binding_cache.to_owned(), "1048576".to_owned()),
+        ]));
+        assert_eq!(globals.get(plan_cache).expect("readable"), "444");
+        assert_eq!(globals.get(binding_cache).expect("readable"), "1048576");
 
         // Go's hostname leg: `os.Hostname()` when it resolves. The sem tier
         // owns that default here; `disable()` is the restore path startup

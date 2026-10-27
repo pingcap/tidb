@@ -57,9 +57,7 @@ pub(crate) fn tables() -> HashMap<String, Arc<TableEntry>> {
     static TABLES: OnceLock<HashMap<String, Arc<TableEntry>>> = OnceLock::new();
     TABLES
         .get_or_init(|| {
-            let mut scratch = Catalog::seeded_without_metric_tables();
-            let ctx = crate::StmtContext::for_query();
-            let settings = crate::ddl::CreateTableSettings::default();
+            let mut scratch = Catalog::memory_schema_scratch();
             // Go sorts by name before numbering: "the id is stable across
             // different TiDB instances".
             let mut defs = tidb_metadef::metric_table_def::METRIC_TABLE_MAP
@@ -71,16 +69,16 @@ pub(crate) fn tables() -> HashMap<String, Arc<TableEntry>> {
                     &create_table_sql(name, def),
                     &mut scratch,
                     METRICS_SCHEMA,
-                    settings,
-                    &ctx,
                     METRICS_SCHEMA_DB_ID + 1 + index as i64,
                 )
                 .expect("Go's metric table definitions build in this tier");
             }
-            scratch
+            let tables = scratch
                 .tables_of(METRICS_SCHEMA)
                 .map(|(name, entry)| (name.to_owned(), Arc::clone(entry)))
-                .collect()
+                .collect();
+            Catalog::register_virtual_schema(METRICS_SCHEMA_DB_ID, "METRICS_SCHEMA", &tables);
+            tables
         })
         .clone()
 }

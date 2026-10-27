@@ -67,7 +67,7 @@ pub(crate) fn session_context_with_identity(
     let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
     SessionContext {
         connection_id,
-        peer_addr,
+        peer_addr: peer_addr.into(),
         identity,
         client_found_rows: false,
         secure_transport: false,

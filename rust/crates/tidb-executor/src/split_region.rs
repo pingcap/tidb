@@ -23,7 +23,7 @@
 //! and the fraction that finished scattering.
 
 use crate::kv_table::{KvIndex, KvTable, TableHandle};
-use crate::{Catalog, DriverError, ExecError, MysqlError, StmtContext};
+use crate::{DriverError, ExecError, MysqlError, StmtContext};
 use tidb_codec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_error::tidb::errcode;
@@ -72,12 +72,12 @@ const CHECK_SCATTER_REGION_FINISH_BACKOFF: i64 = 50;
 pub fn split_region(
     stmt: &tidb_ast::SplitRegionStmt,
     table: &KvTable,
-    catalog: &Catalog,
     ctx: &StmtContext,
     wait_finish: bool,
     timeout: std::time::Duration,
 ) -> Result<Vec<Datum>, DriverError> {
-    let table_name = match table.name() {
+    let stored_name = table.name();
+    let table_name = match stored_name.as_str() {
         "" => stmt.table.last().map_or("", String::as_str),
         name => name,
     };
@@ -129,7 +129,7 @@ pub fn split_region(
     // Go `SplitTableRegionExec.splitTableRegion` / `splitIndexRegion`: a
     // failed split is logged, and the regions it did create are reported.
     let start = std::time::Instant::now();
-    let store = catalog.region_store();
+    let store = ctx.region_store();
     let (region_ids, _error) = store.split_regions(keys, true, Some(table.table_id));
     let regions = region_ids.len();
     let mut finished = 0;
@@ -667,7 +667,12 @@ impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
     fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
         let reported = warning.to_sql_error();
         self.0
-            .append_warning_parts(reported.code, &reported.message);
+            .append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            reported.code,
+            reported.message.clone(),
+            reported.identity,
+        ));
     }
 }
 

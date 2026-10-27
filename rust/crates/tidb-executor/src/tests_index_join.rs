@@ -20,6 +20,9 @@
 //! two row lists to be equal ELEMENT BY ELEMENT: an index join preserves its
 //! outer side's order, so the comparison is on sequences and not on sets.
 
+use crate::KvTableDdl;
+#[allow(unused_imports)]
+use crate::RowDecodeContextExt;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -79,7 +82,7 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
                 comment: String::new(),
                 unique: false,
                 column_offsets: vec![1],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
                 global_index_version: 0,
@@ -109,7 +112,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
                 comment: String::new(),
                 unique: true,
                 column_offsets: vec![0, 1],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
                 visible: true,
                 global: false,
                 global_index_version: 0,

@@ -11,7 +11,7 @@
 //! cannot race the other suites' ordinary ON fixtures.
 use std::sync::atomic::Ordering;
 use tidb_executor::TableEntry;
-use tidb_session::{vars::GlobalSysvars, Session};
+use tidb_session::{GlobalSysvars, Session};
 
 fn sql(session: &mut Session, statement: &str) {
     session
@@ -131,27 +131,6 @@ fn foreign_key_global_policy_batch() {
         "ALTER TABLE altered_rows ADD CONSTRAINT fk FOREIGN KEY(id) REFERENCES parent(k)",
         1452,
     );
-    // Persistent entrypoints consume the same validators, including checks
-    // that cannot be bypassed by the process-wide feature switch.
-    for (statement, code) in [
-        ("TRUNCATE TABLE parent", 1701),
-        ("ALTER TABLE parent DROP INDEX ix", 1553),
-        ("DROP TABLE parent", 3730),
-    ] {
-        let parsed = tidb_parser::parse(statement).unwrap();
-        let lowered = tidb_exec::cluster_ddl::lower_ddl(&parsed, "test")
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            session
-                .validate_persistent_ddl_references(&lowered)
-                .unwrap_err()
-                .to_mysql_error()
-                .code,
-            code,
-            "{statement}"
-        );
-    }
     sql(&mut session, "ALTER TABLE parent RENAME COLUMN k TO k2");
     {
         let shared = session.shared_catalog();
@@ -203,22 +182,22 @@ fn foreign_key_global_policy_batch() {
 
     errno(&mut session, "CREATE TABLE other.bad_null(id INT NOT NULL, FOREIGN KEY fk(id) REFERENCES other.absent(id) ON DELETE SET NULL)", 1830);
 
-    use tidb_exec::cluster_ddl::{lower_ddl, DdlStatement};
-    use tidb_exec::foreign_key_build::{
+    use tidb_ddl::cluster_ddl::DdlStatement;
+    use tidb_ddl::foreign_key_build::{
         check_table_foreign_keys_valid, check_table_foreign_keys_valid_in_owner,
     };
     let parsed = tidb_parser::parse(
         "CREATE TABLE test.persisted(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
     )
     .unwrap();
-    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed, "test").unwrap().unwrap()
+    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed).unwrap().unwrap()
     else {
         panic!("create")
     };
     let mut table = build.template().clone_like_go();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
     assert!(table.indices.is_empty());
-    let catalog = tidb_exec::cluster_catalog::ClusterCatalog {
+    let catalog = tidb_cluster::cluster_catalog::ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 1,
@@ -233,4 +212,13 @@ fn foreign_key_global_policy_batch() {
     set("ON");
     check_table_foreign_keys_valid(&catalog, "test", &table, true).unwrap();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
+}
+
+/// Lowers `statement` into schema `test` under TiDB's default DDL session.
+fn lower_ddl(
+    statement: &tidb_ast::Stmt,
+) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, tidb_exec::table_info_build::DdlAdmissionError> {
+    let context: tidb_ddl::cluster_ddl::DdlContext =
+        std::sync::Arc::new(tidb_exec::table_info_build::default_ddl_statement_context());
+    tidb_ddl::cluster_ddl::lower_ddl_with_context(statement, "test", &context)
 }

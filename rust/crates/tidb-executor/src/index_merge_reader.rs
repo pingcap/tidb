@@ -130,6 +130,8 @@
 //! * `fetchLoopIntersectionWithOrderBy` (:1569) is an empty `// todo` in Go
 //!   itself. It is refused here for the same reason.
 
+#[allow(unused_imports)]
+use crate::RowDecodeContextExt;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -1112,7 +1114,7 @@ impl MergeProcessMemory {
 
     fn consume(&self, bytes: i64) -> Result<(), ExecError> {
         self.tracker.consume(bytes);
-        self.memory.check()
+        self.memory.check().map_err(ExecError::from)
     }
 }
 
@@ -1382,7 +1384,7 @@ impl IndexMergeReaderExec {
         let memory = self.decode_context.expression().statement_memory();
         let result = (|| {
             for partial in &mut self.partials {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 self.opened_partials += 1;
                 partial.open()?;
             }
@@ -1453,7 +1455,7 @@ impl IndexMergeReaderExec {
         let memory = self.decode_context.expression().statement_memory();
         let process = self.union_process.as_mut().expect("active union process");
         loop {
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             if process.pushed_limit.is_some_and(|limit| limit.count == 0) {
                 return Ok(None);
             }
@@ -1473,7 +1475,7 @@ impl IndexMergeReaderExec {
                     stats.record_partial_batch(process.partial, std::time::Duration::ZERO, 0);
                 }
             }
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             let Some(batch) = batch.filter(|batch| !batch.handles.is_empty()) else {
                 process.partial += 1;
                 process.remaining = process.initial_partial_budget;
@@ -1551,9 +1553,9 @@ impl IndexMergeReaderExec {
                 limit.offset.saturating_add(limit.count) as usize
             });
             'path: loop {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let batch = partial.next_batch_with_max_handles(remaining)?;
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let Some(batch) = batch else {
                     break;
                 };
@@ -1618,9 +1620,9 @@ impl IndexMergeReaderExec {
         > = BTreeMap::new();
         for partial in &mut self.partials {
             loop {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let batch = partial.next_batch()?;
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let Some(batch) = batch else {
                     break;
                 };
@@ -1668,7 +1670,7 @@ impl IndexMergeReaderExec {
         let mut tasks = Vec::new();
         for (_, group) in per_partition {
             for chunk in group.chunks(self.batch_size) {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let mut handles = chunk.to_vec();
                 if let Some(limit) = pushed_limit.as_mut() {
                     if limit.count == 0 {
@@ -1704,10 +1706,10 @@ impl IndexMergeReaderExec {
                     .saturating_mul(8),
             )?;
             loop {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 let mut chunk = reader.new_chunk();
                 reader.next(&mut chunk)?;
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 if chunk.num_rows() == 0 {
                     break;
                 }
@@ -1808,13 +1810,13 @@ impl Executor for IndexMergeReaderExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let result = (|| {
             let memory = self.decode_context.expression().statement_memory();
-            memory.check()?;
+            memory.check().map_err(ExecError::from)?;
             if !self.started {
                 self.start_workers()?;
             }
             req.reset();
             loop {
-                memory.check()?;
+                memory.check().map_err(ExecError::from)?;
                 if let Some(task) = self.current.as_mut() {
                     let count = (task.rows.len() - task.cursor)
                         .min(self.meta.max_chunk_size() - req.num_rows());

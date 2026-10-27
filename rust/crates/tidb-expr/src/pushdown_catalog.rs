@@ -3567,14 +3567,72 @@ pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
 /// current evaluation context, without cloning or rewriting the expression.
 pub fn from_expression_in(
     expression: &Expression,
-    context: &impl crate::Columns,
+    context: &dyn crate::Columns,
 ) -> Result<Option<PbScalar>, crate::EvalError> {
     from_expression_with_context(expression, context, true)
 }
 
+/// What Go `NewPBConverter(client, ctx)` is handed: the statement's
+/// `exprctx.EvalContext`, whose constants, parameters and correlated bindings
+/// `ExprToPB` reads ([`crate::Columns`]), plus the expression pushdown
+/// blacklist every conversion is gated by. Go reads the blacklist from the
+/// global `DefaultExprPushDownBlacklist`; this tier captures it per statement,
+/// so the statement's context answers it.
+pub trait PbConverterContext: crate::Columns + Send + Sync {
+    /// The `mysql.expr_pushdown_blacklist` image this statement converts
+    /// under.
+    fn expr_pushdown_blacklist(&self) -> &crate::infer_pushdown::ExprPushDownBlacklist;
+}
+
+/// Go `PbConverter.conOrCorColToPBExpr`: every deferred constant (a parameter
+/// marker or a value bound at execution) and every correlated column under
+/// `expression` becomes the constant `context` holds for it now. The caller
+/// binds a request-owned copy, so the retained plan expression is untouched
+/// for the next Open.
+pub fn bind_deferred_leaves(
+    expression: &mut Expression,
+    context: &dyn crate::Columns,
+) -> Result<(), crate::EvalError> {
+    use crate::constant::Constant;
+    match expression {
+        Expression::Constant(constant) if constant.literal_value().is_none() => {
+            let value = constant.eval_in(context)?;
+            let field_type = if constant.param_marker.is_some() {
+                tidb_datatype::infer_param_type_from_datum(&value)
+            } else {
+                constant
+                    .ret_type
+                    .clone()
+                    .ok_or(crate::EvalError::Unsupported(
+                        "deferred aggregate constant has no result type",
+                    ))?
+            };
+            *constant = Constant::new(value, field_type);
+        }
+        Expression::CorrelatedColumn(column) => {
+            let field_type =
+                column
+                    .column
+                    .ret_type
+                    .clone()
+                    .ok_or(crate::EvalError::Unsupported(
+                        "correlated aggregate column has no result type",
+                    ))?;
+            *expression = Expression::Constant(Constant::new(column.eval(), field_type));
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                bind_deferred_leaves(argument, context)?;
+            }
+        }
+        Expression::Column(_) | Expression::Constant(_) => {}
+    }
+    Ok(())
+}
+
 fn from_expression_with_context(
     expression: &Expression,
-    context: &impl crate::Columns,
+    context: &dyn crate::Columns,
     bind_values: bool,
 ) -> Result<Option<PbScalar>, crate::EvalError> {
     match expression {

@@ -26,22 +26,46 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_hack::GoToLower;
 
-use super::indexes::{
-    build_index_definition, is_visible, unsupported_partial_index, BuiltIndex, IndexAdmission,
-    IndexSpec,
-};
-use crate::{Catalog, DriverError, KvIndex};
+use tidb_model::index::{IndexColumn, IndexInfo};
+use crate::{Catalog, DriverError, KvIndex, KvTable};
 
 /// Go `SessionVars.HypoIndexes`: `dbName -> tblName -> idxName -> idxInfo`,
 /// every key lowercase.
 #[derive(Clone, Debug, Default)]
 pub struct HypoIndexes {
-    by_table: BTreeMap<String, BTreeMap<String, BTreeMap<String, KvIndex>>>,
+    by_table: BTreeMap<String, BTreeMap<String, BTreeMap<String, IndexInfo>>>,
     /// How many ids [`Self::add`] has handed out.
     allocated_ids: i64,
 }
 
+pub use tidb_sessionstates::HypoIndexMap;
+
 impl HypoIndexes {
+    /// Go `EncodeSessionStates`: `sessionStates.HypoIndexes = s.HypoIndexes`.
+    #[must_use]
+    pub fn session_state(&self) -> &HypoIndexMap {
+        &self.by_table
+    }
+
+    /// Go `DecodeSessionStates`: `s.HypoIndexes = sessionStates.HypoIndexes`,
+    /// each index taking its own planning id (see [`Self::add`]).
+    #[must_use]
+    pub fn from_session_state(mut by_table: HypoIndexMap) -> Self {
+        let mut allocated_ids = 0;
+        for index in by_table
+            .values_mut()
+            .flat_map(BTreeMap::values_mut)
+            .flat_map(BTreeMap::values_mut)
+        {
+            allocated_ids += 1;
+            index.id = -allocated_ids;
+        }
+        Self {
+            by_table,
+            allocated_ids,
+        }
+    }
+
     /// Whether no hypothetical index is defined anywhere.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -55,15 +79,27 @@ impl HypoIndexes {
     /// result stable" (`show.go`). Go's access-path loop walks the map in
     /// random order; this one order serves both.
     #[must_use]
-    pub fn table_indexes(&self, database: &str, table: &str) -> Vec<&KvIndex> {
-        let mut indexes: Vec<&KvIndex> = self
+    pub fn table_indexes(&self, database: &str, table: &str) -> Vec<&IndexInfo> {
+        let mut indexes: Vec<&IndexInfo> = self
             .by_table
             .get(&database.go_to_lower())
             .and_then(|tables| tables.get(&table.go_to_lower()))
             .map(|indexes| indexes.values().collect())
             .unwrap_or_default();
-        indexes.sort_by(|left, right| left.name.cmp(&right.name));
+        indexes.sort_by(|left, right| left.name.original().cmp(right.name.original()));
         indexes
+    }
+
+    /// [`Self::table_indexes`] resolved against `table`'s columns, for the
+    /// readers that work over the loaded table (EXPLAIN's access objects,
+    /// `SHOW CREATE TABLE`). An index naming a column the table no longer
+    /// has is left out.
+    #[must_use]
+    pub fn table_kv_indexes(&self, database: &str, table: &KvTable) -> Vec<KvIndex> {
+        self.table_indexes(database, &table.name())
+            .into_iter()
+            .filter_map(|index| tidb_table::table_from_meta::kv_index(index, &table.columns).ok())
+            .collect()
     }
 
     /// Go `addHypoIndexIntoCtx`.
@@ -72,18 +108,23 @@ impl HypoIndexes {
     /// `*IndexInfo` itself. Plans here name their index by id, so each one
     /// takes its own negative id, which no stored index can have; ids never
     /// reach EXPLAIN's text.
-    fn add(&mut self, database: &str, table: &str, mut index: KvIndex) -> Result<(), DriverError> {
+    pub(crate) fn add(
+        &mut self,
+        database: &str,
+        table: &str,
+        mut index: IndexInfo,
+    ) -> Result<(), crate::driver::MysqlError> {
         let indexes = self
             .by_table
             .entry(database.go_to_lower())
             .or_default()
             .entry(table.go_to_lower())
             .or_default();
-        let name = index.name.go_to_lower();
+        let name = index.name.lowercase().to_owned();
         if indexes.contains_key(&name) {
             // Go `errors.Errorf("conflict hypo index name %s", indexName.L)`.
-            return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
-                format!("conflict hypo index name {name}"),
+            return Err(crate::driver::MysqlError::unknown(format!(
+                "conflict hypo index name {name}"
             )));
         }
         self.allocated_ids += 1;
@@ -93,20 +134,24 @@ impl HypoIndexes {
     }
 
     /// Go `dropHypoIndexFromCtx`.
-    fn remove(
+    pub(crate) fn remove(
         &mut self,
         database: &str,
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), DriverError> {
+    ) -> Result<(), crate::driver::MysqlError> {
         let removed = self
             .by_table
             .get_mut(&database.go_to_lower())
             .and_then(|tables| tables.get_mut(&table.go_to_lower()))
             .and_then(|indexes| indexes.remove(&index.go_to_lower()));
         if removed.is_none() && !if_exists {
-            return Err(DriverError::UnknownIndex(index.to_owned()));
+            // Go `ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist")`.
+            return Err(crate::driver::MysqlError::terror(
+                &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
+                format!("index {index} doesn't exist"),
+            ));
         }
         Ok(())
     }
@@ -119,6 +164,45 @@ pub struct HypoTiFlashReplicas {
 }
 
 impl HypoTiFlashReplicas {
+    /// Go `setHypoTiFlashReplica`'s map write, by lowercase schema and table
+    /// name: a positive count adds the replica, zero deletes it.
+    pub fn set(&mut self, schema: &str, table: &str, add: bool) {
+        let tables = self.by_database.entry(schema.to_owned()).or_default();
+        if add {
+            tables.insert(table.to_owned());
+        } else {
+            tables.remove(table);
+        }
+    }
+
+    /// Go `EncodeSessionStates`' `sessionStates.HypoTiFlashReplicas =
+    /// s.HypoTiFlashReplicas`.
+    #[must_use]
+    pub fn session_state(&self) -> tidb_sessionstates::HypoTiFlashReplicaMap {
+        self.by_database
+            .iter()
+            .map(|(database, tables)| {
+                let tables = tables
+                    .iter()
+                    .map(|table| (table.clone(), tidb_sessionstates::Empty {}))
+                    .collect();
+                (database.clone(), tables)
+            })
+            .collect()
+    }
+
+    /// Go `DecodeSessionStates`' `s.HypoTiFlashReplicas =
+    /// sessionStates.HypoTiFlashReplicas`.
+    #[must_use]
+    pub fn from_session_state(state: tidb_sessionstates::HypoTiFlashReplicaMap) -> Self {
+        Self {
+            by_database: state
+                .into_iter()
+                .map(|(database, tables)| (database, tables.into_keys().collect()))
+                .collect(),
+        }
+    }
+
     /// Whether no hypothetical replica is defined anywhere.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -134,70 +218,6 @@ impl HypoTiFlashReplicas {
     }
 }
 
-/// Go `createIndex` for an `IndexOption.Tp == IndexTypeHypo` statement: every
-/// check up to the hypo branch, then `BuildIndexInfo` (no id is allocated)
-/// and `addHypoIndexIntoCtx`. No job is submitted and the table is untouched.
-pub fn create_hypo_index(
-    catalog: &Catalog,
-    current_db: &str,
-    create: &tidb_ast::CreateIndexStmt,
-    ctx: &crate::StmtContext,
-    hypo_indexes: &mut HypoIndexes,
-) -> Result<(), DriverError> {
-    let (database, table_name) = crate::driver::split_table_path_pub(&create.table, current_db)?;
-    super::refuse_local_temporary_table_ddl(catalog, database, table_name, "CREATE INDEX")?;
-    let unique = match create.kind {
-        tidb_ast::IndexKind::Ordinary => false,
-        tidb_ast::IndexKind::Unique => true,
-        _ => {
-            return Err(DriverError::unsupported(
-                "SPATIAL, FULLTEXT, VECTOR and COLUMNAR indexes are not supported yet",
-            ))
-        }
-    };
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-            format!("{database}.{table_name}"),
-        )));
-    };
-    if table.is_cache_table() {
-        return Err(DriverError::OperationOnCachedTable("Create Index"));
-    }
-    if create.options.condition.is_some() && table.partition().is_some() {
-        return Err(unsupported_partial_index(
-            "partial index on partitioned table is not supported",
-        ));
-    }
-    let spec = IndexSpec {
-        name: &create.name,
-        comment: create.options.comment.as_deref().unwrap_or(""),
-        unique,
-        primary: false,
-        parts: &create.parts,
-        visible: is_visible(&create.options),
-        global: create.options.global,
-        if_not_exists: create.if_not_exists,
-        condition: create.options.condition.as_ref(),
-    };
-    let BuiltIndex { index, hidden } =
-        match build_index_definition(table, spec, ctx, catalog.max_index_length())? {
-            IndexAdmission::Change(built) => built,
-            IndexAdmission::Note(note) => {
-                ctx.append_suppressed(&note);
-                return Ok(());
-            }
-        };
-    // Go builds a hypothetical expression index over `finalColumns`, a COPY
-    // of the table's columns with the hidden ones appended, and keeps only
-    // the `IndexInfo`. A `KvIndex` names its columns by offset into the
-    // table itself, so it cannot name a column the table does not hold.
-    if !hidden.is_empty() {
-        return Err(DriverError::unsupported(
-            "a hypothetical expression index is not supported",
-        ));
-    }
-    hypo_indexes.add(database, table_name, index)
-}
 
 /// The Index Advisor's `addHypoIndex` (`pkg/planner/indexadvisor/optimizer.go`):
 /// a public, non-unique hypothetical index over `columns`, built straight
@@ -216,152 +236,38 @@ pub fn set_advisor_hypo_index(
             format!("{database}.{table_name}"),
         )));
     };
-    let mut offsets = Vec::with_capacity(columns.len());
+    // Go: each column's offset in `tInfo.Cols()`, the public columns.
+    let public = table.meta().read().cols();
+    let mut parts = Vec::with_capacity(columns.len());
     for column in columns {
-        let wanted = column.go_to_lower();
-        let Some(offset) = table
-            .columns()
-            .iter()
-            .position(|stored| stored.name.go_to_lower() == wanted)
+        let Some(offset) = public
+            .iter_deref()
+            .position(|stored| stored.read().name.lowercase() == column.go_to_lower())
         else {
             return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
                 format!("column {column} not found in table {database}.{table_name}"),
             )));
         };
-        offsets.push(offset);
+        parts.push(IndexColumn {
+            name: tidb_ast::CiString::new(column.clone()),
+            offset: i64::try_from(offset).unwrap_or(0),
+            length: tidb_datatype::UNSPECIFIED_LENGTH,
+            ..IndexColumn::default()
+        });
     }
-    let index = KvIndex {
-        id: 0,
-        name: index_name.to_owned(),
-        comment: String::new(),
-        unique: false,
-        prefix_lengths: vec![super::index_prefix::UNSPECIFIED_LENGTH; offsets.len()],
-        column_offsets: offsets,
-        visible: true,
-        global: false,
-        global_index_version: 0,
-        clustered_primary: false,
-        primary: false,
+    let index = IndexInfo {
+        name: tidb_ast::CiString::new(index_name),
+        columns: parts.into(),
+        state: tidb_model::SchemaState::PUBLIC,
+        tp: tidb_ast::IndexType::HYPO,
+        ..IndexInfo::default()
     };
-    let name = index.name.go_to_lower();
+    let name = index.name.lowercase().to_owned();
     let _ = hypo_indexes.remove(database, table_name, &name, true);
-    hypo_indexes.add(database, table_name, index)
+    hypo_indexes
+        .add(database, table_name, index)
+        .map_err(DriverError::Mysql)
 }
 
-/// Go `dropIndex` with `isHypo`: the table must exist and not be cached, and
-/// then `dropHypoIndexFromCtx`.
-pub fn drop_hypo_index(
-    catalog: &Catalog,
-    current_db: &str,
-    drop: &tidb_ast::DropIndexStmt,
-    hypo_indexes: &mut HypoIndexes,
-) -> Result<(), DriverError> {
-    let (database, table_name) = crate::driver::split_table_path_pub(&drop.table, current_db)?;
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-        if drop.if_exists {
-            return Ok(());
-        }
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-            format!("{database}.{table_name}"),
-        )));
-    };
-    if table.is_cache_table() {
-        return Err(DriverError::OperationOnCachedTable("Drop Index"));
-    }
-    hypo_indexes.remove(database, table_name, &drop.name, drop.if_exists)
-}
 
-/// Go `AlterTableSetTiFlashReplica` with `replicaInfo.Hypo`:
-/// `isTableTiFlashSupported`, `shouldModifyTiFlashReplica`, then
-/// `setHypoTiFlashReplica`.
-pub fn set_hypo_tiflash_replica(
-    catalog: &Catalog,
-    database: &str,
-    table_name: &str,
-    count: u64,
-    labels: &[String],
-    replicas: &mut HypoTiFlashReplicas,
-) -> Result<(), DriverError> {
-    let table = match catalog.table_in(database, table_name) {
-        None => {
-            return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-                format!("{database}.{table_name}"),
-            )))
-        }
-        Some(crate::TableEntry::Kv(table)) => Some(table),
-        Some(_) => None,
-    };
-    is_table_tiflash_supported(database, table_name, table.map(|table| &**table))?;
-    let table = table.expect("isTableTiFlashSupported refuses every non-table entry");
-    if !should_modify_tiflash_replica(table.tiflash_replica(), count, labels) {
-        return Ok(());
-    }
-    let tables = replicas
-        .by_database
-        .entry(database.go_to_lower())
-        .or_default();
-    if count > 0 {
-        tables.insert(table_name.go_to_lower());
-    } else {
-        tables.remove(&table_name.go_to_lower());
-    }
-    Ok(())
-}
 
-/// Go `isTableTiFlashSupported`. `table` is `None` for a view or a sequence.
-fn is_table_tiflash_supported(
-    database: &str,
-    table_name: &str,
-    table: Option<&crate::KvTable>,
-) -> Result<(), DriverError> {
-    let unsupported = |what: String| {
-        DriverError::Mysql(crate::driver::MysqlError::terror(
-            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
-            format!("Unsupported {what}"),
-        ))
-    };
-    if tidb_metadef::db::is_mem_or_sys_db(&database.go_to_lower()) {
-        return Err(unsupported(
-            "`set TiFlash replica` settings for system table and memory table".to_owned(),
-        ));
-    }
-    let Some(table) = table else {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
-            name: format!("{database}.{table_name}"),
-            expected: "BASE TABLE",
-        }));
-    };
-    if table.temp_table_type() != tidb_model::TempTableType::NONE {
-        return Err(DriverError::OptOnTemporaryTable("set TiFlash replica"));
-    }
-    for column in table.columns() {
-        let charset = column.field_type.charset();
-        let charset = charset.name();
-        if !tidb_datatype::TIFLASH_SUPPORTED_CHARSETS.contains(&charset) {
-            return Err(unsupported(format!(
-                "`set TiFlash replica` settings for table contains {charset} charset"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Go `shouldModifyTiFlashReplica`.
-fn should_modify_tiflash_replica(
-    current: Option<&tidb_model::table::TiFlashReplicaInfo>,
-    count: u64,
-    labels: &[String],
-) -> bool {
-    match current {
-        Some(current)
-            if current.count == count && current.location_labels.len() == labels.len() =>
-        {
-            current
-                .location_labels
-                .iter()
-                .zip(labels)
-                .any(|(current, wanted)| current != wanted)
-        }
-        _ => true,
-    }
-}

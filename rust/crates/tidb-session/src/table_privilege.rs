@@ -19,11 +19,11 @@
 //! SQL spelling alone cannot identify the owner of an unqualified column.
 //! Other statement collectors still use the AST and remain a parity boundary.
 
-use tidb_ast::{AlterPartitionAction, AlterTableAction, DdlStmt, DmlStmt, Stmt, TableConstraint};
+use crate::privilege::PrivilegeTypeExt;
+use tidb_ast::{DmlStmt, Stmt};
 
-use crate::privilege::GlobalPriv;
+use crate::privilege::PrivilegeType;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_util::stringutil::go_to_lower;
 
 /// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub(crate) struct TablePrivilegeRequest {
     /// Table name as written.
     pub(crate) table: String,
     /// The privilege Go's `appendVisitInfo` recorded.
-    pub(crate) privilege: GlobalPriv,
+    pub(crate) privilege: PrivilegeType,
     /// Whether Go attached a statement-specific `authErr` naming the table
     /// (`ErrTableaccessDenied`, 1142). Where it did not, `CheckPrivilege`
     /// falls to `ErrPrivilegeCheckFail` (8121) -- which is what a denied
@@ -53,6 +53,9 @@ pub(crate) struct TablePrivilegeRequest {
     /// table-scoped 1142 form. `CREATE/DROP DATABASE` carry a schema name but
     /// no table, and their planner visitInfo attaches exactly that error.
     pub(crate) database_named_in_error: bool,
+    /// The database Go's `ErrDBaccessDenied` names, when it differs from the
+    /// checked scope (a `LOCK TABLES` visit names its schema).
+    pub(crate) database_in_error: Option<String>,
     /// Adapt admission without discarding original observation table names.
     pub(crate) temporary_privilege: TemporaryPrivilege,
     /// Go authErr can name a different command/table than the checked visit.
@@ -60,69 +63,47 @@ pub(crate) struct TablePrivilegeRequest {
     /// Go `appendDynamicVisitInfo`: dynamic privileges any one of which
     /// grants the visit (SUPER standing in for each); empty for an ordinary
     /// static-privilege visit.
-    pub(crate) dynamic_privileges: &'static [&'static str],
+    pub(crate) dynamic_privileges: Vec<String>,
+    /// Go `dynamicWithGrant`: the dynamic privilege is needed WITH GRANT
+    /// OPTION.
+    pub(crate) dynamic_with_grant: bool,
     /// Go's `ErrSpecificAccessDenied` authErr (1227), naming what the
     /// statement needs.
     pub(crate) specific_denial: Option<&'static str>,
     /// Further static privileges that grant the visit as well: Go checks a
     /// combined mask (`RequestVerification` asks `priv & mask > 0`).
-    pub(crate) also_granted_by: &'static [GlobalPriv],
+    pub(crate) also_granted_by: Vec<PrivilegeType>,
     /// Go's `ErrViewNoExplain` authErr (1345): the SHOW VIEW visit
     /// `BuildDataSourceFromView` appends under EXPLAIN.
     pub(crate) view_no_explain: bool,
 }
 
 impl TablePrivilegeRequest {
-    pub(crate) fn new(database: &str, table: &str, privilege: GlobalPriv) -> Self {
+    pub(crate) fn new(database: &str, table: &str, privilege: PrivilegeType) -> Self {
         Self {
             database: database.to_owned(),
             table: table.to_owned(),
             privilege,
             table_named_in_error: true,
             database_named_in_error: false,
+            database_in_error: None,
             table_error_override: None,
             temporary_privilege: TemporaryPrivilege::Check,
-            dynamic_privileges: &[],
+            dynamic_privileges: Vec::new(),
+            dynamic_with_grant: false,
             specific_denial: None,
-            also_granted_by: &[],
+            also_granted_by: Vec::new(),
             view_no_explain: false,
-        }
-    }
-
-    /// Go `appendDynamicVisitInfo(privileges, false,
-    /// ErrSpecificAccessDenied(denial))`.
-    fn dynamic(privileges: &'static [&'static str], denial: &'static str) -> Self {
-        Self {
-            table_named_in_error: false,
-            dynamic_privileges: privileges,
-            specific_denial: Some(denial),
-            ..Self::new("", "", GlobalPriv::Super)
         }
     }
 
     /// A global visit whose denial Go reports as
     /// `ErrSpecificAccessDenied(denial)`.
-    fn specific(privilege: GlobalPriv, denial: &'static str) -> Self {
+    fn specific(privilege: PrivilegeType, denial: &'static str) -> Self {
         Self {
             table_named_in_error: false,
             specific_denial: Some(denial),
             ..Self::new("", "", privilege)
-        }
-    }
-
-    /// The form whose denial carries no statement-specific error.
-    fn unnamed(database: &str, table: &str, privilege: GlobalPriv) -> Self {
-        Self {
-            table_named_in_error: false,
-            ..Self::new(database, table, privilege)
-        }
-    }
-
-    fn database(database: &str, privilege: GlobalPriv) -> Self {
-        Self {
-            table_named_in_error: false,
-            database_named_in_error: true,
-            ..Self::new(database, "", privilege)
         }
     }
 }
@@ -157,15 +138,15 @@ pub(crate) fn sem_verdict_mask(
     if tidb_util::sem_compat::is_invisible_table(&database_lower, &table_lower) {
         return Some(false);
     }
-    const SEM_REFUSED_WRITES: &[GlobalPriv] = &[
-        GlobalPriv::Create,
-        GlobalPriv::Alter,
-        GlobalPriv::Drop,
-        GlobalPriv::Index,
-        GlobalPriv::CreateView,
-        GlobalPriv::Insert,
-        GlobalPriv::Update,
-        GlobalPriv::Delete,
+    const SEM_REFUSED_WRITES: &[PrivilegeType] = &[
+        tidb_mysql::CreatePriv,
+        tidb_mysql::AlterPriv,
+        tidb_mysql::DropPriv,
+        tidb_mysql::IndexPriv,
+        tidb_mysql::CreateViewPriv,
+        tidb_mysql::InsertPriv,
+        tidb_mysql::UpdatePriv,
+        tidb_mysql::DeletePriv,
     ];
     if is_mem_or_sys_db(&database_lower)
         && SEM_REFUSED_WRITES
@@ -198,19 +179,19 @@ pub(crate) fn mem_db_verdict_mask(database: &str, mask: u64) -> Option<bool> {
     if !is_mem_db(database) {
         return None;
     }
-    const REFUSED: &[GlobalPriv] = &[
-        GlobalPriv::Create,
-        GlobalPriv::Alter,
-        GlobalPriv::Drop,
-        GlobalPriv::Index,
-        GlobalPriv::CreateView,
-        GlobalPriv::Insert,
-        GlobalPriv::Update,
-        GlobalPriv::Delete,
-        GlobalPriv::References,
-        GlobalPriv::Execute,
-        GlobalPriv::ShowView,
-        GlobalPriv::LockTables,
+    const REFUSED: &[PrivilegeType] = &[
+        tidb_mysql::CreatePriv,
+        tidb_mysql::AlterPriv,
+        tidb_mysql::DropPriv,
+        tidb_mysql::IndexPriv,
+        tidb_mysql::CreateViewPriv,
+        tidb_mysql::InsertPriv,
+        tidb_mysql::UpdatePriv,
+        tidb_mysql::DeletePriv,
+        tidb_mysql::ReferencesPriv,
+        tidb_mysql::ExecutePriv,
+        tidb_mysql::ShowViewPriv,
+        tidb_mysql::LockTablesPriv,
     ];
     if REFUSED.iter().any(|priv_| priv_.bit() == mask) {
         return Some(false);
@@ -266,6 +247,12 @@ pub(crate) fn required_table_privileges(
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
         tidb_executor::DriverError,
     >,
+    resolve_statement: impl FnOnce(
+        &Stmt,
+    ) -> Result<
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+        tidb_executor::DriverError,
+    >,
 ) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
     match stmt {
@@ -285,7 +272,7 @@ pub(crate) fn required_table_privileges(
             // Go `buildSelectInto` appends FILE after planning the query.
             if matches!(&**query, tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_some())
             {
-                requests.push(TablePrivilegeRequest::specific(GlobalPriv::File, "FILE"));
+                requests.push(TablePrivilegeRequest::specific(tidb_mysql::FilePriv, "FILE"));
             }
         }
         Stmt::Dml(dml) => match &**dml {
@@ -327,11 +314,11 @@ pub(crate) fn required_table_privileges(
             DmlStmt::ImportInto(import) => {
                 if let Some((schema, table)) = split_path(&import.table, current_db) {
                     for privilege in [
-                        GlobalPriv::Select,
-                        GlobalPriv::Update,
-                        GlobalPriv::Insert,
-                        GlobalPriv::Delete,
-                        GlobalPriv::Alter,
+                        tidb_mysql::SelectPriv,
+                        tidb_mysql::UpdatePriv,
+                        tidb_mysql::InsertPriv,
+                        tidb_mysql::DeletePriv,
+                        tidb_mysql::AlterPriv,
                     ] {
                         requests.push(TablePrivilegeRequest::new(&schema, &table, privilege));
                     }
@@ -342,7 +329,7 @@ pub(crate) fn required_table_privileges(
                         .split_once("://")
                         .is_none_or(|(scheme, _)| scheme.is_empty() || scheme == "file");
                     if local {
-                        requests.push(TablePrivilegeRequest::specific(GlobalPriv::File, "FILE"));
+                        requests.push(TablePrivilegeRequest::specific(tidb_mysql::FilePriv, "FILE"));
                     }
                 }
             }
@@ -350,60 +337,25 @@ pub(crate) fn required_table_privileges(
             // could touch a table.
             _ => {}
         },
-        Stmt::Ddl(ddl) => {
-            // Go `buildDDL`'s dynamic-privilege visits.
-            match ddl.as_ref() {
-                DdlStmt::CreatePlacementPolicy(_)
-                | DdlStmt::AlterPlacementPolicy(_)
-                | DdlStmt::DropPlacementPolicy(_) => requests.push(TablePrivilegeRequest::dynamic(
-                    &["PLACEMENT_ADMIN"],
-                    "SUPER or PLACEMENT_ADMIN",
-                )),
-                DdlStmt::CreateResourceGroup(_)
-                | DdlStmt::AlterResourceGroup(_)
-                | DdlStmt::DropResourceGroup(_) => requests.push(TablePrivilegeRequest::dynamic(
-                    &["RESOURCE_GROUP_ADMIN"],
-                    "SUPER or RESOURCE_GROUP_ADMIN",
-                )),
-                _ => {}
+        // Go `Compile` for every statement that is not a query or DML:
+        // `PlanBuilder.Build`'s visit infos, after `VisitInfo4PrivCheck`.
+        // SET and SHOW compile themselves (`Session::run_set_stmt`,
+        // `Session::run_planned_show`), and PREPARE / EXECUTE / DEALLOCATE
+        // are the session's.
+        Stmt::Session(session)
+            if matches!(
+                session.as_ref(),
+                tidb_ast::SessionStmt::Set(_)
+                    | tidb_ast::SessionStmt::Prepare { .. }
+                    | tidb_ast::SessionStmt::Execute { .. }
+                    | tidb_ast::SessionStmt::Deallocate(_)
+            ) => {}
+        Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Show(_)) => {}
+        Stmt::Ddl(_) | Stmt::Admin(_) | Stmt::Session(_) => {
+            for visit in resolve_statement(stmt)? {
+                requests.push(request_of_visit(&visit));
             }
-            if let DdlStmt::CreateView(create) = ddl.as_ref() {
-                // Go builds the query before appending CREATE VIEW and DROP
-                // visits, so the body's own visit info comes first.
-                for visit in resolve_read(&create.query).unwrap_or_default() {
-                    requests.push(request_of_visit(&visit));
-                }
-            }
-            requests.extend(ddl_table_privileges(ddl, current_db));
         }
-        // `planbuilder.go` around line 5622: "only by administrator".
-        Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CleanupTableLock(_)) => {
-            requests.push(TablePrivilegeRequest::unnamed("", "", GlobalPriv::Super));
-        }
-        // Go `buildTraffic`: each operation needs its own dynamic privilege
-        // (or SUPER), reported as `ErrSpecificAccessDenied`.
-        Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Traffic(_)) => {
-            let tidb_ast::AdminStmt::Traffic(traffic) = &**admin else {
-                unreachable!("matched above")
-            };
-            requests.push(match &**traffic {
-                tidb_ast::TrafficStmt::Capture { .. } => TablePrivilegeRequest::dynamic(
-                    &["TRAFFIC_CAPTURE_ADMIN"],
-                    "SUPER or TRAFFIC_CAPTURE_ADMIN",
-                ),
-                tidb_ast::TrafficStmt::Replay { .. } => TablePrivilegeRequest::dynamic(
-                    &["TRAFFIC_REPLAY_ADMIN"],
-                    "SUPER or TRAFFIC_REPLAY_ADMIN",
-                ),
-                tidb_ast::TrafficStmt::ShowJobs | tidb_ast::TrafficStmt::CancelJobs => {
-                    TablePrivilegeRequest::dynamic(
-                        &["TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"],
-                        "SUPER, TRAFFIC_CAPTURE_ADMIN or TRAFFIC_REPLAY_ADMIN",
-                    )
-                }
-            });
-        }
-        Stmt::Admin(_) | Stmt::Session(_) => {}
     }
     // Preserve original table visits for observation, but retain Go's
     // statement-specific temporary-table policy for each execution's grants.
@@ -414,280 +366,71 @@ pub(crate) fn required_table_privileges(
             request.temporary_privilege = TemporaryPrivilege::SkipLocal;
         }
     }
-    if let Stmt::Ddl(ddl) = stmt {
-        match ddl.as_ref() {
-            DdlStmt::CreateTable(create) => {
-                for request in &mut requests {
-                    if request.privilege == GlobalPriv::Create {
-                        request.temporary_privilege =
-                            if create.temporary == tidb_ast::CreateTableTemporary::Local {
-                                request.table_error_override = None;
-                                request.database_named_in_error = true;
-                                TemporaryPrivilege::CreateLocal
-                            } else {
-                                TemporaryPrivilege::Check
-                            };
-                    }
-                }
-            }
-            DdlStmt::TruncateTable(_)
-            | DdlStmt::AlterTable(_)
-            | DdlStmt::CreateIndex(_)
-            | DdlStmt::DropIndex(_)
-            | DdlStmt::RenameTable(_) => {
-                for request in &mut requests {
-                    request.temporary_privilege = TemporaryPrivilege::SkipLocal;
-                }
-            }
-            DdlStmt::DropTable(drop) => {
-                for request in &mut requests {
-                    request.temporary_privilege =
-                        if drop.temporary == tidb_ast::DropTemporary::Local {
-                            TemporaryPrivilege::Skip
-                        } else {
-                            TemporaryPrivilege::SkipLocal
-                        };
-                }
-            }
-            _ => {}
-        }
-    }
     Ok(requests)
-}
-
-/// The `visitInfo` `planbuilder.go`'s DDL arm appends, for the statements
-/// this tier executes. Everything it refuses as unsupported is deliberately
-/// absent rather than half-modelled.
-fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRequest> {
-    let one = |path: &[String], privilege| {
-        split_path(path, current_db)
-            .map(|(schema, table)| vec![TablePrivilegeRequest::new(&schema, &table, privilege)])
-            .unwrap_or_default()
-    };
-    let references = |path: &[String], owner: &[String]| {
-        // Go's preprocessor defaults an unqualified FK reference to the
-        // child table's schema, which need not be the current database.
-        let Some((schema, _)) = split_path(owner, current_db) else {
-            return Vec::new();
-        };
-        split_path(path, &schema)
-            .map(|(schema, table)| {
-                vec![TablePrivilegeRequest::new(
-                    &schema,
-                    &table,
-                    GlobalPriv::References,
-                )]
-            })
-            .unwrap_or_default()
-    };
-    match ddl {
-        // `planbuilder.go` around line 5392 / 5508: database DDL attaches
-        // ErrDBaccessDenied (1044), with the schema name as the scope.
-        DdlStmt::CreateDatabase { name, .. } => {
-            vec![TablePrivilegeRequest::database(name, GlobalPriv::Create)]
-        }
-        // Around line 5631.
-        DdlStmt::CreateResourceGroup(_)
-        | DdlStmt::AlterResourceGroup(_)
-        | DdlStmt::DropResourceGroup(_) => vec![TablePrivilegeRequest::dynamic(
-            &["RESOURCE_GROUP_ADMIN"],
-            "SUPER or RESOURCE_GROUP_ADMIN",
-        )],
-        // Around line 5611: LOCK TABLES on the table, denied as the schema
-        // (1044), then SELECT on it.
-        DdlStmt::LockTables(locks) => locks
-            .iter()
-            .filter_map(|lock| split_path(&lock.table, current_db))
-            .flat_map(|(schema, table)| {
-                let (schema, table) = (go_to_lower(&schema), go_to_lower(&table));
-                [
-                    TablePrivilegeRequest {
-                        table_named_in_error: false,
-                        database_named_in_error: true,
-                        ..TablePrivilegeRequest::new(&schema, &table, GlobalPriv::LockTables)
-                    },
-                    TablePrivilegeRequest::new(&schema, &table, GlobalPriv::Select),
-                ]
-            })
-            .collect(),
-        DdlStmt::DropDatabase { name, .. } => {
-            vec![TablePrivilegeRequest::database(name, GlobalPriv::Drop)]
-        }
-        // `planbuilder.go` around line 5428.
-        DdlStmt::CreateTable(create) => {
-            let mut visits = Vec::new();
-            for constraint in &create.table_constraints {
-                if let TableConstraint::ForeignKey(fk) = constraint {
-                    if let Some(table) = &fk.reference.table {
-                        visits.extend(references(table, &create.name));
-                    }
-                }
-            }
-            let mut target = one(&create.name, GlobalPriv::Create);
-            // buildDDL retains the final REFERENCES authErr for the CREATE
-            // visit too. The checked scope still belongs to the new table.
-            if let Some(last) = visits.last() {
-                for request in &mut target {
-                    request.table_error_override = Some(("REFERENCES", last.table.clone()));
-                }
-            }
-            visits.extend(target);
-            if let Some(source) = &create.like_table {
-                let mut source = one(source, GlobalPriv::Select);
-                for request in &mut source {
-                    request.table_error_override = Some(("CREATE", request.table.clone()));
-                }
-                visits.extend(source);
-            }
-            visits
-        }
-        // Around line 5528. Go appends one entry per named table.
-        DdlStmt::DropTable(drop) => drop
-            .names
-            .iter()
-            .flat_map(|name| one(name, GlobalPriv::Drop))
-            .collect(),
-        // Around line 5321.
-        DdlStmt::AlterTable(alter) => {
-            let mut visits = one(&alter.name, GlobalPriv::Alter);
-            for action in &alter.actions {
-                match action {
-                    AlterTableAction::RenameTable { new_name } => {
-                        visits.extend(one(&alter.name, GlobalPriv::Drop));
-                        visits.extend(one(new_name, GlobalPriv::Create));
-                        visits.extend(one(new_name, GlobalPriv::Insert));
-                    }
-                    AlterTableAction::Partition(AlterPartitionAction::Exchange {
-                        table, ..
-                    }) => {
-                        // EXCHANGE mutates both tables; Go preserves this order.
-                        visits.extend(one(&alter.name, GlobalPriv::Drop));
-                        visits.extend(one(table, GlobalPriv::Create));
-                        visits.extend(one(table, GlobalPriv::Insert));
-                        visits.extend(one(&alter.name, GlobalPriv::Insert));
-                        visits.extend(one(&alter.name, GlobalPriv::Create));
-                        visits.extend(one(table, GlobalPriv::Alter));
-                        visits.extend(one(table, GlobalPriv::Drop));
-                    }
-                    AlterTableAction::Partition(
-                        AlterPartitionAction::Drop { .. } | AlterPartitionAction::Truncate { .. },
-                    ) => {
-                        visits.extend(one(&alter.name, GlobalPriv::Drop));
-                    }
-                    AlterTableAction::AddForeignKey(fk) => {
-                        if let Some(table) = &fk.reference.table {
-                            visits.extend(references(table, &alter.name));
-                        }
-                    }
-                    AlterTableAction::AddColumns { constraints, .. } => {
-                        for constraint in constraints {
-                            if let TableConstraint::ForeignKey(fk) = constraint {
-                                if let Some(table) = &fk.reference.table {
-                                    visits.extend(references(table, &alter.name));
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            visits
-        }
-        DdlStmt::RenameTable(rename) => {
-            let mut visits = Vec::new();
-            for (old, new) in &rename.pairs {
-                visits.extend(one(old, GlobalPriv::Alter));
-                visits.extend(one(old, GlobalPriv::Drop));
-                visits.extend(one(new, GlobalPriv::Create));
-                visits.extend(one(new, GlobalPriv::Insert));
-            }
-            visits
-        }
-        DdlStmt::TruncateTable(name) => one(name, GlobalPriv::Drop),
-        DdlStmt::AlterSequence(alter) => one(&alter.name, GlobalPriv::Alter),
-        DdlStmt::DropSequence(drop) => drop
-            .names
-            .iter()
-            .flat_map(|name| one(name, GlobalPriv::Drop))
-            .collect(),
-        DdlStmt::DropView { names, .. } => names
-            .iter()
-            .flat_map(|name| one(name, GlobalPriv::Drop))
-            .collect(),
-        DdlStmt::AlterDatabase { name, .. } => {
-            let database = name.as_deref().unwrap_or(current_db);
-            // Name resolution owns ErrNoDB before privilege checking.
-            if database.is_empty() {
-                Vec::new()
-            } else {
-                vec![TablePrivilegeRequest::database(database, GlobalPriv::Alter)]
-            }
-        }
-        // Around line 5404 / 5520: an index is an `ALTER`-class change that
-        // Go demands `IndexPriv` for.
-        DdlStmt::CreateIndex(create) => one(&create.table, GlobalPriv::Index),
-        DdlStmt::DropIndex(drop) => one(&drop.table, GlobalPriv::Index),
-        // Around line 5487.
-        DdlStmt::CreateView(create) => {
-            let mut visits = one(&create.name, GlobalPriv::CreateView);
-            if create.or_replace {
-                visits.extend(one(&create.name, GlobalPriv::Drop));
-            }
-            visits
-        }
-        // `resolveCreateSequenceStmt` (`planbuilder.go` around line 5398)
-        // records the same table-scoped CREATE privilege as CREATE TABLE and
-        // carries the sequence name in the 1142 auth error.
-        DdlStmt::CreateSequence(create) => one(&create.name, GlobalPriv::Create),
-        _ => Vec::new(),
-    }
 }
 
 /// The static privileges a `mysql.PrivilegeType` mask names; any one of them
 /// grants the visit, as `RequestVerification` asks `priv & mask > 0`.
-pub(crate) fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<GlobalPriv> {
-    [
-        (tidb_mysql::SelectPriv, GlobalPriv::Select),
-        (tidb_mysql::InsertPriv, GlobalPriv::Insert),
-        (tidb_mysql::UpdatePriv, GlobalPriv::Update),
-        (tidb_mysql::DeletePriv, GlobalPriv::Delete),
-        (tidb_mysql::LockTablesPriv, GlobalPriv::LockTables),
-        (tidb_mysql::ShowViewPriv, GlobalPriv::ShowView),
-    ]
-    .into_iter()
-    .filter(|(mask, _)| privilege.0 & mask.0 != 0)
-    .map(|(_, global)| global)
-    .collect()
+pub(crate) fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<PrivilegeType> {
+    tidb_mysql::ALL_GLOBAL_PRIVS
+        .iter()
+        .copied()
+        .chain([tidb_mysql::GrantPriv])
+        .filter(|global| privilege.0 & global.bit() != 0)
+        .collect()
 }
 
 /// One plan-time [`tidb_planner::plan_builder::visit_info::VisitInfo`] as the
 /// request the session checks.
-fn request_of_visit(
+pub(crate) fn request_of_visit(
     visit: &tidb_planner::plan_builder::visit_info::VisitInfo,
 ) -> TablePrivilegeRequest {
     use tidb_planner::plan_builder::visit_info::VisitAuthError;
-    let alternatives = global_privileges_of(visit.privilege);
-    // The only combined mask the planner asks for is a locking read's
-    // `DELETE|UPDATE|LOCK TABLES`; DELETE leads and the others also grant it.
-    let locking = alternatives.contains(&GlobalPriv::Delete)
-        && alternatives.contains(&GlobalPriv::Update)
-        && alternatives.contains(&GlobalPriv::LockTables);
-    let primary = if locking {
-        GlobalPriv::Delete
-    } else {
-        alternatives.first().copied().unwrap_or(GlobalPriv::Select)
-    };
-    let mut request = TablePrivilegeRequest::new(&visit.database, &visit.table, primary);
-    if locking {
-        request.also_granted_by = &[GlobalPriv::Update, GlobalPriv::LockTables];
+    if visit.privilege == tidb_mysql::ExtendedPriv {
+        // Go `appendDynamicVisitInfo`: any one dynamic privilege (SUPER
+        // standing in for each) passes.
+        let mut request = TablePrivilegeRequest {
+            table_named_in_error: false,
+            dynamic_privileges: visit.dynamic_privs.clone(),
+            dynamic_with_grant: visit.dynamic_with_grant,
+            ..TablePrivilegeRequest::new("", "", tidb_mysql::SuperPriv)
+        };
+        if let VisitAuthError::SpecificAccessDenied { privilege } = &visit.error {
+            request.specific_denial = Some(privilege);
+        }
+        return request;
     }
+    // Go `RequestVerification` passes when the account holds ANY bit of the
+    // visit's mask (a locking read's `DELETE|UPDATE|LOCK TABLES`, SHOW's
+    // `AllPrivMask`); the first names the denial, DELETE for a locking read.
+    let mut alternatives = global_privileges_of(visit.privilege);
+    let locking = alternatives.contains(&tidb_mysql::DeletePriv)
+        && alternatives.contains(&tidb_mysql::UpdatePriv)
+        && alternatives.contains(&tidb_mysql::LockTablesPriv);
+    if locking {
+        alternatives.retain(|privilege| *privilege != tidb_mysql::DeletePriv);
+        alternatives.insert(0, tidb_mysql::DeletePriv);
+    }
+    let primary = alternatives.first().copied().unwrap_or(tidb_mysql::SelectPriv);
+    let mut request = TablePrivilegeRequest::new(&visit.database, &visit.table, primary);
+    request.also_granted_by = alternatives.into_iter().skip(1).collect();
     match &visit.error {
-        VisitAuthError::TableAccessDenied { command, table } if *command != "SELECT" => {
+        VisitAuthError::TableAccessDenied { command, table } => {
             request.table_error_override = Some((command, table.clone()));
         }
-        VisitAuthError::None => request.table_named_in_error = false,
+        VisitAuthError::DbAccessDenied { database } => {
+            request.table_named_in_error = false;
+            request.database_named_in_error = true;
+            request.database_in_error = Some(database.clone());
+        }
+        VisitAuthError::SpecificAccessDenied { privilege } => {
+            request.table_named_in_error = false;
+            request.specific_denial = Some(privilege);
+        }
+        VisitAuthError::None | VisitAuthError::PrivilegeCheckFail => {
+            request.table_named_in_error = false;
+        }
         VisitAuthError::ViewNoExplain => request.view_no_explain = true,
-        _ => {}
     }
     request
 }

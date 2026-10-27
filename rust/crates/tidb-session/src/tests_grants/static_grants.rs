@@ -560,7 +560,7 @@ fn tls_owner_grant_require_shares_account_policy_at_every_scope() {
         );
         assert_eq!(policy(), expected);
     }
-    assert!(!registry.has_global_priv("tls_grantee", "%", privilege::GlobalPriv::Insert));
+    assert!(!registry.has_global_priv("tls_grantee", "%", tidb_mysql::InsertPriv));
     session
         .run("GRANT USAGE ON *.* TO tls_grantee REQUIRE NONE")
         .unwrap();

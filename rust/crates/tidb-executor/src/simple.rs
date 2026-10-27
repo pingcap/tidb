@@ -14,6 +14,10 @@
 
 //! Go `pkg/executor/simple.go`: the executors of Go's `core.Simple` plans.
 
+pub mod account;
+pub mod account_password;
+pub mod account_tables;
+
 use crate::sessionctx::SessionContext;
 use crate::{Catalog, DriverError, SchemaErrorKind};
 
@@ -61,9 +65,100 @@ pub fn execute_use(
     Ok(())
 }
 
-/// A variable error as the driver error the wire layer renders.
-impl From<tidb_variable::VarError> for DriverError {
-    fn from(error: tidb_variable::VarError) -> Self {
-        DriverError::Var(error)
-    }
+/// Go `SimpleExec.executeSetResourceGroupName`: a named group must exist in
+/// the statement's infoschema (`ErrResourceGroupNotExists`, naming it as
+/// written); the empty name is `default`.
+pub fn execute_set_resource_group_name(
+    ctx: &mut dyn SessionContext,
+    is: &Catalog,
+    stmt: &tidb_ast::SetResourceGroupStmt,
+) -> Result<(), DriverError> {
+    use tidb_hack::GoToLower;
+    let name = if stmt.name.is_empty() {
+        "default".to_owned()
+    } else {
+        if is.resource_group(&stmt.name).is_none() {
+            return Err(DriverError::Mysql(crate::MysqlError::terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
+                format!("Unknown resource group '{}'", stmt.name),
+            )));
+        }
+        stmt.name.go_to_lower()
+    };
+    ctx.session_vars_mut().resource_group = name;
+    Ok(())
 }
+
+/// Go `SimpleExec.executeSetRole`: the roles named, all granted ones, all
+/// but some, the default ones, or none, become the session's active roles.
+/// Activation is direct-only: a role named or excluded must be granted to
+/// the account itself (`FindEdge`), else `ErrRoleNotGranted` (3530), and a
+/// rejected statement leaves the previous set untouched.
+pub fn execute_set_role(
+    ctx: &mut dyn SessionContext,
+    stmt: &tidb_ast::SetRoleStmt,
+) -> Result<(), DriverError> {
+    if ctx.privilege_checks_bypassed() {
+        return Ok(());
+    }
+    if !ctx.has_privilege_registry() {
+        return Err(DriverError::unsupported(
+            "SET ROLE requires a server front end with a privilege registry",
+        ));
+    }
+    let account = ctx
+        .session_vars()
+        .current_user
+        .as_deref()
+        .and_then(|identity| identity.split_once('@'))
+        .map(|(user, host)| (user.to_owned(), host.to_owned()))
+        .ok_or_else(|| {
+            DriverError::unsupported("CURRENT_USER requires a session with an authenticated identity")
+        })?;
+    let checker = ctx.privilege_manager();
+    let granted = |roles: &[tidb_ast::RoleSpec]| -> Result<Vec<(String, String)>, DriverError> {
+        roles
+            .iter()
+            .map(|spec| {
+                let role = role_identity(spec);
+                if checker.find_edge(&role, &account) {
+                    Ok(role)
+                } else {
+                    Err(DriverError::RoleNotGranted {
+                        role: role.0,
+                        role_host: role.1,
+                        user: account.0.clone(),
+                        host: account.1.clone(),
+                    })
+                }
+            })
+            .collect()
+    };
+    let active = match &stmt.selection {
+        tidb_ast::SetRoleSelection::None => Vec::new(),
+        tidb_ast::SetRoleSelection::All => checker.get_all_roles(&account.0, &account.1),
+        tidb_ast::SetRoleSelection::Default => checker.get_default_roles(&account.0, &account.1),
+        tidb_ast::SetRoleSelection::AllExcept(excluded) => {
+            let excluded = granted(excluded)?;
+            checker
+                .get_all_roles(&account.0, &account.1)
+                .into_iter()
+                .filter(|role| !excluded.contains(role))
+                .collect()
+        }
+        tidb_ast::SetRoleSelection::Roles(roles) => granted(roles)?,
+    };
+    ctx.session_vars_mut().active_roles = std::sync::Arc::new(active);
+    Ok(())
+}
+
+/// Go `auth.RoleIdentity` of a written role: an omitted host is `%`.
+fn role_identity(spec: &tidb_ast::RoleSpec) -> (String, String) {
+    let host = if spec.host.is_empty() {
+        "%".to_owned()
+    } else {
+        spec.host.clone()
+    };
+    (spec.role.clone(), host)
+}
+

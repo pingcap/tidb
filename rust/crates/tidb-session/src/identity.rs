@@ -22,6 +22,7 @@
 //! with no front end has none of it, which is why every check falls back to
 //! "unrestricted" rather than "denied".
 
+use crate::privilege::PrivilegeTypeExt;
 use std::sync::Arc;
 
 use tidb_ast::{SessionStmt, Stmt};
@@ -37,7 +38,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        privilege: privilege::GlobalPriv,
+        privilege: privilege::PrivilegeType,
     ) -> Result<(), DriverError> {
         let granted = match crate::table_privilege::mem_db_verdict_mask(database, privilege.bit()) {
             Some(verdict) => verdict,
@@ -61,7 +62,7 @@ impl Session {
     /// STATS_HISTOGRAMS, STATS_BUCKETS and STATS_LOCKED: SELECT on the
     /// `mysql` table the parser names, refused as the `SHOW` command.
     pub(crate) fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError> {
-        if self.has_scoped_privilege("mysql", table, privilege::GlobalPriv::Select) {
+        if self.has_scoped_privilege("mysql", table, tidb_mysql::SelectPriv) {
             return Ok(());
         }
         let Some((_, user, host)) = self.privilege_context() else {
@@ -73,31 +74,6 @@ impl Session {
             host: host.to_owned(),
             table: table.to_owned(),
         })
-    }
-
-    /// Go's privilege gate on `SET GLOBAL`: SUPER, or the dynamic
-    /// `SYSTEM_VARIABLES_ADMIN` privilege (which `has_dynamic_priv` already
-    /// falls back to SUPER for, so this one call covers "at least one of").
-    /// No attached privilege registry (an in-process session with no
-    /// front end) is treated as unrestricted, matching every other
-    /// privilege check this session performs before a registry is attached.
-    pub(crate) fn require_set_global_privilege(&self) -> Result<(), DriverError> {
-        let Some((registry, user, host)) = self.privilege_context() else {
-            return Ok(());
-        };
-        if registry.has_dynamic_priv_with_roles(
-            user,
-            host,
-            self.active_roles(),
-            "SYSTEM_VARIABLES_ADMIN",
-            false,
-        ) {
-            Ok(())
-        } else {
-            Err(DriverError::Var(
-                tidb_executor::VarError::SetGlobalAccessDenied,
-            ))
-        }
     }
 
     /// The account table plus this session's authenticated identity -- what
@@ -130,7 +106,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: privilege::GlobalPriv,
+        global_priv: privilege::PrivilegeType,
     ) -> bool {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
@@ -159,9 +135,9 @@ impl Session {
         Some(Arc::new(
             move |database: &str, sequence: &str, insert: bool| {
                 let global_priv = if insert {
-                    privilege::GlobalPriv::Insert
+                    tidb_mysql::InsertPriv
                 } else {
-                    privilege::GlobalPriv::Select
+                    tidb_mysql::SelectPriv
                 };
                 scoped_privilege(
                     &registry,
@@ -205,7 +181,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: privilege::GlobalPriv,
+        global_priv: privilege::PrivilegeType,
     ) -> bool {
         self.has_scoped_privilege(database, table, global_priv)
     }
@@ -254,7 +230,7 @@ impl Session {
             privilege_bypassed: self.privilege_bypassed,
             login_user: self.vars.login_user.clone(),
             current_user: self.vars.current_user.clone(),
-            active_roles: self.active_roles.to_vec(),
+            active_roles: self.vars.active_roles.to_vec(),
             restricted_sql: self.restricted_sql_executor(),
         }
     }
@@ -343,22 +319,6 @@ impl Session {
 
     pub(crate) fn require_sem_visible_sysvar(&self, name: &str) -> Result<(), DriverError> {
         if self.sem_hides_sysvar(name) {
-            Err(DriverError::SpecificAccessDenied(
-                "RESTRICTED_VARIABLES_ADMIN".to_owned(),
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(crate) fn require_sem_writable_sysvar(&self, name: &str) -> Result<(), DriverError> {
-        self.require_sem_visible_sysvar(name)?;
-        if tidb_util::sem_v2::is_enabled()
-            && tidb_util::sem_v2::is_read_only_variable(&name.to_ascii_lowercase())
-            && self
-                .privilege_context()
-                .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
-        {
             Err(DriverError::SpecificAccessDenied(
                 "RESTRICTED_VARIABLES_ADMIN".to_owned(),
             ))
@@ -490,7 +450,193 @@ impl Session {
                     tidb_executor::driver::query_visit_info(query, catalog, &self.vars.current_db, &ctx)
                 })
             },
+            |stmt| self.statement_visit_infos(stmt, &ctx),
         )
+    }
+
+    /// Whether Go's `Compile` builds `stmt` through `PlanBuilder.Build`'s
+    /// statement builders here: every statement that is not a query or DML,
+    /// except SET and SHOW (which compile themselves) and PREPARE / EXECUTE
+    /// / DEALLOCATE (the session's own).
+    pub(crate) fn compiles_as_statement_plan(stmt: &tidb_ast::Stmt) -> bool {
+        match stmt {
+            tidb_ast::Stmt::Ddl(_) => true,
+            tidb_ast::Stmt::Admin(admin) => !matches!(admin.as_ref(), tidb_ast::AdminStmt::Show(_)),
+            tidb_ast::Stmt::Session(session) => !matches!(
+                session.as_ref(),
+                tidb_ast::SessionStmt::Set(_)
+                    | tidb_ast::SessionStmt::Prepare { .. }
+                    | tidb_ast::SessionStmt::Execute { .. }
+                    | tidb_ast::SessionStmt::Deallocate(_)
+            ),
+            tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_) => false,
+        }
+    }
+
+    /// Go `PlanBuilder.Build` for a statement [`Self::compiles_as_statement_plan`]
+    /// admits: the common plan and its visit infos after
+    /// `VisitInfo4PrivCheck`. `None` for any other statement.
+    pub(crate) fn build_statement_plan(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<
+        Option<(
+            tidb_planner::common_plans::Plan,
+            Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+            tidb_executor::StmtContext,
+        )>,
+        DriverError,
+    > {
+        if !Self::compiles_as_statement_plan(stmt) {
+            return Ok(None);
+        }
+        self.validate_ddl_preprocess(stmt)?;
+        let ctx = self.statement_context_for_stmt(stmt, false);
+        let (plan, visits) = self.with_planning_catalog(|catalog| {
+            tidb_executor::driver::plan_statement(stmt, catalog, &self.vars.current_db, &ctx, self)
+        })?;
+        let visits = tidb_planner::plan_builder::stmt_build::visit_info_4_priv_check(
+            stmt,
+            visits,
+            |database, table| self.is_local_temporary_table(database, table),
+        );
+        Ok(Some((plan, visits, ctx)))
+    }
+
+    /// Go `Compile` for a statement that is not a query or DML: the plan,
+    /// after `CheckPrivilege` over its visit infos -- or over the requests a
+    /// PREPARE derived (Go `checkPreparedPriv`). A statement the node already
+    /// compiled ([`Self::compile_statement`]) is not built or checked again.
+    pub(crate) fn compile_stmt(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+    ) -> Result<Option<tidb_planner::common_plans::Plan>, DriverError> {
+        if prepared.is_none()
+            && self
+                .precompiled
+                .as_ref()
+                .is_some_and(|precompiled| precompiled.stmt == *stmt)
+        {
+            let precompiled = self.precompiled.take().expect("matched above");
+            self.observe_privilege_tables(&precompiled.requests);
+            // The plan is rebuilt (it does not cross threads with the
+            // session), and what this build notes is the statement's: the
+            // node's compile filed none of it.
+            let Some((plan, _, ctx)) = self.build_statement_plan(stmt)? else {
+                return Ok(None);
+            };
+            self.drain_eval_warnings(&ctx);
+            return Ok(Some(plan));
+        }
+        let Some((plan, visits, ctx)) = self.build_statement_plan(stmt)? else {
+            return Ok(None);
+        };
+        // What the build noted (`DROP PROCEDURE IF EXISTS`) is the
+        // statement's.
+        self.drain_eval_warnings(&ctx);
+        match prepared {
+            Some(requests) => self.check_table_privilege_requests(requests)?,
+            None => self.check_visit_infos(&visits)?,
+        }
+        Ok(Some(plan))
+    }
+
+    /// Go `Compile` for a statement whose executor this session's node runs
+    /// (a DDL, an account statement): the preprocessor -- its grammar checks
+    /// and, for a DDL, its table-name resolution -- then
+    /// `PlanBuilder.Build`'s plan and `CheckPrivilege` over its visit infos,
+    /// all before the executor commits the user's transaction. The
+    /// executor's own compile ([`Self::compile_stmt`]) then takes the plan
+    /// without checking it again, and the statement's observation, which
+    /// begins after it, the tables it checked
+    /// ([`Self::observe_precompiled_privilege_tables`]).
+    pub fn compile_statement(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<CompiledExecutor, DriverError> {
+        self.precompiled = None;
+        if !Self::compiles_as_statement_plan(stmt) {
+            return Ok(CompiledExecutor::Other);
+        }
+        // What the build notes is filed by the executor's own compile, which
+        // builds the plan again; a DDL job's lowering notes its own.
+        let Some((plan, visits, _)) = self.preprocess_and_build(stmt)? else {
+            return Ok(CompiledExecutor::Other);
+        };
+        let executor = CompiledExecutor::of(&plan);
+        let requests: Vec<_> = visits
+            .iter()
+            .map(crate::table_privilege::request_of_visit)
+            .collect();
+        self.check_table_privilege_requests(&requests)?;
+        self.precompiled = Some(PrecompiledStatement {
+            stmt: stmt.clone(),
+            requests,
+        });
+        Ok(executor)
+    }
+
+    /// Go `PREPARE` of a statement [`Self::compile_statement`] compiles
+    /// (`GeneratePlanCacheStmtWithAST`): the preprocessor and
+    /// `PlanBuilder.Build`, whose errors PREPARE reports, without the
+    /// privilege check EXECUTE makes.
+    pub fn compile_statement_for_prepare(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<CompiledExecutor, DriverError> {
+        if !Self::compiles_as_statement_plan(stmt) {
+            return Ok(CompiledExecutor::Other);
+        }
+        Ok(self
+            .preprocess_and_build(stmt)?
+            .map_or(CompiledExecutor::Other, |(plan, _, _)| CompiledExecutor::of(&plan)))
+    }
+
+    /// Go `Compile`'s preprocessor and `PlanBuilder.Build`.
+    fn preprocess_and_build(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<
+        Option<(
+            tidb_planner::common_plans::Plan,
+            Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+            tidb_executor::StmtContext,
+        )>,
+        DriverError,
+    > {
+        self.validate_ddl_preprocess(stmt)?;
+        self.ddl_preprocess_table_names(stmt)?;
+        self.build_statement_plan(stmt)
+    }
+
+    /// Forgets a statement [`Self::compile_statement`] compiled; the node
+    /// calls it at every statement's start, so no plan outlives its
+    /// statement.
+    pub fn clear_precompiled_statement(&mut self) {
+        self.precompiled = None;
+    }
+
+    /// Files the tables [`Self::compile_statement`] checked privileges on
+    /// with the statement's observation, which the node begins after the
+    /// compile (Go's statement context records them during `Compile`).
+    pub fn observe_precompiled_privilege_tables(&self) {
+        if let Some(precompiled) = &self.precompiled {
+            self.observe_privilege_tables(&precompiled.requests);
+        }
+    }
+
+    /// The visit infos [`Self::build_statement_plan`] answers, for the
+    /// privilege collectors.
+    pub(crate) fn statement_visit_infos(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        _ctx: &tidb_executor::StmtContext,
+    ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, DriverError> {
+        Ok(self
+            .build_statement_plan(stmt)?
+            .map(|(_, visits, _)| visits)
+            .unwrap_or_default())
     }
 
     /// Go `preprocessor.tableByName`: a table that does not exist is never
@@ -591,6 +737,18 @@ impl Session {
 
     /// Preprocessor errors precede both grant checking and implicit commits.
     pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        // Go's walk enters an `ADMIN REPAIR TABLE` before its CREATE TABLE,
+        // and `checkRepairTableGrammar` reads the process's REPAIR MODE.
+        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::RepairTable(repair) = ddl.as_ref() {
+                let repair_info = &*tidb_domain::domainutil::REPAIR_INFO;
+                tidb_planner::preprocess::check_repair_table_grammar(
+                    repair,
+                    repair_info.in_repair_mode(),
+                    repair_info.get_repair_table_list().is_empty(),
+                )?;
+            }
+        }
         // Go's preprocessor grammar checks over the statement's own names
         // and declarations, before anything reads the catalog. Its
         // `handleTableName` has already given an unqualified CREATE TABLE the
@@ -610,7 +768,7 @@ impl Session {
             },
             _ => stmt,
         };
-        tidb_executor::ddl::preprocess::check_ddl_grammar(
+        tidb_planner::preprocess::check_ddl_grammar(
             graded,
             self.vars.sql_mode().has_strict_mode(),
         )?;
@@ -655,6 +813,19 @@ impl Session {
         Ok(())
     }
 
+    /// Go `CheckPrivilege` (and `CheckTableLock`) over a plan's visit
+    /// infos, through the same request check every statement takes.
+    pub(crate) fn check_visit_infos(
+        &self,
+        visits: &[tidb_planner::plan_builder::visit_info::VisitInfo],
+    ) -> Result<(), DriverError> {
+        let requests: Vec<_> = visits
+            .iter()
+            .map(crate::table_privilege::request_of_visit)
+            .collect();
+        self.check_table_privilege_requests(&requests)
+    }
+
     /// Checks one statement's `visitInfo`s as Go's optimizer does:
     /// `CheckPrivilege` against the live grants, then `CheckTableLock`.
     pub(crate) fn check_table_privilege_requests(
@@ -684,7 +855,7 @@ impl Session {
                 request
                     .dynamic_privileges
                     .iter()
-                    .any(|name| self.has_dynamic_privilege(name, false))
+                    .any(|name| self.has_dynamic_privilege(name, request.dynamic_with_grant))
             } else {
                 match request.temporary_privilege {
                     TemporaryPrivilege::Skip => true,
@@ -696,7 +867,7 @@ impl Session {
                     TemporaryPrivilege::CreateLocal => self.has_scoped_privilege(
                         &request.database,
                         "",
-                        privilege::GlobalPriv::CreateTemporaryTables,
+                        tidb_mysql::CreateTMPTablePriv,
                     ),
                     _ => {
                         self.has_scoped_privilege(
@@ -715,6 +886,14 @@ impl Session {
             if let Some(denial) = request.specific_denial {
                 return Err(DriverError::SpecificAccessDenied(denial.to_owned()));
             }
+            if !request.dynamic_privileges.is_empty() {
+                // Go `ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)`
+                // prints the slice.
+                return Err(DriverError::PrivilegeCheckFail(format!(
+                    "[{}]",
+                    request.dynamic_privileges.join(" ")
+                )));
+            }
             if request.view_no_explain {
                 return Err(view_no_explain());
             }
@@ -722,24 +901,29 @@ impl Session {
                 DriverError::DbAccessDenied {
                     user,
                     host,
-                    database: request.database.clone(),
+                    database: request
+                        .database_in_error
+                        .clone()
+                        .unwrap_or_else(|| request.database.clone()),
                 }
             } else if request.table_named_in_error {
-                DriverError::TableAccessDenied {
-                    // Go's `authErr` spells the verb as the uppercase
-                    // command name and the table as `tableInfo.Name.L`.
-                    privilege: request
-                        .table_error_override
-                        .as_ref()
-                        .map_or(request.privilege.print_name(), |(command, _)| *command),
-                    user,
-                    host,
-                    table: go_to_lower(
-                        request
-                            .table_error_override
-                            .as_ref()
-                            .map_or(request.table.as_str(), |(_, table)| table.as_str()),
-                    ),
+                // Go returns the visit's `authErr` as the planner built it:
+                // the uppercase command and the table as that call site
+                // spells it (`Name.L` mostly, `Name.O` for
+                // `requireInsertAndSelectPriv`).
+                match &request.table_error_override {
+                    Some((command, table)) => DriverError::TableAccessDenied {
+                        privilege: command,
+                        user,
+                        host,
+                        table: table.clone(),
+                    },
+                    None => DriverError::TableAccessDenied {
+                        privilege: request.privilege.print_name(),
+                        user,
+                        host,
+                        table: go_to_lower(&request.table),
+                    },
                 }
             } else {
                 DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())
@@ -875,7 +1059,7 @@ impl Session {
                 .map(|(user, host)| (user.to_owned(), host.to_owned()))
             {
                 let (user, host) = (user.as_str(), host.as_str());
-                self.active_roles =
+                self.vars.active_roles =
                     Arc::new(registry.default_roles(&(user.to_owned(), host.to_owned())));
                 // Go `Auth`: with resource control on, the account's
                 // `User_attributes->$.resource_group` (the privilege
@@ -905,7 +1089,7 @@ impl Session {
     /// verification and role activation are bypassed.
     pub fn enable_privilege_bypass(&mut self) {
         self.privilege_bypassed = true;
-        Arc::make_mut(&mut self.active_roles).clear();
+        Arc::make_mut(&mut self.vars.active_roles).clear();
     }
 
     /// Records that this connection completed a secure transport handshake.
@@ -968,7 +1152,7 @@ impl Session {
     /// happens exactly once, here, rather than on every read.
     pub fn attach_globals(
         &mut self,
-        globals: vars::GlobalSysvars,
+        globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor>,
     ) -> Result<(), crate::DriverError> {
         // A session on the store reads its domain's GLOBAL table, as a Go
         // session reads its domain's (`GlobalVarsAccessor`); a private table
@@ -991,14 +1175,17 @@ impl Session {
     /// [`Self::swap_privileges`]) must be able to put the live table back
     /// unconditionally if the statement fails, without disturbing anything
     /// else this session has already seeded from it.
-    pub fn swap_globals(&mut self, globals: vars::GlobalSysvars) -> vars::GlobalSysvars {
+    pub fn swap_globals(
+        &mut self,
+        globals: Option<std::sync::Arc<dyn tidb_variable::GlobalVarAccessor>>,
+    ) -> Option<std::sync::Arc<dyn tidb_variable::GlobalVarAccessor>> {
         self.vars.swap_globals(globals)
     }
 
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
     /// `CURRENT_ROLE()` builtin.
     pub(crate) fn active_roles(&self) -> &[privilege::Account] {
-        self.active_roles.as_slice()
+        self.vars.active_roles.as_slice()
     }
 
     /// Splits the `CURRENT_USER()` identity (`user@host`) this session
@@ -1119,7 +1306,7 @@ impl Session {
         };
         match stmt {
             Stmt::Session(session) if matches!(*session, SessionStmt::SetPassword(_)) => Ok(()),
-            Stmt::Ddl(ddl) if matches!(*ddl, tidb_ast::DdlStmt::AlterUser(_)) => Ok(()),
+            Stmt::Admin(admin) if matches!(*admin, tidb_ast::AdminStmt::AlterUser(_)) => Ok(()),
             _ => Err(DriverError::MustChangePassword),
         }
     }
@@ -1144,7 +1331,7 @@ fn scoped_privilege(
     roles: &[privilege::Account],
     database: &str,
     table: &str,
-    global_priv: privilege::GlobalPriv,
+    global_priv: privilege::PrivilegeType,
 ) -> bool {
     if tidb_util::sem_compat::is_enabled() {
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
@@ -1168,4 +1355,44 @@ fn scoped_privilege(
         return verdict;
     }
     registry.has_table_priv_with_roles(user, host, roles, database, table, global_priv)
+}
+
+/// A statement [`Session::compile_statement`] compiled, and the privilege
+/// requests its visit infos made, which it passed.
+pub(crate) struct PrecompiledStatement {
+    stmt: tidb_ast::Stmt,
+    requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
+}
+
+/// The executor Go's `executorBuilder.build` picks for a compiled plan, as
+/// far as this session's node runs it differently from the session's own
+/// statement path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompiledExecutor {
+    /// Go `DDLExec` (`core.DDL`).
+    Ddl,
+    /// Go `AnalyzeExec` (`core.Analyze`).
+    Analyze,
+    /// Go `LoadStatsExec` (`core.LoadStats`).
+    LoadStats,
+    /// Go `LockStatsExec` / `UnlockStatsExec`.
+    StatsLock,
+    /// Go `SimpleExec` (`core.Simple`), which switches on the statement node.
+    Simple,
+    /// Any other plan, or a query / DML the session compiles itself.
+    Other,
+}
+
+impl CompiledExecutor {
+    fn of(plan: &tidb_planner::common_plans::Plan) -> Self {
+        use tidb_planner::common_plans::Plan;
+        match plan {
+            Plan::Ddl(_) => Self::Ddl,
+            Plan::Analyze(_) => Self::Analyze,
+            Plan::LoadStats(_) => Self::LoadStats,
+            Plan::LockStats(_) | Plan::UnlockStats(_) => Self::StatsLock,
+            Plan::Simple(_) => Self::Simple,
+            _ => Self::Other,
+        }
+    }
 }

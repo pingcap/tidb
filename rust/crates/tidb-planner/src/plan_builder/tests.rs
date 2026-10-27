@@ -941,7 +941,10 @@ fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
     use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
 
     let mut harness = Harness::new();
-    harness.tables_mut()[0].has_tiflash_replica = true;
+    harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
+        available: true,
+        ..tidb_model::TiFlashReplicaInfo::default()
+    });
     let warnings = WarningColumns::default();
 
     let build = |sql: &str, engines: &str| {
@@ -1027,7 +1030,10 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
     use crate::access_path::PossiblePath;
 
     let mut harness = Harness::new();
-    harness.tables_mut()[0].has_tiflash_replica = true;
+    harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
+        available: true,
+        ..tidb_model::TiFlashReplicaInfo::default()
+    });
     let warnings = WarningColumns::default();
     let build = |sql: &str| {
         warnings

@@ -170,8 +170,8 @@ fn reported(session: &Session) -> Vec<(&str, u16, String)> {
         .map(|warning| {
             (
                 warning.level.as_str(),
-                warning.code,
-                warning.message.clone(),
+                warning.code(),
+                warning.message().to_owned(),
             )
         })
         .collect()
@@ -725,8 +725,8 @@ fn the_warning_channel_can_already_carry_both_captured_hint_warnings() {
         .map(|warning| {
             (
                 warning.level.as_str(),
-                warning.code,
-                warning.message.as_str(),
+                warning.code(),
+                warning.message(),
             )
         })
         .collect();

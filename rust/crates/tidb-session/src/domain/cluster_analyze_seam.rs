@@ -52,14 +52,14 @@ use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
-use tidb_exec::cluster_catalog::load_cluster_catalog;
+use tidb_cluster::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
     ClusterAnalyzeReport,
 };
-use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
 };
@@ -129,7 +129,7 @@ where
     stats_lease: Duration,
     /// The node's live row-ID allocators, which the statistics rows this
     /// analyzer writes allocate from (Go's internal INSERT).
-    row_ids: Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 }
 
 impl<S> RealClusterAnalyze<S>
@@ -144,21 +144,15 @@ where
         stats: Arc<SharedStats>,
         timeout: Duration,
         stats_lease: Duration,
+        row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
     ) -> Self {
         Self {
             opener,
             stats,
             timeout,
             stats_lease,
-            row_ids: None,
+            row_ids,
         }
-    }
-
-    /// Allocates the statistics rows' ids from the node's live allocators.
-    #[must_use]
-    pub fn with_row_ids(mut self, ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>) -> Self {
-        self.row_ids = Some(ids);
-        self
     }
 
     /// Runs Go's targeted cache update after ANALYZE or LOAD STATS.
@@ -256,14 +250,14 @@ where
             &record_history,
             &record_global_history,
             jobs,
-            self.row_ids.as_ref(),
+            &self.row_ids,
         )
         .map_err(cluster_analyze_error)?;
         if let Err(error) = save_cluster_analyze_options(
             &self.opener,
             &statement,
             self.timeout,
-            self.row_ids.as_ref(),
+            &self.row_ids,
         ) {
             report.option_save_warning = Some(error.to_string());
         }
@@ -293,7 +287,7 @@ where
                     .is_some()
             },
             0,
-            self.row_ids.as_ref(),
+            &self.row_ids,
         )
         .map_err(cluster_load_stats_error)?;
         // As after ANALYZE, pinned Go returns `StatsHandle.Update` failure

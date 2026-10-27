@@ -1,0 +1,142 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! What a zero, zero-in, or invalid DATE/DATETIME/TIMESTAMP written into a
+//! column DOES, and the value that stands in for it when it is not an error.
+//!
+//! Mirrors Go `pkg/table/column.go`'s `handleZeroDatetime`. The conversion
+//! flags the statement derives from the SQL mode (`pkg/util/misc.go`'s
+//! `GetTypeFlagsForInsert`, `pkg/executor/select.go`'s `ResetUpdateStmtCtx`)
+//! are `tidb_util::misc::write_date_flags`.
+//!
+//! # Four inputs, and none of them is "strict mode" alone
+//!
+//! `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES` each decide a
+//! DIFFERENT question, and strict mode only decides the LEVEL of whatever
+//! they turn up. The two zero flags are exact mirrors of each other, which is
+//! the fastest way to see they are not one bit:
+//!
+//! | `INSERT INTO t(v DATE)` | `NO_ZERO_DATE` alone | `NO_ZERO_IN_DATE` alone |
+//! | --- | --- | --- |
+//! | `'0000-00-00'` | warning 1292, stores `0000-00-00` | accepted, stores `0000-00-00` |
+//! | `'2024-00-01'` | accepted, stores `2024-00-01` | warning 1292, stores `0000-00-00` |
+//!
+//! Add strict mode to either and the warning becomes an error. Take both
+//! flags away and even strict mode stores both values silently -- captured,
+//! `sql_mode = 'STRICT_TRANS_TABLES'` accepts `'0000-00-00'`.
+//!
+//! `ALLOW_INVALID_DATES` is about which dates EXIST, not about the level:
+//! it makes `'2024-02-31'` a real value that stores as written, in strict
+//! mode too, while `'2024-13-01'` stays wrong because a 13th month is not a
+//! date at all. It reaches this seam through the conversion flags rather
+//! than through the table below, because Go asks it inside `Time.Check`.
+//!
+//! # TIMESTAMP is stricter, and Go says so in a comment
+//!
+//! `handleZeroDatetime`'s timestamp arms come first and swallow every case
+//! the DATE arms would tolerate. A TIMESTAMP that ends up zero because its
+//! input was bad is a warning even when the input was merely a zero-in-date,
+//! and `ALLOW_INVALID_DATES` does not rescue `'2024-02-31'` there. Only the
+//! genuinely all-zero input gets the `NO_ZERO_DATE` treatment. Captured:
+//!
+//! | `INSERT INTO t(v TIMESTAMP)`, `sql_mode = ''` | |
+//! | --- | --- |
+//! | `'0000-00-00'` | accepted, stores the zero timestamp, no warning |
+//! | `'2024-00-01'` | warning 1292, stores the zero timestamp |
+//!
+//! # The stored value is the zero of the column's own type
+//!
+//! Never NULL, and never the input: a warned DATE stores `0000-00-00` and a
+//! warned DATETIME/TIMESTAMP stores `0000-00-00 00:00:00`. That is Go
+//! returning `types.NewDatum(zeroV)` on both the warning and the error path,
+//! and it is what makes the non-strict path a silent data change rather than
+//! a rejection.
+
+use tidb_datatype::{Datum, FieldTypeCode, Time};
+
+/// The mode bits this table reads, which now live in `tidb_datatype` because
+/// the READ path needs the same three and cannot depend on this crate.
+pub use tidb_datatype::DateModes;
+
+/// What the write path should do with one converted temporal value.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ZeroDateAction {
+    /// Store this value with no diagnostic.
+    Store(Datum),
+    /// Store this value and leave warning 1292 behind.
+    WarnAndStore(Datum),
+    /// Fail the statement with 1292.
+    Refuse,
+}
+
+/// Go `handleZeroDatetime`.
+///
+/// `converted` is the value `ConvertTo` produced -- which Go returns even
+/// when it also returns an error, and which is the zero of the target type in
+/// exactly that case. `was_invalid` is Go's `tmIsInvalid`, i.e. whether that
+/// conversion reported `ErrWrongValue`.
+pub(crate) fn handle_zero_datetime(
+    code: FieldTypeCode,
+    converted: Time,
+    was_invalid: bool,
+    modes: DateModes,
+    strict: bool,
+) -> ZeroDateAction {
+    let zero = Datum::new_time(zero_of(code));
+    let store_zero = |warn: bool| {
+        if warn && strict {
+            ZeroDateAction::Refuse
+        } else if warn {
+            ZeroDateAction::WarnAndStore(zero.clone())
+        } else {
+            ZeroDateAction::Store(zero.clone())
+        }
+    };
+
+    // Timestamp first, as Go does: its two arms shadow every case below.
+    if code == FieldTypeCode::Timestamp {
+        if converted.is_zero() {
+            return store_zero(was_invalid || modes.no_zero_date);
+        }
+        if was_invalid {
+            // An invalid timestamp is never stored as itself.
+            return store_zero(true);
+        }
+    } else if converted.is_zero() {
+        // Go: "Don't care NoZeroDate mode if time val is invalid."
+        if !was_invalid && !modes.no_zero_date {
+            return ZeroDateAction::Store(zero);
+        }
+        return store_zero(true);
+    } else if converted.invalid_zero() {
+        if !modes.no_zero_in_date {
+            return ZeroDateAction::Store(Datum::new_time(converted));
+        }
+        return store_zero(true);
+    }
+
+    ZeroDateAction::Store(Datum::new_time(converted))
+}
+
+/// Go's table fallback is selected by the column type, with FSP zero.
+/// The conversion's error-side value can have a different type (for example,
+/// unsigned overflow returns ZeroDate even for a DATETIME target).
+fn zero_of(code: FieldTypeCode) -> Time {
+    let kind = match code {
+        FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+        FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+        _ => tidb_datatype::TimeType::DateTime,
+    };
+    Time::new(tidb_datatype::CoreTime::default(), kind, 0).expect("valid zero temporal type")
+}

@@ -90,6 +90,9 @@ fn config_with_token_limit(limit: &str) -> NodeConfig {
         "3",
         "--port",
         "0",
+        // Go's server tests clear `cfg.Socket`; every node here binds port 0.
+        "--socket",
+        "",
         "--token-limit",
         limit,
     ])
@@ -868,4 +871,108 @@ fn prepared_execute_exports_cached_statement_label() {
             && line.ends_with(" 2")),
         "{text}"
     );
+}
+
+/// Go's `socket` listener (`server.go`'s `net.Listen("unix", cfg.Socket)`):
+/// a stale socket file is cleaned up first (`cleanupStaleSocket`), a client
+/// logs in over the Unix-domain socket as `localhost` (`PeerHost`), and the
+/// socket file goes with the listener.
+#[cfg(unix)]
+#[test]
+fn a_client_logs_in_over_the_unix_socket_like_go() {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let path = std::env::temp_dir().join(format!("tidb-socket-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    // A socket file nothing listens on any more.
+    drop(UnixListener::bind(&path).unwrap());
+    assert!(path.exists());
+
+    let mut config = config();
+    config.socket = path.to_str().unwrap().to_owned();
+    let factory = Arc::new(BarrierFactory {
+        barrier: Arc::new(Barrier::new(1)),
+        contexts: Mutex::new(Vec::new()),
+        opening: AtomicUsize::new(0),
+        max_opening: AtomicUsize::new(0),
+    });
+    let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::new(users())).unwrap();
+    // A live socket is never taken over.
+    let error = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::new(users()))
+        .err()
+        .expect("the second node refuses the live socket");
+    assert!(format!("{error:?}").contains("exists and is functional"), "{error:?}");
+    let shutdown = node.shutdown_handle();
+    let tracker = node.tracker();
+    let server = std::thread::spawn(move || node.run());
+
+    let mut client = UnixStream::connect(&path).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    reader.set_sequence(0);
+    let (_, salt) = handshake_fields(&reader.read_packet().unwrap());
+    let capabilities = CLIENT_PROTOCOL_41
+        | CLIENT_SECURE_CONNECTION
+        | CLIENT_PLUGIN_AUTH
+        | CLIENT_CONNECT_ATTRS
+        | CLIENT_DEPRECATE_EOF;
+    let mut response = Vec::new();
+    response.extend_from_slice(&capabilities.to_le_bytes());
+    response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+    response.push(46);
+    response.extend_from_slice(&[0; 23]);
+    response.extend_from_slice(b"alice\0");
+    response.push(20);
+    response.extend_from_slice(&native_response(b"secret", &salt));
+    response.extend_from_slice(b"mysql_native_password\0");
+    response.push(0);
+    let send = |client: &mut UnixStream, sequence: u8, payload: &[u8]| {
+        let mut writer = PacketWriter::with_sequence(client, sequence);
+        writer.write_packet(payload).unwrap();
+        writer.flush().unwrap();
+    };
+    send(&mut client, 1, &response);
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "auth OK over the socket");
+    send(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    send(&mut client, 0, &[COM_QUIT]);
+    // The live-socket check dialed the socket too (Go's `net.Dial`), so the
+    // client is the second connection served.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while tracker.completed() < 2 {
+        assert!(Instant::now() < deadline, "the client was never served");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    shutdown.shutdown();
+    server.join().unwrap().unwrap();
+
+    let contexts = factory.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0].peer_addr, tidb_server::PeerAddress::Unix);
+    assert_eq!(contexts[0].peer_addr.host(), "localhost");
+    // Go `ConnectionInfo.IsSecureTransport`: a Unix socket is secure.
+    assert!(contexts[0].secure_transport);
+    assert!(!path.exists(), "the socket file goes with the listener");
+}
+
+/// Go `cleanupStaleSocket` refuses a path that is not a socket file.
+#[cfg(unix)]
+#[test]
+fn a_regular_file_at_the_socket_path_is_refused_like_go() {
+    let path = std::env::temp_dir().join(format!("tidb-socket-file-{}.sock", std::process::id()));
+    std::fs::write(&path, b"not a socket").unwrap();
+    let mut config = config();
+    config.socket = path.to_str().unwrap().to_owned();
+    let factory = Arc::new(BarrierFactory {
+        barrier: Arc::new(Barrier::new(1)),
+        contexts: Mutex::new(Vec::new()),
+        opening: AtomicUsize::new(0),
+        max_opening: AtomicUsize::new(0),
+    });
+    let error = ConcurrentSqlNode::bind(&config, factory, Arc::new(users()))
+        .err()
+        .expect("a regular file is not taken over");
+    assert!(format!("{error:?}").contains("instead of a socket file"), "{error:?}");
+    assert!(path.exists(), "the file is left alone");
+    std::fs::remove_file(&path).unwrap();
 }

@@ -18,6 +18,7 @@
 //! Mirrors Go's `PlanBuilder.buildInsert` / `buildUpdate` / `buildDelete` and
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
+use crate::KvTableReader;
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
@@ -1254,10 +1255,15 @@ fn run_insert_rows(
                 // failed conversion's zero datum.
                 Err(error) if lenient && load_restrictive.is_some() => {
                     let rendered = error.to_mysql_error();
-                    ctx.append_warning_parts(rendered.code, &rendered.message);
+                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            rendered.code,
+            rendered.message.clone(),
+            rendered.identity,
+        ));
                     Datum::Null
                 }
-                Err(error) => return Err(error),
+                Err(error) => return Err(error.into()),
             };
             if let Some(buffer) = eval_buffer.as_mut() {
                 buffer.set_datum(offset, &value);
@@ -1522,11 +1528,13 @@ fn run_insert_rows(
                 ) {
                     Ok(outcome) => outcome,
                     Err(error) => {
-                        if let Err(killed) = ctx.statement_memory().check() {
+                        if let Err(killed) = ctx.statement_memory().check().map_err(ExecError::from) {
                             return Err(DriverError::Exec(killed));
                         }
                         match error {
-                            AutoIdError::Exhausted => return Err(kv.auto_id_exhausted_error()),
+                            AutoIdError::Exhausted => {
+                                return Err(DriverError::Mysql(kv.auto_id_exhausted_error()))
+                            }
                             // An id that does not fit the COLUMN is not a full
                             // domain: Go `setDatumAutoIDAndCast` casts the
                             // allocated id, and the cast's 1690 names the value
@@ -1541,18 +1549,20 @@ fn run_insert_rows(
                                 if ctx.strict() && !insert.ignore {
                                     return Err(DriverError::ConstantOverflows { value, type_name });
                                 }
-                                ctx.append_warning_parts(
-                                    1690,
-                                    &format!("constant {value} overflows {type_name}"),
-                                );
+                                ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+                                    tidb_util::context::WarningLevel::Warning,
+                                    &tidb_error::catalog::types::ERR_OVERFLOW,
+                                    format!("constant {value} overflows {type_name}"),
+                                ));
                                 if !has_on_duplicate {
                                     if !insert.ignore {
                                         return Err(DriverError::AutoincReadFailed);
                                     }
-                                    ctx.append_warning_parts(
-                                        1467,
+                                    ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+                                        tidb_util::context::WarningLevel::Warning,
+                                        &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
                                         "Failed to read auto-increment value from storage engine",
-                                    );
+                                    ));
                                     return Ok((0, None));
                                 }
                                 kv.clamp_auto_increment(&mut new_rows[*index]);
@@ -1861,7 +1871,12 @@ fn run_insert_rows(
             } else if insert.ignore {
                 let conflict = conflicts.into_iter().next().expect("a conflict was found");
                 let warning = kv_write_error(conflict.error).to_mysql_error();
-                ctx.append_warning_parts(warning.code, &warning.message);
+                ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
                 continue;
             }
         }
@@ -1879,7 +1894,12 @@ fn run_insert_rows(
             ) {
                 if matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
                     let warning = error.to_mysql_error();
-                    ctx.append_warning_parts(warning.code, &warning.message);
+                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
                     continue;
                 }
                 return Err(error);
@@ -2094,7 +2114,12 @@ fn handle_partition_write_error(
             if ignore =>
         {
             let warning = error.to_mysql_error();
-            ctx.append_warning_parts(warning.code, &warning.message);
+            ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
             Ok(())
         }
         error => Err(error),
@@ -2623,7 +2648,7 @@ impl CachedDmlPlan {
 #[derive(Debug)]
 pub struct PreparedDmlExecution {
     parameters: Arc<[Datum]>,
-    planning_warnings: std::sync::Mutex<Vec<(crate::WarnLevel, u16, String)>>,
+    planning_warnings: std::sync::Mutex<Vec<tidb_util::context::SqlWarn>>,
     plan: Arc<PreparedDmlPlan>,
     cached_plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
     generation: u64,
@@ -2902,7 +2927,7 @@ impl PreparedDmlExecution {
         Arc::clone(&self.parameters)
     }
     /// Takes warnings produced by this execution's cache-miss planning once.
-    pub fn take_planning_warnings(&self) -> Vec<(crate::WarnLevel, u16, String)> {
+    pub fn take_planning_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
         std::mem::take(
             &mut *self
                 .planning_warnings

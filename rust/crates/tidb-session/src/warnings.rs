@@ -42,61 +42,14 @@ pub(crate) const CHECK_CONSTRAINT_IS_OFF_MESSAGE: &str = "tidb_enable_check_cons
 /// instead`.
 pub(crate) const UNSUPPORTED_CREATE_PARTITION_CODE: u16 = 8200;
 
-/// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
-/// reports as `Level | Code | Message`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlWarning {
-    /// Whether the statement survived it.
-    pub level: WarningLevel,
-    /// The MySQL error code the warning carries.
-    pub code: u16,
-    /// The message text.
-    pub message: String,
-}
+/// A statement warning, Go's `contextutil.SQLWarn`: the level and the error
+/// `StmtCtx` keeps, which `SHOW WARNINGS` reports as `Level | Code | Message`.
+pub use tidb_util::context::SqlWarn as SqlWarning;
 
-/// A warning's `Level` column, which Go fills from
-/// `StmtCtx.warnings[i].Level`.
-///
-/// The three variants are Go's three: `contextutil.WarnLevelWarning`,
+/// `StmtCtx.warnings[i].Level`: Go's `contextutil.WarnLevelWarning`,
 /// `WarnLevelError` and `WarnLevelNote` (`pkg/util/context/warn.go`), reached
 /// through `StmtCtx.AppendWarning` / `AppendError` / `AppendNote`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WarningLevel {
-    /// The statement continued.
-    Warning,
-    /// The statement failed; Go records its error in the same buffer.
-    Error,
-    /// The statement asked for something to be skipped and it was: Go's
-    /// `AppendNote`, which every `IF EXISTS` / `IF NOT EXISTS` suppression
-    /// files the error it swallowed under. Captured from `gorun`:
-    /// `drop table if exists nosuch` leaves
-    /// `Note | 1051 | Unknown table 'test.nosuch'`.
-    Note,
-}
-
-impl WarningLevel {
-    /// The same three levels, arriving from the executor's own statement
-    /// buffer. Both spell Go's `contextutil` levels; this is the one place
-    /// they meet, so a note raised deep in a DDL action keeps its level all
-    /// the way to `SHOW WARNINGS`.
-    pub(crate) const fn from_executor(level: tidb_executor::WarnLevel) -> Self {
-        match level {
-            tidb_executor::WarnLevel::Warning => Self::Warning,
-            tidb_executor::WarnLevel::Error => Self::Error,
-            tidb_executor::WarnLevel::Note => Self::Note,
-        }
-    }
-
-    /// The text the `Level` column shows.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            WarningLevel::Warning => "Warning",
-            WarningLevel::Error => "Error",
-            WarningLevel::Note => "Note",
-        }
-    }
-}
+pub use tidb_util::context::WarningLevel;
 
 /// Whether the statement reports the warning buffer, and so must be handed the
 /// previous statement's entries instead of an empty buffer.
@@ -135,14 +88,27 @@ impl Session {
     /// once the buffer holds `math.MaxUint16` entries,
     /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
+        self.append_sql_warning(SqlWarning::with_code(level, code, message));
+    }
+
+    /// Go's error door (`driver_tidb.go:376`): a statement's error is also
+    /// appended to the warning buffer at `level`, error and all.
+    pub(crate) fn append_driver_error(&mut self, level: WarningLevel, error: &DriverError) {
+        let reported = error.clone().to_mysql_error();
+        self.append_sql_warning(SqlWarning::from_error(
+            level,
+            reported.code,
+            reported.message,
+            reported.identity,
+        ));
+    }
+
+    /// [`Self::append_warning`] of a warning kept with its error.
+    pub(crate) fn append_sql_warning(&mut self, warning: SqlWarning) {
         if self.warnings.len() >= u16::MAX as usize {
             return;
         }
-        self.warnings.push(SqlWarning {
-            level,
-            code,
-            message,
-        });
+        self.warnings.push(warning);
     }
 
     /// Takes back the `Error` row the statement pipeline filed for a failure
@@ -152,9 +118,9 @@ impl Session {
     /// the lock error itself, which `TiDBContext.ExecuteStmt` files once.
     pub fn retract_statement_failure(&mut self, code: u16, message: &str) {
         if let Some(position) = self.warnings.iter().rposition(|warning| {
-            warning.level == WarningLevel::Error
-                && warning.code == code
-                && warning.message == message
+            warning.warning_level() == WarningLevel::Error
+                && warning.code() == code
+                && warning.message() == message
         }) {
             self.warnings.remove(position);
         }
@@ -168,8 +134,7 @@ impl Session {
     /// returned (`pkg/ddl/executor.go`), so the note's code and text are the
     /// suppressed error's, never a second string that can drift from it.
     pub(crate) fn append_suppressed(&mut self, error: DriverError) {
-        let reported = error.to_mysql_error();
-        self.append_warning(WarningLevel::Note, reported.code, reported.message);
+        self.append_driver_error(WarningLevel::Note, &error);
     }
 
     /// Go `ShowExec.fetchShowWarnings(errOnly)`: one `Level | Code | Message`
@@ -179,7 +144,7 @@ impl Session {
         let reported = self
             .warnings
             .iter()
-            .filter(|warning| !errors_only || warning.level == WarningLevel::Error);
+            .filter(|warning| !errors_only || warning.warning_level() == WarningLevel::Error);
         if count_only {
             return vec![vec![Datum::Int(reported.count() as i64)]];
         }
@@ -187,11 +152,11 @@ impl Session {
             .map(|warning| {
                 vec![
                     Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
-                    Datum::Int(i64::from(warning.code)),
+                    Datum::Int(i64::from(warning.code())),
                     // A message quoting the client's SQL (a parse error's
                     // `near` text) carries a byte that is not UTF-8 as its
                     // `raw_bytes` escape; Go's message holds the byte.
-                    Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&warning.message).into_owned()),
+                    Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&warning.message()).into_owned()),
                 ]
             })
             .collect()
@@ -214,14 +179,14 @@ impl Session {
         // before producing one (FORMAT('x', 'y')'s 1582) would leave their
         // fold-time warnings for the NEXT statement's drain to mis-attribute.
         ctx.drain_fold_warnings();
-        for (level, code, message) in ctx.take_warnings() {
+        for warning in ctx.take_warnings() {
             // NOTE: the DDL lowering files LEGITIMATE Error-level rows here
             // (the 1846 algorithm refusal, the 8200 WITHOUT VALIDATION
             // warning -- oracle g-alter) on statements that SUCCEED, so this
             // drain must not blanket-drop Error level. The fatal-eval case
             // (the statement failing WITH the same error: g-group's 3158)
             // dedups at the error door's retain filter instead.
-            self.append_warning(WarningLevel::from_executor(level), code, message);
+            self.append_sql_warning(warning);
         }
     }
 
@@ -231,8 +196,8 @@ impl Session {
     /// order go's buffer carries them -- the fold rows first, the error row
     /// last).
     pub fn drain_fold_stash(&mut self) {
-        for (code, message) in tidb_executor::take_fold_warnings() {
-            self.append_warning(WarningLevel::Warning, code, message);
+        for warning in tidb_executor::take_fold_warnings() {
+            self.append_sql_warning(warning);
         }
     }
 
@@ -319,17 +284,22 @@ impl Session {
         let parse_warnings_start = self.warnings.len();
         for diagnostic in parse_warnings {
             // A class-less diagnostic is Go's hint refusal (8061).
-            let code = diagnostic.terror.map_or(8061, |proto| {
-                u16::try_from(proto.code().value()).unwrap_or(8061)
-            });
-            self.append_warning(
+            let proto = diagnostic
+                .terror
+                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR);
+            self.append_sql_warning(SqlWarning::of(
                 crate::WarningLevel::Warning,
-                code,
-                diagnostic.body().to_owned(),
-            );
+                proto,
+                diagnostic.body(),
+            ));
         }
         for message in decimal_literal_warnings(sql, &mut stmt) {
-            self.append_warning(crate::WarningLevel::Warning, 1292, message);
+            // Go lexer `toDecimal`: the parser's `types.ErrTruncatedWrongValue`.
+            self.append_sql_warning(SqlWarning::of(
+                crate::WarningLevel::Warning,
+                &tidb_error::catalog::parser_types::ERR_TRUNCATED_WRONG_VALUE,
+                message,
+            ));
         }
         // Go's connection appends the parser's warnings after the statement
         // has run (`handleStmt`); they are recorded here and moved behind the
@@ -498,7 +468,7 @@ impl Session {
         self.vars.sys_warning_count = previous.len();
         self.vars.sys_error_count = previous
             .iter()
-            .filter(|warning| warning.level == WarningLevel::Error)
+            .filter(|warning| warning.warning_level() == WarningLevel::Error)
             .count();
     }
 

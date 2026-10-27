@@ -36,7 +36,7 @@
 //! while the live builder answered `-10`.
 
 use tidb_datatype::FieldTypeFlags;
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::build_table_info_with_context;
 
 /// Every column shape whose flags come from the TYPE, from a DECLARED
 /// modifier, or from neither -- so a builder that ran the pass on only some of
@@ -54,15 +54,16 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
         panic!("the fixture is a CREATE TABLE");
     };
 
-    let cluster = build_table_info(
+    let cluster = build_table_info_with_context(
         create,
         "utf8mb4",
         "utf8mb4_bin",
-        ClusteredIndexDefMode::IntOnly,
+        &int_only_context(),
+        false,
     )
     .expect("the fixture is buildable as a TableInfo");
 
-    let mut catalog = tidb_executor::Catalog::default();
+    let mut catalog = tidb_executor::Catalog::mock();
     tidb_executor::run_create_table_on(FIXTURE, &mut catalog).expect("the fixture is runnable");
     let live = catalog
         .table_in("test", "y")
@@ -126,4 +127,17 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
     assert_eq!(flags("g"), 0);
     assert_eq!(flags("h"), FieldTypeFlags::UNSIGNED);
     assert_eq!(flags("i"), 0);
+}
+
+/// Go `metabuild.NewContext(WithExprCtx(<ModeNone static context>),
+/// WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeIntOnly))`.
+fn int_only_context() -> tidb_expr::metabuild::Context {
+    tidb_expr::metabuild::Context::new([
+        tidb_expr::metabuild::with_expr_ctx(std::sync::Arc::clone(
+            tidb_expr::metabuild::Context::new_non_strict().get_expr_ctx(),
+        )),
+        tidb_expr::metabuild::with_clustered_index_def_mode(
+            tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,
+        ),
+    ])
 }

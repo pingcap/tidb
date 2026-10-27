@@ -63,7 +63,7 @@ fn rows(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
 /// completes it.
 #[test]
 fn update_exec_charges_the_session_query_quota() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(a))",
         &mut catalog,
@@ -118,7 +118,7 @@ fn update_exec_charges_the_session_query_quota() {
 /// session-variable surface and are not reproduced here.
 #[test]
 fn insert_replace_and_insert_select_charge_the_session_query_quota() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(a))",
         &mut catalog,
@@ -241,7 +241,7 @@ fn insert_replace_and_insert_select_charge_the_session_query_quota() {
 /// yields 8175 and removes nothing.
 #[test]
 fn delete_exec_charges_the_session_query_quota() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     run_create_table_on(
         "create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(a), index idx_b(b))",
         &mut catalog,
@@ -301,7 +301,7 @@ fn delete_exec_charges_the_session_query_quota() {
 #[test]
 fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
     let session = SessionMemory::new(-1, OomAction::Log, 7);
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     for name in ["t0", "t1", "t2", "t3", "t4"] {
         run_create_table_on(&format!("create table {name}(a int)"), &mut catalog).unwrap();
         run_insert_on(

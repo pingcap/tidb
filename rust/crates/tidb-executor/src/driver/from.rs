@@ -271,8 +271,8 @@ impl ColumnResolver for ScopeResolver<'_> {
                 // route through the fold stash the statement driver drains
                 // into the session buffer (captured: ADDDATE('abc', INTERVAL
                 // 1 DAY) warns `Incorrect datetime value: 'abc'`).
-                for (_level, code, message) in minimal.take_warnings() {
-                    tidb_expr::constant_fold::record_fold_warning(code, &message);
+                for warning in minimal.take_warnings() {
+                    tidb_expr::constant_fold::record_fold_sql_warn(warning);
                 }
             }
             None => {}

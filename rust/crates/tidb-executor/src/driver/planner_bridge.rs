@@ -27,20 +27,16 @@ use std::rc::Rc;
 use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
-use tidb_planner::find_best_task::coster::Ver2Coster;
-use tidb_planner::find_best_task::dispatch::{DispatchContext, find_best_task};
 use tidb_planner::logical::cte::CteClass;
 use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner::logical::rule::{DisabledLogicalRules, RuleContext, flags, logical_optimize};
+use tidb_planner::logical::rule::{RuleContext, flags, logical_optimize};
 use tidb_planner::logical::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
 use tidb_planner::physical::PhysicalPlan;
-use tidb_planner::physical_property::PhysicalProperty;
 use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner::plan_builder::catalog::TableSource;
@@ -53,51 +49,6 @@ use super::from::FromScope;
 enum ListColumnsLocated {
     Full,
     Location(crate::partition_pruning::ListPartitionLocation),
-}
-
-struct PartialIndexChecker<'a> {
-    resolver: &'a ZonedNoResolver,
-    use_plan_cache: bool,
-    opt_prefix_index_single_scan: bool,
-}
-
-impl OwnedRewrite for PartialIndexChecker<'_> {
-    type Down = ();
-    type Up = ();
-
-    fn descend(&mut self, node: &mut LogicalPlan, (): ()) -> Descend<(), ()> {
-        if let LogicalPlan::DataSource(source) = node {
-            source.check_partial_indexes(
-                self.resolver,
-                self.use_plan_cache,
-                self.opt_prefix_index_single_scan,
-            );
-        }
-        Descend::Children(vec![(); node.children().len()])
-    }
-
-    fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
-        (node, ())
-    }
-}
-
-fn check_partial_index_paths(
-    plan: LogicalPlan,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-) -> LogicalPlan {
-    let resolver =
-        ZonedNoResolver::with_like_default_escape(ctx.session_zone(), ctx.like_default_escape());
-    fold_owned(
-        &mut PartialIndexChecker {
-            resolver: &resolver,
-            use_plan_cache,
-            opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
-        },
-        plan,
-        (),
-    )
-    .0
 }
 
 /// Go `TryFastPlan` runs before static partition processing, so a complete
@@ -639,43 +590,6 @@ fn partition_indices_for_spec(
     ))
 }
 
-fn attach_dynamic_partition_access(
-    plan: &mut LogicalPlan,
-    pruning: &dyn tidb_planner::logical::rule_partition_processor::PartitionPruning,
-) -> Result<(), tidb_planner::plan_base::PlanError> {
-    if let LogicalPlan::DataSource(source) = plan {
-        if !source.partition_definition_ids.is_empty() {
-            let indices = pruning.partition_indices(source)?;
-            let all_partitions = source.partition_names.is_empty()
-                && indices.len() == source.partition_definition_ids.len();
-            let partitions = if all_partitions {
-                Vec::new()
-            } else {
-                indices
-                    .into_iter()
-                    .filter_map(|index| source.partition_definition_names.get(index).cloned())
-                    .collect()
-            };
-            source.dynamic_partition_access =
-                Some(tidb_planner::access::DynamicPartitionAccessObject {
-                    database: source.db_name.clone(),
-                    table: source
-                        .table_as_name
-                        .clone()
-                        .unwrap_or_else(|| source.table_name.clone()),
-                    all_partitions,
-                    partitions,
-                    error: String::new(),
-                });
-        }
-        return Ok(());
-    }
-    for child in plan.base_mut().children_mut() {
-        attach_dynamic_partition_access(child, pruning)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod list_columns_pruning_tests {
     use super::*;
@@ -893,7 +807,8 @@ pub(super) fn logical_from_plan(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .with_mpp_warning_sink(ctx);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
@@ -903,6 +818,9 @@ pub(super) fn logical_from_plan(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+    );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.parser_config = ctx.parser_config();
@@ -1515,133 +1433,13 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     ctx: &crate::StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
-    let begin_physical_opt = ctx
-        .phase_durations()
-        .take_begin_physical_opt()
-        .unwrap_or_else(std::time::Instant::now);
-    let optimizer_cost_env = ctx.optimizer_cost_env();
-    let coster = Ver2Coster::from_env(optimizer_cost_env);
-    let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(ctx);
-    let mut dispatch = DispatchContext::new(plan_ids, &coster, optimizer_cost_env.session.scale_ndv_skew_ratio)
-        .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
-        .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
-        .with_correlation_options(optimizer_cost_env.session.correlation_options)
-        .with_expression_evaluator(&evaluate)
-        .with_mpp_allowed(ctx.optimizer_cost_env().session.mpp_allowed)
-        .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
-        .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
-        .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())
-        .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
-        .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
-        .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
-        .with_mpp_warning_sink(ctx)
-        .with_plan_cache(
-            tidb_expr::Columns::use_plan_cache(ctx),
-            ctx,
-            ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_44830, false),
-        )
-        .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
-        .with_selectivity_factor(ctx.selectivity_factor())
-        .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
-        .with_ordering_index_selectivity_threshold(ctx.ordering_index_selectivity_threshold())
-        .with_projection_push_down(ctx.allow_projection_push_down())
-        .with_heavy_function_optimize(
-            ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_56318, true),
-        )
-        .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
-        .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
-        .with_paging(ctx.optimizer_cost_env().session.enable_paging)
-        .with_hash_join_concurrency(
-            ctx.optimizer_cost_env()
-                .session
-                .hash_join_concurrency
-                .max(1.0) as usize,
-        )
-        .with_use_hash_join_v2(ctx.optimizer_cost_env().session.use_hash_join_v2)
-        .with_disable_hash_join(!ctx.enable_hash_join())
-        .with_apply_cache_capacity(ctx.apply_cache_capacity())
-        .with_point_get_conversion(
-            !ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false),
-        )
-        .with_index_join_row_count_upper_bound(
-            ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_44855, false),
-        )
-        .with_column_ids(column_ids);
-    dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();
-    dispatch.shuffle_options = ctx.optimizer_cost_env().session.shuffle_options;
-    // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on every
-    // return, an error one included.
-    let task =
-        find_best_task(logical, &PhysicalProperty::default(), &mut dispatch).inspect_err(|_| {
-            ctx.phase_durations()
-                .set_physical_opt(begin_physical_opt.elapsed());
-        })?;
-    let mut physical = task.plan().cloned().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal_coded(
-            "Can't find a proper physical plan for this query",
-        )
-    })?;
-    // Go caches each operator's cost while `findBestTask` compares tasks
-    // (`PlanCostInit`), and EXPLAIN shows that cost for the finished plan even
-    // where `postOptimize` later put an operator between a parent and its
-    // child. Keep the enumeration-time costs on the nodes the same way.
-    tidb_planner::find_best_task::coster::Ver2Coster::from_env(ctx.optimizer_cost_env())
-        .with_explain_cache()
-        .record_enumeration_costs(&mut physical);
-    // Go physicalOptimize: "collect the warnings from task". Every task
-    // warning is a planner `ErrInternal` (hint warnings), code 1815.
-    for warning in task.warnings().get_warnings() {
-        let level = match warning.level {
-            tidb_planner::task::WarnLevel::Warning => tidb_distsql::WarningLevel::Warning,
-            tidb_planner::task::WarnLevel::Note => tidb_distsql::WarningLevel::Note,
-        };
-        ctx.append_leveled(level, 1815, &warning.message);
-    }
-    // Go physicalOptimize binds positions before postOptimize removes aliases.
-    let resolved = physical.resolve_indices();
-    ctx.phase_durations()
-        .set_physical_opt(begin_physical_opt.elapsed());
-    resolved?;
-    let physical = tidb_planner::physical::eliminate_physical_projection_for_update(
-        physical,
+    tidb_planner::optimize::optimize_physical(
+        logical,
+        plan_ids,
+        column_ids,
+        ctx,
         col_ref_from_update_plan,
-    );
-    // Go postOptimize: eliminatePhysicalProjection → InjectExtraProjection.
-    // The projection re-injection restores the purposeful projections
-    // (scalar aggregate arguments, scalar order-by items, expression
-    // nominal sorts) that the elimination pass removed.
-    let mut physical =
-        tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
-    // Go postOptimize: mergeContinuousSelections.
-    tidb_planner::physical::merge_continuous_selections(&mut physical);
-    // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
-    let mut physical = tidb_planner::physical::eliminate_union_scan_over_point_get(
-        physical,
-        ctx.pessimistic_transaction() || ctx.optimistic_transaction(),
-    );
-    tidb_planner::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
-    if ctx.enable_parallel_apply() {
-        tidb_planner::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
-    }
-    // Go postOptimize: disableReuseChunkIfNeeded.
-    if ctx.is_chunk_alloc_valid()
-        && tidb_planner::physical::chunk_reuse::should_disable_reuse_chunk(
-            &physical,
-            ctx.executor_chunk_sizes().1,
-            tidb_util::memory::mem_total().ok(),
-        )
-    {
-        ctx.set_chunk_alloc_valid(false);
-    }
-    physical
-        .base_mut()
-        .base
-        .set_output_names(logical.output_names().to_vec());
-    Ok(physical)
+    )
 }
 
 /// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` calls it
@@ -1777,7 +1575,7 @@ impl DriverCteOptimizer<'_> {
         if let Some(error) = initializer.error {
             return Err(error);
         }
-        let opt_flag = adjust_optimization_flags(opt_flag, ctx);
+        let opt_flag = tidb_planner::optimize::adjust_optimization_flags(opt_flag, ctx);
         // Go's CTE `DoOptimize` runs `logicalOptimize` and `physicalOptimize`,
         // which set the session's optimizer clocks like any other pass.
         let begin_logical_opt = std::time::Instant::now();
@@ -1785,8 +1583,11 @@ impl DriverCteOptimizer<'_> {
         ctx.phase_durations()
             .set_logical_opt(begin_logical_opt.elapsed());
         let optimized = logical_result.map_err(|(_, error)| error)?.plan;
-        let mut optimized =
-            check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
+        let mut optimized = tidb_planner::optimize::check_partial_index_paths(
+            optimized,
+            ctx,
+            rule_context.use_plan_cache,
+        );
         let begin_physical_opt = std::time::Instant::now();
         optimized.recursive_derive_stats_with_context(&[], rule_context)?;
         ctx.phase_durations()
@@ -2162,7 +1963,13 @@ pub(crate) fn physical_show_plan(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::common_plans::Plan, tidb_planner::plan_base::PlanError> {
+) -> Result<
+    (
+        tidb_planner::common_plans::Plan,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2174,13 +1981,14 @@ pub(crate) fn physical_show_plan(
         plan_ids: &plan_ids,
         column_ids: &column_ids,
         registry: &registry,
+        session_ctx: None,
     };
-    let (plan, opt_flag) = parts.build(None, None, |builder| {
+    let (plan, opt_flag, visits) = parts.build(None, None, |builder| {
         let plan = builder.build_show(show)?;
-        Ok((plan, builder.get_opt_flag()))
+        Ok((plan, builder.get_opt_flag(), builder.visit_info.clone()))
     })?;
     let tidb_planner::common_plans::Plan::Logical(plan) = plan else {
-        return Ok(plan);
+        return Ok((plan, visits));
     };
     let logical = optimize_built_logical(
         plan,
@@ -2193,7 +2001,75 @@ pub(crate) fn physical_show_plan(
         &ctx.session_zone(),
     )?;
     physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
-        .map(tidb_planner::common_plans::Plan::Physical)
+        .map(|physical| (tidb_planner::common_plans::Plan::Physical(physical), visits))
+}
+
+/// Go `buildSet` for a `SET` statement: the plan and its visit infos.
+pub(crate) fn set_plan(
+    set: &tidb_ast::SetStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::common_plans::Set,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: None,
+    };
+    parts.build(None, None, |builder| {
+        let tidb_planner::common_plans::Plan::Set(plan) = builder.build_set(set)? else {
+            unreachable!("buildSet answers a Set plan");
+        };
+        Ok((plan, builder.visit_info.clone()))
+    })
+}
+
+/// Go `PlanBuilder.Build` for a statement that is not a query or DML: the
+/// common plan and its visit infos.
+pub(crate) fn statement_plan(
+    stmt: &tidb_ast::Stmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
+) -> Result<
+    (
+        tidb_planner::common_plans::Plan,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: Some(session_ctx),
+    };
+    parts.build(None, None, |builder| {
+        let plan = builder.build_stmt(stmt)?;
+        Ok((plan, builder.visit_info.clone()))
+    })
 }
 
 /// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:
@@ -2216,6 +2092,7 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
         plan_ids: &plan_ids,
         column_ids: &column_ids,
         registry: &registry,
+        session_ctx: None,
     };
     let (plan, opt_flag) = parts.build(None, None, |builder| {
         let plan = builder.build_admin_show_ddl_jobs(job_number, where_clause)?;
@@ -2257,6 +2134,7 @@ fn planner_built_query_with_allocators(
         plan_ids,
         column_ids,
         registry,
+        session_ctx: None,
     };
     parts.build(Some(query), building_view, |builder| {
         let node = tidb_resolve::NodeW::new(query.clone());
@@ -2288,6 +2166,7 @@ pub(crate) fn build_create_view(
         plan_ids: &plan_ids,
         column_ids: &column_ids,
         registry: &registry,
+        session_ctx: None,
     };
     let body = (*create.query).clone();
     parts.build(Some(&body), None, |builder| {
@@ -2305,6 +2184,8 @@ struct QueryBuilderParts<'a> {
     plan_ids: &'a PlanIdAllocator,
     column_ids: &'a ColumnIdAllocator,
     registry: &'a ScalarSubqueryRegistry,
+    /// Go `PlanContext`'s session-side reach for the statement builders.
+    session_ctx: Option<&'a dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext>,
 }
 
 impl QueryBuilderParts<'_> {
@@ -2343,7 +2224,11 @@ impl QueryBuilderParts<'_> {
         let mut builder =
             PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
                 .with_subquery_evaluator(&evaluator)
-                .with_default_evaluator(&defaults);
+                .with_default_evaluator(&defaults)
+                .with_mpp_warning_sink(ctx);
+        if let Some(session_ctx) = self.session_ctx {
+            builder = builder.with_session_ctx(session_ctx);
+        }
         builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
         builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
         builder.only_full_group_by = ctx.only_full_group_by();
@@ -2353,6 +2238,9 @@ impl QueryBuilderParts<'_> {
         builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
         builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
         builder.set_isolation_read_engines(ctx.isolation_read_engines());
+        builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
+            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        );
         builder.advanced_join_hint = ctx.advanced_join_hint();
         builder.in_explain_stmt = ctx.in_explain_stmt();
         builder.parser_config = ctx.parser_config();
@@ -2362,6 +2250,9 @@ impl QueryBuilderParts<'_> {
                     .is_some_and(|query| static_global_index_point_lookup(query, &source, ctx)),
         );
         builder.set_dynamic_prune_fallback(&prune_fallback);
+        // Go `PlanBuilder.Build`: `b.optFlag |= FlagPruneColumns` for every
+        // statement, which each evaluated subquery's `DoOptimize` reads.
+        builder.add_opt_flag(flags::PRUNE_COLUMNS);
         if let Some((database, view)) = building_view {
             builder.building_view_stack.insert((
                 tidb_mysql::to_lowercase(database),
@@ -2406,6 +2297,7 @@ pub(crate) fn view_column_types(
         plan_ids: &plan_ids,
         column_ids: &column_ids,
         registry: &registry,
+        session_ctx: None,
     };
     parts.build(None, None, |builder| {
         let view = builder
@@ -2744,7 +2636,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let defaults = default_evaluator(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults);
+        .with_default_evaluator(&defaults)
+        .with_mpp_warning_sink(ctx);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
@@ -2754,6 +2647,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+    );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.parser_config = ctx.parser_config();
@@ -3119,17 +3015,6 @@ fn optimize_built_logical(
         }
     }
 
-    // Go `adjustOptimizationFlags` enables both statistics rules for every
-    // ordinary (non-restricted) statement; the builder never owns these
-    // flags because they are session/execution policy, not AST shape.
-    let flags = flags | flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
-    let flags = if ctx.static_partition_prune() {
-        flags
-    } else {
-        flags & !flags::PARTITION_PROCESSOR
-    };
-    let flags = tidb_planner::logical::rule::add_second_column_prune(flags);
-    let flags = adjust_optimization_flags(flags, ctx);
     let function_builder = RealFunctionBuilder::new(ctx);
     let statistics_load = PlannerStatisticsLoad {
         catalog,
@@ -3144,7 +3029,6 @@ fn optimize_built_logical(
         context: ctx,
         plan_ids,
     };
-    let optimizer_cost_env = ctx.optimizer_cost_env();
     let cte_optimizer = DriverCteOptimizer {
         catalog,
         ctx,
@@ -3153,112 +3037,34 @@ fn optimize_built_logical(
         visiting: RefCell::new(HashSet::new()),
         parallel_apply_allowed: std::cell::Cell::new(ctx.enable_parallel_apply()),
     };
-    let rule_context = RuleContext {
-        estimator_options: optimizer_cost_env.session.estimator_options.clone(),
-        allocator: plan_ids,
-        column_allocator: column_ids,
-        builder: &function_builder,
-        use_plan_cache,
-        eval_context: ctx,
-        plan_cache_marker: Some(ctx),
-        allow_derive_topn: ctx.allow_derive_topn(),
-        expr_pushdown_blacklist: ctx.expr_pushdown_blacklist().clone(),
-        disabled_rules: DisabledLogicalRules::from_names(
-            tidb_planner::logical::rule::OPT_RULE_LIST
-                .iter()
-                .map(|rule| rule.name())
-                .filter(|name| ctx.logical_rule_disabled(name)),
-        ),
-        statistics_load: Some(&statistics_load),
-        partition_pruning: Some(&partition_pruning),
-        opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
-        opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
-        index_merge_enabled: ctx.index_merge(),
-        no_index_merge_hint: ctx.no_index_merge_hint(),
-        in_explain_stmt: ctx.in_explain_stmt(),
-        range_max_size: ctx.range_max_size(),
-        selectivity_factor: ctx.selectivity_factor(),
-        range_fallback_handler: Some(ctx.range_fallback_handler()),
-        always_keep_join_key: ctx.always_keep_join_key(),
-        enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
-        enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
-        enable_null_aware_anti_join: ctx.enable_null_aware_anti_join(),
-        enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
-        allow_eliminate_apply: ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_45822, true),
-        join_reorder_threshold: ctx.join_reorder_threshold(),
-        group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
-        scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
-        allow_agg_push_down: ctx.allow_agg_push_down(),
-        advanced_join_reorder: ctx.advanced_join_reorder(),
-        cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
-        join_reorder_through_proj: ctx.join_reorder_through_proj(),
-        join_reorder_through_sel: ctx.join_reorder_through_sel(),
-        outer_join_reorder: ctx.outer_join_reorder(),
-        advanced_join_hint: ctx.advanced_join_hint(),
-        hint_warning_sink: Some(ctx),
-        used_stats_recorder: Some(&statistics_load),
-        cte_optimizer: Some(&cte_optimizer),
+    // The base statistics are attached before the rule list with used-item
+    // recording suspended for that walk.
+    let initialize_statistics = |plan: LogicalPlan| {
+        statistics_load.record_used_stats.set(false);
+        let initialized =
+            tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
+                &statistics_load,
+                plan,
+            );
+        statistics_load.record_used_stats.set(true);
+        initialized
     };
-    let mut source_count = 0;
-    plan.walk_preorder(&mut |plan| {
-        source_count += usize::from(matches!(plan, LogicalPlan::DataSource(_)));
-    });
-    // Go DataSource.InitStats is available to logical rules themselves;
-    // join reorder derives candidate statistics while logical optimization
-    // is still running. Attach real-or-pseudo base statistics before entering
-    // that rule list, rather than delaying them until physical optimization.
-    statistics_load.record_used_stats.set(false);
-    let initialized =
-        tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
-            &statistics_load,
-            plan,
-        );
-    statistics_load.record_used_stats.set(true);
-    let mut plan = initialized.map_err(|(_, error)| error)?;
-    // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
-    // `IsOuterMostCTE` on every CTE class before ANY optimization runs —
-    // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
-    // non-outermost CTE.
-    tidb_planner::logical::cte::recheck_cte(&mut plan);
-    // Go `planner/optimize.go:525`: the result's field names are the logical
-    // plan's `OutputNames()` captured BEFORE optimization. A rule may replace
-    // the root (an always-false filter makes a TableDual) with a node that
-    // names nothing.
-    let built_names = plan.output_names().to_vec();
-    // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
-    // `DoOptimize` the first time a reference's statistics are derived, which
-    // `rule_context.cte_optimizer` does from inside the stats walk.
-    let begin_logical_opt = std::time::Instant::now();
-    let logical_result = logical_optimize(&rule_context, flags, plan);
-    // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
-    ctx.phase_durations()
-        .set_logical_opt(begin_logical_opt.elapsed());
-    let mut optimized = logical_result.map_err(|(_, error)| error)?.plan;
-    // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
-    // sources from the loaded snapshot before join reorder. No partition-only
-    // reinitialization or pre-load access-path estimates survive here.
-    optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
-    if !ctx.static_partition_prune() {
-        attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;
-    }
-    if optimized.output_names().is_empty()
-        && optimized
-            .schema()
-            .is_some_and(|schema| schema.columns.len() == built_names.len())
-    {
-        optimized.set_output_names(built_names);
-    }
-    // Go `physicalOptimize` starts its clock before `RecursiveDeriveStats`
-    // and records `StatsDerive` after it; the physical search that follows
-    // this function takes the start over.
-    let begin_physical_opt = std::time::Instant::now();
-    optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
-    ctx.phase_durations()
-        .finish_stats_derive(begin_physical_opt);
-    let logical = prepare_possible_properties(optimized).0;
-    Ok(logical)
+    let services = tidb_planner::optimize::OptimizeServices {
+        statistics_load: &statistics_load,
+        initialize_statistics: &initialize_statistics,
+        used_stats_recorder: &statistics_load,
+        partition_pruning: &partition_pruning,
+        cte_optimizer: &cte_optimizer,
+    };
+    tidb_planner::optimize::optimize_logical(
+        plan,
+        flags,
+        ctx,
+        &services,
+        use_plan_cache,
+        plan_ids,
+        column_ids,
+    )
 }
 
 /// The complete physical tree retained by the prepared-plan cache. A hit
@@ -3448,16 +3254,6 @@ pub(super) fn deferred_rebuild_context(
     ctx.map(|ctx| ctx.clone().with_prepared_params(std::sync::Arc::from(values)))
 }
 
-/// Go `adjustOptimizationFlags` (`VolcanoOptimize`, run for the statement
-/// and for each CTE part): stable result mode adds `ResultReorder`.
-fn adjust_optimization_flags(flags: u64, ctx: &crate::StmtContext) -> u64 {
-    if ctx.stable_result_mode() {
-        flags | tidb_planner::logical::rule::flags::STABILIZE_RESULTS
-    } else {
-        flags
-    }
-}
-
 /// Builds the same logical and physical plan as ordinary execution, with
 /// plan-cache-safe logical rewrites enabled so parameter markers are not
 /// folded into a value-specific shape.
@@ -3556,6 +3352,9 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+    );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.parser_config = ctx.parser_config();
@@ -3617,7 +3416,7 @@ mod predicate_column_tests {
             is_sync_load_failed: false,
         };
         let demanded = std::collections::HashMap::from([(item(1), true), (item(2), false)]);
-        let catalog = Catalog::default();
+        let catalog = Catalog::mock();
         let context = crate::StmtContext::default();
         let initializer = InitStats {
             error: None,
@@ -3672,7 +3471,7 @@ mod statistics_initialization_tests {
                 generated: None,
             }],
         );
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         catalog.set_table_statistics(
             7,
@@ -3790,7 +3589,7 @@ mod statistics_initialization_tests {
             index.name = format!("ia_{id}");
             table.add_index(index, false);
         }
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
         source.db_name = "test".to_owned();
@@ -3962,7 +3761,7 @@ mod statistics_initialization_tests {
             },
             false,
         );
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
         source.db_name = "test".to_owned();
@@ -4089,5 +3888,173 @@ mod statistics_initialization_tests {
                 }
             }
         }
+    }
+}
+
+/// Go `base.PlanContext` as `pkg/planner/core`'s optimizer reads it.
+impl tidb_planner::optimize::OptimizeContext for crate::StmtContext {
+    fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+        crate::StmtContext::session_zone(self)
+    }
+    fn static_partition_prune(&self) -> bool {
+        crate::StmtContext::static_partition_prune(self)
+    }
+    fn stable_result_mode(&self) -> bool {
+        crate::StmtContext::stable_result_mode(self)
+    }
+    fn optimizer_cost_env(&self) -> &tidb_planner::find_best_task::coster::CostEnv {
+        crate::StmtContext::optimizer_cost_env(self)
+    }
+    fn allow_derive_topn(&self) -> bool {
+        crate::StmtContext::allow_derive_topn(self)
+    }
+    fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
+        crate::StmtContext::expr_pushdown_blacklist(self)
+    }
+    fn logical_rule_disabled(&self, name: &str) -> bool {
+        crate::StmtContext::logical_rule_disabled(self, name)
+    }
+    fn opt_index_prune_threshold(&self) -> i32 {
+        crate::StmtContext::opt_index_prune_threshold(self)
+    }
+    fn opt_prefix_index_single_scan(&self) -> bool {
+        crate::StmtContext::opt_prefix_index_single_scan(self)
+    }
+    fn index_merge(&self) -> bool {
+        crate::StmtContext::index_merge(self)
+    }
+    fn no_index_merge_hint(&self) -> bool {
+        crate::StmtContext::no_index_merge_hint(self)
+    }
+    fn in_explain_stmt(&self) -> bool {
+        crate::StmtContext::in_explain_stmt(self)
+    }
+    fn range_max_size(&self) -> i64 {
+        crate::StmtContext::range_max_size(self)
+    }
+    fn selectivity_factor(&self) -> f64 {
+        crate::StmtContext::selectivity_factor(self)
+    }
+    fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+        crate::StmtContext::range_fallback_handler(self)
+    }
+    fn always_keep_join_key(&self) -> bool {
+        crate::StmtContext::always_keep_join_key(self)
+    }
+    fn enable_unsafe_substitute(&self) -> bool {
+        crate::StmtContext::enable_unsafe_substitute(self)
+    }
+    fn enable_semi_join_rewrite(&self) -> bool {
+        crate::StmtContext::enable_semi_join_rewrite(self)
+    }
+    fn enable_null_aware_anti_join(&self) -> bool {
+        crate::StmtContext::enable_null_aware_anti_join(self)
+    }
+    fn enable_no_decorrelate_in_select(&self) -> bool {
+        crate::StmtContext::enable_no_decorrelate_in_select(self)
+    }
+    fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
+        crate::StmtContext::optimizer_fix_control(self)
+    }
+    fn join_reorder_threshold(&self) -> i32 {
+        crate::StmtContext::join_reorder_threshold(self)
+    }
+    fn allow_agg_push_down(&self) -> bool {
+        crate::StmtContext::allow_agg_push_down(self)
+    }
+    fn advanced_join_reorder(&self) -> bool {
+        crate::StmtContext::advanced_join_reorder(self)
+    }
+    fn cartesian_join_order_threshold(&self) -> f64 {
+        crate::StmtContext::cartesian_join_order_threshold(self)
+    }
+    fn join_reorder_through_proj(&self) -> bool {
+        crate::StmtContext::join_reorder_through_proj(self)
+    }
+    fn join_reorder_through_sel(&self) -> bool {
+        crate::StmtContext::join_reorder_through_sel(self)
+    }
+    fn outer_join_reorder(&self) -> bool {
+        crate::StmtContext::outer_join_reorder(self)
+    }
+    fn advanced_join_hint(&self) -> bool {
+        crate::StmtContext::advanced_join_hint(self)
+    }
+    fn get_index_force(&self) -> bool {
+        crate::StmtContext::get_index_force(self)
+    }
+    fn enable_skew_distinct_agg(&self) -> bool {
+        crate::StmtContext::enable_skew_distinct_agg(self)
+    }
+    fn enable_3_stage_distinct_agg(&self) -> bool {
+        crate::StmtContext::enable_3_stage_distinct_agg(self)
+    }
+    fn enable_3_stage_multi_distinct_agg(&self) -> bool {
+        crate::StmtContext::enable_3_stage_multi_distinct_agg(self)
+    }
+    fn tiflash_pre_agg_mode(&self) -> &str {
+        crate::StmtContext::tiflash_pre_agg_mode(self)
+    }
+    fn partial_ordered_index_for_topn(&self) -> bool {
+        crate::StmtContext::partial_ordered_index_for_topn(self)
+    }
+    fn ordering_index_selectivity_ratio(&self) -> f64 {
+        crate::StmtContext::ordering_index_selectivity_ratio(self)
+    }
+    fn ordering_index_selectivity_threshold(&self) -> f64 {
+        crate::StmtContext::ordering_index_selectivity_threshold(self)
+    }
+    fn allow_projection_push_down(&self) -> bool {
+        crate::StmtContext::allow_projection_push_down(self)
+    }
+    fn enable_inl_join_inner_multi_pattern(&self) -> bool {
+        crate::StmtContext::enable_inl_join_inner_multi_pattern(self)
+    }
+    fn limit_push_down_threshold(&self) -> u64 {
+        crate::StmtContext::limit_push_down_threshold(self)
+    }
+    fn enable_hash_join(&self) -> bool {
+        crate::StmtContext::enable_hash_join(self)
+    }
+    fn apply_cache_capacity(&self) -> i64 {
+        crate::StmtContext::apply_cache_capacity(self)
+    }
+    fn enable_parallel_apply(&self) -> bool {
+        crate::StmtContext::enable_parallel_apply(self)
+    }
+    fn executor_concurrency(&self) -> usize {
+        crate::StmtContext::executor_concurrency(self)
+    }
+    fn in_transaction(&self) -> bool {
+        self.pessimistic_transaction() || self.optimistic_transaction()
+    }
+    fn is_chunk_alloc_valid(&self) -> bool {
+        crate::StmtContext::is_chunk_alloc_valid(self)
+    }
+    fn set_chunk_alloc_valid(&self, valid: bool) {
+        crate::StmtContext::set_chunk_alloc_valid(self, valid);
+    }
+    fn max_chunk_size(&self) -> usize {
+        self.executor_chunk_sizes().1
+    }
+    fn append_task_warning(&self, note: bool, code: u16, message: &str) {
+        let level = if note {
+            tidb_distsql::WarningLevel::Note
+        } else {
+            tidb_distsql::WarningLevel::Warning
+        };
+        self.append_leveled(level, code, message);
+    }
+    fn set_logical_opt(&self, duration: std::time::Duration) {
+        self.phase_durations().set_logical_opt(duration);
+    }
+    fn finish_stats_derive(&self, begin: std::time::Instant) {
+        self.phase_durations().finish_stats_derive(begin);
+    }
+    fn take_begin_physical_opt(&self) -> Option<std::time::Instant> {
+        self.phase_durations().take_begin_physical_opt()
+    }
+    fn set_physical_opt(&self, duration: std::time::Duration) {
+        self.phase_durations().set_physical_opt(duration);
     }
 }

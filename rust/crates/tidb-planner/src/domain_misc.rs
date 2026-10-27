@@ -32,6 +32,16 @@ pub struct LatestIndexSchema {
     pub table_indexes: BTreeMap<i64, Vec<SourceIndex>>,
 }
 
+/// Go `sctx.GetLatestInfoSchema()` as `metabuild.WithInfoSchema` keeps it
+/// (`pkg/ddl/metabuild.go`): the same latest domain infoschema.
+impl tidb_expr::metabuild::MetaOnlyInfoSchema for LatestIndexSchema {
+    fn schema_meta_version(&self) -> i64 {
+        // Go's `SchemaMetaVersion` is an `int64`; this field holds the same
+        // non-negative version.
+        self.schema_meta_version as i64
+    }
+}
+
 /// Go `domainmisc.GetLatestIndexInfo`.
 ///
 /// `None` is Go's nil domain. A missing table in a newer schema produces an

@@ -476,7 +476,10 @@ fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // go `builtinLog1ArgSig`: a non-positive argument warns
         // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
         Some(x) if x <= 0.0 => {
-            ctx.append_warning(3020, "Invalid argument for logarithm");
+            ctx.append_go_warning(
+                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                "Invalid argument for logarithm",
+            );
             Datum::Null
         }
         Some(x) => checked_ln(x),
@@ -496,7 +499,10 @@ fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
             if base <= 0.0 || base == 1.0 || x <= 0.0 {
                 // go `builtinLog2ArgSig`: the invalid base/argument warns
                 // ErrInvalidArgumentForLogarithm (3020) on its way to NULL.
-                ctx.append_warning(3020, "Invalid argument for logarithm");
+                ctx.append_go_warning(
+                    &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                    "Invalid argument for logarithm",
+                );
                 return Ok(Datum::Null);
             }
             Ok(Datum::Real(x.log(base)))
@@ -515,7 +521,10 @@ fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // like the 1-arg ln/log10 signatures (oracle g-err3: log2('x')
         // answers NULL with 1292 + 3020).
         Some(x) if x <= 0.0 => {
-            ctx.append_warning(3020, "Invalid argument for logarithm");
+            ctx.append_go_warning(
+                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                "Invalid argument for logarithm",
+            );
             Datum::Null
         }
         Some(x) => Datum::Real(x.log2()),
@@ -531,7 +540,10 @@ fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // go `builtinLog10Sig.evalReal`: a non-positive argument warns
         // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
         Some(x) if x <= 0.0 => {
-            ctx.append_warning(3020, "Invalid argument for logarithm");
+            ctx.append_go_warning(
+                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                "Invalid argument for logarithm",
+            );
             Datum::Null
         }
         Some(x) => Datum::Real(go_exp_log::go_log10(x)),

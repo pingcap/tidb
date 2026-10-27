@@ -368,7 +368,7 @@ fn select_index_tasks(
                     .ok_or_else(|| {
                         DriverError::unsupported(format!(
                             "Index '{name}' in field list does not exist in table '{}'",
-                            table.name
+                            table.name()
                         ))
                     })
             })
@@ -680,6 +680,89 @@ fn saved_options(
     }
 }
 
+/// Go `getSavedAnalyzeOpts`'s row: `sample_num, sample_rate, buckets, topn,
+/// column_choice, column_ids` of `mysql.analyze_options`, with a LIST's
+/// column ids resolved against `table` (an id it no longer has is dropped).
+fn saved_options_from_row(
+    row: &[tidb_datatype::Datum],
+    table: &tidb_executor::kv_table::KvTable,
+) -> SavedAnalyzeOptions {
+    let text = |index: usize| row.get(index).and_then(crate::datum_text).unwrap_or_default();
+    let int = |index: usize| text(index).parse::<i64>().unwrap_or(0);
+    let sample_num = int(0);
+    let sample_rate = text(1).parse::<f64>().unwrap_or(0.0);
+    let buckets = int(2);
+    let topn = int(3);
+    let raw = tidb_executor::analyze::AnalyzeOptionOverrides {
+        num_buckets: (buckets > 0).then(|| buckets as isize),
+        num_topn: (topn >= 0).then(|| topn as isize),
+        num_samples: (sample_num > 0).then(|| sample_num as usize),
+        sample_rate: (sample_rate > 0.0).then_some(sample_rate),
+    };
+    let columns = match text(4).as_str() {
+        "ALL" => AnalyzeColumnChoice::All,
+        "LIST" => AnalyzeColumnChoice::Explicit(
+            text(5)
+                .split(',')
+                .filter_map(|id| id.parse::<i64>().ok())
+                .filter_map(|id| table.columns().iter().find(|column| column.id == id))
+                .map(|column| column.name.clone())
+                .collect(),
+        ),
+        "PREDICATE" => AnalyzeColumnChoice::Predicate,
+        _ => AnalyzeColumnChoice::Default,
+    };
+    SavedAnalyzeOptions { raw, columns }
+}
+
+/// Go `AnalyzeExec.saveAnalyzeOptions`' `REPLACE INTO mysql.analyze_options`
+/// over `saved`, a LIST's column names stored as `table`'s column ids.
+fn save_analyze_options_sql(
+    saved: &[(i64, SavedAnalyzeOptions)],
+    table: &tidb_executor::kv_table::KvTable,
+) -> String {
+    let rows = saved
+        .iter()
+        .map(|(physical_id, options)| {
+            let (choice, ids) = match &options.columns {
+                AnalyzeColumnChoice::Default => ("DEFAULT", String::new()),
+                AnalyzeColumnChoice::All => ("ALL", String::new()),
+                AnalyzeColumnChoice::Predicate => ("PREDICATE", String::new()),
+                AnalyzeColumnChoice::Explicit(names) => (
+                    "LIST",
+                    names
+                        .iter()
+                        .filter_map(|name| {
+                            table
+                                .columns()
+                                .iter()
+                                .find(|column| column.name.go_to_lower() == name.go_to_lower())
+                                .map(|column| column.id.to_string())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            };
+            format!(
+                "({physical_id},{},{},{},{},'{choice}','{ids}')",
+                options.raw.num_samples.map_or(0, |value| value as i64),
+                tidb_datatype::go_strconv::format_float(
+                    options.raw.sample_rate.unwrap_or(0.0),
+                    b'g',
+                    -1,
+                    64,
+                ),
+                options.raw.num_buckets.map_or(0, |value| value as i64),
+                options.raw.num_topn.map_or(-1, |value| value as i64),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES {rows}"
+    )
+}
+
 impl Session {
     /// Runs one `ANALYZE` through the session catalog when its resolved table
     /// is temporary.
@@ -737,6 +820,35 @@ impl Session {
         let usage_provider = self.column_stats_usage.clone();
         let session_time_zone = self.session_time_zone();
         let resource_group = self.active_resource_group.clone();
+        let approximate_table_counts = std::sync::Arc::clone(&self.approximate_table_counts);
+        // Go `getSavedAnalyzeOpts`, per physical table, by restricted SQL.
+        let mut persisted = std::collections::HashMap::new();
+        if statement.persist_options {
+            let target = self.with_catalog_mut(|catalog| {
+                Ok(match catalog.table_in(&schema, &name) {
+                    Some(TableEntry::Kv(kv)) => Some((
+                        kv.clone(),
+                        analyze_partition_ids(kv, &statement.partitions)?,
+                    )),
+                    _ => None,
+                })
+            })?;
+            if let Some((table, partition_ids)) = target {
+                for physical_id in
+                    std::iter::once(table.table_id).chain(partition_ids.iter().copied())
+                {
+                    let rows = self.exec_restricted_sql(&format!(
+                        "select sample_num,sample_rate,buckets,topn,column_choice,column_ids \
+                         from mysql.analyze_options where table_id = {physical_id}"
+                    ))?;
+                    if let Some(row) = rows.first() {
+                        persisted.insert(physical_id, saved_options_from_row(row, &table));
+                    }
+                }
+            }
+        }
+        let mut to_save = Vec::new();
+        let mut saved_table = None;
         let result = self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => {
@@ -780,14 +892,6 @@ impl Session {
                     &mut suppress_predicate_warning,
                     &mut explicit_warning_emitted,
                 )?;
-            }
-            let mut persisted = std::collections::HashMap::new();
-            if statement.persist_options {
-                for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
-                    if let Some(options) = catalog.analyze_options(physical_id) {
-                        persisted.insert(physical_id, options);
-                    }
-                }
             }
             let mut resolution = resolve_analyze_options(
                 table_id,
@@ -888,7 +992,10 @@ impl Session {
                             .find(|definition| definition.id == options.physical_id)
                     })
                     .map_or("", |definition| definition.name.as_str());
-                let (approximate, has_pd) = catalog.approximate_table_count(
+                // Go `getAdjustedSampleRate`'s
+                // `GlobalPDHelper.GetApproximateTableCountFromStorage`.
+                let (approximate, has_pd) = approximate_table_counts.approximate_table_count(
+                    &resource_group,
                     options.physical_id,
                     &schema,
                     &name,
@@ -1041,9 +1148,6 @@ impl Session {
             })
             .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?;
             execution?;
-            for &physical_id in analyzed.keys() {
-                catalog.clear_stats_modify_count(physical_id);
-            }
             if statement.persist_options {
                 for options in &resolution.physical {
                     if options.is_partition && !ctx.static_partition_prune() {
@@ -1052,16 +1156,19 @@ impl Session {
                     let selected = selections
                         .get(&options.physical_id)
                         .and_then(Option::as_ref);
-                    catalog.set_analyze_options(
-                        options.physical_id,
-                        saved_options(&table, options, selected),
-                    );
+                    to_save.push((options.physical_id, saved_options(&table, options, selected)));
                 }
+                saved_table = Some(table.clone());
             }
             Ok(analyzed)
         });
         self.drain_context_warnings(&ctx);
-        result
+        let analyzed = result?;
+        // Go `saveAnalyzeOptions`, by restricted SQL after the analysis.
+        if let (false, Some(table)) = (to_save.is_empty(), saved_table) {
+            self.exec_restricted_sql(&save_analyze_options_sql(&to_save, &table))?;
+        }
+        Ok(analyzed)
     }
 
     /// Go's analyze memory quota, as one `ANALYZE` reads it.

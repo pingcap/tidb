@@ -134,7 +134,7 @@ pub(crate) fn warnings_of(session: &Session) -> Vec<(u16, String)> {
     session
         .warnings()
         .iter()
-        .map(|w| (w.code, w.message.clone()))
+        .map(|w| (w.code(), w.message().to_owned()))
         .collect()
 }
 

@@ -29,7 +29,7 @@ fn permitting() -> crate::StmtContext {
 }
 
 fn seeded() -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)",
@@ -123,7 +123,7 @@ fn an_insert_over_the_quota_is_8175_and_writes_nothing() {
 /// errno.
 #[test]
 fn a_cancelled_cascade_repoints_no_child_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE p (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();
     crate::run_create_table_on(
         "CREATE TABLE c (id BIGINT PRIMARY KEY, pid BIGINT, \
@@ -234,7 +234,7 @@ fn corpus_quota() -> crate::StmtContext {
 
 /// `n` rows of `(i, i * 10)` in a fresh `t`.
 fn table_of(n: i64) -> Catalog {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     let values: Vec<String> = (0..n).map(|i| format!("({i}, {})", i * 10)).collect();
     run_insert_on(

@@ -18,7 +18,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
 
 use tidb_txnkv::*;
 
@@ -436,98 +436,60 @@ impl Transaction for MockTransaction {
 struct MockResponse;
 
 impl Response for MockResponse {
-    type Context = ();
-    type ResultSubset = MockResult;
-    type Error = MockError;
-    fn next(&mut self, _: &()) -> Result<Option<Self::ResultSubset>, Self::Error> {
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         Ok(None)
     }
-    fn close(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
+    fn close(&mut self) {}
 }
 
-struct MockResult {
-    key: Key,
-}
-
-impl ResultSubset for MockResult {
-    fn data(&self) -> &[u8] {
-        &[]
-    }
-    fn start_key(&self) -> &Key {
-        &self.key
-    }
-    fn memory_size(&self) -> i64 {
-        0
-    }
-    fn response_time(&self) -> Duration {
-        Duration::ZERO
-    }
-}
-
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct MockClient;
 
 impl Client for MockClient {
-    type Context = ();
-    type Variables = ();
-    type Response = MockResponse;
-    type Warning = MockError;
-    fn send(
-        &mut self,
-        _: &(),
-        _: &Request,
-        _: &mut (),
-        _: &mut ClientSendOption<Self::Warning>,
-    ) -> Self::Response {
-        MockResponse
+    fn send(&self, _: &TransportRequest) -> Result<Box<dyn Response + Send>, String> {
+        Ok(Box::new(MockResponse))
     }
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool {
         RequestTypeSupportedChecker.is_request_type_supported(request_type, sub_type)
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct MockMppClient;
 
 impl MppClient for MockMppClient {
-    type Context = ();
-    type Error = MockError;
-    type Backoffer = ();
-    type DispatchPolicy = ();
-    type ReplicaRead = ();
-    type DispatchResponse = ();
-    type StreamResponse = ();
     fn construct_mpp_tasks(
-        &mut self,
-        _: &(),
+        &self,
+        _: &Arc<dyn MppContext>,
         _: &MppBuildTasksRequest,
-        _: Duration,
-        _: (),
-        _: (),
-        _: &mut dyn FnMut(&Self::Error),
-    ) -> Result<Vec<MppTaskMeta>, Self::Error> {
+        _: &StatementKvContext,
+        _: tidb_util::tiflashcompute::DispatchPolicy,
+        _: ReplicaRead,
+        _: &mut dyn FnMut(String),
+    ) -> Result<Vec<MppStoreTask>, MppError> {
         Ok(Vec::new())
     }
     fn dispatch_mpp_task(
-        &mut self,
-        _: DispatchMppTaskParam<(), ()>,
-    ) -> Result<(Self::DispatchResponse, bool), Self::Error> {
-        Ok(((), false))
-    }
-    fn establish_mpp_connections(
-        &mut self,
-        _: EstablishMppConnsParam<(), ()>,
-    ) -> Result<(Self::StreamResponse, bool), Self::Error> {
-        Ok(((), false))
-    }
-    fn cancel_mpp_tasks(&mut self, _: CancelMppTasksParam) {}
-    fn check_visibility(&self, _: u64) -> Result<(), Self::Error> {
+        &self,
+        _: &Arc<dyn MppContext>,
+        _: MppStoreTask,
+        _: tidb_proto::mpp::TaskMeta,
+        _: Vec<u8>,
+        _: &StatementKvContext,
+        _: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    ) -> Result<(), MppError> {
         Ok(())
     }
-    fn mpp_store_count(&self) -> Result<usize, Self::Error> {
-        Ok(0)
+    fn establish_mpp_conns(
+        &self,
+        _: Arc<dyn MppContext>,
+        _: &str,
+        _: tidb_proto::mpp::TaskMeta,
+        _: tidb_proto::mpp::TaskMeta,
+        _: &StatementKvContext,
+        _: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    ) -> Result<Box<dyn MppStreamResponse>, MppError> {
+        Err(MppError::Other("no store".to_owned()))
     }
 }
 

@@ -33,10 +33,10 @@ fn admin_cleanup_table_lock_restores_original_go_rows() {
 
 #[test]
 fn admin_cleanup_table_lock_retains_typed_table_paths() {
-    let Stmt::Admin(admin) = parse("admin cleanup table lock db.t1, t2").expect("parse") else {
+    let Stmt::Ddl(admin) = parse("admin cleanup table lock db.t1, t2").expect("parse") else {
         panic!("expected ADMIN statement");
     };
-    let tidb_ast::AdminStmt::CleanupTableLock(cleanup) = admin.as_ref() else {
+    let tidb_ast::DdlStmt::CleanupTableLock(cleanup) = admin.as_ref() else {
         panic!("expected typed cleanup table lock statement");
     };
     assert_eq!(

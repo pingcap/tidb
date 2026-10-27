@@ -66,7 +66,7 @@ fn char_using_decodes_and_tags_the_requested_charset() {
         [["1"]]
     );
     assert_eq!(session.wire_warning_count(), 1);
-    assert_eq!(session.warnings()[0].code, 1300);
+    assert_eq!(session.warnings()[0].code(), 1300);
 
     session.run("SET sql_mode=''").unwrap();
     assert_eq!(
@@ -74,5 +74,5 @@ fn char_using_decodes_and_tags_the_requested_charset() {
         [["01"]]
     );
     assert_eq!(session.wire_warning_count(), 1);
-    assert_eq!(session.warnings()[0].code, 1300);
+    assert_eq!(session.warnings()[0].code(), 1300);
 }

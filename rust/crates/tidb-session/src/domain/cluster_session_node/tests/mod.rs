@@ -10,6 +10,7 @@ mod node_fixture;
 mod observation_batch;
 
 mod autocommit_transactions;
+mod compile_path;
 mod global_variables;
 mod point_get_max_ts;
 mod prepared_transactions;

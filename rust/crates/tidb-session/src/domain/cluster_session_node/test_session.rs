@@ -31,6 +31,30 @@ use crate::domain::session_api::{QuerySession, SqlQueryError};
 use crate::{Session, StmtOutput};
 
 impl ClusterSessionFactory {
+    /// Go `DDLExecutor().UpdateTableReplicaInfo(sctx, physicalID, available)`:
+    /// the TiFlash replica manager's status change, as the persisted
+    /// `ActionUpdateTiFlashReplicaStatus` job (none when the status already
+    /// holds).
+    ///
+    /// # Errors
+    ///
+    /// The job's refusal, as Go returns it.
+    pub fn update_table_replica_info(
+        &self,
+        physical_id: i64,
+        available: bool,
+    ) -> Result<(), SqlQueryError> {
+        self.ddl
+            .execute(
+                &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
+                    table_id: physical_id,
+                    available,
+                },
+                &tidb_executor::StmtContext::for_query(),
+            )
+            .map(drop)
+    }
+
     /// Go `session.CreateSession4Test`: a session over this node that no
     /// client logged in. Go's testkit never calls `Auth`, so
     /// `SessionVars.User` stays nil and every privilege request passes; the
@@ -142,7 +166,7 @@ impl ClusterServerSession {
         let stmt = match self.parse_statement(sql) {
             Ok(stmt) => stmt,
             Err(error) => {
-                self.record_parse_failure(error.code, error.message.clone());
+                self.record_parse_failure(&error);
                 return Err(driver_error(error));
             }
         };
@@ -190,6 +214,25 @@ impl ClusterServerSession {
         let output = attempt.map_err(driver_error)?;
         self.store.session.add_statement_read_keys(affected_rows);
         Ok(output)
+    }
+
+    /// Replaces the domain's analyzer this session's statements reach (its
+    /// services' `analyze`, which `AnalyzeExec` runs through), for a test
+    /// that observes or fails the analysis.
+    pub(crate) fn set_analyzer(
+        &mut self,
+        factory: &ClusterSessionFactory,
+        analyze: Arc<dyn super::ClusterAnalyze>,
+    ) {
+        let mut services = self
+            .store
+            .session
+            .domain_services()
+            .expect("a node session holds its domain's services")
+            .clone();
+        services.analyze = factory.analyze_service_over(Arc::clone(&analyze));
+        self.store.session.install_domain_services(services);
+        self.analyze = analyze;
     }
 
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
@@ -271,7 +314,7 @@ impl ClusterServerSession {
                         .session
                         .warnings()
                         .iter()
-                        .any(|warning| warning.code == 1050),
+                        .any(|warning| warning.code() == 1050),
                 ),
                 tidb_ast::DdlStmt::CreatePlacementPolicy(_)
                 | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
@@ -324,7 +367,7 @@ fn column_field_type(info: &tidb_protocol::ColumnInfo) -> tidb_datatype::FieldTy
 }
 
 fn driver_error(error: SqlQueryError) -> tidb_executor::DriverError {
-    if let Some(cause) = error.driver_cause() {
+    if let Some(cause) = crate::txn::driver_cause(&error) {
         return cause.clone();
     }
     let mut mapped = tidb_executor::MysqlError::from_parts(error.code, error.state, error.message);

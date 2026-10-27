@@ -12,7 +12,7 @@ use super::*;
 /// never collides.
 #[test]
 fn unique_indexes() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE u (id BIGINT PRIMARY KEY, email VARCHAR(32) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -128,7 +128,7 @@ fn unique_indexes() {
 /// rows with the same value are two entries (Go's non-distinct path).
 #[test]
 fn a_non_unique_index_accepts_repeats() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE n (id BIGINT PRIMARY KEY, tag VARCHAR(8), KEY tag_idx (tag))",
         &mut catalog,
@@ -156,7 +156,7 @@ fn a_non_unique_index_accepts_repeats() {
 /// unique-key lookup a point read (Go's PointGetPlan on a unique key).
 #[test]
 fn a_unique_index_entry_points_at_its_row() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE k (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
         &mut catalog,
@@ -213,7 +213,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
         }
     }
 
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE lookup_hint (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia(a))",
         &mut catalog,
@@ -256,7 +256,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
     let conflict = "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) NO_INDEX_LOOKUP_PUSHDOWN(lookup_hint) */ b FROM lookup_hint WHERE a > 0";
     let plan = physical(conflict, &conflict_ctx);
     assert!(lookup(&plan).is_none_or(|reader| !reader.index_lookup_push_down));
-    assert!(conflict_ctx.take_warnings().iter().any(|(_, _, message)| {
+    assert!(conflict_ctx.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).any(|(_, _, message)| {
         message
             == "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified"
     }));

@@ -30,6 +30,13 @@ serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
 tidb-vardef = { path = "../tidb-vardef" }
+# Go `pkg/domain` imports `pkg/sessionctx/variable`: the GLOBAL accessor the
+# session installs answers from the domain's sysvar cache over its registry.
+tidb-variable = { path = "../tidb-variable" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 # `ru_stats.go` computes interval buckets from local midnight and documents
 # DST as load-bearing; chrono replaces Go's time.Time/time.Location.
@@ -37,6 +44,7 @@ chrono.workspace = true
 base64.workspace = true
 
 [dev-dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-parser = { path = "../tidb-parser" }
 # The upstream ru_stats test pins Asia/Shanghai and Australia/Lord_Howe.
 chrono-tz.workspace = true

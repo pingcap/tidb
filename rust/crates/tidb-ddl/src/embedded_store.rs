@@ -22,8 +22,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_pd_client::ClusterSecurity;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_unistore::kv_handler::KvHandler;
@@ -97,7 +97,7 @@ pub fn in_process_stack_from_image(
     let transaction_opener =
         RealOptimisticTransactionOpener::from_capabilities(tikv_store.clone(), IN_PROCESS_TIMEOUT)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-            .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
+            .with_commit_protocol(tidb_cluster::session_commit_protocol::bootstrap_commit_protocol());
     Ok(InProcessStack {
         pd,
         opener: transaction_opener,

@@ -22,12 +22,13 @@ use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
-use tidb_exec::cop_scan::CopScanSource;
+use tidb_exec::cop_client::CopClient;
+use tidb_executor::cop_reader::open_cop_scan;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_executor::remote_scan::{
-    PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownStatementContext,
+    PushdownScanColumn, PushdownScanRequest, PushdownStatementContext,
 };
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, SelectResponse};
@@ -79,7 +80,7 @@ struct FakeResponse {
     subsets: Vec<QueryResultSubset>,
 }
 
-impl QueryResponse for FakeResponse {
+impl tidb_txnkv::Response for FakeResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         Ok(if self.subsets.is_empty() {
             None
@@ -92,6 +93,7 @@ impl QueryResponse for FakeResponse {
         self.subsets.clear();
     }
 }
+
 
 /// Evaluates one lowered `id > 0` condition over a row, the way TiKV does it.
 fn admits(condition: &Expr, id: i64) -> bool {
@@ -253,8 +255,8 @@ fn greater_than(value: i64) -> Expression {
     ))
 }
 
-fn scanner(region: &Arc<FakeRegion>) -> CopScanSource<FakeFactory> {
-    CopScanSource::new(Arc::new(FakeFactory {
+fn client(region: &Arc<FakeRegion>) -> CopClient<FakeFactory> {
+    CopClient::new(Arc::new(FakeFactory {
         region: Arc::clone(region),
     }))
 }
@@ -300,8 +302,7 @@ fn request_over(
 #[test]
 fn a_fully_lowered_projected_scan_sends_its_output_offsets_and_reads_narrow_rows() {
     let region = Arc::new(FakeRegion::default());
-    let mut stream = scanner(&region)
-        .open(&request(vec![lowered_conjunct()], Some(vec![1])))
+    let mut stream = open_cop_scan(&client(&region), &request(vec![lowered_conjunct()], Some(vec![1])))
         .expect("the narrowing travels when every predicate lowers");
     assert!(
         stream.predicates_applied(),
@@ -364,7 +365,7 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
         count: 2,
         column_offset: 1,
     });
-    let mut stream = scanner(&region).open(&scan).expect("prefix Limit lowers");
+    let mut stream = open_cop_scan(&client(&region), &scan).expect("prefix Limit lowers");
     // This fake observes transport fields; native SQL tests cover tied rows.
     assert!(stream.next_row().unwrap().is_some());
     stream.close();
@@ -388,10 +389,10 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
     drop(observations);
 
     scan.prefix_limit.as_mut().unwrap().column_offset = 3;
-    assert!(scanner(&region).open(&scan).is_err());
+    assert!(open_cop_scan(&client(&region), &scan).is_err());
     scan.prefix_limit.as_mut().unwrap().column_offset = 1;
     scan.limit = Some(1);
-    assert!(scanner(&region).open(&scan).is_err());
+    assert!(open_cop_scan(&client(&region), &scan).is_err());
 }
 
 #[test]
@@ -417,8 +418,7 @@ fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
         }],
         limit: 2,
     });
-    let mut stream = scanner(&region)
-        .open(&scan)
+    let mut stream = open_cop_scan(&client(&region), &scan)
         .expect("index TopN can return only handles");
     assert!(stream.predicates_applied());
     let mut handles = Vec::new();

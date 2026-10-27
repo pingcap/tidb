@@ -333,7 +333,7 @@ impl Executor for LateralApplyExec {
                             inner_relation_bytes(inner.as_ref()),
                         );
                         self.tracker.consume(delta);
-                        self.memory.check()?;
+                        self.memory.check().map_err(ExecError::from)?;
                     }
                     inner
                 };
@@ -342,7 +342,7 @@ impl Executor for LateralApplyExec {
                 // relation is what the statement quota sees.
                 let inner_memory = inner_relation_bytes(inner.as_ref());
                 self.tracker.consume(inner_memory);
-                if let Err(error) = self.memory.check() {
+                if let Err(error) = self.memory.check().map_err(ExecError::from) {
                     self.tracker.consume(-inner_memory);
                     return Err(error);
                 }
@@ -540,7 +540,7 @@ impl Executor for ApplyExec {
                 if let (Some(key), Some(cache)) = (cache_key, self.cache.as_ref()) {
                     let delta = cache.set(key, Arc::clone(&inner), datum_bytes(inner.as_ref()));
                     self.tracker.consume(delta);
-                    self.memory.check()?;
+                    self.memory.check().map_err(ExecError::from)?;
                 }
                 inner
             };
@@ -549,7 +549,7 @@ impl Executor for ApplyExec {
             // the whole of what it can accumulate.
             let inner_memory = datum_bytes(inner.as_ref());
             self.tracker.consume(inner_memory);
-            if let Err(error) = self.memory.check() {
+            if let Err(error) = self.memory.check().map_err(ExecError::from) {
                 self.tracker.consume(-inner_memory);
                 return Err(error);
             }

@@ -791,7 +791,9 @@ impl<C: Columns> Drop for ExpressionRewriter<'_, C> {
     /// `SEMI_JOIN_REWRITE()` -- is a statement warning (1815).
     fn drop(&mut self) {
         for warning in self.hint_warnings.drain(..) {
-            self.env.ctx.append_warning(1815, &warning);
+            self.env
+                .ctx
+                .append_go_warning(&tidb_error::plannererrors::ERR_INTERNAL, &warning);
         }
     }
 }

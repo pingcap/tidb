@@ -1,23 +1,32 @@
 #![cfg(test)]
 
 //! `SET GLOBAL` / `SELECT @@global.x` / `SHOW GLOBAL VARIABLES`: the
-//! GLOBAL-scope sysvar tier over [`vars::GlobalSysvars`]. See that module's
+//! GLOBAL-scope sysvar tier over [`tidb_domain::global_sysvars::GlobalSysvars`]. See that module's
 //! doc comment for the inheritance rule these tests capture: a session's
 //! copy is made from the shared table once, at connect.
 
 use crate::tests_support::*;
 use crate::*;
 
-/// Two connections to one store, which share its [`vars::GlobalSysvars`]
+/// Two connections to one store, which share its [`tidb_domain::global_sysvars::GlobalSysvars`]
 /// table as Go's sessions share their domain's. Root is bootstrapped with
 /// every privilege on both, so a `SET GLOBAL` is not itself blocked by the
 /// privilege gate under test elsewhere in this file.
-fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
+fn two_sessions_sharing_globals() -> (Session, Session, tidb_domain::global_sysvars::GlobalSysvars) {
     let registry = privilege::PrivilegeRegistry::default();
     let first = authenticated_session(&registry, "root", "%");
     let second = session_as(&registry, first.shared_catalog(), "root", "%");
-    let globals = first.vars.global_sysvars();
+    let globals = node_globals(&first);
     (first, second, globals)
+}
+
+/// The GLOBAL accessor the session's node installs in its sessions (Go's
+/// domain behind `session.GlobalVarsAccessor`).
+fn node_globals(session: &Session) -> tidb_domain::global_sysvars::GlobalSysvars {
+    crate::domain::mock_store::domain_of(session)
+        .expect("a session on a store")
+        .factory()
+        .global_vars()
 }
 
 #[test]
@@ -53,7 +62,7 @@ fn ddl_error_count_limit_publishes_set_load_and_reset() {
         .run("SET GLOBAL tidb_ddl_error_count_limit = 'invalid'")
         .is_err());
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
-    let scratch = vars::GlobalSysvars::from_cluster_rows(vec![(
+    let scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![(
         "tidb_ddl_error_count_limit".to_owned(),
         "9".to_owned(),
     )]);
@@ -83,7 +92,7 @@ fn ttl_job_enable_global_hook_updates_the_process_switch() {
 
     let _restore =
         RestoreTtlJobEnable(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
-    let globals = vars::GlobalSysvars::new();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
 
     globals
         .set(
@@ -124,7 +133,7 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
     }
 
     let _restore = RestoreEnableMdl(tidb_vardef::is_mdl_enabled(false));
-    let globals = vars::GlobalSysvars::new();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
 
     globals
         .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "OFF".to_owned())
@@ -142,7 +151,7 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
     // row does not exist yet must not keep the flag's `false` default while
     // answering ON.
     tidb_vardef::set_enable_mdl(false);
-    let fresh_cluster = vars::GlobalSysvars::new();
+    let fresh_cluster = tidb_domain::global_sysvars::GlobalSysvars::new();
     fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
     assert_eq!(
         tidb_vardef::is_mdl_enabled(false),
@@ -151,7 +160,7 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
 
     // A fresh image replacing the live one (the cluster reload path) carries
     // the switch the same way.
-    let fresh = vars::GlobalSysvars::new();
+    let fresh = tidb_domain::global_sysvars::GlobalSysvars::new();
     fresh
         .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "OFF".to_owned())
         .unwrap();
@@ -165,8 +174,8 @@ fn replacing_empty_global_image_uses_mdl_default() {
     let original = tidb_vardef::is_mdl_enabled(false);
     tidb_vardef::set_enable_mdl(false);
 
-    let globals = vars::GlobalSysvars::new();
-    globals.replace_from(&vars::GlobalSysvars::from_cluster_rows([]));
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    globals.replace_from(&tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([]));
 
     assert!(tidb_vardef::is_mdl_enabled(false));
     tidb_vardef::set_enable_mdl(original);
@@ -642,7 +651,11 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
 
     assert_eq!(read(), Some(Datum::Bytes(b"OFF".to_vec())));
     globals
-        .set("validate_password.enable", "ON".to_owned())
+        .set_with_time_zone(
+            "validate_password.enable",
+            "ON".to_owned(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
         .unwrap();
     assert_eq!(read(), Some(Datum::Bytes(b"ON".to_vec())));
 }
@@ -680,7 +693,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     // session default -- the snapshot-at-connect step a new connection to
     // the store performs.
     let mut fresh = Session::with_catalog(first.shared_catalog());
-    fresh.attach_globals(globals).unwrap();
+    fresh.attach_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(
         fresh.run("SELECT @@autocommit").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
@@ -731,7 +744,7 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
 fn show_global_and_session_variables_diverge() {
     let mut session = Session::new();
     session.attach_privileges(privilege::PrivilegeRegistry::default());
-    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
 
     session.run("SET autocommit = OFF").unwrap();
     assert_eq!(
@@ -755,7 +768,7 @@ fn show_global_and_session_variables_diverge() {
 #[test]
 fn set_global_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session.run("SET GLOBAL debug_sync = 'x'").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1228, "{mysql:?}");
@@ -766,7 +779,7 @@ fn set_global_on_a_session_only_variable_is_rejected() {
 #[test]
 fn set_session_on_a_global_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session
         .run("SET default_password_lifetime = 5")
         .unwrap_err();
@@ -779,7 +792,7 @@ fn set_session_on_a_global_only_variable_is_rejected() {
 #[test]
 fn reading_at_global_scope_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session.run("SELECT @@global.debug_sync").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1238, "{mysql:?}");
@@ -796,7 +809,7 @@ fn set_global_requires_super_or_system_variables_admin() {
     root.run("CREATE USER 'plain'@'%'").unwrap();
 
     let mut plain = session_as(&registry, catalog, "plain", "%");
-    plain.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    plain.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = plain.run("SET GLOBAL autocommit = OFF").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1227, "{mysql:?}");
@@ -807,7 +820,7 @@ fn set_global_requires_super_or_system_variables_admin() {
     // this connection's identity resolves to (matches how every other
     // privilege check in this tier is exercised after a GRANT).
     let mut plain = session_as(&registry, root.shared_catalog(), "plain", "%");
-    plain.attach_globals(vars::GlobalSysvars::new()).unwrap();
+    plain.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     plain.run("SET GLOBAL autocommit = OFF").unwrap();
 }
 
@@ -1455,7 +1468,7 @@ fn analyze_store_batch_size_uses_go_typed_session_hook() {
         .run("SET GLOBAL tidb_analyze_store_batch_size = 6")
         .unwrap();
     let mut fresh = vars::SessionVars::new();
-    fresh.seed_from_globals(globals).unwrap();
+    fresh.seed_from_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(fresh.analyze_store_batch_size(), 6);
 }
 
@@ -1481,7 +1494,7 @@ fn opt_selectivity_factor_uses_go_typed_session_hook() {
         .unwrap();
     assert_eq!(globals.get("tidb_opt_selectivity_factor").unwrap(), "1");
     let mut fresh = vars::SessionVars::new();
-    fresh.seed_from_globals(globals).unwrap();
+    fresh.seed_from_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(fresh.selectivity_factor(), 1.0);
 }
 
@@ -1751,7 +1764,7 @@ fn committer_concurrency_updates_the_process_authority() {
         "the live atomic must follow the accepted GLOBAL assignment"
     );
 
-    let scratch = vars::GlobalSysvars::from_cluster_rows([(
+    let scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([(
         tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY.to_owned(),
         "2048".to_owned(),
     )]);
@@ -1971,7 +1984,7 @@ fn global_isolation_skip_waits_for_the_next_session() {
     assert_eq!(error.to_mysql_error().code, 8048);
 
     let mut inherited = Session::with_catalog(current.shared_catalog());
-    inherited.attach_globals(globals).unwrap();
+    inherited.attach_globals(std::sync::Arc::new(globals)).unwrap();
     inherited
         .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
         .unwrap();
@@ -2115,7 +2128,7 @@ fn skip_init_globals_are_read_through_once_then_kept() {
     let (mut setter, mut reader, globals) = two_sessions_sharing_globals();
     let mut unread = Session::with_catalog(setter.shared_catalog());
     unread.set_user("root@%".to_owned(), "root@%".to_owned());
-    unread.attach_globals(globals.clone()).unwrap();
+    unread.attach_globals(std::sync::Arc::new(globals.clone())).unwrap();
     let read = |session: &mut Session| {
         scalar_text(session, "SELECT @@tidb_opt_tiflash_concurrency_factor")
     };
@@ -2126,7 +2139,7 @@ fn skip_init_globals_are_read_through_once_then_kept() {
     assert_eq!(read(&mut unread), Some("31".to_owned()));
     assert_eq!(read(&mut reader), Some("24".to_owned()));
     let mut fresh = Session::with_catalog(setter.shared_catalog());
-    fresh.attach_globals(globals).unwrap();
+    fresh.attach_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(read(&mut fresh), Some("31".to_owned()));
     setter
         .run("SET GLOBAL tidb_opt_tiflash_concurrency_factor = 32")
@@ -2147,7 +2160,7 @@ fn noop_globals_are_read_through_by_new_sessions() {
         .unwrap();
     session.run("SET GLOBAL tx_read_only = ON").unwrap();
     let mut fresh = SessionVars::new();
-    fresh.seed_from_globals(globals).unwrap();
+    fresh.seed_from_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(fresh.system_value("tx_read_only").unwrap(), "ON");
     assert_eq!(
         fresh.system_value("tidb_enable_noop_functions").unwrap(),
@@ -2386,7 +2399,7 @@ fn a_sysvar_name_is_case_insensitive_but_the_column_header_keeps_its_case() {
         session
             .warnings()
             .iter()
-            .map(|w| (w.code, w.message.clone()))
+            .map(|w| (w.code(), w.message().to_owned()))
             .collect::<Vec<_>>(),
         vec![(
             8142,
@@ -2649,7 +2662,7 @@ fn set_default_resolves_the_new_install_initial_value() {
 /// minimum adjusts it up instead of storing the too-small value.
 #[test]
 fn validate_password_count_sets_couple_the_length_sibling_like_go() {
-    let globals = vars::GlobalSysvars::new();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
 
     // Stock counts are number 1 / special 1 / mixed 1 and length 8: raising
     // mixed_case to 5 moves length to 1 + 1 + 2*5 = 12.
@@ -2693,7 +2706,7 @@ fn validate_password_count_sets_couple_the_length_sibling_like_go() {
 /// is ON.
 #[test]
 fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
-    let globals = vars::GlobalSysvars::new();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
     globals
         .set("tidb_restricted_read_only", "ON".to_owned())
         .unwrap();
@@ -2753,22 +2766,22 @@ fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let mut session = Session::new();
     session.set_global_config_syncer(std::sync::Arc::clone(&syncer));
-    let globals = vars::GlobalSysvars::new();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
     globals.set_startup("tidb_enable_top_sql", "ON".into());
     globals.load_from_cluster(vec![("tidb_source_id".into(), "3".into())]);
     let scratch =
-        vars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "4".into())]);
+        tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "4".into())]);
     globals.replace_from(&scratch);
     globals.publish_global_changes_from(
-        &vars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "5".into())]),
+        &tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "5".into())]),
         &["tidb_source_id".into()],
     );
-    session.swap_globals(globals);
+    session.swap_globals(Some(std::sync::Arc::new(globals)));
     assert!(session.run("SET SESSION tidb_source_id=2").is_err());
     assert!(session
         .run("SET GLOBAL tidb_enable_top_sql='not-a-bool'")
         .is_err());
-    let live = session.swap_globals(vars::GlobalSysvars::from_cluster_rows(Vec::new()));
+    let live = session.swap_globals(Some(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(Vec::new()))));
     session.run("SET GLOBAL tidb_source_id=99").unwrap();
     session.swap_globals(live);
     session.run("SET GLOBAL tidb_source_id=DEFAULT").unwrap();
@@ -2880,7 +2893,7 @@ fn collection_batch_sql_publication_preserves_fractional_wait_and_scratch_isolat
         .is_err());
     assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
     let name = "tidb_tso_client_batch_max_wait_time";
-    let scratch = vars::GlobalSysvars::from_cluster_rows([(name.to_owned(), "8".to_owned())]);
+    let scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([(name.to_owned(), "8".to_owned())]);
     scratch.set_pd_region_policy(policy.clone());
     assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
     globals.replace_from(&scratch);

@@ -25,13 +25,14 @@
 
 #![allow(missing_docs)]
 
+use tidb_executor::KvTableReader;
 use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
-use tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH;
-use tidb_executor::remote_scan::{
-    PushdownPartialAggregate, PushdownScan, PushdownScanRequest, PushdownStatementContext,
-};
+use tidb_datatype::UNSPECIFIED_LENGTH;
+use prost::Message;
+use tidb_executor::remote_scan::{PushdownPartialAggregate, PushdownStatementContext};
+use tidb_proto::tipb::DagRequest;
 use tidb_executor::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
 use tidb_txnkv::Key;
@@ -57,11 +58,56 @@ impl StorageIterator for EmptyIterator {
     fn close(&mut self) {}
 }
 
-/// A store with no coprocessor: it records the request the table BUILT, then
-/// refuses, exactly where the caller falls back to the local cursor.
+/// The request a table built, as its region received it.
+#[derive(Clone, Debug)]
+struct Recorded {
+    dag: DagRequest,
+    desc: bool,
+    keep_order: bool,
+}
+
+/// A region that records the request it was sent and answers no rows.
+#[derive(Debug)]
+struct RecordingRegion {
+    captured: Arc<Mutex<Option<Recorded>>>,
+}
+
+#[derive(Debug)]
+struct NoRows;
+
+impl tidb_txnkv::Response for NoRows {
+    fn next(
+        &mut self,
+    ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        Ok(None)
+    }
+    fn close(&mut self) {}
+}
+
+impl tidb_txnkv::Client for RecordingRegion {
+    fn send(
+        &self,
+        request: &tidb_txnkv::TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        let metadata = request.metadata();
+        let dag = DagRequest::decode(metadata.data.as_deref().expect("a DAG request"))
+            .expect("the request is a TiDB DAG");
+        *self.captured.lock().unwrap() = Some(Recorded {
+            dag,
+            desc: metadata.desc,
+            keep_order: metadata.keep_order,
+        });
+        Ok(Box::new(NoRows))
+    }
+    fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+        true
+    }
+}
+
+/// A store whose coprocessor client records the request the table BUILT.
 #[derive(Debug)]
 struct RecordingStore {
-    captured: Arc<Mutex<Option<PushdownScanRequest>>>,
+    captured: Arc<Mutex<Option<Recorded>>>,
 }
 
 impl TableStorage for RecordingStore {
@@ -90,12 +136,13 @@ impl TableStorage for RecordingStore {
             captured: Arc::clone(&self.captured),
         })
     }
-    fn open_remote_scan(
-        &mut self,
-        request: &PushdownScanRequest,
-    ) -> Option<Result<PushdownScan, StorageError>> {
-        *self.captured.lock().unwrap() = Some(request.clone());
-        None
+    fn client(&self) -> Option<Arc<dyn tidb_txnkv::Client>> {
+        Some(Arc::new(RecordingRegion {
+            captured: Arc::clone(&self.captured),
+        }))
+    }
+    fn start_ts(&self) -> u64 {
+        100
     }
 }
 
@@ -146,7 +193,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
     }
 }
 
-fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>>) {
+fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<Recorded>>>) {
     let opened = table.pushdown_partial_aggregate_cursor(
         &[0],
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
@@ -159,16 +206,16 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>
         false, // keep_order
     );
     assert!(
-        opened.unwrap().is_none(),
-        "the recording store has no coprocessor"
+        opened.unwrap().is_some(),
+        "the recording region serves the aggregate"
     );
     assert!(
         captured.lock().unwrap().is_some(),
-        "the request must be recorded before the refusal"
+        "the request reached the region"
     );
 }
 
-fn recorded(captured: &Arc<Mutex<Option<PushdownScanRequest>>>) -> PushdownScanRequest {
+fn recorded(captured: &Arc<Mutex<Option<Recorded>>>) -> Recorded {
     captured
         .lock()
         .unwrap()
@@ -196,12 +243,16 @@ fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
     let request = recorded(&captured);
     assert!(!request.desc);
     assert!(!request.keep_order);
-    assert_eq!(request.primary_column_ids, vec![2]);
+    let scan = request.dag.executors[0]
+        .tbl_scan
+        .as_ref()
+        .expect("a table scan");
+    assert_eq!(scan.primary_column_ids, vec![2]);
     // Whole-column key parts: nothing travels as a prefix.
-    assert!(request.primary_prefix_column_ids.is_empty());
+    assert!(scan.primary_prefix_column_ids.is_empty());
     // The scanned column list itself stays the projection the caller asked for.
-    assert_eq!(request.columns.len(), 1);
-    assert_eq!(request.columns[0].id, 2);
+    assert_eq!(scan.columns.len(), 1);
+    assert_eq!(scan.columns[0].column_id, Some(2));
 }
 
 /// A table that DOES store a PRIMARY `KvIndex` keeps the same ids -- the two
@@ -235,6 +286,10 @@ fn a_stored_primary_index_yields_the_same_ids() {
     let request = recorded(&captured);
     assert!(!request.desc);
     assert!(!request.keep_order);
-    assert_eq!(request.primary_column_ids, vec![2]);
-    assert!(request.primary_prefix_column_ids.is_empty());
+    let scan = request.dag.executors[0]
+        .tbl_scan
+        .as_ref()
+        .expect("a table scan");
+    assert_eq!(scan.primary_column_ids, vec![2]);
+    assert!(scan.primary_prefix_column_ids.is_empty());
 }

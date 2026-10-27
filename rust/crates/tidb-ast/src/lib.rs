@@ -364,13 +364,12 @@ impl Stmt {
     pub fn is_sensitive(&self) -> bool {
         match self {
             Self::Dml(dml) => matches!(dml.as_ref(), DmlStmt::ImportInto(_)),
-            Self::Ddl(ddl) => matches!(
-                ddl.as_ref(),
-                DdlStmt::CreateUser { .. } | DdlStmt::AlterUser(_)
-            ),
+            Self::Ddl(_) => false,
             Self::Admin(admin) => matches!(
                 admin.as_ref(),
-                AdminStmt::Grant(_)
+                AdminStmt::CreateUser { .. }
+                    | AdminStmt::AlterUser(_)
+                    | AdminStmt::Grant(_)
                     | AdminStmt::GrantRole(_)
                     | AdminStmt::Brie(_)
                     | AdminStmt::Traffic(_)

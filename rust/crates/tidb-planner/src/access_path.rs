@@ -1251,7 +1251,7 @@ pub fn get_possible_access_paths(
             None
         },
     });
-    if table.has_tiflash_replica {
+    if table.has_tiflash_replica() {
         paths.push(PossiblePath::TiFlashTable);
     }
     let mut check_latest_schema =

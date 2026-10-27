@@ -155,6 +155,9 @@ fn config() -> NodeConfig {
         "2",
         "--port",
         "0",
+        // Go's server tests clear `cfg.Socket`.
+        "--socket",
+        "",
         "--token-limit",
         "1",
     ])

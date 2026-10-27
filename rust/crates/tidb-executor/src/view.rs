@@ -34,36 +34,6 @@ use crate::SchemaErrorKind;
 use tidb_ast::{CreateViewStmt, QueryStmt, SetOprTermBody, Stmt};
 use tidb_datatype::FieldType;
 
-/// Resolves and publishes a view while retaining session-local name shadows.
-pub fn run_create_view_in(
-    create: &CreateViewStmt,
-    catalog: &mut Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let (database, name, view) = resolve_view_definition(create, catalog, current_db, ctx)?;
-    // Go `CreateView` builds the view as a table of its column names, which
-    // `createTableWithInfoJob` checks like any other table.
-    crate::ddl::check_table_info_valid_extra(
-        &name,
-        view.columns.iter().map(|(column, _)| column.as_str()),
-        0,
-        catalog.table_column_count_limit(),
-    )?;
-    crate::ddl::bdr::submit(
-        catalog,
-        ctx,
-        &database,
-        &name,
-        None,
-        &[crate::ddl::bdr::SubmittedJob::new(
-            tidb_model::ActionType::ACTION_CREATE_VIEW,
-        )],
-    )?;
-    catalog.register_persistent_view_in(&database, &name, view)?;
-    Ok(())
-}
-
 /// Resolves a `CREATE VIEW` into the [`ViewDef`] it would register, without
 /// registering it: the shared first half of [`run_create_view_in`], split out
 /// so the cluster DDL route can validate and settle a view's columns against
@@ -96,7 +66,7 @@ pub fn resolve_view_definition(
 
     // Go plans the body first, then CreateTableWithInfo checks the durable
     // target. A local table is neither a duplicate nor a replaceable view.
-    check_view_target(
+    tidb_ddl_build::table_lifecycle::check_view_target(
         &database,
         &name,
         create.or_replace,
@@ -141,82 +111,6 @@ pub fn resolve_view_definition(
         id: 0,
     };
     Ok((database, name, view))
-}
-
-/// Go CreateTableWithInfo's shared view-name admission, including its worker
-/// recheck against the publication snapshot. `existing` describes the durable
-/// object only; true means a view and false means another object kind.
-pub fn check_view_target(
-    database: &str,
-    name: &str,
-    or_replace: bool,
-    existing: Option<bool>,
-) -> Result<(), DriverError> {
-    match existing {
-        Some(_) if !or_replace => Err(DriverError::Schema(SchemaErrorKind::TableExists(format!(
-            "{database}.{name}"
-        )))),
-        Some(false) => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-            name: format!("{database}.{name}"),
-            expected: "VIEW",
-        })),
-        _ => Ok(()),
-    }
-}
-
-/// Drops views, refusing to touch a base table of the same name.
-///
-/// Returns the names that were not there. `IF EXISTS` does not discard them:
-/// Go files one `Note 1051` per missing name, the same `ErrBadTable` it would
-/// have raised (`pkg/ddl/executor.go`). Without `IF EXISTS` the whole list
-/// becomes the error's text -- captured from `gorun`, `drop view nvA, nvB` is
-/// `Unknown table 'test.nvA,test.nvB'` -- and the return is empty.
-pub fn run_drop_view_in(
-    if_exists: bool,
-    names: &[Vec<String>],
-    catalog: &mut Catalog,
-    current_db: &str,
-    // The statement's context: its `tidb_cdc_write_source` exempts the jobs
-    // from BDR admission, and its job sink records them.
-    ctx: &crate::StmtContext,
-) -> Result<Vec<String>, DriverError> {
-    use crate::ddl::{check_drop_object, drop_objects, DropObjectKind, DropObjectsError};
-    let names = names
-        .iter()
-        .map(|path| {
-            crate::driver::split_table_path_pub(path, current_db)
-                .map(|(schema, name)| (schema.to_owned(), name.to_owned()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    drop_objects(&names, if_exists, |schema, name| {
-        let Some(entry) = catalog.table_in(schema, name) else {
-            return Ok(false);
-        };
-        let actual = if entry.is_view() {
-            DropObjectKind::View
-        } else {
-            DropObjectKind::Other
-        };
-        check_drop_object(schema, name, DropObjectKind::View, actual, false)?;
-        // Go `dropTableObject` submits one ActionDropView per view.
-        crate::ddl::bdr::submit(
-            catalog,
-            ctx,
-            schema,
-            name,
-            None,
-            &[crate::ddl::bdr::SubmittedJob::new(
-                tidb_model::ActionType::ACTION_DROP_VIEW,
-            )],
-        )?;
-        Ok(catalog.drop_table_in(schema, name))
-    })
-    .map_err(|error| match error {
-        DropObjectsError::Target(error) => error,
-        DropObjectsError::Missing(names) => {
-            DriverError::Schema(SchemaErrorKind::BadTable(names.join(",")))
-        }
-    })
 }
 
 /// Go `preprocessor.checkCreateViewWithSelectGrammar` over
@@ -369,4 +263,56 @@ pub(crate) fn current_tso() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as u64);
     millis << 18
+}
+
+pub fn build_view_table_info(name: &str, view: &crate::ViewDef) -> tidb_model::TableInfo {
+    use tidb_ast::CiString;
+    use tidb_model::{GoShared, SchemaState, TableInfo};
+    use tidb_ast::{ViewAlgorithm, ViewCheckOption, ViewSecurity};
+    use tidb_model::table::ViewInfo;
+    use tidb_parser::auth::UserIdentity;
+    let columns = view
+        .columns
+        .iter()
+        .enumerate()
+        .map(
+            |(offset, (column_name, field_type))| tidb_model::ColumnInfo {
+                id: i64::try_from(offset).expect("a column offset fits in i64") + 1,
+                name: CiString::new(column_name.clone()),
+                offset: i64::try_from(offset).expect("a column offset fits in i64"),
+                field_type: field_type.clone(),
+                state: SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            },
+        )
+        .collect::<Vec<_>>();
+    // `ast/model.go`: UNDEFINED/MERGE/TEMPTABLE are 0/1/2, DEFINER/INVOKER
+    // 0/1, LOCAL/CASCADED 0/1.
+    let algorithm = ViewAlgorithm(match view.algorithm.as_str() {
+        "MERGE" => 1,
+        "TEMPTABLE" => 2,
+        _ => 0,
+    });
+    let security = ViewSecurity(i64::from(view.security == "INVOKER"));
+    let check_option = ViewCheckOption(i64::from(view.check_option != "LOCAL"));
+    TableInfo {
+        name: CiString::new(name.to_owned()),
+        charset: view.character_set_client.clone(),
+        collate: view.collation_connection.clone(),
+        columns: columns.into(),
+        state: SchemaState::PUBLIC,
+        view: Some(GoShared::new(ViewInfo {
+            algorithm,
+            definer: Some(Box::new(UserIdentity {
+                username: view.definer_user.clone(),
+                hostname: view.definer_host.clone(),
+                ..UserIdentity::default()
+            })),
+            security,
+            select_stmt: view.select_sql.clone(),
+            check_option,
+            ..ViewInfo::default()
+        })),
+        ..TableInfo::default()
+    }
 }

@@ -1100,3 +1100,9 @@ mod tests {
         assert_eq!(exec.phys_tbl_id_idx(), 2);
     }
 }
+
+impl MemBufferSnapshotGetter for std::sync::Arc<tidb_kv::cluster_storage::MemBufferSnapshot> {
+    fn get(&self, key: &tidb_txnkv::Key) -> Result<Option<Vec<u8>>, crate::ExecError> {
+        Ok(tidb_kv::cluster_storage::MemBufferSnapshot::get(self, key))
+    }
+}

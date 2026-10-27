@@ -220,7 +220,7 @@ fn fail_analyze_jobs(jobs: &dyn AnalyzeJobLifecycle, pending: &[AnalyzeJobHandle
 /// `None` means the statement is not one -- including when it does not parse
 /// at all, so an unparsable statement is still reported by the query path
 /// that owns the same text. This mirrors
-/// [`crate::real_tikv_ddl::prepare_cluster_ddl`]: the server never parses SQL
+/// [`crate::real_tikv_ddl::prepare_cluster_ddl_with_context`]: the server never parses SQL
 /// itself, so the dependency direction stays
 /// `tidb-server -> tidb-exec -> tidb-txnkv`.
 pub fn prepare_cluster_analyze(
@@ -943,7 +943,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     if !resolved.statement.persist_options {
         return Ok(());
@@ -955,7 +955,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let plan = {
         let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids_opt(row_ids);
+            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
@@ -1111,7 +1111,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
         Vec::new()
@@ -1473,14 +1473,14 @@ fn commit_cluster_global_stats<S: StoreClient>(
     stats_lease: Duration,
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let (logical_id, total_count, modify_count, items) = {
         let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids_opt(row_ids);
+            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
@@ -1696,7 +1696,7 @@ fn record_analyze_history<S: StoreClient>(
     table_id: i64,
     version: u64,
     timeout: Duration,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) {
     let result = (|| -> Result<(), ClusterAnalyzeError> {
         let transaction = SessionTransaction::begin_pessimistic(
@@ -1708,7 +1708,7 @@ fn record_analyze_history<S: StoreClient>(
         let staged = MutationBuffer::new();
         let (modify_count, count) =
             lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
                 let catalog =
                     load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
                 let (counts, plan) =
@@ -1718,7 +1718,7 @@ fn record_analyze_history<S: StoreClient>(
             })
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let plan = plan_historical_stats_meta_replace(
                 &mut snapshot,
@@ -2271,7 +2271,7 @@ fn commit_global_stats_item<S: StoreClient>(
     item: ClusterStatsItem,
     timeout: Duration,
     stats_lease: Duration,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2280,7 +2280,7 @@ fn commit_global_stats_item<S: StoreClient>(
     let mut version = transaction.start_ts();
     let write = {
         let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids_opt(row_ids);
+            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let is_index = item.is_index;
@@ -2339,10 +2339,10 @@ fn refresh_stats_meta_version<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     timeout: Duration,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_stats_meta_version_refresh(&mut snapshot, &catalog, table_id, version)
             .map_err(|error| error.to_string())?;
@@ -2376,7 +2376,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     killer: &SqlKiller,
     resource_group: &str,
     build_diagnostics: &[(bool, u16, String)],
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin()
@@ -2384,7 +2384,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     let sample_ts = sample_transaction.start_ts();
     let sampled = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut sample_transaction, timeout)
-            .with_row_ids_opt(row_ids);
+            .with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
@@ -2464,7 +2464,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     report.stats.last_stats_hist_version = save_version;
     let write = {
         let mut snapshot =
-            TransactionMetaSnapshot::new(&mut save_transaction, timeout).with_row_ids_opt(row_ids);
+            TransactionMetaSnapshot::new(&mut save_transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let scope = if options.is_partition && selected_columns_for_task.is_some() {
@@ -2582,7 +2582,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2591,7 +2591,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     let start_ts = transaction.start_ts();
     let (report, write, inserted_meta) = {
         let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids_opt(row_ids);
+            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
@@ -2676,7 +2676,7 @@ fn finish_analyze_save<S: StoreClient>(
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
-    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
         refresh_stats_meta_version(opener, table_id, timeout, row_ids)

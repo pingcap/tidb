@@ -1,0 +1,29 @@
+[package]
+name = "tidb-kv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/kv for the TiDB Rust rewrite."
+
+[dependencies]
+tracing = "0.1"
+smallvec = { workspace = true }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-config = { path = "../tidb-config" }
+tikv-client = { workspace = true }
+
+[dev-dependencies]
+tidb-codec = { path = "../tidb-codec" }
+
+[features]
+test-util = []
+
+[lints]
+workspace = true

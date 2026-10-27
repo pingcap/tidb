@@ -132,11 +132,6 @@ impl Parser {
         if self.is_kw_at(1, "CHECK") {
             return Ok(AdminStmt::AdminCheck(Box::new(self.parse_admin_check()?)));
         }
-        if self.is_kw_at(1, "CLEANUP") && self.is_kw_at(2, "TABLE") && self.is_kw_at(3, "LOCK") {
-            return Ok(AdminStmt::CleanupTableLock(Box::new(
-                self.parse_admin_cleanup_table_lock()?,
-            )));
-        }
         // go's yacc grammar: the ADMIN sub-productions consume their keywords
         // and fail AT the first unrecognized token (captured: ADMIN CLEANUP
         // ALL JOBS answers column 17 near "ALL JOBS"). The expect chains
@@ -216,7 +211,7 @@ impl Parser {
     /// Parses Go's distinct `CleanupTableLockStmt` production. The table
     /// list is nonempty; restore uses Go's canonical comma spacing and quoted
     /// table-name paths.
-    fn parse_admin_cleanup_table_lock(&mut self) -> PResult<AdminCleanupTableLockStmt> {
+    pub(crate) fn parse_admin_cleanup_table_lock(&mut self) -> PResult<AdminCleanupTableLockStmt> {
         self.expect_kw("ADMIN")?;
         self.expect_kw("CLEANUP")?;
         self.expect_kw("TABLE")?;

@@ -12,211 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The DDL history of this synchronous owner: the jobs a statement submitted
-//! (`tidb_executor::ddl::job_history`) finished the way Go's job worker
-//! leaves them and filed by `AddHistoryDDLJob`, and Go's
-//! `DDLJobRetriever.appendJobToChunk`, which renders them for both
+//! Go's `DDLJobRetriever`: the running jobs and the meta history read from
+//! the store, and `appendJobToChunk`, which renders them for both
 //! `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS`.
 
 use tidb_datatype::{Datum, Time, TimeType};
-use tidb_executor::ddl::job_history::{done_schema_state, rolls_back, SubmittedDdlJob};
 use tidb_executor::{Catalog, DriverError};
-use tidb_model::go_runtime::GoShared;
 use tidb_model::{ActionType, Job, JobState, SchemaState};
 
 use crate::Session;
 
 impl Session {
-    /// Go's job worker finishing the statement's submitted jobs and
-    /// `AddHistoryDDLJob` filing each: the meta history every reader uses,
-    /// then Go's best-effort copy into `mysql.tidb_ddl_history`. A statement
-    /// that failed after submitting leaves its jobs rolled back (a job that
-    /// reorganizes data) or cancelled.
-    pub(crate) fn finish_submitted_ddl_jobs(&mut self, sql: &str, succeeded: bool) {
-        let submitted = self.ddl_job_sink.take();
-        if submitted.is_empty() {
-            return;
-        }
-        let context = self.ddl_statement_context();
-        let filed = self.with_persistent_catalog_mut(|catalog| {
-            let mut filed = Vec::with_capacity(submitted.len());
-            for submitted in submitted {
-                let mut job = finished_job(catalog, &context, sql, submitted, succeeded);
-                catalog.add_history_ddl_job(&mut job)?;
-                filed.push(job);
-            }
-            Ok(filed)
-        });
-        let Ok(filed) = filed else {
-            return;
-        };
-        // Go `recordLastDDLInfo` over the job the statement waited for.
-        if let Some(job) = filed.last() {
-            self.record_last_ddl_info(&job.query.to_utf8_lossy_go());
-        }
-        for mut job in filed {
-            // Go `addHistoryDDLJob2Table` only logs a failure.
-            let _ = self.insert_ddl_history_row(&mut job);
-        }
-    }
-
-    /// Go `addHistoryDDLJob2Table`.
-    fn insert_ddl_history_row(&mut self, job: &mut Job) -> Result<(), DriverError> {
-        let encoded = job
-            .encode(true)
-            .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        let hex = encoded
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let quote = |text: &str| format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"));
-        let create_time = tso_local_time(job.start_ts).to_string();
-        let sql = format!(
-            "insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, \
-             schema_ids, table_ids, create_time) values ({}, 0x{hex}, {}, {}, {}, {}, {})",
-            job.id,
-            quote(&job.schema_name.to_utf8_lossy_go()),
-            quote(&job.table_name.to_utf8_lossy_go()),
-            quote(&job.schema_id.to_string()),
-            quote(&job.table_id.to_string()),
-            quote(&create_time),
-        );
-        self.run_internal_write(&sql).map(|_| ())
-    }
 
     /// Go `DDLJobRetriever.initial`: the running jobs (`GetAllDDLJobs`),
     /// then the meta history newest first (`GetLastHistoryDDLJobsIterator`),
-    /// from the cluster's store when one is installed, else this catalog's
-    /// own history (which has no running job: its DDL runs to completion).
+    /// read from the session's store.
     ///
     /// Both readers run on a fresh system-session transaction
     /// (`GetSysSession` + `sessiontxn.NewTxn`), so the jobs are the latest
     /// ones whatever the statement reads at: the shared catalog, not this
     /// statement's transaction or `tidb_snapshot` image.
     pub(crate) fn all_ddl_jobs(&mut self) -> Result<(Vec<Job>, Vec<Job>), DriverError> {
-        if let Some(store) = self.ddl_job_history_store.clone() {
-            return store
-                .all_ddl_jobs()
-                .map_err(|message| DriverError::unsupported(message));
-        }
-        let history = self.lock_catalog()?.last_history_ddl_jobs()?;
-        Ok((Vec::new(), history))
+        self.ddl_job_history_store
+            .clone()
+            .ok_or_else(|| DriverError::unsupported("this session has no store to read DDL jobs from"))?
+            .all_ddl_jobs()
+            .map_err(|message| DriverError::unsupported(message))
     }
-}
-
-/// The job Go's worker leaves when it finishes `submitted`.
-fn finished_job(
-    catalog: &mut Catalog,
-    context: &tidb_executor::StmtContext,
-    sql: &str,
-    submitted: SubmittedDdlJob,
-    succeeded: bool,
-) -> Job {
-    let action = submitted.action;
-    let schema_id = submitted
-        .schema_id
-        .or_else(|| catalog.database_id(&submitted.schema_name))
-        .or_else(|| {
-            catalog
-                .policy(&submitted.schema_name)
-                .map(|policy| policy.id)
-        })
-        .unwrap_or(0);
-    let table_id = submitted
-        .table_id
-        .or_else(|| {
-            (!submitted.table_name.is_empty())
-                .then(|| catalog.stored_table_id(&submitted.schema_name, &submitted.table_name))
-                .flatten()
-        })
-        .unwrap_or(0);
-    let (state, schema_state) = if succeeded {
-        (JobState::SYNCED, done_schema_state(action))
-    } else if rolls_back(action) {
-        (JobState::ROLLBACK_DONE, SchemaState::NONE)
-    } else {
-        (JobState::CANCELLED, SchemaState::NONE)
-    };
-    let mut job = Job::default();
-    job.version = tidb_model::get_job_ver_in_use();
-    // Go `GenGlobalID`: the job takes the next ID of the sequence its
-    // table IDs come from.
-    job.id = catalog.allocate_table_id();
-    job.type_ = action;
-    job.schema_id = schema_id;
-    job.table_id = table_id;
-    job.schema_name = submitted.schema_name.clone().into();
-    job.table_name = submitted.table_name.clone().into();
-    job.state = state;
-    job.schema_state = schema_state;
-    if succeeded {
-        job.row_count = submitted.row_count;
-    }
-    job.query =
-        tidb_executor::ddl::job_history::rewritten_query(sql, submitted.query_rewrite.as_ref())
-            .into();
-    job.start_ts = catalog.allocate_tso();
-    job.real_start_ts = catalog.allocate_tso();
-    job.sql_mode = context.ddl_sql_mode();
-    job.cdc_write_source = context.ddl_cdc_write_source();
-    let finished_ts = catalog.allocate_tso();
-    let mut history = tidb_model::HistoryInfo {
-        schema_version: i64::try_from(catalog.schema_version()).unwrap_or(i64::MAX),
-        finished_ts,
-        ..tidb_model::HistoryInfo::default()
-    };
-    // Go `FinishTableJob` / `FinishMultipleTableJob` / `FinishDBJob`: the
-    // finished table (by its final name), tables, or schema.
-    let table_info = |id: i64| {
-        catalog.table_names_by_id(id).map(|(_, name)| {
-            let mut info = tidb_model::TableInfo::default();
-            info.id = id;
-            info.name = tidb_ast::CiString::new(name);
-            GoShared::new(info)
-        })
-    };
-    if !submitted.multiple_table_ids.is_empty() {
-        let infos = submitted
-            .multiple_table_ids
-            .iter()
-            .filter_map(|id| table_info(*id))
-            .collect::<Vec<_>>();
-        history.table_info = infos.last().cloned();
-        history.multiple_table_infos = tidb_model::go_runtime::GoSharedPointerSlice::from_handles(
-            infos.into_iter().map(Some).collect(),
-        );
-    } else if table_id != 0 {
-        history.table_info = table_info(table_id);
-    } else if submitted.table_name.is_empty() && schema_id != 0 {
-        let mut info = tidb_model::DBInfo::default();
-        info.id = schema_id;
-        info.name = tidb_ast::CiString::new(submitted.schema_name.clone());
-        history.db_info = Some(GoShared::new(info));
-    }
-    job.binlog_info = Some(GoShared::new(history));
-    if !submitted.sub_jobs.is_empty() {
-        let sub_jobs = submitted
-            .sub_jobs
-            .iter()
-            .map(|sub_action| {
-                let mut sub_job = tidb_model::SubJob::default();
-                sub_job.type_ = *sub_action;
-                if succeeded {
-                    sub_job.state = JobState::DONE;
-                    sub_job.schema_state = done_schema_state(*sub_action);
-                } else {
-                    sub_job.state = state;
-                }
-                Some(GoShared::new(sub_job))
-            })
-            .collect::<Vec<_>>();
-        let info = tidb_model::MultiSchemaInfo {
-            sub_jobs: tidb_model::go_runtime::GoSharedPointerSlice::from_handles(sub_jobs),
-            ..tidb_model::MultiSchemaInfo::default()
-        };
-        job.multi_schema_info = Some(GoShared::new(info));
-    }
-    job
 }
 
 /// Go `ts2Time` over a TSO: its physical milliseconds in the process's

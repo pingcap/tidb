@@ -439,7 +439,7 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
 /// from `CheckModifyTypeCompatible` at `:1515-1518`): five type-pair MODIFYs
 /// Go refuses OUTRIGHT, at statement-build time, before any row is read. The
 /// bug this closes: the only gate this tier had before was the per-row
-/// `convert_to` call in `KvTable::modify_column_with_context`, which never runs on zero
+/// `convert_to` call of the in-process column rewrite, which never ran on zero
 /// rows -- so on an EMPTY table every one of these five refusals used to be
 /// silently ACCEPTED. Each rule below is pinned three ways: refused on an
 /// EMPTY table (the proof the check moved earlier, not just "still errors
@@ -449,7 +449,8 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
 /// scan rather than during it).
 ///
 /// MUTATION PROBE: comment out the `check_type_change_supported` call in
-/// `tidb-executor`'s `prepare_modify_column` (`ddl/alter_table.rs`) and only
+/// `tidb-ddl-build`'s `check_modify_types` (`modify_column_type.rs`), which
+/// `tidb-exec`'s `get_modifiable_column_job` asks, and only
 /// the five `*_on_empty_table_is_refused` assertions below flip from `Err`
 /// to `Ok`; the five `_control_conversion_is_accepted` and
 /// `_on_populated_table_is_also_refused` assertions are unaffected, because
@@ -599,4 +600,128 @@ fn alter_column_noops_share_original_schema_admission() {
         1054
     );
     assert_eq!(row_text(session.run("SELECT * FROM t")), vec![["2"]]);
+}
+
+/// Go `checkColumnWithIndexConstraint` (`pkg/ddl/modify_column.go:2185`):
+/// a MODIFY that widens an indexed column past the default
+/// `config.MaxIndexLength` (3072 bytes) is refused by
+/// `checkIndexPrefixLength`, which reports the index's WHOLE byte total --
+/// a single `varchar(1000)` utf8mb4 key part is 4000 bytes, and the
+/// two-part key is 400 + 2800. Each part alone is legal (no declared prefix),
+/// so only the total check catches it.
+#[test]
+fn modify_column_checks_the_index_length_against_max_index_length() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ml (a varchar(10), KEY k (a))")
+        .unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE ml MODIFY a varchar(1000)"),
+        1071,
+        "Specified key was too long (4000 bytes); max key length is 3072 bytes",
+    );
+    session
+        .run("CREATE TABLE ml2 (a varchar(10), b varchar(700), KEY k (a, b))")
+        .unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE ml2 MODIFY a varchar(100)"),
+        1071,
+        "Specified key was too long (3200 bytes); max key length is 3072 bytes",
+    );
+    // Within the limit the change goes through.
+    session.run("ALTER TABLE ml2 MODIFY a varchar(50)").unwrap();
+}
+
+/// Go `ProcessModifyColumnOptions` (`pkg/ddl/modify_column.go:2297`) refuses
+/// the options a MODIFY may not carry, where CREATE's `columnDefToCol`
+/// ignores a column REFERENCES and builds an inline key.
+#[test]
+fn modify_column_refuses_references_and_inline_keys() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE mp_parent (id int PRIMARY KEY)").unwrap();
+    session.run("CREATE TABLE mp_child (a int)").unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE mp_child MODIFY a int REFERENCES mp_parent(id)"),
+        8200,
+        "Unsupported modify column: can't modify with references",
+    );
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE mp_child MODIFY a int PRIMARY KEY"),
+        8200,
+        "can't change column constraint (PRIMARY KEY)",
+    );
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE mp_child MODIFY a int UNIQUE"),
+        8200,
+        "can't change column constraint (UNIQUE KEY)",
+    );
+}
+
+/// Go `GetModifiableColumnJob`: "We don't support modifying column from
+/// not_auto_increment to auto_increment" (8200), whether or not the column
+/// is the primary key.
+#[test]
+fn modify_column_refuses_adding_auto_increment() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ma (a int PRIMARY KEY, b int)")
+        .unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE ma MODIFY a int AUTO_INCREMENT"),
+        8200,
+        "Unsupported modify column: can't set auto_increment",
+    );
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE ma MODIFY b int AUTO_INCREMENT"),
+        8200,
+        "Unsupported modify column: can't set auto_increment",
+    );
+}
+
+/// Go `checkPriKeyConstraint`, reached through `ProcessModifyColumnOptions`
+/// with the primary-key flag copied from the old column: an explicit NULL on
+/// a primary-key column is 1171, and a NULL default is 1067.
+#[test]
+fn modify_column_keeps_a_primary_key_not_null() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE mk (a int PRIMARY KEY)").unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE mk MODIFY a int NULL"),
+        1171,
+        "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE \
+         instead",
+    );
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE mk MODIFY a int DEFAULT NULL"),
+        1067,
+        "Invalid default value for 'a'",
+    );
+}
+
+/// Go `checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols))`
+/// (`pkg/ddl/executor.go:4910`): an expression index adds a hidden column, so
+/// on a table already at the default `TableColumnCountLimit` (1017) it is
+/// refused, through ADD INDEX and CREATE INDEX alike, while a plain index
+/// adds no column and is accepted.
+#[test]
+fn expression_index_hidden_columns_count_against_the_column_limit() {
+    let mut session = Session::new();
+    let columns = std::iter::once("c1 varchar(10)".to_owned())
+        .chain((2..=1017).map(|i| format!("c{i} int")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session
+        .run(&format!("CREATE TABLE wide ({columns})"))
+        .unwrap();
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE wide ADD INDEX ie ((lower(c1)))"),
+        1117,
+        "Too many columns",
+    );
+    crate::tests_support::assert_err(
+        session.run("CREATE INDEX ie ON wide ((lower(c1)))"),
+        1117,
+        "Too many columns",
+    );
+    session.run("ALTER TABLE wide ADD INDEX ip (c1)").unwrap();
 }

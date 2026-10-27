@@ -88,6 +88,9 @@ struct MetaStore {
     pairs: BTreeMap<Vec<u8>, Vec<u8>>,
     scans: Vec<Vec<u8>>,
     fail_scan_prefix: Option<Vec<u8>>,
+    /// The node's row-ID allocators Go's internal INSERTs draw from; each
+    /// reservation commits on its own, outside the planned write set.
+    row_ids: tidb_cluster::table_from_meta::LocalTableAutoIds,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -108,6 +111,10 @@ impl MetaSnapshot for MetaStore {
             .filter(|(key, _)| key.starts_with(prefix))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect())
+    }
+
+    fn row_ids(&self) -> Option<&dyn tidb_cluster::table_from_meta::TableAutoIds> {
+        Some(&self.row_ids)
     }
 }
 

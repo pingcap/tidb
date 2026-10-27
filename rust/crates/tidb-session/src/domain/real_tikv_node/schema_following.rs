@@ -9,8 +9,8 @@
 //! availability property for a latency one.
 
 use super::*;
-use tidb_exec::real_tikv_catalog::note_reload;
-use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
+use tidb_cluster::real_tikv_catalog::note_reload;
+use tidb_cluster::schema_validator::{SchemaValidator, Validator as _};
 
 /// Connects the node's one etcd client (Go `domain.NewDomain`'s
 /// `etcdClient`, from `store.EtcdAddrs()`).
@@ -328,13 +328,13 @@ where
 /// what Go's reload loop does with a failed `Reload`.
 ///
 /// `startup_lease_grant_ts` is the timestamp `startup` was read at
-/// ([`tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at`]).
+/// ([`tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at`]).
 pub fn spawn_catalog_reloader<S>(
     startup: ClusterCatalog,
     startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
-    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
@@ -364,7 +364,7 @@ where
                 &transaction_opener,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 current,
-                row_ids.get(),
+                &row_ids,
             ) {
                 Ok(at) => Ok(note_reload(&pass_validator, current.schema_version, at)),
                 Err(error) => Err(error.to_string()),
@@ -377,7 +377,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_exec::cluster_catalog::LoadedDatabase;
+    use tidb_cluster::cluster_catalog::LoadedDatabase;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
     use tidb_model::table_info::TableInfo;

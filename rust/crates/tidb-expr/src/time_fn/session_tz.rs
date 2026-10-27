@@ -242,7 +242,10 @@ pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     let Ok(parsed) = parsed else {
         // go's argument-cast layer warns `Incorrect datetime value: '<text>'`
         // before answering NULL (oracle-captured on g-fsp).
-        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
+            &format!("Incorrect datetime value: '{text}'"),
+        );
         return Ok(Datum::Null);
     };
     let core = parsed.time.core_time();
@@ -259,8 +262,8 @@ pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         if !cols.date_modes().no_zero_date {
             return Ok(unix_result(0, fsp));
         }
-        cols.append_warning(
-            1292,
+        cols.append_go_warning(
+            &tidb_error::catalog::types::ERR_WRONG_VALUE,
             &format!("Incorrect datetime value: '{}'", parsed.time),
         );
         return Ok(Datum::Null);

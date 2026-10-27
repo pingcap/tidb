@@ -24,16 +24,13 @@
 //! captured from Go's own `GetSysVars()`, and the value validation Go's
 //! `ValidateFromType` performs.
 //!
-//! GLOBAL scope: [`GlobalSysvars`] is the shared, `Arc`-backed accessor
-//! every session a [`crate::Session`] factory opens holds a clone of -- Go's
-//! one process-wide `GlobalVarAccessor` over the domain's sysvar cache
-//! ([`tidb_domain::sysvar_cache::SysVarCache`]), rebuilt from
-//! `mysql.global_variables`. `SET GLOBAL x = v` writes the row and rebuilds
-//! the cache; the setting session's own `@@x` is untouched (MySQL's rule: a
-//! live session keeps whatever it already has). A brand new session copies
-//! the cache's session view once, at connect
+//! GLOBAL scope: a session reads and writes the GLOBAL and INSTANCE tiers
+//! through its `GlobalVarsAccessor` ([`crate::GlobalVarAccessor`], Go's
+//! interface), which the session installs when it is created -- the node's
+//! accessor over the domain's sysvar cache (`tidb_domain::global_sysvars`).
+//! A brand new session copies the cache's session view once, at connect
 //! ([`SessionVars::seed_from_globals`], Go
-//! `loadCommonGlobalVariablesIfNeeded`) -- so a session opened AFTER the
+//! `loadCommonGlobalVariablesIfNeeded`) -- so a session opened AFTER a
 //! `SET GLOBAL` sees the new value as its session default, while sessions
 //! already open do not. A `SkipInit` variable is not copied: the session
 //! reads its GLOBAL value at first use and keeps it.
@@ -47,12 +44,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use tidb_model::Job;
 use tidb_util::fixcontrol::OptimizerFixControl;
 
-use crate::sysvar::{
-    alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
-};
+use crate::sysvar::{alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_SESSION};
 
 /// Names a validation refusal the way the variable error surface reports it:
 /// Go's `ErrWrongTypeForVar` (1232), `ErrWrongValueForVar` (1231) and the
@@ -71,69 +65,6 @@ pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> 
         ValidationError::SqlError(error) => VarError::SqlError(error),
         ValidationError::Refused(message) => VarError::ValidationRefused(message),
     }
-}
-
-/// The node's global variable accessor every session of one
-/// [`crate::Session`] factory holds a clone of: Go's `GlobalVarAccessor`
-/// over the domain's `sysVarCache`, plus the process-local INSTANCE tier.
-///
-/// The GLOBAL tier is [`tidb_domain::sysvar_cache::SysVarCache`], rebuilt
-/// from `mysql.global_variables` as Go's `rebuildSysVarCache` does:
-/// `@@global.x` reads its global view (`Domain.GetGlobalVar`) and a new
-/// session copies its session view (`Domain.GetSessionCache`). A cluster
-/// node persists `SET GLOBAL` through its sysvar seam and rebuilds from the
-/// cluster's table (`LoadSysVarCacheLoop` and the `/tidb/sysvars` etcd
-/// notify).
-#[derive(Clone, Debug)]
-pub struct GlobalSysvars {
-    pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
-    external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
-    /// Go `Domain.sysVarCache`: the global and session views every read and
-    /// every new session is answered from. Shared by every clone.
-    cache: Arc<tidb_domain::sysvar_cache::SysVarCache>,
-    /// The `mysql.global_variables` rows the cache was last rebuilt from (Go
-    /// `fetchTableValues`). For a store-backed table (an in-process catalog,
-    /// a cluster) every rebuild replaces them from the store's own table; for
-    /// a cluster scratch copy and a storeless factory these rows ARE the
-    /// table.
-    table: Arc<Mutex<HashMap<String, String>>>,
-    /// Go `variable.SetSysVar` at startup: a config-derived value replacing a
-    /// GLOBAL variable's registry `Value`, which the cache serves for a
-    /// variable with no row.
-    startup: Arc<Mutex<HashMap<String, String>>>,
-    /// The INSTANCE tier: Go `vardef.ScopeInstance`. A per-node value, held
-    /// beside the global one rather than in it because the two tiers differ
-    /// in exactly one way that matters -- Go persists `ScopeGlobal` to
-    /// `mysql.GLOBAL_VARIABLES` and holds `ScopeInstance` in this process's
-    /// own memory (`SetInstanceSysVar` writes an `atomic` in `vardef`, never
-    /// a row). Keeping them in one map would make [`Self::overrides`] offer
-    /// a node-local value to the cluster writer as if it were cluster state.
-    ///
-    /// 28 entries have this scope alone; the six that carry
-    /// `ScopeGlobal|ScopeInstance` live in `values`, matching Go's
-    /// `setSysVariable`, which sends anything `IsGlobal` to
-    /// `SetGlobalSysVar`.
-    instances: Arc<Mutex<HashMap<String, String>>>,
-    /// Ordered INSTANCE-only writes made against a cluster transaction's
-    /// scratch table. Cluster rows never contain this tier, so the writer must
-    /// replay these mutations into the live node only after the statement's
-    /// durable GLOBAL half has committed.
-    instance_mutations: Option<Arc<Mutex<Vec<InstanceMutation>>>>,
-    /// Scratch registries validate cluster writes before commit. They must not
-    /// publish process-wide runtime settings until [`Self::replace_from`]
-    /// makes the committed state live.
-    publishes_runtime_settings: bool,
-    /// The read-mostly image described on [`ResolvedGlobals`]. Writers swap it
-    /// wholesale; readers clone the `Arc` under a read lock.
-    resolved: Arc<RwLock<Arc<ResolvedGlobals>>>,
-    /// Serializes rebuilds of `resolved`; see `refresh_resolved`.
-    refresh_lock: Arc<Mutex<()>>,
-}
-
-#[derive(Clone, Debug)]
-enum InstanceMutation {
-    Set(String, String),
-    Reset(String),
 }
 
 /// Process-owned PD setting consumer. Detached cluster validation images do
@@ -173,53 +104,6 @@ pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
     fn set(&self, ts: u64) -> Result<(), String>;
 }
 
-// Go Domain converts fractional milliseconds to integer nanoseconds.
-fn tso_batch_wait(value: &str) -> std::time::Duration {
-    let milliseconds = value.parse::<f64>().expect("validated TSO wait is numeric");
-    std::time::Duration::from_nanos((milliseconds * 1_000_000.0) as u64)
-}
-
-/// Go's `TiDBTSOClientRPCMode` choice-to-concurrency mapping
-/// (`pkg/domain/domain_sysvars.go:92-106`): `DEFAULT` sends one batch at a
-/// time, `PARALLEL` allows two and `PARALLEL-FAST` four.
-///
-/// Go reaches its `ErrWrongValueForVar` arm only for a value the enum
-/// validator already rejects, so an unknown spelling here means the catalog
-/// and this mapping disagree; it falls back to Go's own default of 1 rather
-/// than failing a publication that the validator already accepted.
-fn tso_rpc_concurrency(value: &str) -> isize {
-    if value.eq_ignore_ascii_case("PARALLEL") {
-        2
-    } else if value.eq_ignore_ascii_case("PARALLEL-FAST") {
-        4
-    } else {
-        1
-    }
-}
-
-impl Default for GlobalSysvars {
-    fn default() -> Self {
-        Self {
-            external_timestamp: Arc::default(),
-            pd_region_policy: Arc::default(),
-            cache: Arc::default(),
-            table: Arc::default(),
-            startup: Arc::default(),
-            instances: Arc::default(),
-            instance_mutations: None,
-            publishes_runtime_settings: true,
-            resolved: Arc::new(RwLock::new(EMPTY_RESOLVED.with(|it| it.clone()))),
-            refresh_lock: Arc::default(),
-        }
-    }
-}
-
-impl crate::GlobalSysvarAccessor for GlobalSysvars {
-    fn get_global_sysvar(&self, name: &str) -> Option<String> {
-        self.get(name).ok()
-    }
-}
-
 /// One read-mostly image of the node-wide variable tables.
 ///
 /// [`GlobalSysvars::get`] used to answer through the authoritative
@@ -234,17 +118,17 @@ impl crate::GlobalSysvarAccessor for GlobalSysvars {
 /// Slot `i` mirrors registry entry `i`; the owning tier is static per
 /// variable, so one flat table serves both maps.
 #[derive(Debug, Clone)]
-struct ResolvedGlobals {
-    values: std::boxed::Box<[Option<Arc<str>>]>,
+pub struct ResolvedGlobals {
+    pub values: std::boxed::Box<[Option<Arc<str>>]>,
     /// Go's process-wide typed `vardef.OOMAction` atomic.
-    oom_action: tidb_vardef::OomAction,
+    pub oom_action: tidb_vardef::OomAction,
     /// Go's process-wide typed `vardef.EnableTmpStorageOnOOM` atomic.
-    tmp_storage_on_oom: bool,
+    pub tmp_storage_on_oom: bool,
     /// Go's `config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8` atomic
     /// (`sysvar.go`, the `tidb_check_mb4_value_in_utf8` instance hook).
-    check_mb4_value_in_utf8: bool,
+    pub check_mb4_value_in_utf8: bool,
     /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic.
-    enable_check_constraint: bool,
+    pub enable_check_constraint: bool,
 }
 
 impl Default for ResolvedGlobals {
@@ -261,1504 +145,13 @@ impl Default for ResolvedGlobals {
 
 impl ResolvedGlobals {
     /// Writes one slot by name; `None` records "at the registry default".
-    fn note(&mut self, name: &str, value: Option<&str>) {
+    pub fn note(&mut self, name: &str, value: Option<&str>) {
         if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
             if let Some(slot) = self.values.get_mut(index) {
                 *slot = value.map(Arc::from);
             }
         }
     }
-}
-
-thread_local! {
-    /// The empty image `Default` starts from; `SYS_VARS`' length is not yet
-    /// readable in a `const` context, so the first real build sizes the table.
-    static EMPTY_RESOLVED: Arc<ResolvedGlobals> = Arc::default();
-}
-
-/// Reads the live process/config products behind Go's instance-scoped
-/// `GetSessionOrGlobalSystemVar` hooks. Explicit `SET INSTANCE` values remain
-/// authoritative in the registry; otherwise the current process config and
-/// vardef atomics are exposed instead of the catalog's bootstrap spelling.
-fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> Option<String> {
-    if !def.has_instance_scope() || def.has_global_scope() {
-        return None;
-    }
-    let lowered = crate::sysvar::lowered_if_needed(def.name);
-    if let Some(value) = globals
-        .store(def)
-        .lock()
-        .expect("instance sysvar lock poisoned")
-        .get(lowered.as_ref())
-    {
-        return Some(value.clone());
-    }
-
-    let config = tidb_config::config_tree::config::get_global_config();
-    let instance = &config.instance;
-    match def.name {
-        "tidb_stmt_summary_enable_persistent" => Some(if instance.stmt_summary_enable_persistent {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
-        "tidb_stmt_summary_filename" => Some(instance.stmt_summary_filename.clone()),
-        "tidb_stmt_summary_file_max_days" => Some(instance.stmt_summary_file_max_days.to_string()),
-        "tidb_stmt_summary_file_max_size" => Some(instance.stmt_summary_file_max_size.to_string()),
-        "tidb_stmt_summary_file_max_backups" => {
-            Some(instance.stmt_summary_file_max_backups.to_string())
-        }
-        "tidb_general_log" => Some(if instance.tidb_general_log {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
-        "tidb_pprof_sql_cpu" => Some(if instance.enable_pprof_sql_cpu {
-            "1".to_owned()
-        } else {
-            "0".to_owned()
-        }),
-        "ddl_slow_threshold" => Some(instance.ddl_slow_opr_threshold.to_string()),
-        "tidb_expensive_query_time_threshold" => {
-            Some(instance.expensive_query_time_threshold.to_string())
-        }
-        "tidb_expensive_txn_time_threshold" => {
-            Some(instance.expensive_txn_time_threshold.to_string())
-        }
-        "tidb_enable_slow_log" => Some(if instance.enable_slow_log.load() {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
-        "tidb_slow_log_threshold" => Some(instance.slow_threshold.to_string()),
-        "tidb_record_plan_in_slow_log" => Some(
-            if instance.record_plan_in_slow_log != 0 {
-                "ON"
-            } else {
-                "OFF"
-            }
-            .to_owned(),
-        ),
-        "tidb_check_mb4_value_in_utf8" => Some(if instance.check_mb4_value_in_utf8.load() {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
-        "tidb_force_priority" => Some(instance.force_priority.clone()),
-        "tidb_memory_usage_alarm_ratio" => {
-            Some(tidb_vardef::memory_usage_alarm_ratio().to_string())
-        }
-        "tidb_memory_usage_alarm_keep_record_num" => Some(
-            tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string(),
-        ),
-        "plugin_dir" => Some(instance.plugin_dir.clone()),
-        "plugin_load" => Some(instance.plugin_load.clone()),
-        "tidb_config" => Some(config.get_json_config().unwrap_or_default()),
-        "tidb_log_file_max_days" => Some(config.log.file.max_days.to_string()),
-        "tidb_enable_collect_execution_info" => {
-            Some(if instance.enable_collect_execution_info.load() {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            })
-        }
-        "tidb_rc_read_check_ts" => Some(if instance.tidb_rc_read_check_ts {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
-        _ => None,
-    }
-}
-
-/// Reads the process-wide products Go exposes through the
-/// GLOBAL getter hooks. The registry still owns validation and persistence;
-/// these atomics are the live consumer-facing authority.
-fn runtime_global_value(name: &str) -> Option<String> {
-    match name {
-        tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY => Some(
-            if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(
-            if tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => Some(
-            if tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY => Some(
-            tidb_vardef::AUTO_ANALYZE_CONCURRENCY
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string(),
-        ),
-        tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
-            Some(tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => Some(
-            if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => Some(
-            if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        _ => None,
-    }
-}
-
-fn is_auto_analyze_setting(name: &str) -> bool {
-    matches!(
-        name,
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE
-            | tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
-            | tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY
-    )
-}
-
-fn is_resource_control_setting(name: &str) -> bool {
-    matches!(
-        name,
-        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL
-            | tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE
-    )
-}
-
-fn is_stmt_summary_setting(name: &str) -> bool {
-    matches!(
-        name,
-        "tidb_enable_stmt_summary"
-            | "tidb_stmt_summary_internal_query"
-            | "tidb_stmt_summary_refresh_interval"
-            | "tidb_stmt_summary_history_size"
-            | "tidb_stmt_summary_max_stmt_count"
-            | "tidb_stmt_summary_max_sql_length"
-            | "tidb_stmt_summary_persist_evicted"
-            | "tidb_stmt_summary_group_by_user"
-    )
-}
-
-impl GlobalSysvars {
-    /// A fresh registry with every variable at its default (Go's state on a
-    /// cluster nobody has ever run `SET GLOBAL` against).
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Where a variable's node-wide value is written: a variable that has
-    /// GLOBAL scope at all is a `mysql.global_variables` row (the cache is
-    /// rebuilt from it) even when it ALSO has instance scope; only the
-    /// instance-only ones are node-local.
-    ///
-    /// Every write goes through here, so a value can never be written to one
-    /// tier and looked for in the other -- the failure mode that makes a
-    /// `SET` a silent no-op.
-    fn store(&self, def: &'static SysVarDef) -> &Arc<Mutex<HashMap<String, String>>> {
-        if def.has_global_scope() {
-            &self.table
-        } else {
-            &self.instances
-        }
-    }
-
-    /// Go `Domain.GetGlobalVar` behind `session.GetGlobalSysVar`: the global
-    /// view of the cache, rebuilt from the table first if it is empty. A
-    /// variable the cache does not hold falls back to its registry value, as
-    /// Go's accessor does once its table probe also misses.
-    fn cached_global(&self, def: &'static SysVarDef) -> String {
-        self.cache
-            .get_global_var(&SysVarCacheRebuild(self), def.name)
-            .unwrap_or_else(|_| self.registry_value(def))
-    }
-
-    /// Go `SysVar.Value` as this process has it: the registry default, or the
-    /// startup value `variable.SetSysVar` replaced it with.
-    fn registry_value(&self, def: &'static SysVarDef) -> String {
-        self.startup
-            .lock()
-            .expect("startup sysvar lock poisoned")
-            .get(def.name)
-            .cloned()
-            .unwrap_or_else(|| crate::sysvar::effective_default(def))
-    }
-
-    /// Go `rebuildSysVarCache`: rebuilds both cache views from the table
-    /// rows, running every GLOBAL variable's SetGlobal hook with its value
-    /// (which is how a peer's `SET GLOBAL` takes effect on this node), then
-    /// republishes the read image derived from the cache.
-    fn rebuild_sys_var_cache(&self) {
-        // The table read cannot fail here: the rows are already in hand.
-        let _ = self.cache.rebuild(&SysVarCacheRebuild(self));
-        self.refresh_resolved();
-    }
-
-    /// Installs the node's PD policy and applies the current persisted/default value.
-    pub fn set_pd_region_policy(&self, policy: Arc<dyn PdRegionPolicy>) {
-        // Bind and initialize under the image lock so a concurrent publication
-        // cannot be overwritten by an older value read before binding.
-        let resolved = self
-            .resolved
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let value = |name| {
-            let index = crate::sysvar::sys_var_index_lookup(name).expect("PD policy is registered");
-            resolved
-                .values
-                .get(index)
-                .and_then(|slot| slot.as_deref())
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
-                })
-        };
-        let enabled = |name| {
-            let value = value(name);
-            value.eq_ignore_ascii_case("ON") || value == "1"
-        };
-        *self
-            .pd_region_policy
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
-        if self.publishes_runtime_settings {
-            policy.set_follower_handle(enabled(
-                tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION,
-            ));
-            policy.set_tso_follower_proxy(enabled(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY,
-            ));
-            policy.set_tso_batch_wait(tso_batch_wait(&value(
-                tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME,
-            )));
-            policy.set_tso_rpc_concurrency(tso_rpc_concurrency(&value(
-                tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE,
-            )));
-        }
-        drop(resolved);
-    }
-
-    /// Installs the live storage oracle used by external timestamp callbacks.
-    pub fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
-        *self
-            .external_timestamp
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(provider);
-    }
-
-    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>> {
-        self.external_timestamp
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    /// Reads a node-wide value; oracle-backed variables bypass the cached image.
-    pub fn get(&self, name: &str) -> Result<String, VarError> {
-        if name.eq_ignore_ascii_case("tidb_external_ts") {
-            if let Some(provider) = self.external_timestamp_provider() {
-                return provider
-                    .get()
-                    .map(|ts| ts.to_string())
-                    .map_err(VarError::ValidationRefused);
-            }
-        }
-        let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
-        };
-        let def = &crate::sysvar::SYS_VARS[index];
-        // Go's retired partition-statistics concurrency variable has fixed
-        // getters so upgraded persisted values cannot leak a stale setting.
-        if let Some(value) = self.instance_plan_cache_limit_getter(def) {
-            return Ok(value);
-        }
-        if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
-            return Ok("1".to_owned());
-        }
-        if self.publishes_runtime_settings
-            && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
-        {
-            if tidb_config::deploymode::is_starter() {
-                return Ok("ON".to_owned());
-            }
-            return Ok(if tidb_util::tls::REQUIRE_SECURE_TRANSPORT
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON"
-            } else {
-                "OFF"
-            }
-            .to_owned());
-        }
-        if self.publishes_runtime_settings
-            && def.name == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE
-        {
-            return Ok(
-                if tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst) {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .to_owned(),
-            );
-        }
-        if self.publishes_runtime_settings {
-            if let Some(value) = runtime_global_value(def.name) {
-                return Ok(value);
-            }
-        }
-        if self.publishes_runtime_settings {
-            if let Some(value) = runtime_instance_value(self, def) {
-                return Ok(value);
-            }
-        }
-        let snapshot = Arc::clone(
-            &*self
-                .resolved
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
-            return Ok(value.to_string());
-        }
-        if snapshot.values.len() == crate::sysvar::SYS_VARS.len() {
-            // The image is current (a mutation republishes it before releasing
-            // its writer), so an empty slot means "at its registry default".
-            return Ok(crate::sysvar::effective_default(def));
-        }
-        // A pre-image from `Default`: the cache has not been built yet.
-        Ok(self.unimaged_value(def))
-    }
-
-    /// A node-wide value before the read image exists (a fresh `Default`
-    /// table nobody has rebuilt): the GLOBAL tier reads the cache, which
-    /// builds itself on first read as Go's `rebuildSysVarCacheIfNeeded`
-    /// does; the INSTANCE tier reads its own map. The image is published
-    /// only by writers, so a reader can never install a stale one.
-    fn unimaged_value(&self, def: &'static SysVarDef) -> String {
-        if def.has_global_scope() {
-            return self.cached_global(def);
-        }
-        self.instances
-            .lock()
-            .expect("instance sysvar lock poisoned")
-            .get(def.name)
-            .cloned()
-            .unwrap_or_else(|| crate::sysvar::effective_default(def))
-    }
-
-    /// The global-form read used by both SQL variables and expression
-    /// accessors. INSTANCE and NONE scopes have one node value; only a
-    /// SESSION-only variable has no global copy (Go error 1238).
-    pub fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
-            return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
-        }
-        self.get(name).map(|value| global_get_hook(def.name, value))
-    }
-
-    /// Rebuilds the read-mostly image from the cache's global view and the
-    /// INSTANCE map. Every mutating entry point calls this after the cache
-    /// rebuild (or the instance write) it follows; readers swap in the new
-    /// `Arc` wholesale. The image is derived state, never written by itself.
-    fn refresh_resolved(&self) {
-        // Refreshes run one at a time: a refresh that started before a
-        // concurrent rebuild swapped the cache publishes before that
-        // rebuild's own refresh, which starts after the swap. The image lock
-        // itself is not held while computing, because a SetGlobal hook a
-        // first-read rebuild runs may read this table.
-        let _refresh = self
-            .refresh_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut slots: Vec<Option<Arc<str>>> =
-            std::vec::Vec::with_capacity(crate::sysvar::SYS_VARS.len());
-        slots.resize_with(crate::sysvar::SYS_VARS.len(), || None);
-        for (index, def) in crate::sysvar::SYS_VARS.iter().enumerate() {
-            if def.has_global_scope() {
-                slots[index] = Some(Arc::from(self.cached_global(def).as_str()));
-            }
-        }
-        for (name, value) in self
-            .instances
-            .lock()
-            .expect("instance sysvar lock poisoned")
-            .iter()
-        {
-            if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
-                if !crate::sysvar::SYS_VARS[index].has_global_scope() {
-                    slots[index] = Some(Arc::from(value.as_str()));
-                }
-            }
-        }
-        // A node-local variable without a value of its own serves the
-        // registry value `variable.SetSysVar` replaced at startup.
-        for (name, value) in self
-            .startup
-            .lock()
-            .expect("startup sysvar lock poisoned")
-            .iter()
-        {
-            if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
-                if slots[index].is_none() && !crate::sysvar::SYS_VARS[index].has_global_scope() {
-                    slots[index] = Some(Arc::from(value.as_str()));
-                }
-            }
-        }
-        let effective = |name: &str| {
-            let index = crate::sysvar::sys_var_index_lookup(name)
-                .expect("typed global policy names are registered");
-            slots[index]
-                .as_deref()
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
-                })
-        };
-        let oom_action = tidb_vardef::OomAction::parse(&effective(
-            tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
-        ));
-        let tmp_storage = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TMP_STORAGE_ON_OOM);
-        let tmp_storage_on_oom = !(tmp_storage.eq_ignore_ascii_case("off") || tmp_storage == "0");
-        let check_mb4 = effective(tidb_vardef::tidb_vars::TIDB_CHECK_MB4_VALUE_IN_UTF8);
-        let check_mb4_value_in_utf8 = check_mb4.eq_ignore_ascii_case("on") || check_mb4 == "1";
-        let check_constraint = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT);
-        let enable_check_constraint =
-            check_constraint.eq_ignore_ascii_case("on") || check_constraint == "1";
-        *self
-            .resolved
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(ResolvedGlobals {
-            values: slots.into(),
-            oom_action,
-            tmp_storage_on_oom,
-            check_mb4_value_in_utf8,
-            enable_check_constraint,
-        });
-    }
-
-    /// The typed process-wide statement-memory policy Go exposes through
-    /// `vardef.OOMAction` and `vardef.EnableTmpStorageOnOOM` atomics.
-    ///
-    /// It is parsed when a GLOBAL mutation publishes the resolved image, not
-    /// when each statement starts.
-    pub fn statement_memory_policy(&self) -> (tidb_vardef::OomAction, bool) {
-        let snapshot = Arc::clone(
-            &*self
-                .resolved
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        (snapshot.oom_action, snapshot.tmp_storage_on_oom)
-    }
-
-    /// Go's process-wide typed `vardef.CheckMb4ValueInUTF8` atomic, parsed
-    /// when a GLOBAL mutation publishes the resolved image rather than by
-    /// every statement context.
-    pub fn check_mb4_value_in_utf8(&self) -> bool {
-        self.resolved
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .check_mb4_value_in_utf8
-    }
-
-    /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic, parsed
-    /// once per GLOBAL publication.
-    pub fn enable_check_constraint(&self) -> bool {
-        self.resolved
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .enable_check_constraint
-    }
-
-    /// Reads the current GLOBAL resource-control enable value for statement
-    /// admission. The table is authoritative for this registry (and for a
-    /// cluster scratch image); the process atomic is published alongside it
-    /// for Go-compatible callbacks.
-    pub fn resource_control_enabled(&self) -> bool {
-        self.global_bool_value(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL,
-            tidb_vardef::defaults::DEF_TIDB_ENABLE_RESOURCE_CONTROL,
-        )
-    }
-
-    /// Reads the current GLOBAL resource-control strict-mode value.
-    pub fn resource_control_strict_mode(&self) -> bool {
-        self.global_bool_value(
-            tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
-            tidb_vardef::defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE,
-        )
-    }
-
-    /// Reads one variable by its registry position, skipping the name probe
-    /// callers already paid (`SessionVars::get_system` resolves the index
-    /// once for both tiers). Same image-then-authoritative fallback as
-    /// [`Self::get`].
-    pub fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
-        let def = &crate::sysvar::SYS_VARS[index];
-        if def.name == "tidb_external_ts" {
-            return self.get(def.name);
-        }
-        if let Some(value) = self.instance_plan_cache_limit_getter(def) {
-            return Ok(value);
-        }
-        if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
-            return Ok("1".to_owned());
-        }
-        if self.publishes_runtime_settings
-            && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
-        {
-            return self.get(def.name);
-        }
-        if self.publishes_runtime_settings {
-            if let Some(value) = runtime_instance_value(self, def) {
-                return Ok(value);
-            }
-            if let Some(value) = runtime_global_value(def.name) {
-                return Ok(value);
-            }
-        }
-        let snapshot = Arc::clone(
-            &*self
-                .resolved
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
-            return Ok(value.to_string());
-        }
-        if snapshot.values.len() == crate::sysvar::SYS_VARS.len() {
-            return Ok(crate::sysvar::effective_default(def));
-        }
-        Ok(self.unimaged_value(def))
-    }
-
-    /// Validates and writes a global value, visible to every session that
-    /// reads `@@global.name` or opens AFTER this call.
-    ///
-    /// Answers whether Go's validation clamped the value, which the caller
-    /// turns into `ErrTruncatedWrongValue` (1292) on the statement.
-    pub fn set(&self, name: &str, value: String) -> Result<bool, VarError> {
-        // Go `validateScope` (`variable.go:265`): `SET GLOBAL` is admitted by
-        // `sv.HasGlobalScope() || sv.HasInstanceScope()`, so `SET GLOBAL
-        // tidb_general_log = 1` is legal and lands in the instance tier.
-        self.set_with_time_zone(name, value, &tidb_datatype::SessionTimeZone::utc())
-    }
-
-    /// `SET GLOBAL` with the issuing session's time zone.
-    ///
-    /// Go's `ValidateFromType(TypeTime)` parses a short `HH:MM` value in the
-    /// session's `Location()` before the variable's GLOBAL hook stores it.
-    /// Most callers use [`Self::set`] (which has no session and therefore uses
-    /// UTC); SQL execution calls this variant so TTL schedule-window values
-    /// retain the issuer's numeric offset, matching `TestSetJobScheduleWindow`.
-    pub fn set_with_time_zone(
-        &self,
-        name: &str,
-        value: String,
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Result<bool, VarError> {
-        if name.eq_ignore_ascii_case("tidb_external_ts") {
-            if let Some(provider) = self.external_timestamp_provider() {
-                if value.is_empty() {
-                    return Err(VarError::SqlError(tidb_error::mysql::SqlError::new_f(
-                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
-                        "Incorrect datetime value: '%s'",
-                        &[],
-                        &[tidb_error::mysql::FormatArg::from(value.as_str())],
-                    )));
-                }
-                provider
-                    .set(parse_read_timestamp(&value, zone, true)?)
-                    .map_err(VarError::ValidationRefused)?;
-            }
-        }
-        let value = match get_sys_var(name) {
-            Some(def) if def.var_type == crate::sysvar::VarType::Time => {
-                crate::sysvar::normalize_time_value(&value, zone)
-                    .map_err(|error| validation_var_error(name, &value, error))?
-            }
-            _ => value,
-        };
-        self.write(name, value, SCOPE_GLOBAL)
-    }
-
-    /// `SET INSTANCE name = value`, and the destination Go's legacy routing
-    /// sends an unqualified `SET` on an instance-scoped variable to.
-    ///
-    /// Go `validateScope`: `scope == ScopeInstance && !sv.HasInstanceScope()`
-    /// is `errLocalVariable` (1228), the same error a `SET GLOBAL` on a
-    /// session-only variable gets.
-    pub fn set_instance(&self, name: &str, value: String) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if !def.is_read_only() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
-        }
-        self.write(name, value, SCOPE_INSTANCE)
-    }
-
-    /// Go `variable.SetSysVar`: the STARTUP write `setGlobalVars`
-    /// (`cmd/tidb-server/main.go:1105`) pushes config-derived values with —
-    /// it replaces the registry `Value` directly, with no scope or read-only
-    /// validation, which is how read-only NONE-scope variables like `port`,
-    /// `socket` and `hostname` get their per-process values. The sysvar cache
-    /// serves the replaced value for a variable with no
-    /// `mysql.global_variables` row, and new sessions copy it from the
-    /// cache's session view. Runtime `SET` statements never come through
-    /// here.
-    pub fn set_startup(&self, name: &str, value: String) {
-        let Some(def) = get_sys_var(name) else {
-            return;
-        };
-        self.startup
-            .lock()
-            .expect("startup sysvar lock poisoned")
-            .insert(def.name.to_owned(), value.clone());
-        if def.has_global_scope() {
-            self.rebuild_sys_var_cache();
-        } else {
-            // A node-local variable's one value is this process's own: the
-            // INSTANCE/NONE read path serves it from here.
-            self.instances
-                .lock()
-                .expect("instance sysvar lock poisoned")
-                .insert(def.name.to_owned(), value.clone());
-            self.apply_set_global_hook(def.name, &value);
-            self.refresh_resolved();
-        }
-    }
-
-    // Go GetGlobal exposes the typed byte count, not the original unit spelling.
-    fn instance_plan_cache_limit_getter(&self, def: &'static SysVarDef) -> Option<String> {
-        if def.name != tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE {
-            return None;
-        }
-        let value = self.cached_global(def);
-        crate::varsutil::parse_byte_size(&value)
-            .map(|(bytes, _)| bytes)
-            .or_else(|| value.parse::<u64>().ok())
-            .map(|bytes| (bytes as i64).to_string())
-    }
-
-    /// Whether [`Self::apply_set_global_hook`] has an arm for `name`: Go's
-    /// `SysVar.SetGlobal != nil` for the variables whose process-wide effect
-    /// this node models. The sysvar cache rebuild calls the hook only for
-    /// these.
-    fn has_set_global_hook(name: &str) -> bool {
-        use tidb_vardef::tidb_vars::*;
-        matches!(
-            name,
-            REQUIRE_SECURE_TRANSPORT
-                | TIDB_TTL_JOB_ENABLE
-                | TIDB_ENABLE_FOREIGN_KEY
-                | TIDB_ENABLE_CHECK_CONSTRAINT
-                | TIDB_DDL_ENABLE_FAST_REORG
-                | TIDB_ENABLE_MDL
-                | TIDB_SCHEMA_CACHE_SIZE
-                | TIDB_DDL_ERROR_COUNT_LIMIT
-                | TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
-                | TIDB_COMMITTER_CONCURRENCY
-                | TIDB_REDACT_LOG
-                | TIDB_ENABLE_INSTANCE_PLAN_CACHE
-                | TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE
-                | TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
-                | TIDB_MEM_OOM_ACTION
-                | TIDB_MEMORY_USAGE_ALARM_RATIO
-                | TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM
-                | TIDB_ANALYZE_DEFAULT_NUM_BUCKETS
-                | TIDB_ANALYZE_DEFAULT_NUM_TOP_N
-                | TIDB_STATS_CACHE_MEM_QUOTA
-                | TIDB_MAX_AUTO_ANALYZE_TIME
-                | PD_ENABLE_FOLLOWER_HANDLE_REGION
-                | TIDB_ENABLE_TSO_FOLLOWER_PROXY
-                | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
-                | TIDB_TSO_CLIENT_RPC_MODE
-                | TIDB_CHECK_MB4_VALUE_IN_UTF8
-        ) || is_auto_analyze_setting(name)
-            || is_resource_control_setting(name)
-            || is_stmt_summary_setting(name)
-            || Self::is_memory_arbitration_setting(name)
-    }
-
-    /// Go `SysVar.SetGlobal` for the variables whose process-wide product
-    /// this node publishes: called with the variable's value by every cache
-    /// rebuild (Go `rebuildSysVarCache`, which is how a peer's `SET GLOBAL`
-    /// takes effect here) and, for an INSTANCE-scoped variable, by the write
-    /// itself (Go `SetInstanceSysVar` -> `SetGlobalFromHook`).
-    ///
-    /// The value is handed in, never read back from the cache: a rebuild
-    /// runs the hooks before it publishes its new views. A scratch table
-    /// (a cluster `SET GLOBAL` validated before its commit) publishes
-    /// nothing; its committed image does, once it becomes the live table.
-    fn apply_set_global_hook(&self, name: &str, value: &str) {
-        if !self.publishes_runtime_settings {
-            return;
-        }
-        use std::sync::atomic::Ordering::SeqCst;
-        use tidb_vardef::tidb_vars::*;
-        let on = value.eq_ignore_ascii_case("ON") || value == "1";
-        match name {
-            REQUIRE_SECURE_TRANSPORT => tidb_util::tls::REQUIRE_SECURE_TRANSPORT
-                .store(!tidb_config::deploymode::is_starter() && on, SeqCst),
-            TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
-            TIDB_ENABLE_FOREIGN_KEY => tidb_vardef::ENABLE_FOREIGN_KEY.store(on, SeqCst),
-            TIDB_ENABLE_CHECK_CONSTRAINT => tidb_vardef::ENABLE_CHECK_CONSTRAINT.store(on, SeqCst),
-            TIDB_DDL_ENABLE_FAST_REORG => tidb_vardef::ENABLE_FAST_REORG.store(on, SeqCst),
-            // Go's `TiDBEnableMDL` hook runs `SwitchMDL` -> `SetEnableMDL`. A
-            // node that leaves the process flag at its `false` default
-            // acknowledges DDL schema versions on the classic per-node key
-            // while a Go owner with metadata locking on waits for the
-            // per-job key, so every Go-issued DDL on the cluster blocks until
-            // the node is gone. Following the value the cluster holds is not
-            // a switch, so Go's running-job guard (enforced by the cluster
-            // writer for a user's `SET GLOBAL`) does not apply here.
-            TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
-            TIDB_SCHEMA_CACHE_SIZE => {
-                let bytes = crate::varsutil::parse_byte_size(value)
-                    .map(|(bytes, _)| bytes)
-                    .or_else(|| value.parse::<u64>().ok())
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
-                tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, SeqCst);
-            }
-            TIDB_ENABLE_AUTO_ANALYZE => tidb_vardef::RUN_AUTO_ANALYZE.store(on, SeqCst),
-            TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
-                tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on, SeqCst)
-            }
-            TIDB_AUTO_ANALYZE_CONCURRENCY => tidb_vardef::AUTO_ANALYZE_CONCURRENCY.store(
-                value
-                    .parse::<i64>()
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY),
-                SeqCst,
-            ),
-            TIDB_DDL_ERROR_COUNT_LIMIT => tidb_vardef::set_ddl_error_count_limit(
-                value
-                    .parse::<i64>()
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT),
-            ),
-            TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
-                tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
-                    value.parse::<f64>().unwrap_or(
-                        tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO,
-                    ),
-                )
-            }
-            TIDB_ENABLE_RESOURCE_CONTROL => {
-                // Go's SetGlobal: only a change reaches the domain's hook.
-                let previous = tidb_vardef::ENABLE_RESOURCE_CONTROL.swap(on, SeqCst);
-                if previous != on {
-                    let hook = SET_GLOBAL_RESOURCE_CONTROL
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .clone();
-                    if let Some(hook) = hook {
-                        hook(on);
-                    }
-                }
-            }
-            TIDB_RESOURCE_CONTROL_STRICT_MODE => {
-                tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE.store(on, SeqCst)
-            }
-            TIDB_COMMITTER_CONCURRENCY => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, SeqCst);
-                }
-            }
-            TIDB_REDACT_LOG => tidb_error::mysql::set_redaction_mode(match value {
-                "ON" => tidb_error::mysql::RedactionMode::Enabled,
-                "MARKER" => tidb_error::mysql::RedactionMode::Marker,
-                _ => tidb_error::mysql::RedactionMode::Disabled,
-            }),
-            TIDB_ENABLE_INSTANCE_PLAN_CACHE => {
-                tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE.store(on, SeqCst)
-            }
-            TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE => {
-                if let Some(bytes) = crate::varsutil::parse_byte_size(value)
-                    .map(|(bytes, _)| bytes)
-                    .or_else(|| value.parse().ok())
-                {
-                    tidb_vardef::INSTANCE_PLAN_CACHE_MAX_MEM_SIZE
-                        .store(bytes.min(i64::MAX as u64) as i64, SeqCst);
-                }
-            }
-            TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE => {
-                if let Ok(value) = value.parse::<f64>() {
-                    tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
-                        .store(value.to_bits(), SeqCst);
-                }
-            }
-            TIDB_MEM_OOM_ACTION => tidb_vardef::set_oom_action(value),
-            TIDB_MEMORY_USAGE_ALARM_RATIO => {
-                if let Ok(value) = value.parse::<f64>() {
-                    tidb_vardef::set_memory_usage_alarm_ratio(value);
-                }
-            }
-            TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.store(value, SeqCst);
-                }
-            }
-            TIDB_ANALYZE_DEFAULT_NUM_BUCKETS => {
-                if let Ok(value) = value.parse::<u64>() {
-                    tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(value, SeqCst);
-                }
-            }
-            TIDB_ANALYZE_DEFAULT_NUM_TOP_N => {
-                if let Ok(value) = value.parse::<u64>() {
-                    tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(value, SeqCst);
-                }
-            }
-            TIDB_STATS_CACHE_MEM_QUOTA => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::STATS_CACHE_MEM_QUOTA.store(value, SeqCst);
-                }
-            }
-            TIDB_MAX_AUTO_ANALYZE_TIME => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::MAX_AUTO_ANALYZE_TIME.store(value, SeqCst);
-                }
-            }
-            PD_ENABLE_FOLLOWER_HANDLE_REGION
-            | TIDB_ENABLE_TSO_FOLLOWER_PROXY
-            | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
-            | TIDB_TSO_CLIENT_RPC_MODE => {
-                // Go `setPDClientDynamicOption`: the store's PD client takes
-                // the new option in place.
-                let policy = self
-                    .pd_region_policy
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                if let Some(policy) = policy {
-                    match name {
-                        PD_ENABLE_FOLLOWER_HANDLE_REGION => policy.set_follower_handle(on),
-                        TIDB_ENABLE_TSO_FOLLOWER_PROXY => policy.set_tso_follower_proxy(on),
-                        TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME => {
-                            policy.set_tso_batch_wait(tso_batch_wait(value))
-                        }
-                        _ => policy.set_tso_rpc_concurrency(tso_rpc_concurrency(value)),
-                    }
-                }
-            }
-            // Go's instance hook updates
-            // `config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8`.
-            TIDB_CHECK_MB4_VALUE_IN_UTF8 => {
-                tidb_config::config_tree::config::update_global(|config| {
-                    config.instance.check_mb4_value_in_utf8 =
-                        tidb_config::config_tree::marshal::AtomicBool::new(value == "ON");
-                });
-            }
-            _ if is_stmt_summary_setting(name) => self.publish_stmt_summary_setting(name, value),
-            _ if Self::is_memory_arbitration_setting(name) => {
-                let _ = tidb_util::memory::apply_process_memory_setting(name, value);
-            }
-            _ => {}
-        }
-    }
-
-    fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
-        }
-        if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
-        }
-        let lookup = |sibling: &str| self.get(sibling).ok();
-        let validated = def
-            .validate_in_scope_with_lookup(&value, scope, Some(&lookup))
-            .map_err(|error| validation_var_error(name, &value, error))?;
-        let key = name.to_ascii_lowercase();
-        if key == tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE {
-            let bytes = crate::varsutil::parse_byte_size(&validated.value)
-                .map(|(bytes, _)| bytes)
-                .or_else(|| validated.value.parse::<u64>().ok());
-            let Some(bytes) = bytes else {
-                return Err(VarError::ValidationRefused(format!(
-                    "invalid tidb_instance_plan_cache_max_mem_size value {value}"
-                )));
-            };
-            if bytes < 100 * 1024 * 1024 {
-                return Err(VarError::ValidationRefused(
-                    "tidb_instance_plan_cache_max_mem_size should be at least 100MiB".to_owned(),
-                ));
-            }
-        }
-        // Go's `tidb_auto_analyze_concurrency` Validation observes the two
-        // current GLOBAL switches. Check the table being written (rather
-        // than process atomics) so a cluster scratch image validates a
-        // statement against its own pending rows and unrelated registries in
-        // parallel tests cannot change the answer mid-write.
-        if key == tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY {
-            let run_auto_analyze = self.global_bool_value(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE,
-            );
-            let enable_auto_analyze_priority_queue = self.global_bool_value(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
-            );
-            if !run_auto_analyze || !enable_auto_analyze_priority_queue {
-                return Err(VarError::ValidationRefused(format!(
-                    "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
-                    tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
-                    run_auto_analyze,
-                    enable_auto_analyze_priority_queue
-                )));
-            }
-        }
-        // Go's plan-replayer continuous-capture Validation refuses ON until
-        // the GLOBAL historical-stats switch is enabled. The closure reads
-        // the pending shared image, so validate against this table rather
-        // than a process singleton.
-        if key == "tidb_enable_plan_replayer_continuous_capture"
-            && validated.value == "ON"
-            && !self.global_bool_value("tidb_enable_historical_stats", false)
-        {
-            return Err(VarError::ValidationRefused(
-                "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-                    .to_owned(),
-            ));
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
-            OptimizerFixControl::parse(&validated.value)
-                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
-        }
-        let stored_value = validated.value;
-        // Go's GOGC tuner bounds are cross-validated against the current
-        // process values: max must stay strictly above min, and min strictly
-        // below max. The Rust registry has no separate tuner singleton, so
-        // use the authoritative GLOBAL image that owns the SQL-visible
-        // values; this also keeps scratch cluster tables self-contained.
-        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE {
-            let min_value = self
-                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
-            if stored_value.parse::<i64>().unwrap_or_default() <= min_value {
-                return Err(VarError::ValidationRefused(
-                    "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
-                        .to_owned(),
-                ));
-            }
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE {
-            let max_value = self
-                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
-            if stored_value.parse::<i64>().unwrap_or_default() >= max_value {
-                return Err(VarError::ValidationRefused(
-                    "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
-                        .to_owned(),
-                ));
-            }
-        }
-        // Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning
-        // the flag OFF through a user SET is refused while
-        // `tidb_restricted_read_only` is ON.
-        if key == "tidb_super_read_only"
-            && stored_value == "OFF"
-            && self.get("tidb_restricted_read_only").ok().as_deref() == Some("ON")
-        {
-            return Err(VarError::ValidationRefused(
-                "can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
-                    .to_owned(),
-            ));
-        }
-        if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
-            tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
-                .map_err(VarError::ValidationRefused)?;
-        }
-        // Go's `tidb_trace_event` GLOBAL hook owns the process-wide flight
-        // recorder. A JSON configuration starts/replaces the recorder, while
-        // an empty assignment closes it. Keep this publication after all
-        // registry validation but before storing the SQL-facing value so a
-        // malformed trigger cannot leave a half-applied setting behind.
-        if self.publishes_runtime_settings && key == "tidb_trace_event" {
-            if stored_value.is_empty() {
-                if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
-                    recorder.close();
-                }
-            } else {
-                let config = serde_json::from_str::<tidb_util::traceevent::FlightRecorderConfig>(
-                    &stored_value,
-                )
-                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
-                tidb_util::traceevent::start_log_flight_recorder(config)
-                    .map_err(VarError::ValidationRefused)?;
-            }
-        }
-        // Go's `validate_password.*` Validation closures (`sysvar.go:717-790`)
-        // keep the five settings coupled: a count raise lifts the sibling
-        // `length` to `number + special + 2 * mixed_case`, and a `length` set
-        // below that floor is adjusted up instead of stored.
-        let stored_value = if key == "validate_password.length" {
-            let floor = self.validate_password_length_floor(stored_value.parse::<i64>().ok());
-            match floor {
-                Some(floor) => floor.to_string(),
-                None => stored_value,
-            }
-        } else {
-            stored_value
-        };
-        {
-            let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
-            if let Some(other) = alias_of(&key) {
-                values.insert(other.to_owned(), stored_value.clone());
-            }
-            values.insert(key.clone(), stored_value.clone());
-        }
-        if !def.has_global_scope() {
-            // Go `SetInstanceSysVar`: the hook is the whole write; the
-            // INSTANCE tier has no row and no cache.
-            self.apply_set_global_hook(&key, &stored_value);
-            self.refresh_resolved();
-            self.record_instance_mutation(InstanceMutation::Set(key.clone(), stored_value));
-            return Ok(validated.truncated);
-        }
-        // Go's `tidb_restricted_read_only` SetGlobal hook promotes
-        // `tidb_super_read_only` whenever restricted mode is enabled
-        // (`SetGlobalSysVarOnly`, a row of its own). The promotion is
-        // one-way: clearing restricted mode leaves super-read-only enabled
-        // until it is explicitly cleared by a later SET.
-        if key == "tidb_restricted_read_only" && stored_value == "ON" {
-            self.table
-                .lock()
-                .expect("global sysvar lock poisoned")
-                .insert("tidb_super_read_only".to_owned(), "ON".to_owned());
-        }
-        // Go `replaceGlobalVariablesTableValue` -> `NotifyUpdateSysVarCache`:
-        // the cache is rebuilt from the table the write just changed.
-        self.rebuild_sys_var_cache();
-        if matches!(
-            key.as_str(),
-            "validate_password.mixed_case_count"
-                | "validate_password.number_count"
-                | "validate_password.special_char_count"
-        ) {
-            // Setting a count raises the stored `length` to the new minimum
-            // when the current length falls short (`updatePasswordValidationLength`,
-            // `varsutil.go:446`): a plain store of its own row, no further
-            // validation, read against the counts just written.
-            if let Some(required) = self.validate_password_required_length() {
-                let current: i64 = self
-                    .get("validate_password.length")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(8);
-                if current < required {
-                    self.table
-                        .lock()
-                        .expect("global sysvar lock poisoned")
-                        .insert("validate_password.length".to_owned(), required.to_string());
-                    self.rebuild_sys_var_cache();
-                }
-            }
-        }
-        Ok(validated.truncated)
-    }
-
-    /// Publishes Go's GLOBAL statement-summary setters into the live v2
-    /// proxy. The SQL table remains the source of truth for reads, while the
-    /// summary map is the process-wide consumer Go's `SetGlobal` callbacks
-    /// update immediately. Scratch cluster images deliberately skip this
-    /// hook and publish only after their committed image becomes live.
-    fn publish_stmt_summary_setting(&self, name: &str, value: &str) {
-        if !self.publishes_runtime_settings || !is_stmt_summary_setting(name) {
-            return;
-        }
-        let bool_value = || value.eq_ignore_ascii_case("ON") || value == "1";
-        match name {
-            "tidb_enable_stmt_summary" => {
-                tidb_stmtsummary::v2::stmtsummary::set_enabled(bool_value())
-            }
-            "tidb_stmt_summary_internal_query" => {
-                tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(bool_value())
-            }
-            "tidb_stmt_summary_refresh_interval" => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(value);
-                }
-            }
-            "tidb_stmt_summary_history_size" => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_history_size(value);
-                }
-            }
-            "tidb_stmt_summary_max_stmt_count" => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(value);
-                }
-            }
-            "tidb_stmt_summary_max_sql_length" => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(value);
-                }
-            }
-            "tidb_stmt_summary_persist_evicted" => {
-                tidb_stmtsummary::v2::stmtsummary::set_persist_evicted(bool_value())
-            }
-            "tidb_stmt_summary_group_by_user" => {
-                tidb_stmtsummary::v2::stmtsummary::set_group_by_user(bool_value())
-            }
-            _ => {}
-        }
-    }
-
-    /// The length floor the `validate_password` coupling requires right now:
-    /// `number_count + special_char_count + 2 * mixed_case_count`
-    /// (`sysvar.go:717`'s Validation), read from the current global values
-    /// with the registry defaults (8/1/1/1) standing in for unset entries.
-    /// `None` when the stored `length` is not an integer and no floor applies.
-    fn validate_password_length_floor(&self, length: Option<i64>) -> Option<i64> {
-        let number = self.validate_password_global("validate_password.number_count", 1);
-        let special = self.validate_password_global("validate_password.special_char_count", 1);
-        let mixed = self.validate_password_global("validate_password.mixed_case_count", 1);
-        let floor = Some(number + special + 2 * mixed);
-        match length {
-            None => None,
-            Some(length) => floor.filter(|floor| length < *floor),
-        }
-    }
-
-    /// The same floor for a count raise: applies whenever the stored length
-    /// falls short of it.
-    fn validate_password_required_length(&self) -> Option<i64> {
-        self.validate_password_length_floor(self.get("validate_password.length").ok()?.parse().ok())
-    }
-
-    /// Reads one `validate_password` global, falling back to Go's default.
-    fn validate_password_global(&self, name: &str, default: i64) -> i64 {
-        self.get(name)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
-    }
-
-    fn global_bool_value(&self, name: &str, default: bool) -> bool {
-        self.get(name).map_or(default, |value| {
-            value.eq_ignore_ascii_case("ON") || value == "1"
-        })
-    }
-
-    /// Restores the registry default (`SET GLOBAL x = DEFAULT` against a
-    /// table whose row the default replaces).
-    pub fn reset(&self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
-        }
-        if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
-        }
-        if !def.has_global_scope() {
-            return self.reset_instance(name);
-        }
-        let key = name.to_ascii_lowercase();
-        self.table
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .remove(&key);
-        // The rebuild serves the registry value again and runs its hook.
-        self.rebuild_sys_var_cache();
-        Ok(())
-    }
-
-    /// Restores an INSTANCE-scoped value to its registry default, after the
-    /// same scope validation as [`Self::set_instance`].
-    pub fn reset_instance(&self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
-        }
-        if !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
-        }
-        if def.has_global_scope() {
-            // A `ScopeGlobal|ScopeInstance` variable's one value is its row.
-            return self.reset(name);
-        }
-        let key = name.to_ascii_lowercase();
-        self.instances
-            .lock()
-            .expect("instance sysvar lock poisoned")
-            .remove(&key);
-        self.apply_set_global_hook(def.name, &self.registry_value(def));
-        self.refresh_resolved();
-        self.record_instance_mutation(InstanceMutation::Reset(key));
-        Ok(())
-    }
-
-    /// Go `rebuildSysVarCache` over rows a caller already read from a
-    /// cluster's (or an in-process store's) `mysql.global_variables` (Go
-    /// `fetchTableValues`): the rows replace this table wholesale, the cache
-    /// is rebuilt from them, and every GLOBAL variable's SetGlobal hook runs
-    /// with its value.
-    ///
-    /// Unlike [`Self::set`], this does not validate: a stored row already
-    /// passed that validation when some earlier `SET GLOBAL` (Go's or this
-    /// node's own) wrote it. A name this registry does not recognize is
-    /// skipped rather than refused, the same forward/backward-compatibility
-    /// stance `tidb_exec::cluster_privilege_load` takes on a column or
-    /// privilege name the running version does not know (Go's rebuild walks
-    /// only `GetSysVars()`, so such a row never reaches its cache either).
-    pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
-        let rows: HashMap<String, String> = rows
-            .into_iter()
-            .filter_map(|(name, value)| {
-                let key = name.to_ascii_lowercase();
-                get_sys_var(&key).is_some().then_some((key, value))
-            })
-            .collect();
-        *self.table.lock().expect("global sysvar lock poisoned") = rows;
-        self.rebuild_sys_var_cache();
-    }
-
-    /// The `mysql.global_variables` rows this table holds (see the `table`
-    /// field): what a cluster scratch copy's statement leaves to persist,
-    /// and what an in-process write diffs to find the rows it changed.
-    pub fn overrides(&self) -> HashMap<String, String> {
-        self.table
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .clone()
-    }
-
-    /// Go `Domain.GetSessionCache`: a copy of the cache's session view, the
-    /// values a new session copies into its own variables
-    /// (`loadCommonGlobalVariablesIfNeeded`).
-    fn session_cache(&self) -> HashMap<String, String> {
-        self.cache
-            .get_session_cache(&SysVarCacheRebuild(self))
-            .unwrap_or_default()
-    }
-
-    /// A fresh table seeded from a cluster's stored
-    /// `mysql.global_variables` rows -- the scratch copy a convergence node
-    /// validates one `SET GLOBAL` against before persisting it, the same
-    /// shape [`crate::privilege::PrivilegeRegistry`]'s cluster scratch table
-    /// takes for an account statement.
-    #[must_use]
-    pub fn from_cluster_rows<I: IntoIterator<Item = (String, String)>>(rows: I) -> Self {
-        let table = Self {
-            instance_mutations: Some(Arc::default()),
-            publishes_runtime_settings: false,
-            ..Self::default()
-        };
-        table.load_from_cluster(rows);
-        table
-    }
-
-    /// Publishes `fresh`'s rows into every existing clone of this table and
-    /// rebuilds its cache from them, retaining this node's INSTANCE-only
-    /// overrides.
-    ///
-    /// Mirrors [`crate::privilege::PrivilegeRegistry::replace_from`]: this
-    /// `mysql.global_variables` never contains the process-local INSTANCE
-    /// tier. A startup or periodic cluster rebuild must therefore replace the
-    /// persisted GLOBAL image without clearing settings written through
-    /// `SET INSTANCE` on this node.
-    pub fn replace_from(&self, fresh: &Self) {
-        let rows = std::mem::take(&mut *fresh.table.lock().expect("global sysvar lock poisoned"));
-        *self.table.lock().expect("global sysvar lock poisoned") = rows;
-        self.rebuild_sys_var_cache();
-    }
-
-    /// Publishes only the named GLOBAL variables from `fresh`.
-    ///
-    /// The cluster writer uses this as its post-commit fallback when the
-    /// durable whole-image reread fails. Applying only the statement's own
-    /// changed names cannot erase a disjoint concurrent `SET GLOBAL`, while
-    /// `set`/`reset` retain validation aliases and runtime-setting hooks.
-    pub fn publish_global_changes_from(&self, fresh: &Self, changed: &[String]) {
-        let desired = fresh.overrides();
-        for name in changed {
-            if get_sys_var(name).is_none() {
-                // A newer peer may have stored a sysvar this binary does not
-                // know. The cluster loader deliberately skips such rows; a
-                // post-commit fallback must do the same instead of turning a
-                // confirmed durable change into a process panic.
-                continue;
-            }
-            match desired.get(name).cloned() {
-                Some(value) => {
-                    self.set(name, value)
-                        .expect("the committed scratch table contains validated sysvars");
-                }
-                None => {
-                    self.reset(name)
-                        .expect("the committed plan contains registered sysvars");
-                }
-            }
-        }
-    }
-
-    /// Replays the INSTANCE-only part of one committed cluster statement into
-    /// this node's live table. Mutations retain source order so repeated
-    /// assignments to one name have the same last-assignment-wins behavior as
-    /// the statement that produced the scratch table.
-    pub fn publish_instance_changes_from_if(
-        &self,
-        fresh: &Self,
-        mut should_publish: impl FnMut(&str) -> bool,
-    ) -> Vec<String> {
-        let Some(mutations) = &fresh.instance_mutations else {
-            return Vec::new();
-        };
-        let mutations = std::mem::take(
-            &mut *mutations
-                .lock()
-                .expect("instance sysvar mutation lock poisoned"),
-        );
-        let mut published = Vec::new();
-        for mutation in mutations {
-            let name = match &mutation {
-                InstanceMutation::Set(name, _) | InstanceMutation::Reset(name) => name,
-            };
-            if !should_publish(name) {
-                continue;
-            }
-            match mutation {
-                InstanceMutation::Set(name, value) => {
-                    self.set_instance(&name, value)
-                        .expect("the committed scratch table contains validated instance sysvars");
-                    published.push(name);
-                }
-                InstanceMutation::Reset(name) => {
-                    self.reset_instance(&name)
-                        .expect("the committed scratch table contains registered instance sysvars");
-                    published.push(name);
-                }
-            }
-        }
-        published
-    }
-
-    fn record_instance_mutation(&self, mutation: InstanceMutation) {
-        if let Some(mutations) = &self.instance_mutations {
-            mutations
-                .lock()
-                .expect("instance sysvar mutation lock poisoned")
-                .push(mutation);
-        }
-    }
-
-    fn is_memory_arbitration_setting(name: &str) -> bool {
-        matches!(
-            name,
-            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT
-                | tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE
-                | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE
-                | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT
-        )
-    }
-}
-
-/// What Go's `rebuildSysVarCache` reaches through its `*Domain` receiver and
-/// the system session it borrows, for one [`GlobalSysvars`].
-///
-/// boundary: Go `Domain.sysSessionPool` + `ExecRestrictedSQL(SELECT
-/// variable_name, variable_value FROM mysql.global_variables)` -- the rows
-/// are the table the owner last read from its store (an in-process catalog
-/// or the cluster), or the rows a storeless or scratch table holds; see
-/// [`GlobalSysvars`]'s `table`.
-struct SysVarCacheRebuild<'a>(&'a GlobalSysvars);
-
-impl tidb_domain::sysvar_cache::RestrictedSqlExecutor for SysVarCacheRebuild<'_> {
-    fn exec_restricted_sysvar_sql(
-        &self,
-        _sql: &str,
-    ) -> Result<Vec<(String, String)>, tidb_domain::sysvar_cache::SysVarCacheError> {
-        Ok(self
-            .0
-            .table
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect())
-    }
-}
-
-impl tidb_domain::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
-    fn sys_vars(&self) -> Vec<tidb_domain::sysvar_cache::SysVarSpec> {
-        crate::sysvar::SYS_VARS
-            .iter()
-            .map(|def| tidb_domain::sysvar_cache::SysVarSpec {
-                name: def.name.to_owned(),
-                value: self.0.registry_value(def),
-                // No variable of this registry sets Go's `IsInitedFromConfig`.
-                is_inited_from_config: false,
-                skip_init: def.skip_init(),
-                has_global_scope: def.has_global_scope(),
-                skip_sysvar_cache: def.skip_sysvar_cache(),
-                has_set_global: GlobalSysvars::has_set_global_hook(def.name),
-            })
-            .collect()
-    }
-
-    fn is_starter(&self) -> bool {
-        tidb_config::deploymode::is_starter()
-    }
-
-    fn max_allowed_packet(&self) -> u64 {
-        tidb_config::config_tree::config::get_max_allowed_packet()
-    }
-
-    fn validate_with_relaxed_validation(
-        &self,
-        sv: &tidb_domain::sysvar_cache::SysVarSpec,
-        value: &str,
-    ) -> String {
-        // Go `ValidateWithRelaxedValidation`: the normalized value, or the
-        // value as given when validation refuses it.
-        get_sys_var(&sv.name)
-            .and_then(|def| def.validate_in_scope(value, SCOPE_GLOBAL).ok())
-            .map_or_else(|| value.to_owned(), |validated| validated.value)
-    }
-
-    fn set_global(
-        &self,
-        sv: &tidb_domain::sysvar_cache::SysVarSpec,
-        value: &str,
-    ) -> Result<(), String> {
-        self.0.apply_set_global_hook(&sv.name, value);
-        Ok(())
-    }
-
-    // boundary: Go `Domain.infoCache.ReSize(SchemaVersionCacheLimit)` -- this
-    // node has no infoschema version cache to resize; the cluster node reads
-    // `tidb_schema_version_cache_limit` where it retains schema versions.
-    fn resize_info_cache(&self) {}
 }
 
 pub use crate::VarError;
@@ -1806,6 +199,10 @@ enum TxnIsolationLevelOneShotState {
 #[derive(Clone, Debug)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
+    /// Go `StmtCtx.AppendWarning` as the sysvar hooks reach it: what a SET's
+    /// `Validation` / `SetSession` / `SetGlobal` hooks appended, which the
+    /// session moves onto the statement (see `crate::set_hooks`).
+    pub(crate) stmt_warnings: Vec<tidb_util::context::SqlWarn>,
     /// Go's typed `ServerStatusAutocommit` bit.
     ///
     /// The normalized system-variable text remains the SQL read authority;
@@ -1875,7 +272,7 @@ pub struct SessionVars {
     bulk_dml_enabled: bool,
     /// Go's typed replica-read selection, maintained by the
     /// `tidb_replica_read` SetSession hook.
-    replica_read: tidb_distsql::ReplicaReadType,
+    replica_read: tidb_txnkv::ReplicaReadType,
     /// Go's typed `SessionVars.AnalyzeStoreBatchSize`, maintained by the
     /// `tidb_analyze_store_batch_size` SetSession hook. Zero disables
     /// Analyze store batching.
@@ -1902,10 +299,10 @@ pub struct SessionVars {
     /// dozens of variable reads cost one fixed-seed probe plus an `Arc` slot
     /// check instead of a SipHash probe and a String clone apiece.
     session_resolved: ResolvedGlobals,
-    /// The shared GLOBAL-scope table this session's factory holds. Cloning a
-    /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
-    /// the same underlying map.
-    globals: Arc<GlobalSysvars>,
+    /// Go `SessionVars.GlobalVarsAccessor`: the GLOBAL and INSTANCE tiers,
+    /// which the session installs when it is created (Go `createSession`
+    /// sets it to the session itself). `None` until then, Go's nil.
+    globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
     /// The GLOBAL values this session read for variables `SkipInit` left
     /// out of its copy; see [`Self::unseeded_global_value`].
     first_read_globals: FirstReadGlobals,
@@ -1933,6 +330,9 @@ pub struct SessionVars {
     pub current_user: Option<String>,
     /// Go `SessionVars.User.AuthUsername@AuthHostname (rendered)`.
     pub login_user: Option<String>,
+    /// Go `SessionVars.ActiveRoles`: the `(user, host)` of each role `SET
+    /// ROLE` activated for this session.
+    pub active_roles: std::sync::Arc<Vec<(String, String)>>,
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
@@ -2032,15 +432,11 @@ pub struct SessionVars {
     /// (Go `SessionVars.LastTxnInfo`.)
     pub last_txn_info: String,
     /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
-    /// `tidb_last_query_info` getter. The zero value is still useful before a
-    /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
-    /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
-    /// (Go `SessionVars.LastQueryInfo`.)
-    pub last_query_info: String,
-    /// Go `SessionVars.LastDDLInfo` (`sessionstates.LastDDLInfo`): the query
-    /// and sequence number of the last DDL job this session waited for.
-    /// (Go `SessionVars.LastDDLInfo`.)
-    pub last_ddl_info: (String, u64),
+    /// `tidb_last_query_info` getter.
+    pub last_query_info: tidb_sessionstates::QueryInfo,
+    /// Go `SessionVars.LastDDLInfo`: the query and sequence number of the
+    /// last DDL job this session waited for.
+    pub last_ddl_info: tidb_sessionstates::LastDDLInfo,
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -2108,10 +504,10 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
+            stmt_warnings: Vec::new(),
             last_txn_info: String::new(),
-            last_query_info: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
-                    .to_owned(),
-            last_ddl_info: (String::new(), 0),
+            last_query_info: tidb_sessionstates::QueryInfo::default(),
+            last_ddl_info: tidb_sessionstates::LastDDLInfo::default(),
             resource_group: "default".to_owned(),
             restricted_sql: false,
             secure_transport: false,
@@ -2120,6 +516,7 @@ impl Default for SessionVars {
             sys_warning_count: 0,
             sys_error_count: 0,
             current_user: None,
+            active_roles: std::sync::Arc::default(),
             login_user: None,
             connection_id: None,
             client_found_rows: false,
@@ -2133,7 +530,7 @@ impl Default for SessionVars {
             prev_found_in_plan_cache: false,
             use_chunk_alloc: false,
             pre_use_chunk_alloc: tidb_vardef::defaults::DEF_TIDB_USE_ALLOC,
-            current_db: "test".to_owned(),
+            current_db: String::new(),
             sandbox_mode: false,
             found_in_binding: false,
             prev_found_in_binding: false,
@@ -2166,13 +563,13 @@ impl Default for SessionVars {
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             pessimistic_transaction_fair_locking: false,
             bulk_dml_enabled: false,
-            replica_read: tidb_distsql::ReplicaReadType::Leader,
+            replica_read: tidb_txnkv::ReplicaReadType::Leader,
             analyze_store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             query_cop_store_limit: tidb_vardef::defaults::DEF_TIDB_QUERY_COP_STORE_LIMIT,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
-            globals: Arc::default(),
+            globals: None,
             first_read_globals: FirstReadGlobals::default(),
         }
     }
@@ -2184,15 +581,16 @@ impl SessionVars {
         self.last_txn_info.clone()
     }
 
-    /// Go `GetSession`'s `tidb_last_query_info` getter.
+    /// Go `GetSession`'s `tidb_last_query_info` getter:
+    /// `json.Marshal(s.LastQueryInfo)`.
     pub fn last_query_info_value(&self) -> String {
-        self.last_query_info.clone()
+        tidb_util::stringutil::go_json_marshal(&self.last_query_info)
     }
 
-    /// Go `GetSession`'s `tidb_last_ddl_info` getter: `{"query", "seq_num"}`.
+    /// Go `GetSession`'s `tidb_last_ddl_info` getter:
+    /// `json.Marshal(s.LastDDLInfo)`.
     pub fn last_ddl_info_value(&self) -> String {
-        let (query, seq) = &self.last_ddl_info;
-        tidb_util::stringutil::go_json_marshal(&serde_json::json!({"query": query, "seq_num": seq}))
+        tidb_util::stringutil::go_json_marshal(&self.last_ddl_info)
     }
 
     /// Restore only Go's typed SnapshotTS after failed storage/schema validation.
@@ -2277,13 +675,16 @@ impl SessionVars {
         SessionVars::default()
     }
 
-    /// Points this session at a shared [`GlobalSysvars`] table and snapshots
+    /// Points this session at a shared GLOBAL accessor and snapshots
     /// its current overrides into the session's own copy -- Go's rule that a
     /// session's variables are copied from the global tier once, at connect.
     /// A `SET GLOBAL` another session runs AFTER this call is invisible to
     /// this session's plain `@@x` (only to `@@global.x`), exactly as MySQL
     /// documents.
-    pub fn seed_from_globals(&mut self, globals: GlobalSysvars) -> Result<(), VarError> {
+    pub fn seed_from_globals(
+        &mut self,
+        globals: Arc<dyn crate::GlobalVarAccessor>,
+    ) -> Result<(), VarError> {
         let mut systems = self.systems.clone();
         // Go `loadCommonGlobalVariablesIfNeeded`: the deep copy of the sysvar
         // cache's session view (`Domain.GetSessionCache`), which holds every
@@ -2335,7 +736,7 @@ impl SessionVars {
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
         self.systems = systems;
-        self.globals = Arc::new(globals);
+        self.globals = Some(globals);
         self.first_read_globals = FirstReadGlobals::default();
         self.optimizer_fix_control = optimizer_fix_control;
         self.autocommit = autocommit;
@@ -2508,30 +909,30 @@ impl SessionVars {
 
     fn replica_read_from_systems(
         systems: &HashMap<String, String>,
-    ) -> tidb_distsql::ReplicaReadType {
+    ) -> tidb_txnkv::ReplicaReadType {
         match systems
             .get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
             .map(String::as_str)
         {
             Some(value) if value.eq_ignore_ascii_case("follower") => {
-                tidb_distsql::ReplicaReadType::Follower
+                tidb_txnkv::ReplicaReadType::Follower
             }
             Some(value) if value.eq_ignore_ascii_case("leader-and-follower") => {
-                tidb_distsql::ReplicaReadType::Mixed
+                tidb_txnkv::ReplicaReadType::Mixed
             }
             Some(value) if value.eq_ignore_ascii_case("closest-replicas") => {
-                tidb_distsql::ReplicaReadType::Closest
+                tidb_txnkv::ReplicaReadType::Closest
             }
             Some(value) if value.eq_ignore_ascii_case("closest-adaptive") => {
-                tidb_distsql::ReplicaReadType::ClosestAdaptive
+                tidb_txnkv::ReplicaReadType::ClosestAdaptive
             }
             Some(value) if value.eq_ignore_ascii_case("learner") => {
-                tidb_distsql::ReplicaReadType::Learner
+                tidb_txnkv::ReplicaReadType::Learner
             }
             Some(value) if value.eq_ignore_ascii_case("prefer-leader") => {
-                tidb_distsql::ReplicaReadType::PreferLeader
+                tidb_txnkv::ReplicaReadType::PreferLeader
             }
-            _ => tidb_distsql::ReplicaReadType::Leader,
+            _ => tidb_txnkv::ReplicaReadType::Leader,
         }
     }
 
@@ -2741,7 +1142,7 @@ impl SessionVars {
 
     /// Go `SessionVars.GetReplicaRead`, the typed KV replica-read mode.
     #[must_use]
-    pub const fn replica_read(&self) -> tidb_distsql::ReplicaReadType {
+    pub const fn replica_read(&self) -> tidb_txnkv::ReplicaReadType {
         self.replica_read
     }
 
@@ -2834,7 +1235,7 @@ impl SessionVars {
         // startup `set_global_vars` push (Go `variable.SetSysVar`) lives.
         if !def.has_session_scope() {
             return self
-                .globals
+                .globals()
                 .get_by_registry_index(index)
                 .map(|value| Cow::Owned(global_get_hook(def.name, value)));
         }
@@ -2886,7 +1287,7 @@ impl SessionVars {
         if let Some(value) = first_reads.get(&index) {
             return Some(Ok(Cow::Owned(value.clone())));
         }
-        Some(self.globals.get_by_registry_index(index).map(|value| {
+        Some(self.globals().get_by_registry_index(index).map(|value| {
             let value = global_get_hook(def.name, value);
             first_reads.insert(index, value.clone());
             Cow::Owned(value)
@@ -3136,46 +1537,59 @@ impl SessionVars {
     /// this session's own copy. Go's `ErrIncorrectGlobalLocalVar` (1238) when
     /// the variable has no GLOBAL scope at all to read.
     pub fn get_global(&self, name: &str) -> Result<String, VarError> {
-        self.globals.get_for_global_scope(name)
+        self.globals().get_for_global_scope(name)
     }
 
-    /// Shares the currently selected global table, not its values. Account
+    /// Go `SessionVars.GlobalVarsAccessor`, which the session installs when
+    /// it is created; reading the GLOBAL tier before then is Go's nil
+    /// dereference.
+    fn globals(&self) -> &dyn crate::GlobalVarAccessor {
+        self.globals
+            .as_deref()
+            .expect("SessionVars.GlobalVarsAccessor is installed by the session")
+    }
+
+    /// Shares the currently selected global accessor, not its values. Account
     /// writes may temporarily swap this owner for a scratch validation table.
-    pub fn global_sysvars(&self) -> GlobalSysvars {
-        (*self.globals).clone()
+    pub fn global_sysvars(&self) -> Arc<dyn crate::GlobalVarAccessor> {
+        Arc::clone(
+            self.globals
+                .as_ref()
+                .expect("SessionVars.GlobalVarsAccessor is installed by the session"),
+        )
     }
 
     pub fn global_sysvar_accessor(&self) -> Arc<dyn crate::GlobalSysvarAccessor> {
-        self.globals.clone()
+        self.global_sysvars()
     }
 
     /// Reads Go's two process-wide typed statement-memory settings without
     /// converting their GLOBAL sysvar text on every statement.
     pub fn statement_memory_policy(&self) -> (tidb_vardef::OomAction, bool) {
-        self.globals.statement_memory_policy()
+        self.globals().statement_memory_policy()
     }
 
     /// Go's process-wide `vardef.CheckMb4ValueInUTF8` switch, typed once per
     /// GLOBAL publication.
     pub fn check_mb4_value_in_utf8(&self) -> bool {
-        self.globals.check_mb4_value_in_utf8()
+        self.globals().check_mb4_value_in_utf8()
     }
 
     /// Go's process-wide `vardef.EnableCheckConstraint` switch, typed once per
     /// GLOBAL publication.
     pub fn enable_check_constraint(&self) -> bool {
-        self.globals.enable_check_constraint()
+        self.globals().enable_check_constraint()
     }
 
     /// Go's process-wide resource-control enable switch, published by the
     /// GLOBAL sysvar hook and consumed by statement hint admission.
     pub fn resource_control_enabled(&self) -> bool {
-        self.globals.resource_control_enabled()
+        self.globals().resource_control_enabled()
     }
 
     /// Go's process-wide resource-control strict-mode switch.
     pub fn resource_control_strict_mode(&self) -> bool {
-        self.globals.resource_control_strict_mode()
+        self.globals().resource_control_strict_mode()
     }
 
     /// Sets a session system variable, validating the value as Go's
@@ -3475,28 +1889,32 @@ impl SessionVars {
     /// session's own `@@name`. Go's `ErrLocalVariable` (1228) when the
     /// variable is SESSION-only, so there is no global copy to set.
     pub fn set_global(&mut self, name: &str, value: String) -> Result<bool, VarError> {
-        self.globals
+        self.globals()
             .set_with_time_zone(name, value, &self.time_zone)
     }
 
     /// `SET INSTANCE name = value`: writes the node-local tier, never this
     /// session's own copy (an instance-scoped variable has none).
     pub fn set_instance(&mut self, name: &str, value: String) -> Result<bool, VarError> {
-        self.globals.set_instance(name, value)
+        self.globals().set_instance(name, value)
     }
 
     /// Points this session at a different shared GLOBAL table for one
-    /// statement, answering the one it was using -- the `GlobalSysvars` twin
+    /// statement, answering the one it was using -- the GLOBAL-tier twin
     /// of [`crate::privilege::PrivilegeRegistry`]'s `swap_privileges`. A
     /// convergence node validates one `SET GLOBAL` against a scratch table
     /// read from the cluster before persisting it, and must be able to put
     /// the live table back unconditionally if the statement fails.
-    pub fn swap_globals(&mut self, globals: GlobalSysvars) -> GlobalSysvars {
-        if let Some(provider) = self.globals.external_timestamp_provider() {
-            globals.set_external_timestamp_provider(provider);
+    pub fn swap_globals(
+        &mut self,
+        globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
+    ) -> Option<Arc<dyn crate::GlobalVarAccessor>> {
+        if let (Some(current), Some(incoming)) = (&self.globals, &globals) {
+            if let Some(provider) = current.external_timestamp_provider() {
+                incoming.set_external_timestamp_provider(provider);
+            }
         }
-        let previous = std::mem::replace(&mut self.globals, Arc::new(globals));
-        Arc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone())
+        std::mem::replace(&mut self.globals, globals)
     }
 
     /// `SET GLOBAL name = DEFAULT`.
@@ -3504,12 +1922,12 @@ impl SessionVars {
         if name.eq_ignore_ascii_case("tidb_external_ts") {
             return self.set_global(name, "0".into()).map(|_| ());
         }
-        self.globals.reset(name)
+        self.globals().reset(name)
     }
 
     /// `SET INSTANCE name = DEFAULT`.
     pub fn reset_instance(&mut self, name: &str) -> Result<(), VarError> {
-        self.globals.reset_instance(name)
+        self.globals().reset_instance(name)
     }
 
     /// Go's `SET x = DEFAULT`.
@@ -3536,7 +1954,7 @@ impl SessionVars {
         if !def.has_global_scope() {
             return Ok(default);
         }
-        if let Some(stored) = self.globals.overrides().get(def.name) {
+        if let Some(stored) = self.globals().overrides().get(def.name) {
             return Ok(global_get_hook(def.name, stored.clone()));
         }
         Ok(global_system_variable_initial_value(def))
@@ -3640,7 +2058,7 @@ impl SessionVars {
 /// Renders a [`VarError`] with Go's system-variable message text for the
 /// variants Go's `SetSystemVar` produces here; the callback payloads carry
 /// the same text Go's `errors.Annotate` would.
-fn render_var_error(error: &VarError) -> String {
+pub fn render_var_error(error: &VarError) -> String {
     match error {
         VarError::UnknownSystemVariable(name) => format!("Unknown system variable '{name}'"),
         VarError::ReadOnlyVariable(name) => {
@@ -3665,1059 +2083,6 @@ fn format_double(value: f64) -> String {
     tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
 }
 
-#[cfg(test)]
-mod tests {
-    /// Serializes the tests that flip process-wide switches (Go `vardef`
-    /// globals) within this test binary.
-    fn process_switch_tests() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    use super::*;
-
-    struct RestoreAnalyzeDefaults {
-        buckets: u64,
-        top_n: u64,
-        stats_cache_mem_quota: i64,
-    }
-
-    impl Drop for RestoreAnalyzeDefaults {
-        fn drop(&mut self) {
-            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
-                .store(self.buckets, std::sync::atomic::Ordering::SeqCst);
-            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
-                .store(self.top_n, std::sync::atomic::Ordering::SeqCst);
-            tidb_vardef::STATS_CACHE_MEM_QUOTA.store(
-                self.stats_cache_mem_quota,
-                std::sync::atomic::Ordering::SeqCst,
-            );
-        }
-    }
-
-    #[test]
-    fn tiflash_set_session_hooks_update_typed_state() {
-        let mut vars = SessionVars::new();
-        assert_eq!(
-            vars.ti_flash_max_bytes_before_ext_join(),
-            tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
-        );
-        assert_eq!(
-            vars.ti_flash_mem_quota_query_per_node(),
-            tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE
-        );
-        assert_eq!(
-            vars.ti_flash_query_spill_ratio(),
-            tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO
-        );
-
-        let join_snapshot = vars
-            .snapshot_system(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN);
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
-            "10000".to_owned(),
-        )
-        .unwrap();
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
-            "20000".to_owned(),
-        )
-        .unwrap();
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
-            "30000".to_owned(),
-        )
-        .unwrap();
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
-            "40000".to_owned(),
-        )
-        .unwrap();
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
-            "0.75".to_owned(),
-        )
-        .unwrap();
-
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_join(), 10_000);
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_agg(), 20_000);
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_sort(), 30_000);
-        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 40_000);
-        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.75);
-
-        vars.restore_system(join_snapshot);
-        assert_eq!(
-            vars.ti_flash_max_bytes_before_ext_join(),
-            tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
-        );
-    }
-
-    #[test]
-    fn tiflash_global_values_seed_typed_state_for_new_sessions() {
-        let globals = GlobalSysvars::new();
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
-                "0.85".to_owned(),
-            )
-            .unwrap();
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
-                "10000".to_owned(),
-            )
-            .unwrap();
-
-        let mut vars = SessionVars::new();
-        vars.seed_from_globals(globals).unwrap();
-        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.85);
-        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 10_000);
-        assert_eq!(
-            vars.get_system(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
-                .unwrap(),
-            "0.85"
-        );
-    }
-
-    #[test]
-    fn pessimistic_fair_locking_uses_go_typed_session_hook() {
-        let mut vars = SessionVars::new();
-        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
-
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-            "OFF".to_owned(),
-        )
-        .unwrap();
-        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
-
-        if tidb_config::kerneltype::is_next_gen() {
-            let error = vars
-                .set_system(
-                    tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-                    "ON".to_owned(),
-                )
-                .expect_err("nextgen rejects fair-locking ON");
-            let VarError::SqlError(error) = error else {
-                panic!("nextgen fair-locking refusal should retain MySQL error 1235");
-            };
-            assert_eq!(error.code, 1235);
-            assert!(!vars.pessimistic_transaction_fair_locking_enabled());
-        } else {
-            vars.set_system(
-                tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-                "ON".to_owned(),
-            )
-            .unwrap();
-            assert!(vars.pessimistic_transaction_fair_locking_enabled());
-        }
-    }
-
-    #[test]
-    fn dml_type_and_replica_read_use_go_typed_hooks() {
-        let mut vars = SessionVars::new();
-        assert!(!vars.bulk_dml_enabled());
-        assert_eq!(vars.replica_read(), tidb_distsql::ReplicaReadType::Leader);
-
-        vars.set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "standard".to_owned())
-            .unwrap();
-        assert!(!vars.bulk_dml_enabled());
-
-        if tidb_config::kerneltype::is_next_gen() {
-            let error = vars
-                .set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
-                .expect_err("nextgen rejects bulk DML");
-            let VarError::SqlError(error) = error else {
-                panic!("nextgen bulk-DML refusal should retain MySQL error 1235");
-            };
-            assert_eq!(error.code, 1235);
-            assert!(!vars.bulk_dml_enabled());
-        } else {
-            vars.set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
-                .unwrap();
-            assert!(vars.bulk_dml_enabled());
-        }
-
-        let modes = [
-            ("follower", tidb_distsql::ReplicaReadType::Follower),
-            ("leader-and-follower", tidb_distsql::ReplicaReadType::Mixed),
-            ("closest-replicas", tidb_distsql::ReplicaReadType::Closest),
-            (
-                "closest-adaptive",
-                tidb_distsql::ReplicaReadType::ClosestAdaptive,
-            ),
-            ("learner", tidb_distsql::ReplicaReadType::Learner),
-            (
-                "prefer-leader",
-                tidb_distsql::ReplicaReadType::PreferLeader,
-            ),
-        ];
-        for (name, expected) in modes {
-            if tidb_config::kerneltype::is_next_gen() {
-                let error = vars
-                    .set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
-                    .expect_err("nextgen rejects non-leader replica reads");
-                let VarError::SqlError(error) = error else {
-                    panic!("nextgen replica-read refusal should retain MySQL error 1235");
-                };
-                assert_eq!(error.code, 1235);
-                assert_eq!(vars.replica_read(), tidb_distsql::ReplicaReadType::Leader);
-            } else {
-                vars.set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
-                    .unwrap();
-                assert_eq!(vars.replica_read(), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn global_analyze_defaults_update_the_vardef_backing_values() {
-        // `ANALYZE_DEFAULT_NUM_*` are process-wide too; the session-tier test
-        // that asserts on them runs apart from this one.
-        let _serialised = process_switch_tests();
-        let _restore = RestoreAnalyzeDefaults {
-            buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
-                .load(std::sync::atomic::Ordering::SeqCst),
-            top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
-            stats_cache_mem_quota: tidb_vardef::STATS_CACHE_MEM_QUOTA
-                .load(std::sync::atomic::Ordering::SeqCst),
-        };
-        let globals = GlobalSysvars::new();
-
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS,
-                "4".to_owned(),
-            )
-            .unwrap();
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N,
-                "5".to_owned(),
-            )
-            .unwrap();
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA,
-                "6".to_owned(),
-            )
-            .unwrap();
-        assert_eq!(
-            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
-            4
-        );
-        assert_eq!(
-            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
-            5
-        );
-        assert_eq!(
-            tidb_vardef::STATS_CACHE_MEM_QUOTA.load(std::sync::atomic::Ordering::SeqCst),
-            6
-        );
-
-        globals
-            .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS)
-            .unwrap();
-        globals
-            .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N)
-            .unwrap();
-        globals
-            .reset(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
-            .unwrap();
-        assert_eq!(
-            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
-            tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64
-        );
-        assert_eq!(
-            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
-            tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64
-        );
-        assert_eq!(
-            tidb_vardef::STATS_CACHE_MEM_QUOTA.load(std::sync::atomic::Ordering::SeqCst),
-            tidb_vardef::defaults::DEF_TIDB_STATS_CACHE_MEM_QUOTA
-        );
-    }
-
-    #[test]
-    fn empty_statement_restore_preserves_the_session_generation() {
-        let mut vars = SessionVars::new();
-        let generation = vars.generation();
-
-        vars.restore_system(Vec::new());
-
-        assert_eq!(vars.generation(), generation);
-    }
-
-    /// Go `TestSessionStatesSystemVar`: only explicitly cached session values
-    /// are serialized; timestamp's default and the insert-ID hooks are not.
-    #[test]
-    fn session_states_system_var_matches_go() {
-        let mut vars = SessionVars::new();
-
-        vars.set_system("autocommit", "1".to_owned()).unwrap();
-        assert_eq!(
-            vars.get_session_states_system_var("autocommit").unwrap(),
-            ("ON".to_owned(), true)
-        );
-
-        assert_eq!(
-            vars.get_session_states_system_var("timestamp").unwrap(),
-            (String::new(), false)
-        );
-        assert_eq!(
-            vars.get_session_states_system_var("max_allowed_packet")
-                .unwrap(),
-            ("67108864".to_owned(), true)
-        );
-        vars.set_system("timestamp", "1.25".to_owned()).unwrap();
-        assert_eq!(
-            vars.get_session_states_system_var("timestamp").unwrap(),
-            ("1.25".to_owned(), true)
-        );
-        vars.set_system("timestamp", "0".to_owned()).unwrap();
-        assert_eq!(
-            vars.get_session_states_system_var("timestamp").unwrap(),
-            (String::new(), false)
-        );
-
-        vars.set_system("max_allowed_packet", "1024".to_owned())
-            .unwrap();
-        assert_eq!(
-            vars.get_session_states_system_var("max_allowed_packet")
-                .unwrap(),
-            ("1024".to_owned(), true)
-        );
-
-        assert_eq!(
-            vars.get_session_states_system_var("last_insert_id")
-                .unwrap(),
-            (String::new(), false)
-        );
-        assert!(matches!(
-            vars.get_session_states_system_var("not_a_sysvar"),
-            Err(VarError::UnknownSystemVariable(_))
-        ));
-    }
-
-    #[test]
-    fn session_sql_mode_uses_go_typed_state() {
-        let mut vars = SessionVars::new();
-        assert!(vars.sql_mode().has_strict_mode());
-        assert!(vars.sql_mode().has_only_full_group_by());
-
-        let restore = vars.snapshot_system("sql_mode");
-        vars.set_system("sql_mode", "strict_trans_tabLES  ".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("sql_mode").unwrap(), "STRICT_TRANS_TABLES");
-        assert!(vars.sql_mode().has_strict_mode());
-        let error = vars
-            .set_system("sql_mode", "strict_trans_tabLES,nonsense_option".to_owned())
-            .unwrap_err();
-        // go's sql_mode Validation wraps the catalogued 1231 rendering in an
-        // uncatalogued error, so the SET surfaces 1105 with the client text.
-        let VarError::ValidationRefused(message) = error else {
-            panic!("expected the uncatalogued validation refusal");
-        };
-        assert_eq!(
-            message,
-            "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'"
-        );
-        assert!(vars.sql_mode().has_strict_mode());
-
-        vars.set_system("sql_mode", "ANSI".to_owned()).unwrap();
-        assert!(vars.sql_mode().has_ansi_quotes_mode());
-        assert!(vars.sql_mode().has_pipes_as_concat_mode());
-        assert!(!vars.sql_mode().has_strict_mode());
-        vars.restore_system(restore);
-        assert!(vars.sql_mode().has_strict_mode());
-        assert!(!vars.sql_mode().has_ansi_quotes_mode());
-
-        let globals = GlobalSysvars::new();
-        globals
-            .set("sql_mode", "NO_UNSIGNED_SUBTRACTION".to_owned())
-            .unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert!(inherited.sql_mode().has_no_unsigned_subtraction_mode());
-        assert!(!inherited.sql_mode().has_strict_mode());
-    }
-
-    /// Go `TestTiDBMaxKeysRead` + `TestGetMaxKeysRead`: validation clips a
-    /// negative value to zero, the session hook stores the positive value in
-    /// typed state, and the accessor returns that state only for SELECTs.
-    #[test]
-    fn max_keys_read_uses_go_select_gate_and_typed_state() {
-        let definition = get_sys_var("tidb_max_keys_read").unwrap();
-        assert_eq!(definition.validate("-1").unwrap().value, "0");
-        assert_eq!(definition.validate("0").unwrap().value, "0");
-        assert_eq!(definition.validate("1000").unwrap().value, "1000");
-
-        let mut vars = SessionVars::new();
-        assert_eq!(vars.max_keys_read(false), 0);
-        assert_eq!(vars.max_keys_read(true), 0);
-
-        vars.set_system("tidb_max_keys_read", "500".to_owned())
-            .unwrap();
-        assert_eq!(vars.max_keys_read(false), 0);
-        assert_eq!(vars.max_keys_read(true), 500);
-
-        let restore = vars.snapshot_system("tidb_max_keys_read");
-        vars.set_system("tidb_max_keys_read", "100".to_owned())
-            .unwrap();
-        vars.restore_system(restore);
-        assert_eq!(vars.max_keys_read(true), 500);
-
-        let globals = GlobalSysvars::new();
-        globals.set("tidb_max_keys_read", "100".to_owned()).unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert_eq!(inherited.max_keys_read(true), 100);
-        assert_eq!(inherited.max_keys_read(false), 0);
-    }
-
-    /// Go `TestMaxExecutionTime`: the unsigned value clamps a negative input,
-    /// the session hook publishes the millisecond deadline into typed state,
-    /// and statement-scoped restore/global inheritance keep that state in
-    /// sync with the authoritative variable image.
-    #[test]
-    fn max_execution_time_uses_go_typed_state() {
-        let definition = get_sys_var("max_execution_time").unwrap();
-        assert_eq!(definition.validate("-10").unwrap().value, "0");
-        assert_eq!(definition.validate("99999").unwrap().value, "99999");
-
-        let mut vars = SessionVars::new();
-        assert_eq!(vars.max_execution_time(), 0);
-        vars.set_system("max_execution_time", "99999".to_owned())
-            .unwrap();
-        assert_eq!(vars.max_execution_time(), 99999);
-
-        let restore = vars.snapshot_system("max_execution_time");
-        vars.set_system("max_execution_time", "100".to_owned())
-            .unwrap();
-        assert_eq!(vars.max_execution_time(), 100);
-        vars.restore_system(restore);
-        assert_eq!(vars.max_execution_time(), 99999);
-
-        let globals = GlobalSysvars::new();
-        globals.set("max_execution_time", "250".to_owned()).unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert_eq!(inherited.max_execution_time(), 250);
-    }
-
-    /// Go `TestTiDBMultiStatementMode`: enum spellings normalize to the
-    /// SessionVars integer mode, statement overlays can restore it, and a
-    /// newly connected session inherits the GLOBAL value.
-    #[test]
-    fn multi_statement_mode_uses_go_typed_state() {
-        let definition = get_sys_var("tidb_multi_statement_mode").unwrap();
-        assert_eq!(definition.validate("on").unwrap().value, "ON");
-        assert_eq!(definition.validate("0").unwrap().value, "OFF");
-        assert_eq!(definition.validate("Warn").unwrap().value, "WARN");
-
-        let mut vars = SessionVars::new();
-        assert_eq!(vars.multi_statement_mode(), 0);
-        vars.set_system("tidb_multi_statement_mode", "ON".to_owned())
-            .unwrap();
-        assert_eq!(vars.multi_statement_mode(), 1);
-
-        let restore = vars.snapshot_system("tidb_multi_statement_mode");
-        vars.set_system("tidb_multi_statement_mode", "WARN".to_owned())
-            .unwrap();
-        assert_eq!(vars.multi_statement_mode(), 2);
-        vars.restore_system(restore);
-        assert_eq!(vars.multi_statement_mode(), 1);
-
-        let globals = GlobalSysvars::new();
-        globals
-            .set("tidb_multi_statement_mode", "WARN".to_owned())
-            .unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert_eq!(inherited.multi_statement_mode(), 2);
-    }
-
-    /// Go `TestSQLSelectLimit`: the unsigned limit clips negatives to zero,
-    /// stores the normalized value in `SessionVars.SelectLimit`, and restores
-    /// the unlimited MaxUint64 default through the ordinary session image.
-    #[test]
-    fn sql_select_limit_uses_go_typed_state() {
-        let definition = get_sys_var("sql_select_limit").unwrap();
-        assert_eq!(definition.validate("-10").unwrap().value, "0");
-        assert_eq!(definition.validate("9999").unwrap().value, "9999");
-
-        let mut vars = SessionVars::new();
-        assert_eq!(vars.select_limit(), u64::MAX);
-        vars.set_system("sql_select_limit", "9999".to_owned())
-            .unwrap();
-        assert_eq!(vars.select_limit(), 9999);
-
-        let restore = vars.snapshot_system("sql_select_limit");
-        vars.set_system("sql_select_limit", "0".to_owned()).unwrap();
-        assert_eq!(vars.select_limit(), 0);
-        vars.restore_system(restore);
-        assert_eq!(vars.select_limit(), 9999);
-
-        let globals = GlobalSysvars::new();
-        globals.set("sql_select_limit", "2".to_owned()).unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert_eq!(inherited.select_limit(), 2);
-    }
-
-    /// Go `TestTimeZone`: validated names and fixed offsets are resolved by
-    /// the session hook, retained for statement contexts, and restored or
-    /// inherited with the session image.
-    #[test]
-    fn time_zone_uses_go_typed_state() {
-        let definition = get_sys_var("time_zone").unwrap();
-        for value in ["America/Edmonton", "+10:00", "UTC", "+00:00"] {
-            assert_eq!(definition.validate(value).unwrap().value, value);
-        }
-
-        let mut vars = SessionVars::new();
-        vars.set_system("time_zone", "+10:00".to_owned()).unwrap();
-        assert_eq!(
-            vars.session_time_zone(),
-            tidb_datatype::SessionTimeZone::Fixed {
-                name: "+10:00".to_owned(),
-                offset_secs: 10 * 60 * 60,
-            }
-        );
-
-        let restore = vars.snapshot_system("time_zone");
-        vars.set_system("time_zone", "UTC".to_owned()).unwrap();
-        assert_eq!(
-            vars.session_time_zone(),
-            tidb_datatype::SessionTimeZone::Named(chrono_tz::Tz::UTC)
-        );
-        vars.restore_system(restore);
-        assert_eq!(
-            vars.session_time_zone(),
-            tidb_datatype::SessionTimeZone::Fixed {
-                name: "+10:00".to_owned(),
-                offset_secs: 10 * 60 * 60,
-            }
-        );
-
-        let globals = GlobalSysvars::new();
-        globals.set("time_zone", "UTC".to_owned()).unwrap();
-        let mut inherited = SessionVars::new();
-        inherited.seed_from_globals(globals).unwrap();
-        assert_eq!(
-            inherited.session_time_zone(),
-            tidb_datatype::SessionTimeZone::Named(chrono_tz::Tz::UTC)
-        );
-    }
-
-    /// Transcreated from Go `TestSetJobScheduleWindow`: a short TTL schedule
-    /// time is interpreted in the issuing session's location, while an
-    /// already-expanded value keeps its explicit numeric offset.
-    #[test]
-    fn ttl_schedule_window_global_write_uses_session_time_zone() {
-        let mut vars = SessionVars::new();
-        vars.set_system("time_zone", "UTC".to_owned()).unwrap();
-        vars.set_global(
-            "tidb_ttl_job_schedule_window_start_time",
-            "16:11".to_owned(),
-        )
-        .unwrap();
-        assert_eq!(
-            vars.get_global("tidb_ttl_job_schedule_window_start_time")
-                .unwrap(),
-            "16:11 +0000"
-        );
-
-        vars.set_system("time_zone", "Asia/Shanghai".to_owned())
-            .unwrap();
-        vars.set_global(
-            "tidb_ttl_job_schedule_window_start_time",
-            "16:11".to_owned(),
-        )
-        .unwrap();
-        assert_eq!(
-            vars.get_global("tidb_ttl_job_schedule_window_start_time")
-                .unwrap(),
-            "16:11 +0800"
-        );
-        vars.set_global(
-            "tidb_ttl_job_schedule_window_start_time",
-            "16:11 +0000".to_owned(),
-        )
-        .unwrap();
-        assert_eq!(
-            vars.get_global("tidb_ttl_job_schedule_window_start_time")
-                .unwrap(),
-            "16:11 +0000"
-        );
-    }
-
-    /// All Go `TypeTime` globals, not only TTL's schedule-window pair, use the
-    /// issuing session's location before their GLOBAL hook stores the value.
-    #[test]
-    fn generic_time_and_duration_globals_use_go_normalization() {
-        let mut vars = SessionVars::new();
-        vars.set_system("time_zone", "Asia/Shanghai".to_owned())
-            .unwrap();
-        vars.set_global("tidb_auto_analyze_start_time", "3:00".to_owned())
-            .unwrap();
-        assert_eq!(
-            vars.get_global("tidb_auto_analyze_start_time").unwrap(),
-            "03:00 +0800"
-        );
-        let error = vars
-            .set_global("tidb_auto_analyze_start_time", "25:00".to_owned())
-            .unwrap_err();
-        // Go returns `time.Parse`'s range error verbatim.
-        assert_eq!(
-            error,
-            VarError::ValidationRefused(r#"parsing time "25:00": hour out of range"#.to_owned())
-        );
-
-        let truncated = vars
-            .set_global("tidb_gc_run_interval", "1ms".to_owned())
-            .unwrap();
-        assert!(truncated);
-        assert_eq!(vars.get_global("tidb_gc_run_interval").unwrap(), "10m0s");
-    }
-
-    #[test]
-    fn shared_lock_promotion_switch_uses_go_typed_state() {
-        let mut vars = SessionVars::new();
-        assert!(!vars.shared_lock_promotion_enabled());
-        let restore =
-            vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION);
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION,
-            "ON".to_owned(),
-        )
-        .unwrap();
-        assert!(vars.shared_lock_promotion_enabled());
-        vars.restore_system(restore);
-        assert!(!vars.shared_lock_promotion_enabled());
-
-        let globals = GlobalSysvars::new();
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION,
-                "ON".to_owned(),
-            )
-            .unwrap();
-        vars.seed_from_globals(globals).unwrap();
-        assert!(vars.shared_lock_promotion_enabled());
-    }
-
-    #[test]
-    fn defaults_come_from_the_registry() {
-        let vars = SessionVars::new();
-        assert_eq!(vars.get_system("autocommit").unwrap(), "ON");
-        assert_eq!(vars.get_system("character_set_client").unwrap(), "utf8mb4");
-        assert_eq!(
-            vars.get_system("transaction_isolation").unwrap(),
-            "REPEATABLE-READ"
-        );
-        assert_eq!(vars.get_system("max_allowed_packet").unwrap(), "67108864");
-        // The lookup is case-insensitive, as Go's is after lowercasing.
-        assert_eq!(vars.get_system("AUTOCOMMIT").unwrap(), "ON");
-    }
-
-    #[test]
-    fn an_unknown_system_variable_is_rejected_both_ways() {
-        let mut vars = SessionVars::new();
-        assert_eq!(
-            vars.get_system("nope"),
-            Err(VarError::UnknownSystemVariable("nope".to_owned()))
-        );
-        assert_eq!(
-            vars.set_system("nope", "1".to_owned()),
-            Err(VarError::UnknownSystemVariable("nope".to_owned()))
-        );
-    }
-
-    #[test]
-    fn a_loaded_row_overrides_and_an_absent_one_still_falls_back_to_default() {
-        // Loading or replacing a whole GLOBAL table republishes the process
-        // switches; the tests that assert on them run apart from this one.
-        let _serialised = process_switch_tests();
-        let globals = GlobalSysvars::new();
-        globals.load_from_cluster([("AUTOCOMMIT".to_owned(), "OFF".to_owned())]);
-        // The seeded row overrides, case-insensitively, exactly like `set`.
-        assert_eq!(globals.get("autocommit").unwrap(), "OFF");
-        // A variable the fixture never mentioned still falls back to the
-        // registry default -- `load_from_cluster` only overwrites names it is
-        // given.
-        assert_eq!(globals.get("max_allowed_packet").unwrap(), "67108864");
-    }
-
-    #[test]
-    fn a_loaded_row_naming_an_unknown_variable_is_skipped_not_refused() {
-        // Loading or replacing a whole GLOBAL table republishes the process
-        // switches; the tests that assert on them run apart from this one.
-        let _serialised = process_switch_tests();
-        let globals = GlobalSysvars::new();
-        // Bypasses `set`'s validation on purpose (a stored row already passed
-        // it once), but an unrecognized name from an older/newer cluster must
-        // still not panic or poison every other loaded row.
-        globals.load_from_cluster([
-            ("not_a_real_variable".to_owned(), "x".to_owned()),
-            ("autocommit".to_owned(), "OFF".to_owned()),
-        ]);
-        assert_eq!(
-            globals.get("not_a_real_variable"),
-            Err(VarError::UnknownSystemVariable(
-                "not_a_real_variable".to_owned()
-            ))
-        );
-        assert_eq!(globals.get("autocommit").unwrap(), "OFF");
-    }
-
-    #[test]
-    fn a_read_only_variable_cannot_be_set() {
-        let mut vars = SessionVars::new();
-        assert!(vars.get_system("version").unwrap().starts_with("8.0.11-"));
-        assert_eq!(
-            vars.set_system("version", "9".to_owned()),
-            Err(VarError::ReadOnlyVariable("version".to_owned()))
-        );
-    }
-
-    #[test]
-    fn set_overrides_the_default_and_set_names_moves_three_variables() {
-        let mut vars = SessionVars::new();
-        vars.set_system("autocommit", "OFF".to_owned()).unwrap();
-        assert_eq!(vars.get_system("autocommit").unwrap(), "OFF");
-
-        vars.set_charset("latin1", Some("latin1_bin"), true)
-            .unwrap();
-        for name in [
-            "character_set_client",
-            "character_set_connection",
-            "character_set_results",
-        ] {
-            assert_eq!(vars.get_system(name).unwrap(), "latin1", "{name}");
-        }
-        assert_eq!(
-            vars.get_system("collation_connection").unwrap(),
-            "latin1_bin"
-        );
-        // SET NAMES leaves the server-side character set alone.
-        assert_eq!(vars.get_system("character_set_server").unwrap(), "utf8mb4");
-    }
-
-    /// Go's charset/collation `SetSession` hooks are reciprocal: changing a
-    /// charset picks its default collation, while changing a collation picks
-    /// its owning charset. The client/results pair keeps its independent
-    /// behavior, including the empty results escape hatch.
-    #[test]
-    fn charset_and_collation_hooks_match_go() {
-        let mut vars = SessionVars::new();
-
-        vars.set_system("character_set_connection", "latin1".to_owned())
-            .unwrap();
-        assert_eq!(
-            vars.get_system("character_set_connection").unwrap(),
-            "latin1"
-        );
-        assert_eq!(
-            vars.get_system("collation_connection").unwrap(),
-            "latin1_bin"
-        );
-
-        vars.set_system("collation_connection", "UTF8MB4_GENERAL_CI".to_owned())
-            .unwrap();
-        assert_eq!(
-            vars.get_system("collation_connection").unwrap(),
-            "utf8mb4_general_ci"
-        );
-        assert_eq!(
-            vars.get_system("character_set_connection").unwrap(),
-            "utf8mb4"
-        );
-
-        vars.set_system("character_set_database", "utf8mb3".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("character_set_database").unwrap(), "utf8");
-        assert_eq!(vars.get_system("collation_database").unwrap(), "utf8_bin");
-
-        vars.set_system("collation_database", "latin1_bin".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("character_set_database").unwrap(), "latin1");
-
-        vars.set_system("character_set_server", "ascii".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("collation_server").unwrap(), "ascii_bin");
-        vars.set_system("collation_server", "utf8mb4_bin".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("character_set_server").unwrap(), "utf8mb4");
-
-        vars.set_system("character_set_results", String::new())
-            .unwrap();
-        assert_eq!(vars.get_system("character_set_results").unwrap(), "");
-        assert!(matches!(
-            vars.set_system("character_set_connection", "not-a-charset".to_owned()),
-            Err(VarError::ValidationRefused(message)) if message == "Unknown charset not-a-charset"
-        ));
-        assert!(matches!(
-            vars.set_system("collation_connection", "not-a-collation".to_owned()),
-            Err(VarError::SqlError(error)) if error.code == 1273
-        ));
-    }
-
-    /// Go's `tidb_enforce_mpp` Validation only permits ON after the
-    /// session's `tidb_allow_mpp` gate is enabled.
-    #[test]
-    fn enforce_mpp_requires_allow_mpp_like_go() {
-        let mut vars = SessionVars::new();
-        vars.set_system("tidb_allow_mpp", "OFF".to_owned()).unwrap();
-        assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "OFF");
-        assert_eq!(
-            vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
-            Err(VarError::WrongValueForVar(
-                "tidb_enforce_mpp".to_owned(),
-                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
-            ))
-        );
-
-        vars.set_system("tidb_allow_mpp", "ON".to_owned()).unwrap();
-        vars.set_system("tidb_enforce_mpp", "1".to_owned()).unwrap();
-        assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "ON");
-    }
-
-    #[test]
-    fn set_global_writes_the_shared_table_not_this_sessions_own_copy() {
-        let mut vars = SessionVars::new();
-        // `autocommit` (scope 3: both SESSION and GLOBAL) is the case Go
-        // documents: `SET GLOBAL` never moves the setting session's own
-        // `@@autocommit`.
-        vars.set_global("autocommit", "OFF".to_owned()).unwrap();
-        assert_eq!(vars.get_system("autocommit").unwrap(), "ON");
-        assert_eq!(vars.get_global("autocommit").unwrap(), "OFF");
-    }
-
-    #[test]
-    fn set_global_redact_log_updates_the_process_redaction_authority() {
-        // Loading or replacing a whole GLOBAL table republishes the process
-        // switches; the tests that assert on them run apart from this one.
-        let _serialised = process_switch_tests();
-        let mut vars = SessionVars::new();
-        vars.set_global("tidb_redact_log", "MARKER".to_owned())
-            .unwrap();
-        assert!(tidb_util::redact::need_redact());
-        assert_eq!(tidb_util::redact::value("secret"), "?");
-
-        vars.globals.reset("tidb_redact_log").unwrap();
-        assert!(!tidb_util::redact::need_redact());
-
-        let scratch =
-            GlobalSysvars::from_cluster_rows([("tidb_redact_log".to_owned(), "MARKER".to_owned())]);
-        assert!(!tidb_util::redact::need_redact());
-        vars.globals.replace_from(&scratch);
-        assert!(tidb_util::redact::need_redact());
-
-        vars.set_global("tidb_redact_log", "OFF".to_owned())
-            .unwrap();
-        assert!(!tidb_util::redact::need_redact());
-
-        vars.globals
-            .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
-        assert!(tidb_util::redact::need_redact());
-        vars.globals.reset("tidb_redact_log").unwrap();
-    }
-
-    /// Go `TestValidateInternalSessionVariable`: explicit session writes hide
-    /// internal variables, while a GLOBAL-only variable reports its scope.
-    #[test]
-    fn internal_session_variable_rejects_explicit_set_like_go() {
-        let mut vars = SessionVars::new();
-        assert!(matches!(
-            vars.set_system("tidb_redact_log", "ON".to_owned()),
-            Err(VarError::UnknownSystemVariable(name)) if name == "tidb_redact_log"
-        ));
-        let instance_error = vars
-            .set_system("tidb_instance_plan_cache_max_size", "1".to_owned())
-            .expect_err("instance plan cache max size is GLOBAL-only");
-        assert!(matches!(
-            instance_error,
-            VarError::GlobalOnlyVariable(name)
-                if name == "tidb_instance_plan_cache_max_size"
-        ));
-    }
-
-    /// Go `TestInstanceScope`: instance-scoped variables have no SESSION
-    /// hooks, accept typed values through the INSTANCE route, and expose the
-    /// node-local value to subsequent reads without touching SESSION state.
-    #[test]
-    fn instance_scope_routes_and_metadata_match_go() {
-        for definition in crate::sysvar::SYS_VARS {
-            if definition.has_instance_scope() {
-                assert!(
-                    !definition.has_session_scope(),
-                    "instance variable {} must not expose SESSION hooks",
-                    definition.name
-                );
-            }
-        }
-
-        let mut vars = SessionVars::new();
-        assert_eq!(vars.get_system("tidb_general_log").unwrap(), "OFF");
-        vars.set_instance("tidb_general_log", "oN".to_owned())
-            .unwrap();
-        assert_eq!(vars.get_system("tidb_general_log").unwrap(), "ON");
-        assert!(matches!(
-            vars.set_system("tidb_general_log", "OFF".to_owned()),
-            Err(VarError::GlobalOnlyVariable(name)) if name == "tidb_general_log"
-        ));
-    }
-
-    #[test]
-    fn global_memory_arbitration_settings_update_the_running_process_authority() {
-        struct NoopRecorder;
-
-        impl tidb_util::memory::RecordMemState for NoopRecorder {
-            fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
-                Ok(None)
-            }
-
-            fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
-                Ok(())
-            }
-        }
-
-        let arbitrator =
-            tidb_util::memory::MemArbitrator::new(1 << 30, 4, 4, 64 << 10, Box::new(NoopRecorder));
-        let _registration = tidb_util::memory::install_process_arbitrator(&arbitrator);
-        let globals = GlobalSysvars::new();
-        // Every cache rebuild runs each GLOBAL variable's SetGlobal hook, as
-        // Go's `rebuildSysVarCache` does, so the server limit the arbitrator
-        // was built with is stored as the global value first; its registry
-        // value (80% of the host memory) would otherwise be applied.
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
-                "1GiB".to_owned(),
-            )
-            .unwrap();
-        assert_eq!(arbitrator.limit_u64(), 1 << 30);
-
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE,
-                "priority".to_owned(),
-            )
-            .unwrap();
-        assert_eq!(
-            arbitrator.work_mode(),
-            tidb_util::memory::ArbitratorWorkMode::Priority
-        );
-
-        globals
-            .set(
-                tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT,
-                "0.5".to_owned(),
-            )
-            .unwrap();
-        assert_eq!(arbitrator.soft_limit(), 512 << 20);
-
-        globals
-            .set_instance(
-                tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
-                "2GiB".to_owned(),
-            )
-            .unwrap();
-        assert_eq!(arbitrator.limit_u64(), 2 << 30);
-
-        globals
-            .reset(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE)
-            .unwrap();
-        assert_eq!(
-            arbitrator.work_mode(),
-            tidb_util::memory::ArbitratorWorkMode::Disable
-        );
-    }
-
-    #[test]
-    fn set_global_on_a_session_only_variable_is_1228() {
-        let mut vars = SessionVars::new();
-        // `error_count` is SESSION-only (scope 2): Go's `ErrLocalVariable`.
-        assert_eq!(
-            vars.set_global("debug_sync", "x".to_owned()),
-            Err(VarError::SessionOnlyVariable("debug_sync".to_owned()))
-        );
-    }
-
-    #[test]
-    fn replacing_a_cluster_global_image_preserves_instance_only_values() {
-        // Loading or replacing a whole GLOBAL table republishes the process
-        // switches; the tests that assert on them run apart from this one.
-        let _serialised = process_switch_tests();
-        let globals = GlobalSysvars::new();
-        globals
-            .set_instance("tidb_general_log", "ON".to_owned())
-            .expect("the instance-only variable sets");
-        globals
-            .set("autocommit", "OFF".to_owned())
-            .expect("the old global override sets");
-
-        let fresh = GlobalSysvars::from_cluster_rows([(
-            "require_secure_transport".to_owned(),
-            "ON".to_owned(),
-        )]);
-        globals.replace_from(&fresh);
-
-        assert_eq!(globals.get("tidb_general_log").as_deref(), Ok("ON"));
-        assert_eq!(globals.get("require_secure_transport").as_deref(), Ok("ON"));
-        assert_eq!(globals.get("autocommit").as_deref(), Ok("ON"));
-    }
-
-    #[test]
-    fn set_session_on_a_global_only_variable_is_1229() {
-        let mut vars = SessionVars::new();
-        // `default_password_lifetime` is GLOBAL-only (scope 1): Go's
-        // `ErrGlobalVariable`.
-        assert_eq!(
-            vars.set_system("default_password_lifetime", "5".to_owned()),
-            Err(VarError::GlobalOnlyVariable(
-                "default_password_lifetime".to_owned()
-            ))
-        );
-    }
-
-    #[test]
-    fn reading_global_on_a_session_only_variable_is_1238() {
-        let vars = SessionVars::new();
-        assert_eq!(
-            vars.get_global("debug_sync"),
-            Err(VarError::NoGlobalCopy("debug_sync".to_owned()))
-        );
-    }
-
-    #[test]
-    fn a_new_session_inherits_the_global_but_a_live_session_does_not() {
-        let globals = GlobalSysvars::new();
-
-        // A session already open BEFORE the GLOBAL changes keeps its own
-        // value -- MySQL's rule that the session copy is made once, at
-        // connect.
-        let mut live = SessionVars::new();
-        live.seed_from_globals(globals.clone()).unwrap();
-        globals.set("autocommit", "OFF".to_owned()).unwrap();
-        assert_eq!(live.get_system("autocommit").unwrap(), "ON");
-
-        // `SET GLOBAL` again, then a brand NEW session opens: it inherits
-        // the value that was live at ITS connect time.
-        globals.set("autocommit", "OFF".to_owned()).unwrap();
-        let mut fresh = SessionVars::new();
-        fresh.seed_from_globals(globals).unwrap();
-        assert_eq!(fresh.get_system("autocommit").unwrap(), "OFF");
-
-        // Neither session's inherited copy is the live table: further
-        // session-only `SET` traffic on one does not leak to the other.
-        live.set_system("autocommit", "OFF".to_owned()).unwrap();
-        fresh.set_system("autocommit", "ON".to_owned()).unwrap();
-        assert_eq!(live.get_system("autocommit").unwrap(), "OFF");
-        assert_eq!(fresh.get_system("autocommit").unwrap(), "ON");
-    }
-}
 
 /// Go parseTSFromNumberOrTime; tx_read_ts deliberately permits datetime syntax only.
 pub fn parse_read_timestamp(
@@ -4759,166 +2124,6 @@ pub fn parse_read_timestamp(
     Ok((instant.timestamp_millis() as u64) << 18)
 }
 
-#[cfg(test)]
-mod pd_region_batch_tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    #[derive(Debug, Default)]
-    struct Policy(AtomicBool);
-    impl PdRegionPolicy for Policy {
-        fn set_follower_handle(&self, value: bool) {
-            self.0.store(value, Ordering::SeqCst);
-        }
-    }
-
-    /// Records the concurrency Go's `opt.TSOClientRPCConcurrency` would carry.
-    #[derive(Debug, Default)]
-    struct ConcurrencyPolicy(std::sync::atomic::AtomicIsize);
-    impl PdRegionPolicy for ConcurrencyPolicy {
-        fn set_follower_handle(&self, _value: bool) {}
-        fn set_tso_rpc_concurrency(&self, concurrency: isize) {
-            self.0.store(concurrency, Ordering::SeqCst);
-        }
-    }
-
-    /// Go maps the `tidb_tso_client_rpc_mode` enum onto a concurrency and
-    /// sends THAT to the PD client (`pkg/domain/domain_sysvars.go:92-106`):
-    /// `DEFAULT` 1, `PARALLEL` 2, `PARALLEL-FAST` 4. The variable's text
-    /// never reaches the client, so a node that stored the string without
-    /// mapping it left the option at its compiled default forever -- the
-    /// shape this pins against.
-    #[test]
-    fn tso_client_rpc_mode_publishes_gos_mapped_concurrency() {
-        let globals = GlobalSysvars::default();
-        let policy = Arc::new(ConcurrencyPolicy::default());
-        let name = tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE;
-        globals.set_pd_region_policy(policy.clone());
-        assert_eq!(
-            policy.0.load(Ordering::SeqCst),
-            1,
-            "installation publishes Go's DEFAULT concurrency"
-        );
-        globals.set(name, "PARALLEL".to_owned()).unwrap();
-        assert_eq!(policy.0.load(Ordering::SeqCst), 2);
-        globals.set(name, "PARALLEL-FAST".to_owned()).unwrap();
-        assert_eq!(policy.0.load(Ordering::SeqCst), 4);
-        globals.set(name, "DEFAULT".to_owned()).unwrap();
-        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
-        // Go's enum validator refuses anything else before the mapping runs,
-        // so a rejected write leaves the published concurrency untouched.
-        globals.set(name, "PARALLEL-SLOW".to_owned()).unwrap_err();
-        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
-        // A missing cluster row restores Go's own default, as the sibling
-        // PD options do.
-        globals.set(name, "PARALLEL".to_owned()).unwrap();
-        globals.reset(name).unwrap();
-        assert_eq!(policy.0.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn pd_region_batch_concurrent_publication_keeps_the_latest_value() {
-        use std::sync::{mpsc, Mutex};
-        use std::time::Duration;
-        #[derive(Debug)]
-        struct BlockingPolicy {
-            value: AtomicBool,
-            block: AtomicBool,
-            entered: mpsc::Sender<()>,
-            release: Mutex<mpsc::Receiver<()>>,
-        }
-        impl PdRegionPolicy for BlockingPolicy {
-            fn set_follower_handle(&self, value: bool) {
-                if value && self.block.swap(false, Ordering::SeqCst) {
-                    self.entered.send(()).unwrap();
-                    self.release.lock().unwrap().recv().unwrap();
-                }
-                self.value.store(value, Ordering::SeqCst);
-            }
-        }
-        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
-        let globals = GlobalSysvars::default();
-        globals.set(name, "OFF".to_owned()).unwrap();
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let policy = Arc::new(BlockingPolicy {
-            value: AtomicBool::new(false),
-            block: AtomicBool::new(true),
-            entered: entered_tx,
-            release: Mutex::new(release_rx),
-        });
-        globals.set_pd_region_policy(policy.clone());
-        let first_globals = globals.clone();
-        let first = std::thread::spawn(move || first_globals.set(name, "ON".to_owned()).unwrap());
-        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let second_globals = globals.clone();
-        let (done_tx, done_rx) = mpsc::channel();
-        let second = std::thread::spawn(move || {
-            second_globals.set(name, "OFF".to_owned()).unwrap();
-            done_tx.send(()).unwrap();
-        });
-        // A correct publication lock keeps the second callback behind the
-        // first. The old unlocked callback lets OFF complete before stale ON.
-        let _ = done_rx.recv_timeout(Duration::from_millis(100));
-        release_tx.send(()).unwrap();
-        first.join().unwrap();
-        second.join().unwrap();
-        assert_eq!(globals.get(name).unwrap(), "OFF");
-        assert!(!policy.value.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn pd_region_batch_setting_default_commit_reload_and_reset() {
-        let globals = GlobalSysvars::default();
-        let policy = Arc::new(Policy::default());
-        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
-        globals.set_pd_region_policy(policy.clone());
-        assert!(policy.0.load(Ordering::SeqCst));
-        globals.set(name, "OFF".to_owned()).unwrap();
-        assert!(!policy.0.load(Ordering::SeqCst));
-        let scratch = GlobalSysvars::from_cluster_rows([(name.to_owned(), "OFF".to_owned())]);
-        scratch.set_pd_region_policy(policy.clone());
-        scratch.set(name, "ON".to_owned()).unwrap();
-        assert!(
-            !policy.0.load(Ordering::SeqCst),
-            "uncommitted validation must not publish"
-        );
-        globals.replace_from(&scratch);
-        assert!(policy.0.load(Ordering::SeqCst));
-        globals.replace_from(&GlobalSysvars::from_cluster_rows([]));
-        assert!(
-            policy.0.load(Ordering::SeqCst),
-            "missing row restores Go default"
-        );
-        globals.set(name, "OFF".to_owned()).unwrap();
-        globals.reset(name).unwrap();
-        assert!(policy.0.load(Ordering::SeqCst));
-        assert!(globals.set(name, "invalid".to_owned()).is_err());
-        assert!(policy.0.load(Ordering::SeqCst));
-        // Go `variable.SetSysVar` replaces only the registry value: a stored
-        // row still wins, and the replaced value is what a missing row
-        // serves.
-        globals.set(name, "ON".to_owned()).unwrap();
-        globals.set_startup(name, "OFF".to_owned());
-        assert!(policy.0.load(Ordering::SeqCst));
-        globals.reset(name).unwrap();
-        assert!(!policy.0.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn pd_region_batch_changed_name_publication_preserves_other_settings() {
-        let globals = GlobalSysvars::default();
-        let policy = Arc::new(Policy(AtomicBool::new(true)));
-        let name = tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
-        globals.set_pd_region_policy(policy.clone());
-        let scratch = GlobalSysvars::from_cluster_rows([(name.to_owned(), "OFF".to_owned())]);
-        globals.publish_global_changes_from(&scratch, &[name.to_owned()]);
-        assert!(!policy.0.load(Ordering::SeqCst));
-        globals.set("max_connections", "333".to_owned()).unwrap();
-        assert!(!policy.0.load(Ordering::SeqCst));
-        assert_eq!(globals.get("max_connections").unwrap(), "333");
-    }
-}
 
 /// Go `variable.GlobalSystemVariableInitialValue(sv.Name, sv.Value)`: the
 /// value bootstrap seeds into `mysql.global_variables` and `SET x = DEFAULT`
@@ -4942,7 +2147,7 @@ pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
 
 /// Go's `GetGlobal` hooks that report something other than the stored text:
 /// an LDAP bind password reads back as `vardef.MaskPwd` once it is set.
-fn global_get_hook(name: &str, value: String) -> String {
+pub fn global_get_hook(name: &str, value: String) -> String {
     match name {
         "authentication_ldap_sasl_bind_root_pwd" | "authentication_ldap_simple_bind_root_pwd"
             if !value.is_empty() =>

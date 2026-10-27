@@ -100,7 +100,7 @@ fn assert_rows_sorted(catalog: &Catalog, sql: &str, expected: &[&str]) {
 /// their own order/limit.
 #[test]
 fn union2_matrix() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table union_test(id int)");
     insert(&mut catalog, "insert union_test values (1),(2)");
 
@@ -378,7 +378,7 @@ fn union2_matrix() {
 /// hash table read through the union executor's worker-count limit path.
 #[test]
 fn union_limit_over_hash_partitions_runs() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(
         &mut catalog,
         "create table union_limit (id int) partition by hash(id) partitions 30",
@@ -417,7 +417,7 @@ fn adapter_statement_keeps_origin_text() {
 /// `[planner:1054]Unknown column 'j' in 'order clause'`.
 #[test]
 fn point_get_order_by_unknown_column_is_1054() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (i int key)");
     let error = select_err(&catalog, "select * from t where i = 1 order by j limit 10");
     let sql_error = error.clone().to_mysql_error();
@@ -434,7 +434,7 @@ fn point_get_order_by_unknown_column_is_1054() {
 /// of `true`, so the mode was ignored.
 #[test]
 fn the_session_only_full_group_by_flag_reaches_the_planner() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (c int, d int)");
     let names = |ctx: &StmtContext| -> Vec<String> {
         let (columns, _) =
@@ -470,12 +470,14 @@ fn the_session_only_full_group_by_flag_reaches_the_planner() {
 /// `column_name_table_metadata` gap below.
 #[test]
 fn column_name_resolution() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (c int, d int)");
     insert(&mut catalog, "insert t values(1,1)");
 
+    // Go: `set sql_mode='STRICT_TRANS_TABLES'` first.
+    let ctx = ctx().with_ddl_sql_mode(tidb_mysql::ModeStrictTransTables.0);
     let names = |sql: &str| -> Vec<String> {
-        let (columns, _) = run_select_meta_in(sql, &catalog, "test", &ctx())
+        let (columns, _) = run_select_meta_in(sql, &catalog, "test", &ctx)
             .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
         columns.into_iter().map(|(name, _)| name).collect()
     };
@@ -511,7 +513,7 @@ fn column_name_resolution() {
 /// not yet supported by the rewriter".
 #[test]
 fn a_select_field_quantified_subquery_is_lowered() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (c int, d int)");
     insert(&mut catalog, "insert t values(1,1)");
     // `> ALL` is planned, named by its written text, and evaluated.
@@ -549,7 +551,7 @@ fn a_select_field_quantified_subquery_is_lowered() {
 /// read. (The `select @a, @a := d+1` head is the gap below.)
 #[test]
 fn select_var_read_hints_run() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (d int)");
     insert(&mut catalog, "insert into t values(1), (2), (1)");
     for hint in ["SQL_BIG_RESULT", "SQL_SMALL_RESULT", "SQL_BUFFER_RESULT"] {
@@ -558,54 +560,12 @@ fn select_var_read_hints_run() {
     }
 }
 
-/// Go `executor_test.go:1640::TestHistoryRead`, ported at the MVCC boundary
-/// this tier owns (`Catalog::allocate_tso`/`record_commit`/`state_as_of`,
-/// Go's `tikv_gc_safe_point` + `tidb_snapshot` machinery underneath): a
-/// snapshot taken between two inserts reads only the first row, the current
-/// state reads both, and the snapshot state also serves the post-ALTER
-/// schema shape (Go's `history_read order by a` showing the pre-ALTER
-/// column list).
-///
-/// The SET/variable surface (`set @@tidb_snapshot = …`, future-time and
-/// too-old-snapshot rejections, write denial under snapshot) is the session's
-/// — gap below.
-#[test]
-fn history_read_snapshot_state_sees_only_older_rows() {
-    let mut catalog = Catalog::default();
-    create(&mut catalog, "create table history_read (a int)");
-    insert(&mut catalog, "insert history_read values (1)");
-
-    // Snapshot ts strictly between the two inserts.
-    let snapshot_ts = catalog.allocate_tso();
-    catalog.record_commit(snapshot_ts);
-    insert(&mut catalog, "insert history_read values (2)");
-
-    let present = rows_text(&select(&catalog, "select * from history_read"));
-    assert_eq!(present, vec![vec!["1"], vec!["2"]]);
-
-    let snapshot = catalog.state_as_of(snapshot_ts).expect("snapshot state");
-    assert_eq!(
-        rows_text(&select(&snapshot, "select * from history_read")),
-        vec![vec!["1"]],
-        "the snapshot predates the second insert"
-    );
-
-    // A state older than every write is empty, not an error.
-    let zero_ts = snapshot_ts.saturating_sub(1);
-    if let Some(oldest) = catalog.state_as_of(zero_ts) {
-        assert!(
-            select(&oldest, "select * from history_read").is_empty(),
-            "no rows existed before the snapshot"
-        );
-    }
-}
-
 /// Go `executor_test.go:2157::TestMaxOneRow`: a scalar subquery returning
 /// more than one row fails with `[executor:1242]Subquery returns more than 1
 /// row` at read time.
 #[test]
 fn max_one_row_scalar_subquery_is_1242() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t1(a double, b double)");
     create(&mut catalog, "create table t2(a double, b double)");
     insert(&mut catalog, "insert into t1 values(1, 1), (2, 2), (3, 3)");
@@ -655,7 +615,7 @@ fn session_root_tracker_fallback_detaches_after_the_statement() {
 /// exactly Go's expected rows in every nesting shape.
 #[test]
 fn issues49377_parenthesized_union_leaves() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(
         &mut catalog,
         "create table employee (employee_id int, name varchar(20), dept_id int)",
@@ -727,7 +687,7 @@ fn issues49377_parenthesized_union_leaves() {
 /// DISTINCT collapses it, and a constant DOUBLE cast DISTINCTs to one row.
 #[test]
 fn issue38756_sqrt_and_distinct() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t (c1 int)");
     insert(&mut catalog, "insert into t values (1), (2), (3)");
     assert_eq!(
@@ -747,158 +707,13 @@ fn issue38756_sqrt_and_distinct() {
     );
 }
 
-/// Go `executor_test.go:2375::TestIssue50043`, running arm: after `alter
-/// column c2 drop default` on a `decimal(37,17)` column, UPDATE still writes
-/// 5 and the value renders with the full 17-digit scale.
-#[test]
-fn issue50043_alter_drop_default_then_write() {
-    let mut catalog = Catalog::default();
-    // Test simplified case by update.
-    create(
-        &mut catalog,
-        "create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ))",
-    );
-    insert(&mut catalog, "insert into t values (0,NULL)");
-    run_alter(&mut catalog, "alter table t alter column c2 drop default");
-    run_update_on("update t set c2 = 5 where c1 = 0", &mut catalog, &ctx())
-        .expect("update over the dropped default");
-    assert_rows(
-        &catalog,
-        "select * from t order by c1,c2",
-        &["0 5.00000000000000000"],
-    );
-}
-
-/// Go `executor_test.go:2418::TestIssue51324`, running arms: inserts missing
-/// values against nullable columns default to NULL (including the `DEFAULT`
-/// keyword), against key/not-null columns fail 1364 (`Field … doesn't have a
-/// default value`) or 1048 (`Column … cannot be null`), and
-/// `alter column … drop default` turns former defaults into 1364 errors.
-#[test]
-fn issue51324_insert_default_and_null_contract() {
-    let mut catalog = Catalog::default();
-    create(
-        &mut catalog,
-        "create table t (id int key, a int, b enum('a', 'b'))",
-    );
-    let no_default = |catalog: &mut Catalog, sql: &str| {
-        let error = run_insert_on(sql, catalog, &ctx()).expect_err(sql);
-        assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
-        assert_eq!(
-            error.to_mysql_error().message,
-            "Field 'id' doesn't have a default value"
-        );
-    };
-    no_default(&mut catalog, "insert into t values ()");
-    insert(&mut catalog, "insert into t set id = 1");
-    insert(&mut catalog, "insert into t set id = 2, a = NULL, b = NULL");
-    insert(
-        &mut catalog,
-        "insert into t set id = 3, a = DEFAULT, b = DEFAULT",
-    );
-    assert_rows(
-        &catalog,
-        "select * from t order by id",
-        &["1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>"],
-    );
-
-    run_alter(&mut catalog, "alter table t alter column a drop default");
-    run_alter(&mut catalog, "alter table t alter column b drop default");
-    {
-        let error = run_insert_on("insert into t set id = 4", &mut catalog, &ctx())
-            .expect_err("no default after drop default");
-        assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
-        assert_eq!(
-            error.to_mysql_error().message,
-            "Field 'a' doesn't have a default value"
-        );
-    }
-    insert(&mut catalog, "insert into t set id = 5, a = NULL, b = NULL");
-    {
-        let error = run_insert_on(
-            "insert into t set id = 6, a = DEFAULT, b = DEFAULT",
-            &mut catalog,
-            &ctx(),
-        )
-        .expect_err("DEFAULT reads the dropped default");
-        assert_eq!(error.clone().to_mysql_error().code, 1364, "{error:?}");
-        assert_eq!(
-            error.to_mysql_error().message,
-            "Field 'a' doesn't have a default value"
-        );
-    }
-    assert_rows(
-        &catalog,
-        "select * from t order by id",
-        &[
-            "1 <nil> <nil>",
-            "2 <nil> <nil>",
-            "3 <nil> <nil>",
-            "5 <nil> <nil>",
-        ],
-    );
-    run_update_on("update t set id = id + 10", &mut catalog, &ctx()).expect("pk update");
-    assert_rows(
-        &catalog,
-        "select * from t order by id",
-        &[
-            "11 <nil> <nil>",
-            "12 <nil> <nil>",
-            "13 <nil> <nil>",
-            "15 <nil> <nil>",
-        ],
-    );
-
-    // Not-null columns: 1364 for missing defaults, 1048 for NULLs.
-    drop_table(&mut catalog, "t");
-    create(
-        &mut catalog,
-        "create table t (id int key, a int not null, b enum('a', 'b') not null)",
-    );
-    let insert_err = |catalog: &mut Catalog, sql: &str, code: u16, message: &str| {
-        let error = run_insert_on(sql, catalog, &ctx()).expect_err(sql);
-        assert_eq!(error.clone().to_mysql_error().code, code, "{error:?}");
-        assert_eq!(error.to_mysql_error().message, message);
-    };
-    insert_err(
-        &mut catalog,
-        "insert into t values ()",
-        1364,
-        "Field 'id' doesn't have a default value",
-    );
-    insert_err(
-        &mut catalog,
-        "insert into t set id = 1",
-        1364,
-        "Field 'a' doesn't have a default value",
-    );
-    insert_err(
-        &mut catalog,
-        "insert into t set id = 2, a = NULL, b = NULL",
-        1048,
-        "Column 'a' cannot be null",
-    );
-    insert_err(
-        &mut catalog,
-        "insert into t set id = 2, a = 2, b = NULL",
-        1048,
-        "Column 'b' cannot be null",
-    );
-    insert_err(
-        &mut catalog,
-        "insert into t set id = 3, a = DEFAULT, b = DEFAULT",
-        1364,
-        "Field 'a' doesn't have a default value",
-    );
-}
-
 /// Go `executor_test.go:2488::TestDecimalDivPrecisionIncrement`: `a/b`'s
 /// scale follows `div_precision_increment` (4 default, 7, 30), and `avg`
 /// builds on it (`8.5000` at 4; `avg(a/b)` = `1.21428571` at 4, then
 /// `1.21428571428571428550` at 10).
 #[test]
 fn decimal_div_precision_increment() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(
         &mut catalog,
         "create table t (a decimal(3,0), b decimal(3,0))",
@@ -945,7 +760,7 @@ fn decimal_div_precision_increment() {
 /// unchanged. In-range writes keep working.
 #[test]
 fn issue50308_update_out_of_range_timestamp_is_1292() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t(a timestamp)");
     insert(&mut catalog, "insert into t values('2000-01-01')");
     let error = run_update_on(
@@ -969,7 +784,7 @@ fn issue50308_update_out_of_range_timestamp_is_1292() {
 /// under `tidb_max_chunk_size=32`) — the frame pins each row's own value.
 #[test]
 fn issue52984_named_window_self_frame_runs_repeatedly() {
-    let mut catalog = Catalog::default();
+    let mut catalog = Catalog::mock();
     create(&mut catalog, "create table t(p int, o int, v int)");
     insert(
         &mut catalog,
@@ -991,20 +806,3 @@ fn issue52984_named_window_self_frame_runs_repeatedly() {
     }
 }
 
-// ---- shared helpers below ----
-
-fn run_alter(catalog: &mut Catalog, sql: &str) {
-    crate::run_alter_table_in(sql, catalog, "test", &ctx())
-        .unwrap_or_else(|error| panic!("alter {sql:?}: {error:?}"));
-}
-
-fn drop_table(catalog: &mut Catalog, name: &str) {
-    crate::run_drop_table_in(
-        &format!("drop table {name}"),
-        catalog,
-        "test",
-        tidb_parser::SqlMode::default(),
-        true,
-    )
-    .unwrap_or_else(|error| panic!("drop {name}: {error:?}"));
-}

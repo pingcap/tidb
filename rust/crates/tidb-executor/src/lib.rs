@@ -48,6 +48,8 @@ pub mod concurrent_entry_map;
 pub use tidb_util::execdetails;
 pub mod sessionctx;
 pub mod show;
+pub mod compact_table;
+pub mod set;
 pub mod simple;
 pub mod join_stats;
 pub mod index_lookup_stats;
@@ -84,27 +86,39 @@ pub fn worker_pool_available() -> bool {
     worker_pool::available()
 }
 pub mod agg_spill;
+pub mod aggfuncs;
 pub mod analyze;
 pub mod apply;
 pub(crate) mod apply_cache;
 mod approx_count_distinct;
-pub(crate) mod bad_null;
-pub mod cluster_storage;
-pub mod column_default;
+pub(crate) use tidb_table::bad_null;
+#[cfg(test)]
+mod tests_bad_null;
+pub use tidb_kv::cluster_storage;
+#[cfg(test)]
+mod tests_cluster_storage;
+pub use tidb_table::column_default;
 pub mod cte_storage;
 pub mod ddl;
-pub mod ddl_label;
 pub mod ddl_sequence;
-pub mod deadlock_history;
+pub use tidb_deadlockhistory as deadlock_history;
+pub mod cop_reader;
+pub mod mpp_coordinator;
+#[cfg(test)]
+pub(crate) mod test_region;
+pub mod dag_request;
 pub mod driver;
+pub mod wide_scan_selection;
 pub mod executor;
 pub mod explain;
-pub mod expression_index;
+pub use tidb_ddl_build::expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
 pub use tidb_distsql::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
-pub mod generated_column;
+pub use tidb_ddl_build::generated_column;
+#[cfg(test)]
+mod tests_generated_column_ddl;
 pub(crate) mod handle_range;
 pub use handle_range::split_ranges_across_int64_boundary;
 pub mod hash_agg;
@@ -112,25 +126,27 @@ pub mod hash_agg;
 mod hash_agg_spill_tests;
 mod hash_join;
 pub mod index_merge_reader;
-mod index_prefix_cut;
 pub mod join;
 pub mod joiner;
 pub mod import_into_options;
-pub mod keydecoder;
+pub use tidb_keydecoder as keydecoder;
 pub mod kv_table;
-pub mod label_manager;
 pub mod limit;
 pub mod load_data;
 pub mod load_stats;
 pub mod max_one_row;
-pub mod mem_quota;
+pub use tidb_kv::mem_quota;
+#[cfg(test)]
+mod tests_mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
 pub mod mem_table_retrieval;
-mod mpp_query;
+use tidb_kv::mpp_query;
+#[cfg(test)]
+mod tests_mpp_query;
 pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
-pub mod partition_routing;
+pub use tidb_table::partition_routing;
 pub mod phase_durations;
 mod physical_cte;
 pub mod select_lock;
@@ -140,20 +156,6 @@ mod tests_aggfuncs_approx_pushdown_source;
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
 mod tests_batch_point_get_temporary_source;
-#[cfg(test)]
-mod tests_ddl_b100_source;
-#[cfg(test)]
-mod tests_ddl_db_change_states;
-#[cfg(test)]
-mod tests_ddl_masking_policy_ddl_gaps;
-#[cfg(test)]
-mod tests_ddl_modify_column_types;
-#[cfg(test)]
-mod tests_ddl_multi_schema_change_sql;
-#[cfg(test)]
-mod tests_ddl_partition_operations_sql;
-#[cfg(test)]
-mod tests_ddl_table_cache;
 #[cfg(test)]
 mod tests_insert_auto_random_id_source;
 #[cfg(test)]
@@ -194,7 +196,7 @@ pub mod projection;
 mod pushdown_blacklist;
 pub mod remote_scan;
 pub mod selection;
-pub mod sequence;
+pub use tidb_table::sequence;
 pub mod show_stats;
 pub mod shuffle;
 pub mod sort;
@@ -203,7 +205,7 @@ pub mod sort_util;
 pub mod statement_pushdown;
 pub mod stats_lock;
 mod stmt_context;
-pub mod storage;
+pub use tidb_kv::storage;
 pub mod table_access;
 pub mod table_dual;
 mod table_sample;
@@ -230,23 +232,12 @@ pub mod union_scan;
 pub(crate) mod vec_group_checker;
 pub mod view;
 pub mod window;
-pub mod zero_date;
+pub use tidb_table::zero_date;
 
 pub use apply::ApplyExec;
 pub use cte_storage::CteStorage;
-pub use ddl::{
-    append_partition_defs, check_constraint_count, discarded_check_constraint_actions,
-    escape_identifier, linear_partitioning_warning, partition_placement_text,
-    resolve_database_charset, run_alter_placement_policy, run_alter_table_in, run_compact_table_in,
-    run_create_index_in, run_create_placement_policy, run_create_system_table_in,
-    run_create_table_in, run_create_table_on, run_drop_index_in, run_drop_placement_policy,
-    run_drop_table_in, run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
-    run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets, CreateTableSettings,
-};
-pub use ddl_sequence::{
-    alter_sequence_options, build_create_sequence, run_alter_sequence_in, run_create_sequence_in,
-    run_drop_sequence_in, show_create_sequence,
-};
+pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_system_table_in, run_create_table_on, run_create_table_on_with, split_drop_table_targets, CreateTableSettings};
+pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::infoschema_meta;
@@ -269,39 +260,19 @@ pub use driver::{
     SelectMeta, TableEntry, TxnErrorKind, VarError, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
-pub use explain::{
-    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost,
-    explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt,
-    explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan,
-    explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info,
-    ExplainFormat,
-};
-pub use foreign_key::{check_index_needed, find_database_referred, find_table_referred};
-pub use hash_agg::{
-    AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec,
-};
+pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info, ExplainFormat};
+pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec};
 pub use join::{JoinExec, JoinKind};
-pub use kv_table::{
-    DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex,
-    KvTable, RowDecodeContext, RowDecoder, TableCharset, TableHandle, TableScanExec,
-    TemporaryTableTxnData,
-};
+pub use kv_table::{DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex, KvTable, KvTableBackfill, KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContext, RowDecodeContextExt, RowDecoder, TableCharset, TableHandle, TableScanExec, TemporaryTableTxnData};
 pub use limit::LimitExec;
 pub use mem_quota::{OomAction, SessionMemory, StatementCancellation, StatementMemory};
 pub use mem_table::MemTableSourceExec;
 pub use mpp_query::MppQueryInfo;
-pub use predicate_pushdown::{
-    PushedScanFilter, ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
-};
+pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate};
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use stmt_context::{
-    DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck,
-    ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan,
-    RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck,
-    SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
-};
+pub use stmt_context::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_decode_key::TidbDecodeKeySnapshot;
@@ -314,15 +285,9 @@ pub use tidb_expr::builtin_registry::builtin_list;
 pub use tidb_expr::constant_fold::take_fold_warnings;
 pub use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 pub use tidb_expr::CurrentTso;
-pub use tidb_expr::{
-    eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError,
-    JsonError, MysqlRng, SessionTimeZone,
-};
+pub use tidb_expr::{eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError, JsonError, MysqlRng, SessionTimeZone};
 pub use topn::TopNExec;
-pub use view::{
-    resolve_view_definition, run_create_view_in, run_drop_view_in,
-    view_column_list,
-};
+pub use view::{resolve_view_definition, view_column_list};
 
 #[cfg(test)]
 mod tests_admin_check_admintest_source;

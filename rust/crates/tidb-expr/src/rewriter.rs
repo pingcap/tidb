@@ -1977,6 +1977,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         | Expr::Null
         | Expr::ParamMarker { .. }
         | Expr::String(_)
+        | Expr::RawString(_)
         | Expr::Decimal(_)
         | Expr::Hex(_)
         | Expr::Bit(_)
@@ -2071,6 +2072,10 @@ fn rewrite_leaf_literal(
             Datum::Null,
             result_type::null_literal_type(),
         ))),
+        // Go `ast.NewValueExpr(value, "", "")`, a value the parser built
+        // rather than a SQL literal (`SET NAMES`' charset): no introducer
+        // and no connection charset.
+        Expr::RawString(text) => Ok(constant_string(text)),
         Expr::String(text) => {
             // The literal's exact bytes: a client byte that is not UTF-8
             // travels in the text as its `raw_bytes` escape.

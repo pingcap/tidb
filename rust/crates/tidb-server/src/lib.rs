@@ -28,7 +28,7 @@
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
-pub use tidb_ddl::bootstrap_publish;
+pub use tidb_exec::bootstrap_publish;
 pub use tidb_session::domain::cluster_account_seam;
 pub use tidb_session::domain::cluster_analyze_seam;
 pub use tidb_session::domain::cluster_auto_id_seam;
@@ -62,7 +62,6 @@ pub(crate) use tidb_session::domain::secure_transport;
 pub mod server_metrics;
 pub use tidb_session::domain::serverinfo_etcd;
 pub(crate) use tidb_session::domain::session_transaction;
-pub(crate) use tidb_session::domain::set_global_vars;
 mod shutdown_signal;
 pub mod signal_exit;
 pub(crate) use tidb_session::domain::session_api;
@@ -77,7 +76,6 @@ mod domain_test_support;
 mod production_replay;
 mod sql_node;
 mod status_transport;
-pub(crate) use tidb_session::domain::unistore_node;
 pub use tidb_session::domain::wire_status;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
@@ -109,6 +107,7 @@ pub use handshake::{
     HandshakeResponseHeader, InitialHandshake, DEFAULT_CONNECT_ATTRS_SIZE,
 };
 pub use handshake_response::{HandshakeResponse41, WireString};
+pub use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
 pub use mysql_connection::{
     serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,
     ConnectionExit, ConnectionReport, MysqlConnectionError,

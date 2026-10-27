@@ -1,0 +1,37 @@
+[package]
+name = "tidb-sessionstates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB sessionctx/sessionstates: the session state a migration carries (Rust rewrite)."
+
+[dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true }
+fail = { version = "0.4", optional = true }
+openssl = "0.10.81"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-util = { path = "../tidb-util" }
+x509-parser = { version = "=0.18.1", default-features = false }
+
+[dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
+tempfile = { workspace = true }
+# The package's own failpoints, on in its test build.
+tidb-sessionstates = { path = ".", features = ["failpoints"] }
+
+[features]
+# Test-only fault injection (`fail::fail_point!`), as tidb-txnkv's.
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[lints]
+workspace = true

@@ -205,7 +205,7 @@ pub fn from_binary(
     if !cannot_convert_string_as_warning {
         return Err(EvalError::Conversion(error));
     }
-    ctx.append_warning(3854, error.message());
+    ctx.append_error_warning(&error.to_sql_error());
     if ctx.strict_sql_mode() {
         return Ok(Datum::Null);
     }

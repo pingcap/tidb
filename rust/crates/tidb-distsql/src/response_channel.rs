@@ -31,14 +31,14 @@ use std::time::Duration;
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tikv_client::util::{ScanDetail, TimeDetail};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
 use super::distsql_runtime::{LimiterWaitStats, SelectResultMetadata, SelectResultRuntimeStats};
 use super::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+pub use tidb_txnkv::{RequestStatsSample, ResponseRuntimeStats};
 use super::select_iter::SelectResultRow;
-use super::warning::{Warning, WarningCollector, WarningLevel};
+use crate::{Warning, WarningCollector, WarningLevel};
 
 /// One already-owned event from a response stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,49 +60,6 @@ pub enum ResponseChannelEvent<T> {
     /// The response source reached its end or was explicitly closed.
     Closed,
 }
-
-/// Non-protobuf CopRuntimeStats data attached to one response subset.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ResponseRuntimeStats {
-    /// TiKV callee address, which may be empty when request RPC stats exist.
-    pub callee_address: String,
-    /// Whether request stats reported a nonzero RPCStatsCount, which satisfies
-    /// the source empty-callee gate.
-    pub request_rpc_stats_present: bool,
-    /// Backoff sleep samples owned by this response subset.
-    pub backoff_sleep_ns: Vec<(String, u64)>,
-    /// Go `CopRuntimeStats.ScanDetail`: the response's `ScanDetailV2` (or the
-    /// legacy write-scan counts), `None` when TiKV sent no scan detail.
-    pub scan_detail: Option<ScanDetail>,
-    /// Go `CopRuntimeStats.TimeDetail`, merged from `TimeDetailV2` or the
-    /// legacy `TimeDetail`.
-    pub time_detail: TimeDetail,
-    /// Go `copResponse.RespTime()`: how long the task's send took
-    /// (`handleTaskOnce`'s `costTime`).
-    pub resp_time: Duration,
-    /// Go `CopRuntimeStats.ReqStats`: the physical RPCs the task's send made.
-    pub req_stats: Option<RequestStatsSample>,
-    /// Go `CopRuntimeStats.CoprCacheHit`.
-    pub copr_cache_hit: bool,
-}
-
-/// A shared `*tikv.RegionRequestRuntimeStats`, compared by identity.
-#[derive(Clone)]
-pub struct RequestStatsSample(pub Arc<tikv_client::RegionRequestRuntimeStats>);
-
-impl fmt::Debug for RequestStatsSample {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "RequestStatsSample({})", self.0)
-    }
-}
-
-impl PartialEq for RequestStatsSample {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for RequestStatsSample {}
 
 /// The statement-wide consumer of every coprocessor response a select result
 /// reads: Go's `selectResult.fetchResp` merges each response's
@@ -342,7 +299,7 @@ impl<T> ResponseChannel<T> {
     ) -> Result<(), ResponseChannelError> {
         self.push_warning(Warning {
             level,
-            class: super::warning::WarningClass::Statement,
+            class: crate::WarningClass::Statement,
             code: None,
             message: message.into(),
         })
@@ -423,7 +380,7 @@ impl<T> ResponseChannel<T> {
     }
 }
 
-impl QueryResponse for ResponseChannel<prost::bytes::Bytes> {
+impl tidb_txnkv::Response for ResponseChannel<prost::bytes::Bytes> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         match self.next_event() {
             Some(ResponseChannelEvent::Result(data)) => Ok(Some(QueryResultSubset {
@@ -451,6 +408,7 @@ impl QueryResponse for ResponseChannel<prost::bytes::Bytes> {
         ResponseChannel::close(self);
     }
 }
+
 
 enum SelectResponseSource {
     Channel(ResponseChannel<prost::bytes::Bytes>),

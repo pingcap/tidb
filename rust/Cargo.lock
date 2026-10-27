@@ -3413,6 +3413,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-autoid"
+version = "0.0.0"
+dependencies = [
+ "tidb-kv",
+ "tidb-txnkv",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-br"
 version = "0.0.0"
 dependencies = [
@@ -3432,6 +3441,46 @@ dependencies = [
  "tidb-datatype",
  "tidb-util",
  "tracing",
+]
+
+[[package]]
+name = "tidb-cluster"
+version = "0.0.0"
+dependencies = [
+ "reqwest 0.13.4",
+ "serde_json",
+ "tidb-ast",
+ "tidb-autoid",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-deadlockhistory",
+ "tidb-distsql",
+ "tidb-error",
+ "tidb-executor",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-keydecoder",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-meta",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-parser",
+ "tidb-pd-client",
+ "tidb-planner",
+ "tidb-privilege",
+ "tidb-proto",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-vardef",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]
@@ -3483,30 +3532,84 @@ dependencies = [
 name = "tidb-ddl"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "fail",
+ "reqwest 0.13.4",
  "serde_json",
  "tidb-ast",
+ "tidb-autoid",
+ "tidb-cluster",
+ "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-ddl-label",
  "tidb-ddl-logutil",
+ "tidb-ddl-notifier",
+ "tidb-ddl-resourcegroup",
  "tidb-ddl-serverstate",
+ "tidb-deadlockhistory",
+ "tidb-distsql",
  "tidb-domain",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-expr",
  "tidb-hack",
+ "tidb-keydecoder",
+ "tidb-kv",
  "tidb-log",
  "tidb-meta",
+ "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-owner",
+ "tidb-parser",
  "tidb-pd-client",
+ "tidb-placement",
+ "tidb-planner",
+ "tidb-privilege",
+ "tidb-proto",
  "tidb-schemaver",
+ "tidb-table",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
  "tidb-vardef",
  "tikv-client",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "tidb-ddl-build"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-ddl-label",
+ "tidb-domain",
+ "tidb-error",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-kv",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-ttl",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]
@@ -3521,6 +3624,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl-label"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tidb-ast",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-model",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-ddl-logutil"
 version = "0.0.0"
 dependencies = [
@@ -3532,7 +3650,8 @@ dependencies = [
 name = "tidb-ddl-mock"
 version = "0.0.0"
 dependencies = [
- "tidb-exec",
+ "tidb-cluster",
+ "tidb-ddl",
  "tidb-model",
 ]
 
@@ -3592,6 +3711,15 @@ name = "tidb-ddl-testargsv1"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-deadlockhistory"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-txnkv",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
@@ -3602,6 +3730,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
+ "tidb-mysql",
  "tidb-proto",
  "tidb-ristretto",
  "tidb-txnkv",
@@ -3623,6 +3752,8 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-config",
+ "tidb-datatype",
+ "tidb-ddl-label",
  "tidb-error",
  "tidb-log",
  "tidb-model",
@@ -3630,8 +3761,12 @@ dependencies = [
  "tidb-parser",
  "tidb-proto",
  "tidb-stats-handle-metrics",
+ "tidb-stmtsummary",
+ "tidb-tikvutil",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tidb-variable",
  "toml",
  "tracing",
 ]
@@ -3691,19 +3826,27 @@ dependencies = [
  "sha2",
  "tempfile",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-chunk",
+ "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl",
+ "tidb-ddl-build",
+ "tidb-ddl-label",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
+ "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-domain",
  "tidb-error",
  "tidb-executor",
  "tidb-expr",
  "tidb-hack",
+ "tidb-keydecoder",
+ "tidb-kv",
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",
@@ -3712,6 +3855,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-placement",
  "tidb-planner",
+ "tidb-privilege",
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
@@ -3720,6 +3864,7 @@ dependencies = [
  "tidb-stats-handle-cache",
  "tidb-stats-handle-usage",
  "tidb-sysutil",
+ "tidb-table",
  "tidb-tablecodec",
  "tidb-ttl",
  "tidb-txnkv",
@@ -3754,31 +3899,40 @@ dependencies = [
  "snap",
  "stacker",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-build",
  "tidb-ddl-session",
+ "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-error",
  "tidb-expr",
  "tidb-funcdep",
  "tidb-hack",
  "tidb-hint",
+ "tidb-keydecoder",
+ "tidb-kv",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-privilege",
  "tidb-proto",
  "tidb-resolve",
+ "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
+ "tidb-unistore",
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
@@ -3850,10 +4004,11 @@ dependencies = [
  "chrono",
  "fail",
  "serde_json",
+ "tidb-cluster",
  "tidb-codec",
  "tidb-config",
- "tidb-exec",
- "tidb-executor",
+ "tidb-ddl",
+ "tidb-ddl-label",
  "tidb-log",
  "tidb-model",
  "tidb-placement",
@@ -3884,9 +4039,35 @@ version = "0.0.0"
 dependencies = [
  "tidb-ast",
  "tidb-datatype",
+ "tidb-error",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+]
+
+[[package]]
+name = "tidb-keydecoder"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "tidb-codec",
+]
+
+[[package]]
+name = "tidb-kv"
+version = "0.0.0"
+dependencies = [
+ "smallvec",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-vardef",
+ "tikv-client",
+ "tracing",
 ]
 
 [[package]]
@@ -3942,6 +4123,7 @@ dependencies = [
  "tidb-ast",
  "tidb-config",
  "tidb-datatype",
+ "tidb-hack",
  "tidb-model",
  "tidb-mysql",
 ]
@@ -4042,6 +4224,7 @@ dependencies = [
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-datatype",
  "tidb-error",
  "tidb-expr",
@@ -4071,6 +4254,22 @@ dependencies = [
  "tidb-model",
  "tidb-parser",
  "tidb-planner",
+]
+
+[[package]]
+name = "tidb-privilege"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-hack",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-util",
 ]
 
 [[package]]
@@ -4182,8 +4381,10 @@ dependencies = [
  "sha2",
  "signal-hook",
  "subtle",
+ "tempfile",
  "tidb-ast",
  "tidb-chunk",
+ "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -4218,6 +4419,7 @@ dependencies = [
  "tidb-resourcemanager",
  "tidb-schemaver",
  "tidb-session",
+ "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle-autoanalyze-exec",
@@ -4277,10 +4479,13 @@ dependencies = [
  "subtle",
  "tidb-ast",
  "tidb-chunk",
+ "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-ddl",
+ "tidb-ddl-build",
+ "tidb-ddl-label",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
  "tidb-ddl-serverstate",
@@ -4309,12 +4514,14 @@ dependencies = [
  "tidb-pd-client",
  "tidb-placement",
  "tidb-planner",
+ "tidb-privilege",
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
  "tidb-resourcemanager",
  "tidb-ristretto",
  "tidb-schemaver",
+ "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle-autoanalyze-exec",
@@ -4341,6 +4548,28 @@ dependencies = [
  "tikv-client",
  "tokio",
  "toml",
+ "x509-parser",
+]
+
+[[package]]
+name = "tidb-sessionstates"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "fail",
+ "openssl",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-log",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-sessionstates",
+ "tidb-util",
  "x509-parser",
 ]
 
@@ -4631,6 +4860,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-table"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "crc32fast",
+ "tidb-ast",
+ "tidb-autoid",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-kv",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-tablecodec"
 version = "0.0.0"
 dependencies = [
@@ -4690,6 +4943,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "fail",
  "futures",
  "futures-timer",
  "hyper 1.10.1",
@@ -4810,16 +5064,14 @@ dependencies = [
  "serde_json",
  "tidb-config",
  "tidb-datatype",
- "tidb-distsql",
- "tidb-domain",
  "tidb-error",
  "tidb-hack",
  "tidb-model",
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",
- "tidb-stmtsummary",
- "tidb-tikvutil",
+ "tidb-sessionstates",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
 ]

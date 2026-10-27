@@ -50,7 +50,7 @@ fn table_rows(
     let TableEntry::Kv(table) = entry else {
         return Ok((None, Vec::new()));
     };
-    let table_placement = policy_placement(catalog, table.placement_policy())?;
+    let table_placement = policy_placement(catalog, table.placement_policy().as_ref())?;
     let own = table_placement
         .as_ref()
         .map(|placement| row(format!("TABLE {database}.{table_name}"), placement, PENDING));
@@ -138,7 +138,7 @@ impl Session {
                     else {
                         return Err(unknown());
                     };
-                    let table_placement = policy_placement(catalog, table.placement_policy())?;
+                    let table_placement = policy_placement(catalog, table.placement_policy().as_ref())?;
                     let placement =
                         policy_placement(catalog, definition.placement_policy.as_ref())?
                             .or(table_placement);
@@ -160,7 +160,7 @@ impl Session {
             // Go `fetchShowPlacementLabels`, whose restricted SQL fails with
             // the store-status retriever's plain error.
             tidb_ast::ShowStmtType::PlacementLabels => {
-                let store = self.with_catalog_mut(|catalog| Ok(catalog.region_store()))?;
+                let store = self.region_store();
                 crate::memtable_retrievers::show_placement_labels_rows(store.as_ref()).map_err(
                     |message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)),
                 )

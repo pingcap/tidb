@@ -31,7 +31,7 @@ use tidb_txnkv::EventCallback;
 
 use crate::{
     analyze_request_source, analyze_result_metadata, checksum_result_metadata,
-    select_result_metadata, select_with_runtime_stats, RequestSource, SelectInput,
+    select_result_metadata, select_with_runtime_stats, RequestSource, RequestType, SelectInput,
     SelectResultMetadata, TransportBinding, TransportRequest, TransportRequestError,
     WarningCollector,
 };
@@ -291,37 +291,12 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         result_context: QueryResultContext,
         runtime_stats_collector_enabled: Option<bool>,
     ) -> Result<QuerySelectResult<T::Response>, QueryRuntimeError> {
-        let bound = match dispatch.request_source_override.clone() {
-            Some(request_source) => request
-                .bind_with_request_source(TransportBinding::new(), request_source)
-                .map_err(QueryRuntimeError::Request)?,
-            None => request
-                .bind(TransportBinding::new())
-                .map_err(QueryRuntimeError::Request)?,
-        };
-        if bound
-            .request_cancellation()
-            .map_err(QueryRuntimeError::Request)?
-            .is_cancelled()
-        {
-            return Err(QueryRuntimeError::Cancelled);
-        }
-        self.transport
-            .set_event_callback(result_context.event_callback.clone());
-        let response = self.transport.send(&bound, &dispatch);
-        self.transport.set_event_callback(None);
-        // The canonical carrier has Go's post-Send ctx.Err precedence over a
-        // simultaneous transport failure or response.
-        if bound
-            .request_cancellation()
-            .map_err(QueryRuntimeError::Request)?
-            .is_cancelled()
-        {
-            return Err(QueryRuntimeError::Cancelled);
-        }
-        let response = response
-            .map_err(QueryRuntimeError::Transport)?
-            .ok_or(QueryRuntimeError::NilResponse)?;
+        let response = send_request(
+            &mut self.transport,
+            request,
+            &dispatch,
+            result_context.event_callback.clone(),
+        )?;
         Ok(QuerySelectResult::new(
             response,
             dispatch.result,
@@ -331,6 +306,135 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
             runtime_stats_collector_enabled,
         ))
     }
+}
+
+/// Go `distsql.SelectWithRuntimeStats` over `DistSQLContext.Client`:
+/// `dctx.Client.Send(kvReq)` and the select result over its response, with
+/// the reader's plan ids bound for runtime statistics. The client binds the
+/// request and owns its cancellation, as Go's `CopClient.Send` does.
+pub fn select_with_runtime_stats_over_client(
+    client: &dyn tidb_txnkv::Client,
+    request: &TransportRequest,
+    mut input: SelectInput,
+    result_context: QueryResultContext,
+    cop_plan_ids: Vec<isize>,
+    root_plan_id: isize,
+    collector_enabled: bool,
+) -> Result<QuerySelectResult<Box<dyn tidb_txnkv::Response + Send>>, QueryRuntimeError> {
+    let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
+    input.row_len = result_context.final_field_types.len();
+    let metadata = select_with_runtime_stats(
+        select_input_from_request(request, input),
+        cop_plan_ids,
+        root_plan_id,
+    );
+    let response = client.send(request).map_err(QueryRuntimeError::Transport)?;
+    Ok(QuerySelectResult::new(
+        response,
+        metadata,
+        result_context.final_field_types,
+        result_context.time_zone,
+        result_context.warnings,
+        Some(collector_enabled),
+    ))
+}
+
+/// The `kv.Client.Send` boundary over one injected transport: claims the
+/// built request for this send (minting its request-local cancellation),
+/// sends it, and returns the raw response owner.
+pub fn send_request<T: QueryTransport>(
+    transport: &mut T,
+    request: &TransportRequest,
+    dispatch: &QueryDispatch,
+    event_callback: Option<EventCallback>,
+) -> Result<T::Response, QueryRuntimeError> {
+    let bound = match dispatch.request_source_override.clone() {
+        Some(request_source) => request
+            .bind_with_request_source(TransportBinding::new(), request_source)
+            .map_err(QueryRuntimeError::Request)?,
+        None => request
+            .bind(TransportBinding::new())
+            .map_err(QueryRuntimeError::Request)?,
+    };
+    if bound
+        .request_cancellation()
+        .map_err(QueryRuntimeError::Request)?
+        .is_cancelled()
+    {
+        return Err(QueryRuntimeError::Cancelled);
+    }
+    transport.set_event_callback(event_callback);
+    let response = transport.send(&bound, dispatch);
+    transport.set_event_callback(None);
+    // The canonical carrier has Go's post-Send ctx.Err precedence over a
+    // simultaneous transport failure or response.
+    if bound
+        .request_cancellation()
+        .map_err(QueryRuntimeError::Request)?
+        .is_cancelled()
+    {
+        return Err(QueryRuntimeError::Cancelled);
+    }
+    response
+        .map_err(QueryRuntimeError::Transport)?
+        .ok_or(QueryRuntimeError::NilResponse)
+}
+
+impl QueryDispatch {
+    /// The dispatch a `kv.Client.Send` presents to its transport for a
+    /// request DistSQL's `Select`, `Analyze` or `Checksum` built: the
+    /// operation its request type names, with that constructor's result
+    /// metadata. `None` for a request type no DistSQL operation sends.
+    #[must_use]
+    pub fn for_request(request: &TransportRequest) -> Option<Self> {
+        let metadata = request.metadata();
+        let (operation, result) = match metadata.request_type {
+            RequestType::Dag => (
+                QueryOperation::Select,
+                select_result_metadata(select_input_from_request(
+                    request,
+                    SelectInput {
+                        in_restricted_sql: metadata.request_source.internal,
+                        ..SelectInput::default()
+                    },
+                )),
+            ),
+            RequestType::Analyze => (
+                QueryOperation::Analyze,
+                analyze_result_metadata(metadata.store_type, metadata.request_source.internal),
+            ),
+            RequestType::Checksum => (
+                QueryOperation::Checksum,
+                checksum_result_metadata(metadata.store_type),
+            ),
+            _ => return None,
+        };
+        Some(Self {
+            operation,
+            result,
+            request_source_override: None,
+        })
+    }
+}
+
+/// Go `distsql.Checksum` (`pkg/distsql/distsql.go`): sends one built
+/// `kv.ReqTypeChecksum` request through `client` and returns the result its
+/// region responses are read from with `NextRaw`. An `Err` is the client's
+/// rendered failure.
+pub fn checksum(
+    client: &dyn tidb_txnkv::Client,
+    request: &TransportRequest,
+) -> Result<QuerySelectResult<Box<dyn tidb_txnkv::Response + Send>>, String> {
+    let response = client.send(request)?;
+    let context = QueryResultContext::new(Vec::new(), WarningCollector::new());
+    Ok(QuerySelectResult::new(
+        response,
+        checksum_result_metadata(request.metadata().store_type),
+        context.final_field_types,
+        context.time_zone,
+        context.warnings,
+        None,
+    ))
 }
 
 /// Retains caller-owned context and field metadata while taking request-owned

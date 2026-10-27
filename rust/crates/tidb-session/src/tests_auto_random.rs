@@ -265,6 +265,18 @@ fn modify_column_increases_auto_random_bits_and_converts_auto_increment() {
         .run("CREATE TABLE ai_to_ar (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)")
         .unwrap();
     session.run("INSERT INTO ai_to_ar (v) VALUES (1)").unwrap();
+    // Go `GetModifiableColumnJob` refuses dropping AUTO_INCREMENT before
+    // `checkAutoRandom` unless `@@tidb_allow_remove_auto_inc` is on, as
+    // `ddl/primary_key_handle.test` (TestAutoRandomChangeFromAutoInc) sets it.
+    crate::tests_support::assert_err(
+        session.run("ALTER TABLE ai_to_ar MODIFY COLUMN id BIGINT AUTO_RANDOM(5)"),
+        8200,
+        "Unsupported modify column: can't remove auto_increment without \
+         @@tidb_allow_remove_auto_inc enabled",
+    );
+    session
+        .run("SET @@tidb_allow_remove_auto_inc = 1")
+        .unwrap();
     session
         .run("ALTER TABLE ai_to_ar MODIFY COLUMN id BIGINT AUTO_RANDOM(5)")
         .unwrap();

@@ -14,7 +14,6 @@
 
 //! Bounded concurrent listener and worker-local query-session ownership.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -22,26 +21,16 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tidb_ast::Stmt;
-use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
-#[cfg(test)]
-use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_protocol::ColumnInfo;
-use tidb_txnkv::transaction::OptimisticCommitOutcome;
-use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
+use tidb_util::globalconn::Allocator;
 
 use crate::configured_user_store::ConfiguredUserStore;
+use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
 use crate::mysql_connection::{
     serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
 use crate::mysql_tls::{MysqlTlsManager, TlsRotation};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
-use crate::resultset_source::ResultSetSource;
-use crate::wire_status::WireStatus;
 pub use crate::session_api::*;
-use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -257,8 +246,8 @@ impl Drop for IdentitySocketRegistration {
 }
 
 struct ConnectionWork {
-    stream: TcpStream,
-    peer_addr: SocketAddr,
+    stream: ClientSocket,
+    peer_addr: PeerAddress,
     cancellation: ConnectionCancellation,
     registration: ActiveSocketRegistration,
 }
@@ -379,7 +368,7 @@ fn poll_terminal(terminal: &mpsc::Receiver<WorkerTerminal>) -> Result<(), SqlNod
 ///
 /// Failures are ignored on purpose: the connection is being refused, and a
 /// peer that has already gone away is the ordinary case.
-fn refuse_over_capacity(stream: &TcpStream) {
+fn refuse_over_capacity(stream: &ClientSocket) {
     let Ok(socket) = stream.try_clone() else {
         return;
     };
@@ -407,7 +396,7 @@ struct ActiveSockets {
 
 struct ActiveSocket {
     key: u64,
-    stream: TcpStream,
+    stream: ClientSocket,
     cancellation: ConnectionCancellation,
 }
 
@@ -448,7 +437,7 @@ impl ActiveSockets {
     fn register(
         &self,
         key: u64,
-        stream: TcpStream,
+        stream: ClientSocket,
         cancellation: ConnectionCancellation,
     ) -> Result<(), SqlNodeError> {
         self.streams
@@ -514,6 +503,8 @@ impl ActiveSockets {
 /// accepted-socket queue.
 pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     listener: TcpListener,
+    /// Go's `socket` listener, when `socket` is configured.
+    socket: Option<SocketListener>,
     factory: Arc<F>,
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
@@ -649,6 +640,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             );
         }
         crate::log_mysql_listening(&config.host.to_string(), config.port);
+        let socket = (!config.socket.is_empty())
+            .then(|| SocketListener::bind(&config.socket))
+            .transpose()?;
         factory.install_tls_manager(tls.clone(), tls_variables);
         let tls_rotation = TlsRotation::start(Arc::clone(&tls));
         let session_manager = factory.session_manager();
@@ -668,6 +662,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         ));
         Ok(Self {
             listener,
+            socket,
             factory,
             users,
             tracker,
@@ -737,7 +732,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         mut prepare_stream: P,
     ) -> Result<(), SqlNodeError>
     where
-        P: FnMut(&TcpStream, Duration) -> Result<(), SqlNodeError>,
+        P: FnMut(&ClientSocket, Duration) -> Result<(), SqlNodeError>,
     {
         let active_sockets = Arc::new(ActiveSockets::default());
         // Includes sockets still in authentication, before ProcessRegistry has
@@ -775,6 +770,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             self.shutdown.waker.clone(),
         )?;
 
+        let (acceptors, incoming) = Acceptors::start(&self.listener, self.socket.as_ref())?;
         let mut accepted = 0_usize;
         let mut dedicated_workers: Vec<WorkerHandle> = Vec::new();
         let mut next_worker_index = warm_workers;
@@ -825,10 +821,14 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // connect timeout and reported "Lost connection ... waiting for
             // initial communication packet" -- a pooler cannot tell that from
             // a dead server, and 1040 is what tells it to back off.
-            let (stream, peer_addr) = match self.listener.accept() {
-                Ok(connection) => connection,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) => break Err(SqlNodeError::Listener(error)),
+            let (stream, peer_addr) = match incoming.recv() {
+                Ok(Ok(connection)) => connection,
+                Ok(Err(error)) => break Err(SqlNodeError::Listener(error)),
+                Err(mpsc::RecvError) => {
+                    break Err(SqlNodeError::Listener(std::io::Error::other(
+                        "every listener stopped",
+                    )))
+                }
             };
             // A wake (shutdown, or a panicked serving thread) is a connection
             // the loop drops unserved, as Go's closed listener ends `Accept`.
@@ -860,7 +860,13 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 refuse_over_capacity(&stream);
                 continue;
             }
-            prepare_stream(&stream, self.connection_timeout)?;
+            // Go `newConn` logs a socket option it could not set and serves
+            // the connection anyway: one client's socket never ends the
+            // listener (a peer that already closed fails its handshake).
+            if let Err(error) = prepare_stream(&stream, self.connection_timeout) {
+                tidb_util::logutil::bg_logger()
+                    .error("failed to set connection socket options", &[crate::zap_error(error)]);
+            }
             let connection_key = u64::try_from(accepted)
                 .ok()
                 .and_then(|value| value.checked_add(1))
@@ -923,12 +929,179 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             accepted += 1;
         })();
 
+        acceptors.stop(&self.shutdown.waker);
         drop(worker_senders);
         drop(available_sender);
         drop(terminal_sender);
         workers.append(&mut dedicated_workers);
         let drain_result = drain_workers(workers, &active_sockets, self.shutdown_grace);
         combine_node_results(accept_result, drain_result)
+    }
+}
+
+/// Go's `socket` listener (`net.Listen("unix", cfg.Socket)`). Go's
+/// `UnixListener` unlinks its socket file on `Close`; dropping this does.
+struct SocketListener {
+    #[cfg(unix)]
+    listener: std::os::unix::net::UnixListener,
+    path: std::path::PathBuf,
+}
+
+impl SocketListener {
+    #[cfg(unix)]
+    fn bind(socket: &str) -> Result<Self, SqlNodeError> {
+        cleanup_stale_socket(socket)?;
+        let listener =
+            std::os::unix::net::UnixListener::bind(socket).map_err(SqlNodeError::Bind)?;
+        tidb_util::logutil::bg_logger().info(
+            "server is running MySQL protocol",
+            &[tidb_log::Field::new("socket", tidb_log::Value::Str(socket.to_owned()))],
+        );
+        Ok(Self {
+            listener,
+            path: socket.into(),
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn bind(_socket: &str) -> Result<Self, SqlNodeError> {
+        Err(SqlNodeError::Bind(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Unix-domain sockets are not supported on this platform",
+        )))
+    }
+}
+
+impl Drop for SocketListener {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Go `cleanupStaleSocket`: a socket file a previous server left behind is
+/// removed, but a live socket or a file that is no socket is an error.
+#[cfg(unix)]
+fn cleanup_stale_socket(socket: &str) -> Result<(), SqlNodeError> {
+    use std::os::unix::fs::FileTypeExt;
+    let refuse = |message: String| SqlNodeError::Bind(std::io::Error::other(message));
+    let metadata = match std::fs::metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(SqlNodeError::Bind(error)),
+    };
+    if !metadata.file_type().is_socket() {
+        return Err(refuse(format!(
+            "the specified socket file {socket} is a {:?} instead of a socket file",
+            metadata.file_type()
+        )));
+    }
+    if std::os::unix::net::UnixStream::connect(socket).is_ok() {
+        return Err(refuse(format!(
+            "unix socket {socket} exists and is functional, not removing it"
+        )));
+    }
+    std::fs::remove_file(socket).map_err(|error| {
+        refuse(format!("failed to cleanup stale Unix socket file {socket}: {error}"))
+    })
+}
+
+type Accepted = std::io::Result<(ClientSocket, PeerAddress)>;
+
+/// Go's `startNetworkListener` per listener: each accepts on its own thread
+/// and hands connections to the one accept loop.
+struct Acceptors {
+    stop: Arc<AtomicBool>,
+    threads: Vec<JoinHandle<()>>,
+    socket_path: Option<std::path::PathBuf>,
+}
+
+impl Acceptors {
+    fn start(
+        listener: &TcpListener,
+        socket: Option<&SocketListener>,
+    ) -> Result<(Self, mpsc::Receiver<Accepted>), SqlNodeError> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sender, incoming) = mpsc::channel::<Accepted>();
+        let mut threads = Vec::new();
+        let tcp = listener.try_clone().map_err(SqlNodeError::Listener)?;
+        threads.push(Self::spawn(&stop, &sender, move || {
+            tcp.accept()
+                .map(|(stream, address)| (ClientSocket::from(stream), PeerAddress::Tcp(address)))
+        })?);
+        #[cfg(unix)]
+        if let Some(socket) = socket {
+            let unix = socket.listener.try_clone().map_err(SqlNodeError::Listener)?;
+            threads.push(Self::spawn(&stop, &sender, move || {
+                // The peer's address is unused (Go's `PeerHost` is
+                // `localhost`), and std's `accept` fails on macOS for an
+                // unnamed client whose address it cannot parse.
+                rustix::net::accept(&unix)
+                    .map(|fd| {
+                        (
+                            ClientSocket::from(std::os::unix::net::UnixStream::from(fd)),
+                            PeerAddress::Unix,
+                        )
+                    })
+                    .map_err(std::io::Error::from)
+            })?);
+        }
+        Ok((
+            Self {
+                stop,
+                threads,
+                socket_path: socket.map(|socket| socket.path.clone()),
+            },
+            incoming,
+        ))
+    }
+
+    fn spawn(
+        stop: &Arc<AtomicBool>,
+        sender: &mpsc::Sender<Accepted>,
+        mut accept: impl FnMut() -> Accepted + Send + 'static,
+    ) -> Result<JoinHandle<()>, SqlNodeError> {
+        let stop = Arc::clone(stop);
+        let sender = sender.clone();
+        std::thread::Builder::new()
+            .name("tidb-sql-accept".to_owned())
+            .spawn(move || loop {
+                let accepted = accept();
+                if stop.load(Ordering::Acquire) {
+                    return;
+                }
+                match accepted {
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        return;
+                    }
+                    Ok(connection) => {
+                        if sender.send(Ok(connection)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            })
+            .map_err(SqlNodeError::WorkerSpawn)
+    }
+
+    /// Ends every acceptor: each is woken out of its `accept` by one
+    /// connection it then drops, as Go's closed listener ends `Accept`.
+    fn stop(self, waker: &AcceptWaker) {
+        self.stop.store(true, Ordering::Release);
+        waker.wake();
+        #[cfg(unix)]
+        let socket_woken = self
+            .socket_path
+            .as_ref()
+            .is_none_or(|path| std::os::unix::net::UnixStream::connect(path).is_ok());
+        #[cfg(not(unix))]
+        let socket_woken = true;
+        for thread in self.threads {
+            if socket_woken || thread.is_finished() {
+                let _ = thread.join();
+            }
+        }
     }
 }
 
@@ -998,7 +1171,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
 /// handshake and lost-PD rejections, or `clientConn.Run`'s close reasons.
 /// A clean end of stream and a recovered panic (already logged where it was
 /// caught) log nothing more, like Go.
-fn log_connection_error(error: &MysqlConnectionError, peer_addr: SocketAddr) {
+fn log_connection_error(error: &MysqlConnectionError, peer_addr: PeerAddress) {
     use tidb_protocol::PacketError;
     let logger = tidb_util::logutil::bg_logger();
     match error {
@@ -1006,7 +1179,7 @@ fn log_connection_error(error: &MysqlConnectionError, peer_addr: SocketAddr) {
             "Server.onConn handshake",
             &[
                 crate::zap_error(error),
-                tidb_log::Field::new("remote addr", tidb_log::Value::Str(peer_addr.to_string())),
+                tidb_log::Field::new("remote addr", tidb_log::Value::Str(peer_addr.remote_addr())),
             ],
         ),
         MysqlConnectionError::ResultUndetermined(message) => logger.warn(
@@ -1034,8 +1207,8 @@ fn log_connection_error(error: &MysqlConnectionError, peer_addr: SocketAddr) {
 #[allow(clippy::too_many_arguments)]
 fn dedicated_connection_job<F: QuerySessionFactory>(
     index: usize,
-    stream: TcpStream,
-    peer_addr: SocketAddr,
+    stream: ClientSocket,
+    peer_addr: PeerAddress,
     cancellation: ConnectionCancellation,
     registration: ActiveSocketRegistration,
     factory: Arc<F>,
@@ -1333,7 +1506,7 @@ impl std::error::Error for SqlNodeError {
 /// which is precisely what an OLTP pooler's request/response pattern produces
 /// through any proxy or tunnel hop between the peers.
 pub(crate) fn prepare_accepted_stream(
-    stream: &TcpStream,
+    stream: &ClientSocket,
     timeout: Duration,
 ) -> Result<(), SqlNodeError> {
     stream.set_nodelay(true).map_err(SqlNodeError::Listener)?;
@@ -1510,8 +1683,10 @@ mod tests {
         }
     }
 
+    /// Go `newConn` only logs a socket option it could not set: the
+    /// connection is still served and the listener keeps accepting.
     #[test]
-    fn accepted_socket_setup_error_still_drains_and_joins_workers() {
+    fn accepted_socket_setup_error_is_logged_and_the_connection_still_served() {
         let users = ConfiguredUserStore::parse(
             "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
         )
@@ -1551,11 +1726,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let failed_setup_client = TcpStream::connect(address).unwrap();
-        let error = server.join().unwrap().unwrap_err();
+        server.join().unwrap().unwrap();
 
-        assert!(matches!(error, SqlNodeError::Listener(_)));
-        assert_eq!(tracker.accepted(), 1);
-        assert_eq!(tracker.completed(), 1);
+        assert_eq!(tracker.accepted(), 2, "the failed setup is still served");
+        assert_eq!(tracker.completed(), 2);
         assert_eq!(
             tracker.active(),
             0,
@@ -1690,7 +1864,7 @@ mod tests {
         sockets
             .register(
                 connection_key,
-                server.try_clone().unwrap(),
+                server.try_clone().unwrap().into(),
                 cancellation.clone(),
             )
             .unwrap();
@@ -1706,8 +1880,8 @@ mod tests {
         assert_eq!(available_rx.recv().unwrap(), 2);
         work_tx
             .send(ConnectionWork {
-                stream: server,
-                peer_addr,
+                stream: server.into(),
+                peer_addr: peer_addr.into(),
                 cancellation,
                 registration,
             })
@@ -1788,7 +1962,7 @@ mod tests {
         sockets
             .register(
                 connection_key,
-                server.try_clone().unwrap(),
+                server.try_clone().unwrap().into(),
                 cancellation.clone(),
             )
             .unwrap();
@@ -1796,8 +1970,8 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         sender
             .send(ConnectionWork {
-                stream: server,
-                peer_addr,
+                stream: server.into(),
+                peer_addr: peer_addr.into(),
                 cancellation,
                 registration,
             })
@@ -1819,7 +1993,7 @@ mod tests {
         let (server, _) = listener.accept().unwrap();
         let sockets = Arc::new(ActiveSockets::default());
         let cancellation = ConnectionCancellation::default();
-        sockets.register(23, server, cancellation.clone()).unwrap();
+        sockets.register(23, server.into(), cancellation.clone()).unwrap();
         let poisoned_sockets = Arc::clone(&sockets);
         assert!(std::thread::spawn(move || {
             let _guard = poisoned_sockets.streams.lock().unwrap();
@@ -1847,7 +2021,11 @@ mod tests {
         let client = TcpStream::connect(addr).unwrap();
         let (server, _) = listener.accept().unwrap();
 
-        prepare_accepted_stream(&server, Duration::from_secs(30)).unwrap();
+        prepare_accepted_stream(
+            &ClientSocket::from(server.try_clone().unwrap()),
+            Duration::from_secs(30),
+        )
+        .unwrap();
 
         // Go's `setDefaultListenerSockopts` puts TCP_NODELAY on every accepted
         // connection; the Rust accept loop must match it or a Nagle-enabled

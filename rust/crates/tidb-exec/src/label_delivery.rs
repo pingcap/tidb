@@ -23,8 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use tidb_executor::ddl_label::{LabelCodec, LabelRulePatch, Rule};
-use tidb_executor::label_manager::{filter_rules_by_keyspace, LabelRuleManager};
+use tidb_ddl_label::{LabelCodec, LabelRulePatch, Rule};
+use tidb_domain::label_manager::{filter_rules_by_keyspace, LabelRuleManager};
 use tikv_client::pd_http;
 
 use crate::cluster_http::block_on_pd_http;
@@ -131,7 +131,7 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::thread;
 
-    use tidb_executor::ddl_label::{new_rule_patch, RegionLabel};
+    use tidb_ddl_label::{new_rule_patch, RegionLabel};
 
     use super::*;
 

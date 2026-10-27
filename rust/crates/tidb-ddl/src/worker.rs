@@ -19,6 +19,8 @@
 //! statement is routed here and what happens to the connection's own
 //! catalog afterwards.
 
+use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
+use tidb_ddl_build::table_backfill::KvTableBackfill;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -27,30 +29,31 @@ use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
-use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
-use tidb_exec::cluster_ddl::{
+use tidb_cluster::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
+use crate::cluster_ddl::{
     CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
 };
-use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
-use tidb_exec::ddl_job_table::DdlJobTable;
-use tidb_exec::ddl_systable::MinJobIdRefresher;
-use tidb_exec::pessimistic_lock_error::LockSqlError;
-use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_exec::real_tikv_ddl::{
+use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
+use crate::ddl_job_table::DdlJobTable;
+use crate::ddl_systable::MinJobIdRefresher;
+use tidb_cluster::pessimistic_lock_error::LockSqlError;
+use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
+use crate::real_tikv_ddl::{
     answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
     load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
     submit_check_constraint_job_with_retry, CheckConstraintValidator, ClusterDdlReport,
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
-use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
-use tidb_exec::schema_validator::SchemaValidator;
-use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
-use tidb_executor::{RowDecodeContext, StmtContext};
+use tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_cluster::schema_validator::SchemaValidator;
+use tidb_kv::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
+use tidb_table::kv_table::RowDecodeContext;
 use tidb_pd_client::EtcdClient;
 
-use tidb_exec::sql_query_error::{cluster_ddl_error, SqlQueryError};
-use tidb_exec::table_from_meta::{cluster_table, AutoIdSource};
+use crate::real_tikv_ddl::cluster_ddl_error;
+use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_cluster::table_from_meta::{cluster_table, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -72,7 +75,7 @@ pub trait ClusterDdl: Send + Sync {
     fn execute(
         &self,
         statement: &DdlStatement,
-        job_context: &tidb_executor::StmtContext,
+        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
     /// Go `do.DDL().OwnerManager().IsOwner()`: whether this node owns the DDL
@@ -85,6 +88,11 @@ pub trait ClusterDdl: Send + Sync {
     fn is_owner(&self) -> bool {
         false
     }
+
+    /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`: the TiFlash
+    /// stores PD lists, which `checkTiFlashReplicaCount` bounds a replica
+    /// count by.
+    fn tiflash_store_count(&self) -> Result<u64, SqlQueryError>;
 }
 
 /// A named thread with the SQL worker's stack, for every background worker
@@ -267,7 +275,7 @@ where
     owner_id: String,
     /// The node's allocator registry (the scheduler's own), so the reload
     /// after a rebase drops the ranges reserved before it.
-    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
 }
 
 struct SchedulerWorker {
@@ -291,12 +299,15 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     owner: Mutex<Option<Arc<dyn tidb_owner::Manager>>>,
     worker: Mutex<Option<SchedulerWorker>>,
-    /// The node's row-ID allocators, bound once the node builds them.
-    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+    /// The node's row-ID allocators: Go's internal INSERTs into `mysql.*`
+    /// tables allocate from them.
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
     /// Go `delRange`'s emulator, on a store without delete-range support.
-    del_range: Arc<std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>>,
+    del_range: Arc<std::sync::OnceLock<crate::real_tikv_ddl::delete_range::DelRangeEmulator>>,
     /// Go `ddlJobDoneChMap`, shared by this node's submitting sessions.
-    ddl_job_done_ch_map: Arc<tidb_exec::real_tikv_ddl::DdlJobDoneChMap>,
+    ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
+    /// Go `pkg/ddl/session.Pool`: the sessions the node hands DDL.
+    session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
 }
 
 impl<S> PersistedDdlScheduler<S>
@@ -364,11 +375,12 @@ where
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
         stopped: Receiver<()>,
-        row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+        row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
         del_range: Arc<
-            std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>,
+            std::sync::OnceLock<crate::real_tikv_ddl::delete_range::DelRangeEmulator>,
         >,
-        ddl_job_done_ch_map: Arc<tidb_exec::real_tikv_ddl::DdlJobDoneChMap>,
+        ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
+        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -404,7 +416,7 @@ where
                         let notifier_ref = notifier
                             .as_ref()
                             .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-                        if !tidb_exec::cluster_ddl::supports_persisted_ddl_job(job.type_) {
+                        if !crate::cluster_ddl::supports_persisted_ddl_job(job.type_) {
                             continue;
                         }
                         let check_owner = || {
@@ -414,9 +426,7 @@ where
                                 Ok(())
                             }
                         };
-                        let backfiller = KvTableIndexBackfiller {
-                            row_ids: row_ids.get().cloned(),
-                        };
+                        let backfiller = KvTableIndexBackfiller::new(&row_ids, &session_pool);
                         // Go `getJobRunCtx`: the job context carries the
                         // submitter's done signal, when this node has one.
                         let job_done = ddl_job_done_ch_map.load(job.id);
@@ -427,7 +437,7 @@ where
                             job_done.as_deref(),
                             notifier_ref,
                             &backfiller,
-                            &KvTableIndexBackfiller::default(),
+                            &backfiller,
                             schema_sync.as_ref(),
                             &check_owner,
                             &|delay| wait_ddl_retry(&stopped, delay),
@@ -544,6 +554,7 @@ where
                 let row_ids = Arc::clone(&self.row_ids);
                 let del_range = Arc::clone(&self.del_range);
                 let ddl_job_done_ch_map = Arc::clone(&self.ddl_job_done_ch_map);
+                let session_pool = Arc::clone(&self.session_pool);
                 let owner = self
                     .owner
                     .lock()
@@ -567,6 +578,7 @@ where
                         row_ids,
                         del_range,
                         ddl_job_done_ch_map,
+                        session_pool,
                     )
                 }
             })
@@ -592,7 +604,7 @@ where
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    auto_ids: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
+    auto_ids: Option<Arc<tidb_cluster::auto_id_client::AutoIdClient>>,
     /// The etcd client this node announces its catalog changes through, so
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
@@ -614,29 +626,21 @@ impl<S> RealClusterDdl<S>
 where
     S: StoreClient,
 {
-    /// The node's row-ID allocators, for the rows the owner inserts into
-    /// `mysql.*` tables (Go's internal INSERTs allocate from them).
-    #[must_use]
-    pub fn with_row_ids(self, ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>) -> Self {
-        let _ = self.scheduler.row_ids.set(ids);
-        self
-    }
-
     /// Go `newDelRangeManager` for a store without delete-range support
     /// (`SupportDeleteRange` false, the embedded store): the owner works off
-    /// `mysql.gc_delete_range` itself. Bind the row-ID allocators first.
+    /// `mysql.gc_delete_range` itself.
     pub fn with_delete_range_emulator(self) -> Result<Self, String> {
-        let emulator = tidb_exec::real_tikv_ddl::delete_range::start_del_range_emulator(
+        let emulator = crate::real_tikv_ddl::delete_range::start_del_range_emulator(
             Arc::clone(&self.opener),
             self.timeout,
-            self.scheduler.row_ids.get().cloned(),
+            Arc::clone(&self.scheduler.row_ids),
         )?;
         let _ = self.scheduler.del_range.set(emulator);
         Ok(self)
     }
 
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
-    pub fn with_auto_ids(mut self, client: Arc<tidb_exec::auto_id_client::AutoIdClient>) -> Self {
+    pub fn with_auto_ids(mut self, client: Arc<tidb_cluster::auto_id_client::AutoIdClient>) -> Self {
         self.auto_ids = Some(client);
         self
     }
@@ -652,6 +656,8 @@ where
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
+        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         Self::new_with_min_job_id_refresher(
             opener,
@@ -663,6 +669,8 @@ where
             schema_validator,
             campaign_owner,
             Arc::new(MinJobIdRefresher::new()),
+            session_pool,
+            row_ids,
         )
     }
 
@@ -679,6 +687,8 @@ where
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
+        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
@@ -719,7 +729,6 @@ where
                 }
             })
             .map_err(|error| error.to_string())?;
-        let row_ids = Arc::new(std::sync::OnceLock::new());
         let schema_sync = Arc::new(ClusterSchemaSync {
             opener: Arc::clone(&opener),
             catalog: Arc::clone(&catalog),
@@ -744,6 +753,7 @@ where
             row_ids,
             del_range: Arc::new(std::sync::OnceLock::new()),
             ddl_job_done_ch_map: Arc::default(),
+            session_pool,
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -841,7 +851,7 @@ where
         ddl_job_id: i64,
         action: tidb_model::ActionType,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
-        use tidb_exec::real_tikv_ddl::{choose_lease_time, get_job_check_interval};
+        use crate::real_tikv_ddl::{choose_lease_time, get_job_check_interval};
         let lease = self.schema_sync.schema_validator.lease().saturating_mul(10);
         let mut tick = choose_lease_time(lease, get_job_check_interval(action, 0).0);
         let mut next_tick = std::time::Instant::now() + tick;
@@ -878,11 +888,11 @@ where
                 load_history_persisted_ddl_job(Arc::clone(&self.opener), ddl_job_id, self.timeout)
                     .map_err(cluster_ddl_error)?
             {
-                if let Some(error) = job.error.as_ref() {
-                    let error = error.read();
-                    return Err(persisted_job_error(&error));
-                }
-                if job.state.is_done() || job.state.is_synced() {
+                // Go `DoDDLJob`: a synced history job succeeded whatever
+                // error a step recorded on it (a non-revertible sub-job that
+                // failed and cancelled itself); only a rolled-back or
+                // cancelled job answers its error.
+                if job.state.is_synced() {
                     // TRUNCATE's new identity, which a session holding a lock
                     // on the old one moves its lock to and which is
                     // pre-split like a created table.
@@ -904,6 +914,10 @@ where
                         warnings: synced_job_warnings(&job),
                     });
                 }
+                if let Some(error) = job.error.as_ref() {
+                    let error = error.read();
+                    return Err(persisted_job_error(&error));
+                }
                 return Err(SqlQueryError::unknown(format!(
                     "DDL job {ddl_job_id} reached terminal state {} without an error",
                     job.state
@@ -914,7 +928,7 @@ where
 }
 
 fn persisted_job_error(error: &tidb_error::terror::TerrorError) -> SqlQueryError {
-    let error = tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(error);
+    let error = crate::cluster_ddl::ddl_job_error_to_sql_error(error);
     SqlQueryError::new(
         error.code,
         error
@@ -941,6 +955,16 @@ fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManag
 #[cfg(test)]
 mod schema_sync_tests {
     use super::*;
+
+    /// The backfiller the node builds, its data checks the executor's.
+    fn test_backfiller() -> KvTableIndexBackfiller {
+        KvTableIndexBackfiller::new(
+            &(Arc::new(tidb_cluster::table_from_meta::LocalTableAutoIds::default())
+                as Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>),
+            &(Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool)
+                as Arc<dyn crate::real_tikv_ddl::DdlSessionPool>),
+        )
+    }
 
     #[test]
     fn persisted_history_preserves_source_sqlstate() {
@@ -986,7 +1010,7 @@ mod schema_sync_tests {
     #[test]
     fn check_validation_source_message() {
         let error = check_constraint_validation_table_error(
-            tidb_executor::kv_table::KvTableError::CheckConstraintViolated("MixedCheck".into()),
+            tidb_table::kv_table::KvTableError::CheckConstraintViolated("MixedCheck".into()),
             "MixedCheck",
         );
         let DdlPlanError::Source(source) = error else {
@@ -1016,8 +1040,8 @@ mod schema_sync_tests {
     }
 
     fn worker_without_mdl(recover: bool, remove_mdl_table: bool) {
-        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-        use tidb_exec::real_tikv_ddl::load_active_persisted_ddl_jobs;
+        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use crate::real_tikv_ddl::load_active_persisted_ddl_jobs;
         use tidb_meta::{key, value};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
@@ -1045,11 +1069,11 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         tidb_vardef::set_enable_mdl(false);
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let before = catalog.schema_version;
         let mut job = Job::default();
         job.id = 600;
@@ -1134,8 +1158,8 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 Some(&notifier),
-                &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
+                &test_backfiller(),
+                &test_backfiller(),
                 &barrier,
                 &|| Ok(()),
                 &|_| panic!("no action error retry expected"),
@@ -1162,9 +1186,9 @@ mod schema_sync_tests {
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
             assert!(
                 matches!(
-                    tidb_exec::ddl_systable::SystemTableManager::new(&catalog)
+                    crate::ddl_systable::SystemTableManager::new(&catalog)
                         .get_mdl_version(&mut snapshot, job.id),
-                    Err(tidb_exec::ddl_systable::SystemTableManagerError::NotFound)
+                    Err(crate::ddl_systable::SystemTableManagerError::NotFound)
                 ),
                 "disabled mode must never register an MDL row"
             );
@@ -1184,7 +1208,7 @@ mod schema_sync_tests {
         );
         // Every committed DROP phase waits in non-MDL mode too, while
         // notification errors do not prevent the self-version acknowledgement.
-        let start = tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+        let start = tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
             .unwrap()
             .schema_version;
         job.id = 602;
@@ -1194,7 +1218,7 @@ mod schema_sync_tests {
         job.last_schema_version = 0;
         job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
         let mut tx = opener.begin().unwrap();
-        let current = tidb_exec::cluster_catalog::load_cluster_catalog(
+        let current = tidb_cluster::cluster_catalog::load_cluster_catalog(
             &mut TransactionMetaSnapshot::new(&mut tx, timeout),
         )
         .unwrap();
@@ -1251,8 +1275,8 @@ mod schema_sync_tests {
             return;
         }
         tidb_vardef::set_enable_mdl(true);
-        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-        use tidb_exec::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
+        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use crate::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
             JobVersion, SchemaState,
@@ -1289,12 +1313,12 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        let (outcome, _) = tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
         let seed = |job: &mut Job| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let table = DdlJobTable::locate(&catalog).unwrap();
             let mut mutations = Vec::new();
             table
@@ -1339,14 +1363,14 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 notifier,
-                &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
+                &test_backfiller(),
+                &test_backfiller(),
                 &barrier,
                 check,
                 &|_| panic!("this job must not wait after an action error"),
             )
         };
-        let before = tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+        let before = tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
             .unwrap()
             .schema_version;
         let checks = std::sync::atomic::AtomicUsize::new(0);
@@ -1359,7 +1383,7 @@ mod schema_sync_tests {
         };
         assert!(run(500, None, &lost_before_commit).is_err());
         assert_eq!(
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version,
             before
@@ -1479,7 +1503,7 @@ mod schema_sync_tests {
         );
         assert_eq!(barrier.waits.lock().unwrap().len(), wait_count);
         assert_eq!(
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version,
             before + 4
@@ -1541,7 +1565,7 @@ mod schema_sync_tests {
             .unwrap()
             .is_none());
         let catalog =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         assert_eq!(catalog.schema_version, before + 4);
         assert!(!catalog
             .databases
@@ -1575,7 +1599,7 @@ mod schema_sync_tests {
         // and follows the normal schema barrier.
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let table = DdlJobTable::locate(&catalog).unwrap();
         let mut active = table.load_by_id(&mut snapshot, 504).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -1629,7 +1653,7 @@ mod schema_sync_tests {
             tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
         );
         assert!(
-            !tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            !tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .databases
                 .iter()
@@ -1639,14 +1663,14 @@ mod schema_sync_tests {
         let set_limit = |limit: i64| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let mut vars =
-                tidb_exec::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
+                tidb_cluster::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
                     .unwrap()
                     .into_iter()
                     .collect::<std::collections::BTreeMap<_, _>>();
             vars.insert("tidb_ddl_error_count_limit".into(), limit.to_string());
-            let plan = tidb_exec::cluster_sysvar_write::plan_sysvar_write(
+            let plan = tidb_cluster::cluster_sysvar_write::plan_sysvar_write(
                 &mut snapshot,
                 &catalog,
                 &vars,
@@ -1771,8 +1795,8 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
+                &test_backfiller(),
+                &test_backfiller(),
                 &barrier,
                 &|| Ok(()),
                 &|delay| {
@@ -1875,7 +1899,7 @@ mod schema_sync_tests {
         let validator = PauseDuringValidation(|_: &MutationBuffer| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
             active.job.state = JobState::PAUSING;
@@ -1898,7 +1922,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
             &validator,
             &barrier,
             &|| Ok(()),
@@ -1916,7 +1940,7 @@ mod schema_sync_tests {
             .is_none());
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -1941,7 +1965,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -1990,7 +2014,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -2043,7 +2067,7 @@ mod schema_sync_tests {
         check_job.id = 702;
         seed(&mut check_job);
         let before_panic_version =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version;
         let marker = tidb_meta::key::table_kv_key(505, 999);
@@ -2067,7 +2091,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
             &panicking,
             &barrier,
             &lost_owner,
@@ -2083,7 +2107,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
             &panicking,
             &barrier,
             &|| Ok(()),
@@ -2109,7 +2133,7 @@ mod schema_sync_tests {
             .is_none());
         tx.finish_without_writes().unwrap();
         let after =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         assert_eq!(after.schema_version, before_panic_version);
         let stored_table = after
             .databases
@@ -2130,7 +2154,7 @@ mod schema_sync_tests {
         let set_job_state = |state| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 703).unwrap().unwrap();
             active.job.state = state;
@@ -2158,7 +2182,7 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &KvTableIndexBackfiller::default(),
+                &test_backfiller(),
                 &pause_then_panic,
                 &barrier,
                 &|| Ok(()),
@@ -2181,7 +2205,7 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &KvTableIndexBackfiller::default(),
+                &test_backfiller(),
                 &panicking,
                 &barrier,
                 &|| Ok(()),
@@ -2203,7 +2227,7 @@ mod schema_sync_tests {
             tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
         );
         let after =
-            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         let stored_table = after
             .databases
             .iter()
@@ -2235,9 +2259,9 @@ mod schema_sync_tests {
             return;
         }
         tidb_vardef::set_enable_mdl(true);
-        use tidb_exec::ddl_reorg_table::DdlReorgTable;
-        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-        use tidb_exec::real_tikv_ddl::{load_history_persisted_ddl_job, JobDoneCh};
+        use crate::ddl_reorg_table::DdlReorgTable;
+        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use crate::real_tikv_ddl::{load_history_persisted_ddl_job, JobDoneCh};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
             JobVersion,
@@ -2264,7 +2288,7 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        let (outcome, _) = tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
         let mut job = Job::default();
         job.id = 700;
@@ -2285,7 +2309,7 @@ mod schema_sync_tests {
         {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let mut mutations = Vec::new();
             DdlJobTable::locate(&catalog)
                 .unwrap()
@@ -2297,7 +2321,7 @@ mod schema_sync_tests {
                     .init_mutations(
                         &[],
                         job.id,
-                        &tidb_exec::cluster_ddl::add_index::ReorgHandle {
+                        &crate::cluster_ddl::add_index::ReorgHandle {
                             element_id: 1,
                             element_type: b"_idx_".to_vec(),
                             start_key: Vec::new(),
@@ -2324,7 +2348,7 @@ mod schema_sync_tests {
         >| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             DdlReorgTable::locate(&catalog)
                 .unwrap()
                 .load(&mut snapshot, 700)
@@ -2355,8 +2379,8 @@ mod schema_sync_tests {
             timeout,
             Some(&done),
             None,
-            &KvTableIndexBackfiller::default(),
-            &KvTableIndexBackfiller::default(),
+            &test_backfiller(),
+            &test_backfiller(),
             &Synced,
             &|| Ok(()),
             &|_| panic!("the job must not fail"),
@@ -2431,9 +2455,9 @@ where
         let _reload = self.catalog.lock_reload();
         let current = self.catalog.load();
         let at =
-            reload_catalog_from_cluster(&self.opener, self.timeout, &current, self.row_ids.get())
+            reload_catalog_from_cluster(&self.opener, self.timeout, &current, &self.row_ids)
                 .map_err(|error| error.to_string())?;
-        match tidb_exec::real_tikv_catalog::note_reload(
+        match tidb_cluster::real_tikv_catalog::note_reload(
             &self.schema_validator,
             current.schema_version,
             at,
@@ -2495,10 +2519,17 @@ where
         self.owner.is_owner()
     }
 
+    fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
+        self.opener
+            .store()
+            .tiflash_store_count()
+            .map_err(SqlQueryError::unknown)
+    }
+
     fn execute(
         &self,
         statement: &DdlStatement,
-        job_context: &tidb_executor::StmtContext,
+        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         self.execute_targets(statement, job_context, &[])
     }
@@ -2514,7 +2545,7 @@ where
     fn execute_targets(
         &self,
         statement: &DdlStatement,
-        job_context: &tidb_executor::StmtContext,
+        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
         targets: &[(String, String)],
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         // Go `dropTableObject`: each target is its own job, a missing name is
@@ -2538,7 +2569,7 @@ where
             _ => None,
         };
         if let Some((names, if_exists, object)) = drop_list {
-            use tidb_executor::ddl::{drop_objects, DropObjectsError};
+            use tidb_ddl_build::table_lifecycle::{drop_objects, DropObjectsError};
             let mut last = ClusterDdlReport::AlreadySatisfied {
                 detail: "no existing DROP targets".into(),
                 warnings: Vec::new(),
@@ -2590,10 +2621,11 @@ where
                             && if_exists
                             && error.code == tidb_error::mysql::errcode::ErrWrongObject =>
                     {
-                        notes.push((
-                            tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
+                        notes.push(tidb_util::context::SqlWarn::from_error(
+                            crate::real_tikv_ddl::DdlWarningLevel::Note,
                             error.code,
                             error.message,
+                            error.identity,
                         ));
                         Ok(true)
                     }
@@ -2615,12 +2647,14 @@ where
             let (ClusterDdlReport::Applied { warnings, .. }
             | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut last;
             warnings.extend(notes);
+            // Go `dropTableObject`'s `dropExistErr`, appended as a note.
+            let missing_error = if object == DropObject::Sequence {
+                &*tidb_error::catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS
+            } else {
+                &*tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+            };
             warnings.extend(missing.into_iter().map(|name| {
-                (
-                    tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
-                    missing_code,
-                    missing_message(&name),
-                )
+                crate::real_tikv_ddl::ddl_note(missing_error, missing_message(&name))
             }));
             return Ok(last);
         }
@@ -2686,12 +2720,12 @@ where
                     | DdlStatement::ExchangePartition { .. }
                     | DdlStatement::ReorganizePartitions { .. }
             )
-            || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
+            || crate::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
             // Go `createIndex` / `dropIndex` / `dropTableObject` /
             // `DropSchema`: a persisted job the owner steps through the
             // object's schema states.
-            match tidb_exec::real_tikv_ddl::submit_persisted_job_with_retry(
+            match crate::real_tikv_ddl::submit_persisted_job_with_retry(
                 Arc::clone(&self.opener),
                 statement,
                 job_context,
@@ -2699,16 +2733,16 @@ where
                 self.timeout,
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.current_min_job_id(),
-                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool),
                 self.auto_ids.as_ref(),
                 Some(&self.scheduler.ddl_job_done_ch_map),
             )
             .map_err(cluster_ddl_error)?
             {
-                tidb_exec::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
+                crate::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
                     return Ok(report)
                 }
-                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(
+                crate::real_tikv_ddl::AddIndexSubmitted::Job(
                     ddl_job_id,
                     action,
                     executor_warnings,
@@ -2736,19 +2770,15 @@ where
 /// then a multi-schema change's sub-job warnings as notes
 /// (`appendMultiChangeWarningsToOwnerCtx`). A job's own `Warning` never
 /// reaches the client.
-fn synced_job_warnings(
-    job: &tidb_model::Job,
-) -> Vec<(tidb_exec::real_tikv_ddl::DdlWarningLevel, u16, String)> {
+fn synced_job_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn> {
     let mut warnings = reorg_meta_warnings(job);
     if job.type_ == tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE {
         if let Some(info) = &job.multi_schema_info {
             for sub in info.read().sub_jobs.iter_deref() {
                 if let Some(warning) = &sub.read().warning {
-                    let warning = warning.read();
-                    warnings.push((
-                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
-                        u16::try_from(warning.code().value()).unwrap_or(1105),
-                        warning.message().to_owned(),
+                    warnings.push(tidb_util::context::SqlWarn::new(
+                        crate::real_tikv_ddl::DdlWarningLevel::Note,
+                        tidb_util::context::WarnErr::Terror(warning.read().clone()),
                     ));
                 }
             }
@@ -2759,9 +2789,7 @@ fn synced_job_warnings(
 
 /// Go `DoDDLJobWrapper` on a synced job: the reorganization's warnings,
 /// each once or summarized by code.
-fn reorg_meta_warnings(
-    job: &tidb_model::Job,
-) -> Vec<(tidb_exec::real_tikv_ddl::DdlWarningLevel, u16, String)> {
+fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn> {
     let Some(meta) = job.reorg_meta.as_ref() else {
         return Vec::new();
     };
@@ -2779,24 +2807,28 @@ fn reorg_meta_warnings(
         .filter_map(|(key, warning)| {
             let warning = warning.as_ref()?.read();
             let count = counts.get(key).copied().unwrap_or_default();
-            let message = if count == 1 {
-                warning.message().to_owned()
+            let error = if count == 1 {
+                warning.clone()
             } else {
-                format!(
-                    "{count} warnings with this error code, first warning: {}",
-                    warning.message()
+                // Go `dbterror.ClassTypes.Synthesize(warning.Code(), newMsg)`.
+                tidb_error::terror::TerrorError::synthesize(
+                    tidb_error::terror::TerrorClass::Types,
+                    warning.code(),
+                    format!(
+                        "{count} warnings with this error code, first warning: {}",
+                        warning.message()
+                    ),
                 )
             };
-            Some((
-                tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning,
-                u16::try_from(warning.code().value()).unwrap_or(1105),
-                message,
+            Some(tidb_util::context::SqlWarn::new(
+                crate::real_tikv_ddl::DdlWarningLevel::Warning,
+                tidb_util::context::WarnErr::Terror(error),
             ))
         })
         .collect()
 }
 
-impl<S> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<S>
+impl<S> crate::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<S>
 where
     S: StoreClient,
 {
@@ -2810,8 +2842,8 @@ where
                 table_id,
                 available,
             },
-            // The domain's own job: no session, no statement text.
-            &tidb_executor::StmtContext::for_query(),
+            // The domain's own job: a system session, no statement text.
+            &*self.scheduler.session_pool.system_session(),
         )
         .map(|_| ())
         .map_err(|error| (error.code, error.message))
@@ -2855,11 +2887,11 @@ struct DdlTransactionAutoIds {
     storage: ClusterTableStorage,
 }
 
-use tidb_executor::kv_table::TableAutoId;
+use tidb_table::kv_table::TableAutoId;
 
-impl tidb_exec::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
+impl tidb_cluster::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
-        self.over(tidb_exec::cluster_auto_id::auto_id_key_for(db_id, table))
+        self.over(tidb_cluster::cluster_auto_id::auto_id_key_for(db_id, table))
     }
 
     fn row_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
@@ -2872,7 +2904,7 @@ impl tidb_exec::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     }
 
     fn random_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
-        self.over(tidb_exec::cluster_auto_id::auto_random_id_key_for(
+        self.over(tidb_cluster::cluster_auto_id::auto_random_id_key_for(
             db_id, table,
         ))
     }
@@ -2885,7 +2917,7 @@ impl DdlTransactionAutoIds {
                 storage: Mutex::new(self.storage.clone()),
                 key: tidb_txnkv::Key::from_bytes(key),
             }),
-            tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP,
+            tidb_autoid::DEFAULT_AUTO_ID_STEP,
         )
     }
 }
@@ -2899,41 +2931,41 @@ struct DdlTransactionAutoIdStore {
 }
 
 impl DdlTransactionAutoIdStore {
-    fn last(&self) -> Result<u64, tidb_executor::kv_table::AutoIdStoreError> {
+    fn last(&self) -> Result<u64, tidb_autoid::AutoIdStoreError> {
         let mut storage = self.storage.lock().expect("auto id storage poisoned");
-        match tidb_executor::storage::TableStorage::get(&mut *storage, &self.key) {
+        match tidb_kv::storage::TableStorage::get(&mut *storage, &self.key) {
             Ok(value) => tidb_meta::value::parse_int_value(&value)
                 .map(|value| value as u64)
-                .map_err(|error| tidb_executor::kv_table::AutoIdStoreError(error.to_string())),
-            Err(tidb_executor::storage::StorageError::NotFound) => Ok(0),
-            Err(error) => Err(tidb_executor::kv_table::AutoIdStoreError(error.to_string())),
+                .map_err(|error| tidb_autoid::AutoIdStoreError(error.to_string())),
+            Err(tidb_kv::storage::StorageError::NotFound) => Ok(0),
+            Err(error) => Err(tidb_autoid::AutoIdStoreError(error.to_string())),
         }
     }
 
-    fn store(&self, end: u64) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+    fn store(&self, end: u64) -> Result<(), tidb_autoid::AutoIdStoreError> {
         let mut storage = self.storage.lock().expect("auto id storage poisoned");
-        tidb_executor::storage::TableStorage::set(
+        tidb_kv::storage::TableStorage::set(
             &mut *storage,
             self.key.clone(),
             tidb_meta::value::encode_int_value(end as i64),
         )
-        .map_err(|error| tidb_executor::kv_table::AutoIdStoreError(error.to_string()))
+        .map_err(|error| tidb_autoid::AutoIdStoreError(error.to_string()))
     }
 }
 
-impl tidb_executor::kv_table::AutoIdStore for DdlTransactionAutoIdStore {
+impl tidb_autoid::AutoIdStore for DdlTransactionAutoIdStore {
     fn reserve(
         &self,
         step: u64,
         unsigned: bool,
-    ) -> Result<(u64, u64), tidb_executor::kv_table::AutoIdStoreError> {
+    ) -> Result<(u64, u64), tidb_autoid::AutoIdStoreError> {
         let base = self.last()?;
-        let end = tidb_executor::kv_table::advance(base, step, unsigned);
+        let end = tidb_autoid::advance(base, step, unsigned);
         self.store(end)?;
         Ok((base, end))
     }
 
-    fn next_global(&self) -> Result<u64, tidb_executor::kv_table::AutoIdStoreError> {
+    fn next_global(&self) -> Result<u64, tidb_autoid::AutoIdStoreError> {
         Ok(self.last()?.wrapping_add(1))
     }
 
@@ -2941,8 +2973,8 @@ impl tidb_executor::kv_table::AutoIdStore for DdlTransactionAutoIdStore {
         &self,
         required: u64,
         unsigned: bool,
-    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
-        if tidb_executor::kv_table::exceeds(required, self.last()?, unsigned) {
+    ) -> Result<(), tidb_autoid::AutoIdStoreError> {
+        if tidb_autoid::exceeds(required, self.last()?, unsigned) {
             self.store(required)?;
         }
         Ok(())
@@ -2952,24 +2984,37 @@ impl tidb_executor::kv_table::AutoIdStore for DdlTransactionAutoIdStore {
         &self,
         required: u64,
         _unsigned: bool,
-    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+    ) -> Result<(), tidb_autoid::AutoIdStoreError> {
         self.store(required)
     }
 
-    fn reset(&self) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+    fn reset(&self) -> Result<(), tidb_autoid::AutoIdStoreError> {
         self.store(0)
     }
 }
 
-#[derive(Default)]
 struct KvTableIndexBackfiller {
     /// The node's row-ID allocators, for the reorg handle's row.
-    row_ids: Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>,
+    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    /// The data checks Go runs as restricted SQL through its session pool.
+    session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+}
+
+impl KvTableIndexBackfiller {
+    fn new(
+        row_ids: &Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+        session_pool: &Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+    ) -> Self {
+        Self {
+            row_ids: Arc::clone(row_ids),
+            session_pool: Arc::clone(session_pool),
+        }
+    }
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
-    fn system_row_ids(&self) -> Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>> {
-        self.row_ids.clone()
+    fn system_row_ids(&self) -> Arc<dyn tidb_cluster::table_from_meta::TableAutoIds> {
+        Arc::clone(&self.row_ids)
     }
 
     /// Go's txn backfill workers over the table as the job holds it, with the
@@ -2998,30 +3043,32 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             .field_type
             .clone()
             .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-        let found = kv_table
-            .check_modify_column_data(
+        let found = self
+            .session_pool
+            .modify_column_data(
+                &mut kv_table,
                 offset,
                 &not_null,
                 false,
-                &tidb_executor::StmtContext::for_query(),
+                &tidb_table::context::StaticMutateContext::new(),
             )
             .map_err(backfill_failure)?;
         Ok(matches!(
             found,
-            Some(tidb_executor::kv_table::KvTableError::InvalidUseOfNull)
+            Some(tidb_table::kv_table::KvTableError::InvalidUseOfNull)
         ))
     }
 
     fn reorg_add_index(
         &self,
-        reorg: &tidb_exec::cluster_ddl::add_index::AddIndexReorg,
-        work: tidb_exec::real_tikv_ddl::AddIndexReorgWork<'_>,
+        reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+        work: crate::real_tikv_ddl::AddIndexReorgWork<'_>,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
-    ) -> Result<tidb_exec::real_tikv_ddl::AddIndexReorgAnswer, LockSqlError> {
-        use tidb_exec::real_tikv_ddl::{AddIndexReorgAnswer, AddIndexReorgWork};
+    ) -> Result<crate::real_tikv_ddl::AddIndexReorgAnswer, LockSqlError> {
+        use crate::real_tikv_ddl::{AddIndexReorgAnswer, AddIndexReorgWork};
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let context = &reorg.context.0;
+        let context = &reorg_table_mutate_context(&reorg.session_vars);
         // Go `reorgPartitionWorker.BackfillData`: the table as the job sees
         // it, with the counters a colliding heap row's fresh handle comes
         // from, read and bumped in this batch's transaction.
@@ -3061,8 +3108,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 .ok_or_else(|| {
                     exchange_validation_internal("the modified column is absent".to_owned())
                 })?;
-            let found = table
-                .check_modify_column_data(
+            let found = self
+                .session_pool
+                .modify_column_data(
+                    &mut table,
                     offset,
                     &check.new_column.field_type,
                     check.check_value_range,
@@ -3070,7 +3119,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 )
                 .map_err(backfill_failure)?;
             return Ok(AddIndexReorgAnswer::Checked(found.map(|error| {
-                let error = tidb_executor::ddl::modify_column_error(error).to_mysql_error();
+                let error = tidb_ddl_build::column_changes::modify_column_error(error);
                 LockSqlError {
                     code: error.code,
                     state: error.state,
@@ -3139,7 +3188,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     )
                     .map(AddIndexReorgAnswer::Batch)
                     .map_err(|error| {
-                        let error = tidb_executor::ddl::modify_column_error(error).to_mysql_error();
+                        let error = tidb_ddl_build::column_changes::modify_column_error(error);
                         LockSqlError {
                             code: error.code,
                             state: error.state,
@@ -3173,13 +3222,13 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                             index.id,
                             index.name.original(),
                             &condition,
-                            &context.session_zone(),
-                            context.like_default_escape(),
+                            &tidb_table::context::MutateContext::session_zone(context),
+                            tidb_expr::Columns::like_default_escape(context),
                         )
                         .map_err(backfill_failure)?;
                 }
                 let decode = RowDecodeContext::for_write(context);
-                let mut combined: Option<tidb_executor::kv_table::ReorgBatch> = None;
+                let mut combined: Option<tidb_ddl_build::backfilling::ReorgBatch> = None;
                 for index_id in &reorg.index_ids {
                     let batch = table
                         .backfill_index_batch(
@@ -3253,44 +3302,17 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     /// by the same check the in-process `ADD FOREIGN KEY` runs.
     fn stage_foreign_key_check(
         &self,
-        plan: &tidb_exec::cluster_ddl::ForeignKeyCheck,
+        plan: &crate::cluster_ddl::ForeignKeyCheck,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut catalog = tidb_executor::Catalog::default();
-        let child = cluster_table(&plan.child, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?
-            .with_new_collation_mode(plan.use_new_collation);
-        catalog.create_database(&plan.schema);
-        catalog
-            .register_kv_in(&plan.schema, plan.child.name.original(), child)
-            .map_err(|error| exchange_validation_internal(format!("{error:?}")))?;
-        if let Some((schema, parent)) = &plan.parent {
-            let table = cluster_table(parent, &storage, &AutoIdSource::Unavailable)
-                .map_err(exchange_validation_internal)?
-                .with_new_collation_mode(plan.use_new_collation);
-            catalog.create_database(schema);
-            catalog
-                .register_kv_in(schema, parent.name.original(), table)
-                .map_err(|error| exchange_validation_internal(format!("{error:?}")))?;
-        }
-        tidb_executor::check_foreign_key_constrain(
-            &mut catalog,
-            &plan.schema,
-            plan.child.name.original(),
-            &plan.name,
-            &plan.context.0,
-        )
-        .map_err(|error| {
-            let error = error.to_mysql_error();
-            LockSqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-                write_conflict: None,
-                identity: None,
-            }
+        self.session_pool.foreign_key(plan, &storage).map_err(|error| LockSqlError {
+            code: error.code,
+            state: error.state,
+            message: error.message,
+            write_conflict: None,
+            identity: None,
         })
     }
     fn stage_cache_table_check(
@@ -3304,14 +3326,13 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             .map_err(exchange_validation_internal)?;
         probe.enable_cache().map_err(|error| {
             let error = match error {
-                tidb_executor::kv_table::KvTableError::CacheTableUnsupported(operation) => {
-                    tidb_executor::DriverError::OperationOnCachedTable(operation)
+                tidb_table::kv_table::KvTableError::CacheTableUnsupported(operation) => {
+                    tidb_ddl_build::errors::opt_on_cache_table(operation)
                 }
-                other => tidb_executor::DriverError::unsupported(format!(
+                other => tidb_ddl_build::errors::unsupported(format!(
                     "cache table size check failed: {other:?}"
                 )),
-            }
-            .to_mysql_error();
+            };
             LockSqlError {
                 code: error.code,
                 state: error.state,
@@ -3359,7 +3380,6 @@ impl KvTableIndexBackfiller {
         let mut partitioned =
             cluster_table(&plan.partitioned, &storage, &AutoIdSource::Unavailable)
                 .map_err(exchange_validation_internal)?;
-        let context = StmtContext::for_query();
         let ordinal = plan
             .partitioned
             .partition
@@ -3378,45 +3398,15 @@ impl KvTableIndexBackfiller {
                     plan.partition_id
                 ))
             })?;
-        let rows = standalone
-            .scan_rows_with_context(&RowDecodeContext::for_query(&context))
-            .map_err(exchange_validation_table_error)?;
-        for row in rows {
-            // Go's literal condition (HASH's signed `mod(expr, num) != index`),
-            // not the row's route.
-            if partitioned
-                .exchange_row_mismatches(ordinal, &row, &context)
-                .map_err(exchange_validation_table_error)?
-            {
-                return Err(exchange_validation_table_error(
-                    tidb_executor::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet,
-                ));
-            }
-            // Go applies the CHECK constraints only while
-            // `vardef.EnableCheckConstraint` is on.
-            if plan.check_constraints {
-                partitioned
-                    .validate_check_constraints(&row, &context)
-                    .map_err(exchange_validation_table_error)?;
-            }
-        }
-        if !plan.check_constraints {
-            return Ok(());
-        }
-
-        // Go's second restricted query reads the target partition and applies
-        // the standalone table's writable constraints. Both scans share the
-        // same transaction snapshot so neither direction can race the swap.
-        partitioned.restrict_read_to_partitions(&[plan.partition_id]);
-        let rows = partitioned
-            .scan_rows_with_context(&RowDecodeContext::for_query(&context))
-            .map_err(exchange_validation_table_error)?;
-        for row in rows {
-            standalone
-                .validate_check_constraints(&row, &context)
-                .map_err(exchange_validation_table_error)?;
-        }
-        Ok(())
+        self.session_pool
+            .exchange_partition_rows(
+                &mut standalone,
+                &mut partitioned,
+                ordinal,
+                plan.partition_id,
+                plan.check_constraints,
+            )
+            .map_err(exchange_validation_table_error)
     }
 }
 
@@ -3430,28 +3420,18 @@ impl CheckConstraintValidator for KvTableIndexBackfiller {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
             .map_err(DdlPlanError::Encode)?;
-        let rows = table
-            .scan_rows_with_context(&RowDecodeContext::for_query(&plan.context.0))
-            .map_err(|error| {
-                check_constraint_validation_table_error(error, &plan.constraint_name)
-            })?;
-        for row in rows {
-            table
-                .validate_check_constraints(&row, &plan.context.0)
-                .map_err(|error| {
-                    check_constraint_validation_table_error(error, &plan.constraint_name)
-                })?;
-        }
-        Ok(())
+        self.session_pool
+            .check_constraint_rows(&mut table)
+            .map_err(|error| check_constraint_validation_table_error(error, &plan.constraint_name))
     }
 }
 
 fn check_constraint_validation_table_error(
-    error: tidb_executor::kv_table::KvTableError,
+    error: tidb_table::kv_table::KvTableError,
     constraint_name: &str,
 ) -> DdlPlanError {
     match error {
-        tidb_executor::kv_table::KvTableError::CheckConstraintViolated(name) => {
+        tidb_table::kv_table::KvTableError::CheckConstraintViolated(name) => {
             use tidb_hack::GoToLower;
             tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
                 .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from(
@@ -3475,22 +3455,21 @@ fn exchange_validation_internal(message: String) -> LockSqlError {
     }
 }
 
-fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError) -> LockSqlError {
+fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
     match error {
-        tidb_executor::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet
-        | tidb_executor::kv_table::KvTableError::NoPartitionForValue(_)
-        | tidb_executor::kv_table::KvTableError::CheckConstraintViolated(_) => LockSqlError {
+        tidb_table::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet
+        | tidb_table::kv_table::KvTableError::NoPartitionForValue(_)
+        | tidb_table::kv_table::KvTableError::CheckConstraintViolated(_) => LockSqlError {
             code: tidb_error::tidb::errcode::ErrRowDoesNotMatchPartition,
             state: *b"HY000",
             message: "Found a row that does not match the partition".to_owned(),
             write_conflict: None,
             identity: None,
         },
-        tidb_executor::kv_table::KvTableError::CheckConstraint {
+        tidb_table::kv_table::KvTableError::CheckConstraint {
             eval: Some(eval), ..
         } => {
-            let error = tidb_executor::DriverError::Exec(tidb_executor::ExecError::Eval(eval))
-                .to_mysql_error();
+            let error = eval.to_mysql_error();
             LockSqlError {
                 code: error.code,
                 state: error.state,
@@ -3504,8 +3483,8 @@ fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError)
 }
 
 /// Preserve the shared table/expression error identity through DDL rollback.
-fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> LockSqlError {
-    let error = tidb_executor::ddl::index_backfill_error(error).to_mysql_error();
+fn backfill_failure(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
+    let error = tidb_ddl_build::table_backfill::index_backfill_error(error);
     LockSqlError {
         code: error.code,
         state: error.state,
@@ -3514,3 +3493,114 @@ fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> LockSqlErro
         identity: None,
     }
 }
+
+
+/// Go `newReorgTableMutateContext(newReorgExprCtxWithReorgMeta(job.ReorgMeta))`:
+/// the table context a reorganization batch writes under, the job's SQL
+/// mode and location with no session.
+#[must_use]
+fn reorg_table_mutate_context(
+    vars: &crate::cluster_ddl::add_index::ReorgSessionVars,
+) -> tidb_table::context::StaticMutateContext {
+    tidb_table::context::StaticMutateContext::for_reorg_meta(vars.sql_mode, vars.time_zone.clone())
+}
+
+#[cfg(test)]
+mod reorg_context_tests {
+    use super::*;
+    use tidb_datatype::SessionTimeZone;
+    use tidb_table::context::MutateContext;
+
+    /// The statement context the worker built for a reorganization before it
+    /// held Go's `reorgTableMutateContext` (Go `newReorgSessCtx`) over the
+    /// job's SQL mode and time zone. Go's reorganization reads the current time
+    /// in the job's zone, as a NULL bound for a `TIMESTAMP NOT NULL` column does.
+    fn reorg_statement_context(vars: &crate::cluster_ddl::add_index::ReorgSessionVars) -> tidb_executor::StmtContext {
+        tidb_exec::table_info_build::default_ddl_statement_context()
+            .with_ddl_sql_mode(vars.sql_mode)
+            .with_lazy_clock(None, vars.time_zone.clone())
+            .for_reorg()
+    }
+
+    /// Every value the table layer and expression evaluation read from a
+    /// reorganization's context, and from its `for_reorg` derivative.
+    fn fingerprint(ctx: &dyn MutateContext) -> Vec<String> {
+        let mut values = vec![
+            format!("{:?}", ctx.write_conversion_flags()),
+            format!("{:?}", ctx.strict()),
+            format!("{:?}", ctx.ignore_err()),
+            format!("{:?}", ctx.new_collation_enabled()),
+            format!("{:?}", ctx.pessimistic_transaction()),
+            format!("{:?}", ctx.pessimistic_check_in_prewrite()),
+            format!("{:?}", ctx.optimistic_transaction()),
+            format!("{:?}", ctx.writes_untouched_indices()),
+            format!("{:?}", ctx.tmp_table_max_size()),
+            format!("{:?}", ctx.reorg_default_conversion_flags()),
+            format!("{:?}", ctx.query_default_conversion_flags()),
+            format!("{:?}", ctx.show_default_conversion_flags()),
+            format!("{:?}", ctx.session_zone()),
+            format!("{:?}", ctx.type_flags()),
+            format!("{:?}", ctx.truncate_level()),
+            format!("{:?}", ctx.division_by_zero_level()),
+            format!("{:?}", ctx.strict_sql_mode()),
+            format!("{:?}", ctx.date_modes()),
+            format!("{:?}", ctx.time_zone()),
+            format!("{:?}", ctx.connection_charset_info()),
+            format!("{:?}", ctx.like_default_escape()),
+            format!("{:?}", ctx.no_unsigned_subtraction()),
+            format!("{:?}", ctx.sysdate_is_now()),
+            format!("{:?}", ctx.max_allowed_packet()),
+            format!("{:?}", ctx.div_precision_increment()),
+            format!("{:?}", ctx.default_week_format()),
+            format!("{:?}", ctx.windowing_use_high_precision()),
+            format!("{:?}", ctx.current_database()),
+            format!("{:?}", ctx.connection_id()),
+            // The clock's offset in the job's zone; its instant is "now".
+            format!("{:?}", ctx.now().map(|(_, _, offset)| offset)),
+        ];
+        ctx.append_warning(1292, "w");
+        values.push(format!("{:?}", ctx.take_warnings()));
+        values
+    }
+
+    /// Go's `reorgTableMutateContext` over `newReorgExprCtxWithReorgMeta`
+    /// reads as the statement context the worker used to build for a
+    /// reorganization, for every SQL-mode shape and zone kind a job carries.
+    #[test]
+    fn the_reorg_table_context_reads_as_the_reorg_statement_did() {
+        let modes = [
+            tidb_mysql::DefaultSQLMode,
+            "",
+            "STRICT_ALL_TABLES",
+            "ALLOW_INVALID_DATES",
+            "NO_ZERO_DATE,NO_ZERO_IN_DATE",
+            "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO",
+        ];
+        let zones = [
+            SessionTimeZone::utc(),
+            SessionTimeZone::Fixed {
+                name: "+08:00".to_owned(),
+                offset_secs: 8 * 3600,
+            },
+            SessionTimeZone::Named(chrono_tz::America::New_York),
+        ];
+        for mode in modes {
+            let sql_mode = tidb_mysql::get_sql_mode(mode).expect("a valid SQL mode").0;
+            for zone in &zones {
+                let vars = crate::cluster_ddl::add_index::ReorgSessionVars {
+                    sql_mode,
+                    time_zone: zone.clone(),
+                };
+                let statement = reorg_statement_context(&vars);
+                let table = reorg_table_mutate_context(&vars);
+                assert_eq!(fingerprint(&table), fingerprint(&statement), "{mode} {zone:?}");
+                assert_eq!(
+                    fingerprint(&*MutateContext::for_reorg(&table)),
+                    fingerprint(&*MutateContext::for_reorg(&statement)),
+                    "{mode} {zone:?} for_reorg"
+                );
+            }
+        }
+    }
+}
+

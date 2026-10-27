@@ -251,7 +251,7 @@ where
     C: Columns + Clone + Send + Sync + 'static,
 {
     fn process_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
-        self.memory.check()?;
+        self.memory.check().map_err(ExecError::from)?;
         self.chunks += 1;
         let keys = (0..chunk.num_rows())
             .map(|row| eval_sort_key(&self.by_items, &self.ctx, chunk.get_row(row)))
@@ -273,7 +273,7 @@ where
         let delta = bytes - self.accounted;
         self.accounted = bytes;
         self.tracker.consume(delta);
-        self.memory.check()
+        self.memory.check().map_err(ExecError::from)
     }
 
     fn spill(&mut self) -> Result<(), ExecError> {
@@ -527,7 +527,7 @@ where
             .iter()
             .map(|column| {
                 let mut value = row.get_datum(column.column_idx, &column.field_type);
-                crate::index_prefix_cut::cut_datum_by_prefix_len(
+                tidb_tablecodec::cut_datum_by_prefix_len(
                     &mut value,
                     column.prefix_len,
                     &column.field_type,
@@ -585,7 +585,7 @@ where
     fn account(&mut self) -> Result<(), ExecError> {
         let bytes = self.heap.memory_usage();
         self.tracker.replace_bytes_used(bytes);
-        self.memory.check()
+        self.memory.check().map_err(ExecError::from)
     }
 
     /// Go RankTopN retains the boundary prefix group before sorting results.
@@ -688,7 +688,7 @@ where
 
         let fetch_result = recover_worker_panic(|| {
             loop {
-                self.memory.check()?;
+                self.memory.check().map_err(ExecError::from)?;
                 let mut chunk = self.child.new_chunk();
                 self.child.next(&mut chunk)?;
                 if chunk.num_rows() == 0 {

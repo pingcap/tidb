@@ -950,7 +950,7 @@ fn duplicate_group_concat_set_var_warns_only_about_the_conflict() {
 
 #[test]
 fn check_mb4_value_in_utf8_is_typed_once_per_global_publication() {
-    let mut vars = crate::vars::SessionVars::new();
+    let mut vars = mock_session_vars();
     assert!(
         vars.check_mb4_value_in_utf8(),
         "Go DefTiDBCheckMb4ValueInUTF8 is true"
@@ -961,4 +961,16 @@ fn check_mb4_value_in_utf8_is_typed_once_per_global_publication() {
     vars.set_global("tidb_check_mb4_value_in_utf8", "1".to_owned())
         .unwrap();
     assert!(vars.check_mb4_value_in_utf8());
+}
+
+/// `SessionVars` over a fresh domain's GLOBAL tier (Go's
+/// `GlobalVarsAccessor`, with its scope checks and SetGlobal hooks), as a
+/// session installs it.
+fn mock_session_vars() -> crate::vars::SessionVars {
+    let mut vars = crate::vars::SessionVars::new();
+    vars.seed_from_globals(std::sync::Arc::new(
+        tidb_domain::global_sysvars::GlobalSysvars::new(),
+    ))
+    .expect("the domain's GLOBAL tier seeds a session");
+    vars
 }

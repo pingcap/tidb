@@ -2091,7 +2091,7 @@ pub(crate) fn do_gc_placement_rules(
 /// tables `ids`.
 pub fn get_gc_rules(
     ids: &[i64],
-    rules: &HashMap<String, tidb_executor::ddl_label::Rule>,
+    rules: &HashMap<String, tidb_ddl_label::Rule>,
 ) -> Vec<String> {
     let mut old_ranges = HashSet::new();
     for &id in ids {

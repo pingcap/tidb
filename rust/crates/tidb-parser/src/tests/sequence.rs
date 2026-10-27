@@ -424,10 +424,10 @@ fn shared_table_options_and_invalid_state_boundaries() {
         r("alter range @r placement policy @p"),
         "ALTER RANGE `r` PLACEMENT POLICY = `p`"
     );
-    let Stmt::Ddl(ddl) = parse("alter range global").expect("Go accepts bare ALTER RANGE") else {
+    let Stmt::Admin(ddl) = parse("alter range global").expect("Go accepts bare ALTER RANGE") else {
         panic!("expected DDL statement")
     };
-    let tidb_ast::DdlStmt::AlterRange(range) = ddl.as_ref() else {
+    let tidb_ast::AdminStmt::AlterRange(range) = ddl.as_ref() else {
         panic!("expected ALTER RANGE")
     };
     assert!(range.placement.is_none());
@@ -471,9 +471,13 @@ fn sequence_source_statements_have_typed_ddl_variants() {
                 tidb_ast::DdlStmt::CreateSequence(_) => "create",
                 tidb_ast::DdlStmt::AlterSequence(_) => "alter",
                 tidb_ast::DdlStmt::DropSequence(_) => "drop",
-                tidb_ast::DdlStmt::AlterInstance(_) => "instance",
-                tidb_ast::DdlStmt::AlterRange(_) => "range",
                 _ => panic!("unexpected DDL variant for {sql}"),
+            },
+            // Go's ALTER INSTANCE and ALTER RANGE are not `DDLNode`s.
+            tidb_ast::Stmt::Admin(admin) => match admin.into_inner() {
+                tidb_ast::AdminStmt::AlterInstance(_) => "instance",
+                tidb_ast::AdminStmt::AlterRange(_) => "range",
+                _ => panic!("unexpected statement variant for {sql}"),
             },
             _ => panic!("unexpected statement envelope for {sql}"),
         };

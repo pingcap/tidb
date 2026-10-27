@@ -67,9 +67,9 @@ fn advisory_lock_functions_match_source_boundaries() {
         row([Datum::Int(1)])
     );
     assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(session.warnings()[0].code(), 1292);
     assert_eq!(
-        session.warnings()[0].message,
+        session.warnings()[0].message(),
         "Truncated incorrect get_lock value: '-10'"
     );
     assert_eq!(

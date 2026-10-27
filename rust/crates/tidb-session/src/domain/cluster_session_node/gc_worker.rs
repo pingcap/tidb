@@ -50,7 +50,7 @@ pub struct NodeGcWorker {
 pub fn start_gc_worker(
     factory: &Arc<ClusterSessionFactory>,
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
-    opener: Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
     // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(
@@ -66,7 +66,7 @@ pub fn start_gc_worker(
         sessions: Arc::new(NodeGcSessions::new(
             factory,
             Arc::new(move |job_id| {
-                tidb_exec::real_tikv_ddl::load_history_persisted_ddl_job(
+                tidb_ddl::real_tikv_ddl::load_history_persisted_ddl_job(
                     Arc::clone(&opener),
                     job_id,
                     GC_RPC_TIMEOUT,
@@ -121,7 +121,9 @@ impl GcSessionFactory for NodeGcSessions {
                 factory
                     .open_session(SessionContext {
                         connection_id: self.next_connection_id.fetch_add(1, Ordering::Relaxed),
-                        peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+                        peer_addr: crate::domain::client_socket::PeerAddress::Tcp(
+                "127.0.0.1:0".parse().expect("loopback socket address"),
+            ),
                         identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                         client_found_rows: false,
                         secure_transport: false,
@@ -328,7 +330,7 @@ impl NodeGcRules {
 
 impl GcRuleClient for NodeGcRules {
     fn delete_tiflash_placement_rules(&self, physical_table_ids: &[i64]) -> GcResult<()> {
-        tidb_exec::placement_delivery::delete_tiflash_placement_rules(
+        tidb_ddl::placement_delivery::delete_tiflash_placement_rules(
             self.pd_http_client()?,
             physical_table_ids,
             GC_RPC_TIMEOUT,
@@ -337,7 +339,7 @@ impl GcRuleClient for NodeGcRules {
     }
 
     fn put_rule_bundles(&self, bundles: Vec<tidb_placement::Bundle>) -> GcResult<()> {
-        tidb_exec::placement_delivery::put_rule_bundles(
+        tidb_ddl::placement_delivery::put_rule_bundles(
             self.pd_http_client()?,
             &bundles,
             GC_RPC_TIMEOUT,
@@ -348,16 +350,16 @@ impl GcRuleClient for NodeGcRules {
     fn get_label_rules(
         &self,
         rule_ids: &[String],
-    ) -> GcResult<HashMap<String, tidb_executor::ddl_label::Rule>> {
-        tidb_executor::label_manager::label_rule_manager()
+    ) -> GcResult<HashMap<String, tidb_ddl_label::Rule>> {
+        tidb_domain::label_manager::label_rule_manager()
             .get_label_rules(rule_ids)
             .map(|rules| rules.into_iter().collect())
             .map_err(GcError::new)
     }
 
     fn delete_label_rules(&self, rule_ids: Vec<String>) -> GcResult<()> {
-        tidb_executor::label_manager::label_rule_manager()
-            .update_label_rules(&tidb_executor::ddl_label::new_rule_patch(
+        tidb_domain::label_manager::label_rule_manager()
+            .update_label_rules(&tidb_ddl_label::new_rule_patch(
                 Vec::new(),
                 rule_ids,
             ))

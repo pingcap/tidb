@@ -47,9 +47,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_exec::table_info_build::{
-    build_table_info, build_table_info_with_context, ClusteredIndexDefMode,
-};
+use tidb_exec::table_info_build::build_table_info_with_context;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_model::table_info::TableInfo;
 
@@ -68,11 +66,12 @@ fn lower(create_sql: &str) -> TableInfo {
     let DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("a metadef statement is a CREATE TABLE");
     };
-    build_table_info(
+    build_table_info_with_context(
         create,
         "utf8mb4",
         "utf8mb4_bin",
-        ClusteredIndexDefMode::IntOnly,
+        &int_only_context(),
+        false,
     )
     .expect("a bootstrap CREATE TABLE is admitted")
 }
@@ -301,11 +300,12 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
 
     // Classic bootstrap deliberately uses ModeNone, so this still runs the
     // ordinary BLOB/TEXT default checker but takes its non-strict warning arm.
-    let bootstrap = build_table_info(
+    let bootstrap = build_table_info_with_context(
         create,
         "utf8mb4",
         "utf8mb4_bin",
-        ClusteredIndexDefMode::IntOnly,
+        &int_only_context(),
+        false,
     )
     .expect("ModeNone admits bootstrap's empty LONGTEXT default");
     let priv_column = bootstrap
@@ -329,8 +329,8 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
         create,
         "utf8mb4",
         "utf8mb4_bin",
-        ClusteredIndexDefMode::IntOnly,
-        &live,
+        &tidb_executor::ddl::new_metabuild_context_with_sctx(&live),
+        live.enable_check_constraint(),
     )
     .expect_err("strict live DDL rejects an empty LONGTEXT default");
     assert_eq!(error.code, 1101);
@@ -338,4 +338,17 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
         error.reason,
         "BLOB/TEXT/JSON column 'Priv' can't have a default value"
     );
+}
+
+/// Go `metabuild.NewContext(WithExprCtx(<ModeNone static context>),
+/// WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeIntOnly))`.
+fn int_only_context() -> tidb_expr::metabuild::Context {
+    tidb_expr::metabuild::Context::new([
+        tidb_expr::metabuild::with_expr_ctx(std::sync::Arc::clone(
+            tidb_expr::metabuild::Context::new_non_strict().get_expr_ctx(),
+        )),
+        tidb_expr::metabuild::with_clustered_index_def_mode(
+            tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,
+        ),
+    ])
 }

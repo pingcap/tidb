@@ -21,17 +21,17 @@
 //! DDL's implicit commit), then transaction control and `SET`, then the parsed
 //! dispatch over query/DML/DDL.
 
-use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
-use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
+use tidb_ast::{DmlStmt, SessionStmt, Stmt};
+use tidb_executor::simple::account::AccountExec;
+use tidb_executor::simple::account_password::AccountPasswordExec;
+use tidb_executor::{Catalog, DriverError};
 use tidb_hack::GoCaseCompare;
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
-use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
-    infoschema, privilege, statement_kind_of, statement_priority_of, Session,
+    infoschema, statement_kind_of, statement_priority_of, Session,
     StatementKind, StmtOutput, WarningLevel,
 };
-use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
 /// The `SELECT <exprs>` whose execution is Go `buildDo`'s Projection over a
 /// one-row TableDual.
@@ -337,30 +337,12 @@ fn cached_dml_plan<'a>(
     Ok(Some(plan))
 }
 impl Session {
-    /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
-    /// and `SHOW TABLES`.
-    ///
-    /// Returns `Some(output)` for those statements and `None` for anything
-    /// else, so a caller can dispatch without re-parsing.
-    ///
-    /// This is also where DDL's IMPLICIT COMMIT lives, because every DDL
-    /// statement passes through here before reaching its own arm --
-    /// see the `Stmt::Ddl` arm below.
-    pub fn apply_schema_statement(&mut self, sql: &str) -> Result<Option<StmtOutput>, DriverError> {
-        let stmt = self.parse(sql)?;
-        self.apply_schema_stmt(&stmt)
-    }
-
-    /// [`Self::apply_schema_statement`] over a statement this session already
-    /// parsed, so a caller holding the parse does not pay for a second one.
-    /// The text form is the wrapper above; the two share this body, so there
-    /// is one answer to "is this a schema statement", not two.
-    pub(crate) fn apply_schema_stmt(
-        &mut self,
-        stmt: &Stmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        self.validate_snapshot_statement(stmt)?;
-        self.validate_ddl_preprocess(stmt)?;
+    /// The checks every compiled statement passes before its executor: the
+    /// `tidb_snapshot` write refusal, the implicit commit Go's `DDLExec`,
+    /// `GrantExec`, `RevokeExec` and `SimpleExec.autoNewTxn` make. (The staleness refusal precedes
+    /// `Compile`, and the DDL preprocess runs inside it.)
+    pub(crate) fn statement_preamble(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+        self.validate_snapshot_write(stmt)?;
         if matches!(stmt, Stmt::Ddl(_)) && !self.ddl_preserves_transaction(stmt) {
             // Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
@@ -382,204 +364,150 @@ impl Session {
             self.leave_txn_ctx_for_commit();
         }
         // Go `GrantExec.Next` and `RevokeExec.Next`, and `SimpleExec`'s
-        // `autoNewTxn` for GRANT/REVOKE ROLE and FLUSH, commit the open
-        // transaction before touching the privilege tables, like DDL.
-        if matches!(stmt, Stmt::Admin(admin) if matches!(
+        // `autoNewTxn`, commit the open transaction before touching the
+        // privilege tables, like DDL.
+        if Self::simple_exec_new_txn_in_stmt(stmt) {
+            self.leave_txn_ctx_for_commit();
+        }
+        Ok(())
+    }
+
+    /// Whether Go's executor for a `Simple` plan commits the open
+    /// transaction with `NewTxnInStmt` before its work: `GrantExec` and
+    /// `RevokeExec` (`grant.go:144`, `revoke.go:71`), and the statements
+    /// `SimpleExec.autoNewTxn` lists (`simple.go:3564`): CREATE / ALTER /
+    /// DROP / RENAME USER (CREATE and DROP ROLE are the same statements),
+    /// GRANT / REVOKE ROLE and FLUSH. SET PASSWORD and SET DEFAULT ROLE are
+    /// not among them.
+    pub(crate) fn simple_exec_new_txn_in_stmt(stmt: &Stmt) -> bool {
+        matches!(stmt, Stmt::Admin(admin) if matches!(
             &**admin,
             tidb_ast::AdminStmt::Grant(_)
                 | tidb_ast::AdminStmt::Revoke(_)
                 | tidb_ast::AdminStmt::GrantRole(_)
                 | tidb_ast::AdminStmt::RevokeRole(_)
                 | tidb_ast::AdminStmt::Flush(_)
-        )) {
-            self.leave_txn_ctx_for_commit();
+                | tidb_ast::AdminStmt::CreateUser { .. }
+                | tidb_ast::AdminStmt::CreateRole { .. }
+                | tidb_ast::AdminStmt::AlterUser(_)
+                | tidb_ast::AdminStmt::DropUser { .. }
+                | tidb_ast::AdminStmt::RenameUser { .. }
+        ))
+    }
+
+    /// Go `executorBuilder.build` and the executor's `Next` for a common
+    /// plan: `SimpleExec`, `DDLExec` (the schema statements this tier
+    /// answers here; table DDL runs in the statement's later arms) and the
+    /// ADMIN plans. `None` for a plan another door runs.
+    pub(crate) fn execute_plan(
+        &mut self,
+        plan: &tidb_planner::common_plans::Plan,
+        stmt: &Stmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        use tidb_planner::common_plans::Plan;
+        match plan {
+            // The account statements' executors write the domain's
+            // privilege tables (`Session::with_account_service`).
+            Plan::Simple(_)
+                if Self::is_account_statement(stmt) =>
+            {
+                self.with_account_service(|session| session.simple_exec(stmt))
+            }
+            Plan::Simple(_) => self.simple_exec(stmt),
+            Plan::Ddl(_) => self.ddl_exec(stmt),
+            Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
+            Plan::Logical(_) | Plan::Physical(_) | Plan::ShowNextRowID(_) | Plan::Set(_) => {
+                Ok(None)
+            }
+            _ => match stmt {
+                Stmt::Admin(admin) => self.dispatch_admin_stmt(admin),
+                _ => Ok(None),
+            },
         }
-        if let Some(error) = self.local_temporary_ddl_refusal(stmt) {
-            return Err(error);
-        }
+    }
+
+    /// Go `CompactTableTiFlashExec.Next` over the table the planner resolved
+    /// through the session's infoschema (`buildCompactTable`'s
+    /// `resolveCtx.GetTableName`), a read.
+    fn compact_table_tiflash_exec(
+        &mut self,
+        compact: &tidb_ast::CompactTableStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let ctx = self.statement_context(false);
+        let result = self.with_planning_catalog(|catalog| {
+            tidb_executor::compact_table::execute_compact_table(
+                compact,
+                catalog,
+                &self.vars.current_db,
+                &ctx,
+            )
+        });
+        self.drain_eval_warnings(&ctx);
+        result.map(|()| StmtOutput::Affected(0))
+    }
+
+    /// Go `SimpleExec.Next`: one arm per statement type.
+    fn simple_exec(&mut self, stmt: &Stmt) -> Result<Option<StmtOutput>, DriverError> {
         match stmt {
             Stmt::Session(session_stmt) => match &**session_stmt {
                 SessionStmt::Use(name) => {
                     self.use_database(name)?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
-                SessionStmt::SetRole(set_role) => Ok(Some(self.set_role_stmt(set_role)?)),
+                SessionStmt::SetRole(set_role) => {
+                    tidb_executor::simple::execute_set_role(self, set_role)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
                 SessionStmt::SetDefaultRole(set_default) => {
-                    Ok(Some(self.set_default_role_stmt(set_default)?))
+                    self.set_default_role_stmt(set_default)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                // `SET PASSWORD` writes `mysql.user`, not a variable.
+                SessionStmt::SetPassword(set_password) => {
+                    self.set_password_stmt(set_password)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                SessionStmt::SetSessionStates(set) => {
+                    self.in_set_session_states = true;
+                    self.decode_session_states(&set.session_states)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                SessionStmt::SetResourceGroup(resource_group) => {
+                    self.set_resource_group_stmt(resource_group)?;
+                    Ok(Some(StmtOutput::Affected(0)))
                 }
                 _ => Ok(None),
             },
-            Stmt::Ddl(ddl) => match &**ddl {
-                tidb_ast::DdlStmt::CreateDatabase {
+            Stmt::Admin(admin) => match &**admin {
+                tidb_ast::AdminStmt::CreateUser {
                     if_not_exists,
-                    name,
-                    options,
+                    users,
+                    tls_options,
+                    resource_options,
+                    password_options,
+                    comment_or_attribute,
+                    resource_group,
                 } => {
-                    if options.iter().any(|option| {
-                        !matches!(
-                            option,
-                            tidb_ast::DatabaseOption::CharacterSet(_)
-                                | tidb_ast::DatabaseOption::Collate(_)
-                                | tidb_ast::DatabaseOption::PlacementPolicy(_)
-                        )
-                    }) {
-                        return Err(DriverError::unsupported(
-                            "this CREATE DATABASE option is not supported yet",
-                        ));
-                    }
-                    let charset = tidb_executor::resolve_database_charset(options)?;
-                    let placement = options.iter().rev().find_map(|option| match option {
-                        tidb_ast::DatabaseOption::PlacementPolicy(name) => Some(name.clone()),
-                        _ => None,
-                    });
-                    let context = self.ddl_statement_context();
-                    let created = self.with_catalog_mut(|catalog| {
-                        // Go `CreateSchemaWithInfo` checks the name's length
-                        // and submits ActionCreateSchema unless the schema
-                        // exists.
-                        if catalog.has_database(name) {
-                            return Ok(false);
-                        }
-                        tidb_executor::ddl::check_too_long_identifier(name)?;
-                        // Go `handleDatabasePlacement`.
-                        let placement = placement
-                            .as_deref()
-                            .map(|policy| {
-                                crate::alter_schema::check_and_normalize_placement_policy(
-                                    catalog, policy,
-                                )
-                            })
-                            .transpose()?
-                            .flatten();
-                        tidb_executor::ddl::submit_ddl_job(
-                            catalog,
-                            &context,
-                            name,
-                            "",
-                            tidb_model::ActionType::ACTION_CREATE_SCHEMA,
-                        )?;
-                        let created = catalog.create_database_with_charset(name, charset);
-                        if created && placement.is_some() {
-                            catalog.set_database_placement_policy(name, placement);
-                        }
-                        Ok(created)
-                    })?;
-                    // Go raises ErrDBCreateExists unless IF NOT EXISTS, and
-                    // under IF NOT EXISTS files that same error as a note:
-                    // `Note | 1007 | Can't create database 'test'; database
-                    // exists`, captured from `gorun`.
-                    if !created {
-                        let existing =
-                            DriverError::Schema(SchemaErrorKind::DatabaseExists(name.clone()));
-                        if !*if_not_exists {
-                            return Err(existing);
-                        }
-                        self.append_suppressed(existing);
-                    }
+                    self.create_user_stmt(
+                        *if_not_exists,
+                        users,
+                        tls_options,
+                        resource_options,
+                        password_options,
+                        comment_or_attribute,
+                        resource_group,
+                    )?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
-                tidb_ast::DdlStmt::AlterDatabase { name, options } => {
-                    Ok(Some(self.alter_schema_stmt(name.as_deref(), options)?))
-                }
-                tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
-                    // Go protects the bootstrap `mysql` schema before the
-                    // drop executor sees IF EXISTS or foreign-key checks.
-                    // The guard is unconditional: both `DROP DATABASE
-                    // mysql` and its IF EXISTS form report ErrForbiddenDDL.
-                    if name.go_lower_eq("mysql") {
-                        return Err(DriverError::DdlCoded {
-                            proto: &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
-                            message: "Drop 'mysql' database is forbidden".to_owned(),
-                        });
-                    }
-                    let foreign_key_checks = self.foreign_key_checks();
-                    if foreign_key_checks {
-                        if let Some(error) = self.with_persistent_catalog_mut(|catalog| {
-                            Ok(tidb_executor::find_database_referred(catalog, name))
-                        })? {
-                            return Err(error);
-                        }
-                    }
-                    let context = self.ddl_statement_context();
-                    let mut schema_table_ids = Vec::new();
-                    let dropped = self.with_catalog_mut(|catalog| {
-                        // Go `DropSchema` submits ActionDropSchema for a
-                        // schema that exists.
-                        if catalog.has_database(name) {
-                            schema_table_ids = catalog
-                                .table_names(name)
-                                .unwrap_or_default()
-                                .iter()
-                                .filter_map(|table| catalog.stored_table_id(name, table))
-                                .collect();
-                            tidb_executor::ddl::submit_ddl_job(
-                                catalog,
-                                &context,
-                                name,
-                                "",
-                                tidb_model::ActionType::ACTION_DROP_SCHEMA,
-                            )?;
-                            // Go `onDropSchema` deletes the tables' label
-                            // rules as the schema leaves the public state.
-                            tidb_executor::ddl::label_rules::drop_schema_label_rules_in(
-                                catalog, name,
-                            )?;
-                        }
-                        Ok(catalog.drop_database(name))
-                    })?;
-                    // Go raises ErrDatabaseDropExists (1008, HY000,
-                    // `Can't drop database '%-.192s'; database doesn't
-                    // exist`) unless IF EXISTS — NOT the 1049 a missing
-                    // database reports elsewhere.
-                    if !dropped && !*if_exists {
-                        return Err(DriverError::DdlCoded {
-                            proto: &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS,
-                            message: format!(
-                                "Can't drop database '{name}'; database doesn't exist"
-                            ),
-                        });
-                    }
-                    // Dropping the current database leaves the session with
-                    // none selected, which is Go's ErrNoDB state for the next
-                    // unqualified statement.
-                    if dropped && self.vars.current_db.go_lower_eq(name) {
-                        self.vars.current_db.clear();
-                    }
-                    // Go `DropSchema` then clears the session's table locks
-                    // on the schema's tables.
-                    if dropped {
-                        self.release_dropped_table_locks(&schema_table_ids);
-                    }
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::DdlStmt::CreateUser {
-                    if_not_exists,
-                    users,
-                    tls_options,
-                    resource_options,
-                    password_options,
-                    comment_or_attribute,
-                    resource_group,
-                } => Ok(Some(self.create_user_stmt(
-                    *if_not_exists,
-                    users,
-                    tls_options,
-                    resource_options,
-                    password_options,
-                    comment_or_attribute,
-                    resource_group,
-                )?)),
-                tidb_ast::DdlStmt::DropUser {
+                tidb_ast::AdminStmt::DropUser {
                     is_role,
                     if_exists,
                     users,
-                } => Ok(Some(self.drop_user_stmt(*is_role, *if_exists, users)?)),
-                tidb_ast::DdlStmt::AlterInstance(alter) => {
-                    // Go planbuilder requires SUPER, not RELOAD or the
-                    // SYSTEM_VARIABLES_ADMIN dynamic privilege.
-                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Super) {
-                        return Err(DriverError::SpecificAccessDenied("SUPER".into()));
-                    }
+                } => {
+                    self.drop_user_stmt(*is_role, *if_exists, users)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                tidb_ast::AdminStmt::AlterInstance(alter) => {
                     let process = self.process.as_ref().ok_or_else(|| {
                         DriverError::unsupported("TLS reload requires a running server")
                     })?;
@@ -589,15 +517,28 @@ impl Session {
                         .map_err(DriverError::unsupported)?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
-                tidb_ast::DdlStmt::AlterUser(alter) => Ok(Some(self.alter_user_stmt(alter)?)),
-                tidb_ast::DdlStmt::RenameUser { pairs } => Ok(Some(self.rename_user_stmt(pairs)?)),
-                tidb_ast::DdlStmt::CreateRole {
+                tidb_ast::AdminStmt::AlterUser(alter) => {
+                    self.alter_user_stmt(alter)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                tidb_ast::AdminStmt::RenameUser { pairs } => {
+                    self.rename_user_stmt(pairs)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                tidb_ast::AdminStmt::CreateRole {
                     if_not_exists,
                     roles,
-                } => Ok(Some(self.create_role_stmt(*if_not_exists, roles)?)),
-                _ => Ok(None),
+                } => {
+                    self.create_role_stmt(*if_not_exists, roles)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                // Go `SimpleExec.Next` has no arm for `DropProcedureStmt`
+                // (and `autoNewTxn` does not list it): `buildSimple` already
+                // refused it, or noted `IF EXISTS`; the executor does nothing
+                // and the open transaction stays.
+                tidb_ast::AdminStmt::DropProcedure(_) => Ok(Some(StmtOutput::Affected(0))),
+                _ => self.dispatch_admin_stmt(admin),
             },
-            Stmt::Admin(admin) => self.dispatch_admin_stmt(admin),
             _ => Ok(None),
         }
     }
@@ -904,8 +845,8 @@ impl Session {
                 // error (go's FORMAT('x', 'y') keeps both coercion warnings
                 // beside the 1582, and the error itself stays out of the
                 // buffer on the read door).
-                for (code, message) in tidb_executor::take_fold_warnings() {
-                    self.append_warning(WarningLevel::Warning, code, message);
+                for warning in tidb_executor::take_fold_warnings() {
+                    self.append_sql_warning(warning);
                 }
                 Err(error)
             }
@@ -1017,7 +958,7 @@ impl Session {
             self.require_named_table_privilege(
                 plan.names().0,
                 plan.names().1,
-                privilege::GlobalPriv::Select,
+                tidb_mysql::SelectPriv,
             )?;
             // `dirty_content` only gates scan/access-path planning. This cached
             // executor owns one handle read and the admission gate already refuses
@@ -1140,8 +1081,8 @@ impl Session {
         self.active_resource_group.clone_from(&self.vars.resource_group);
         self.publish_statement_resource_group();
         self.begin_cached_prepared_query_boundary();
-        for (level, code, message) in execution.take_planning_warnings() {
-            self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+        for warning in execution.take_planning_warnings() {
+            self.append_sql_warning(warning);
         }
 
         let opened = execution.with_plan(|statement, physical| {
@@ -1211,8 +1152,8 @@ impl Session {
         let output = execution
             .with_plan(|statement, physical| {
                 self.begin_prepared_statement_boundary(statement, Some(execution.parameters()));
-                for (level, code, message) in execution.take_planning_warnings() {
-                    self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+                for warning in execution.take_planning_warnings() {
+                    self.append_sql_warning(warning);
                 }
                 self.prepare_parsed_statement_with_optional_physical_plan(
                     sql,
@@ -1264,12 +1205,8 @@ impl Session {
                 self.run_with_columns_using(sql, false, |session| {
                     session
                         .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
-                    for (level, code, message) in execution.take_planning_warnings() {
-                        session.append_warning(
-                            crate::WarningLevel::from_executor(level),
-                            code,
-                            message,
-                        );
+                    for warning in execution.take_planning_warnings() {
+                        session.append_sql_warning(warning);
                     }
                     let output = session.execute_parsed_statement_with_dml_plan(
                         sql,
@@ -1710,7 +1647,7 @@ impl Session {
                 format!("FUNCTION {function} does not exist"),
             )));
         }
-        self.validate_snapshot_statement(&stmt)?;
+        self.validate_statement_read_only_in_staleness(&stmt)?;
         if self.vars.snapshot_ts() != 0
             && self.in_transaction()
             && self.historical_read_ts() != Some(self.vars.snapshot_ts())
@@ -1760,9 +1697,6 @@ impl Session {
                 return Ok(output);
             }
         }
-        // The jobs this statement's DDL submits are finished into the DDL
-        // history once it completes, as Go's job worker finishes them.
-        drop(self.ddl_job_sink.take());
         if matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(),
             tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::ExplainFor(_)))
         {
@@ -1775,7 +1709,6 @@ impl Session {
         // statement loop (Go `handlePessimisticDML`, `StatementLifecycle`).
         let execution =
             self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan);
-        self.finish_submitted_ddl_jobs(sql, execution.is_ok());
         let execution = execution?;
         // Go runs a statement without a result set through
         // `handleNoDelayExecutor`, whose `TryNewCacheChunk` draws from the
@@ -1971,24 +1904,20 @@ impl Session {
         {
             self.apply_set_var_hints(&stmt)?;
         }
-        // Database DDL is answered by `apply_schema_stmt` below, before the
-        // ordinary planner door. Its Go visitInfo must therefore be checked
-        // here, while the statement is still side-effect free. Table DDL is
-        // checked here too so both early schema arms and later executor arms
-        // have one pre-commit privilege boundary.
-        if matches!(stmt, Stmt::Ddl(_)) {
-            match prepared {
-                Some(requests) => self.check_table_privilege_requests(requests)?,
-                None => self.require_statement_table_privileges(&stmt)?,
-            }
-        }
-        // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
-        if let Some(output) = self.apply_schema_stmt(&stmt)? {
+        // Go `Compile` for every statement that is not a query or DML: the
+        // preprocessor, then `PlanBuilder.Build`'s visit infos, checked while
+        // the statement is still side-effect free.
+        let compiled = self.compile_stmt(&stmt, prepared)?;
+        self.statement_preamble(&stmt)?;
+        let executed = match &compiled {
+            Some(plan) => self.execute_plan(plan, &stmt)?,
+            None => None,
+        };
+        if let Some(output) = executed {
             // The partition DDL's fold-stash warnings (the reorganize
             // statistics-outdated row) drain here: DDL statements produce no
             // record set, so the record-set-only drain never runs for them.
             let statement_ctx = self.statement_context(false);
-            let drained_count = statement_ctx.warning_count();
             self.drain_eval_warnings(&statement_ctx);
             return Ok(PendingExecution::Complete(output));
         }
@@ -2009,8 +1938,7 @@ impl Session {
             // both error_count and warning_count read 1 and SHOW WARNINGS
             // carries the row (captured: `SET bogus_var=1`).
             Err(error) => {
-                let reported = error.clone().to_mysql_error();
-                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                self.append_driver_error(WarningLevel::Error, &error);
                 return Err(error);
             }
             Ok(None) => {}
@@ -2073,11 +2001,6 @@ impl Session {
         self.activate_statement_resource_group(&stmt);
         self.bind_variables(&mut stmt)?;
         self.try_add_extra_limit(&mut stmt);
-        // The mode the DDL arms below re-parse under: the one in force NOW,
-        // taken before execution so a statement is lexed exactly once per
-        // meaning.
-        let sql_mode = self.scanner_sql_mode();
-        let parser_config = self.vars.build_parser_config();
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.vars.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
@@ -2105,7 +2028,6 @@ impl Session {
         // refused before any table is touched.
         if let Stmt::Query(query) = &stmt {
             self.check_noop_functions(query)?;
-            self.check_query_clauses(query)?;
         }
         // Go's `CheckPrivilege` runs on the `visitInfo` the planner
         // collected, so it too refuses before any table is touched. This is
@@ -2122,6 +2044,8 @@ impl Session {
             // Resolve its visits against that same current schema: DDL can
             // move an unqualified column to another table after PREPARE.
             self.require_statement_table_privileges(&stmt)?;
+        } else if compiled.is_some() {
+            // `compile_stmt` already ran Go's `CheckPrivilege` for it.
         } else if let Some(requests) = prepared {
             self.check_table_privilege_requests(requests)?;
         } else {
@@ -2150,7 +2074,7 @@ impl Session {
                         }
                     }
                 }
-                let tidb_ast::QueryStmt::Select(select) = &**query else {
+                let tidb_ast::QueryStmt::Select(_) = &**query else {
                     let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
                         let physical = select_plan.as_mut().and_then(|retained| {
                             (retained.schema_version == catalog.schema_version()).then(|| {
@@ -2465,268 +2389,23 @@ impl Session {
                     ))),
                 }
             }
-            Stmt::Ddl(ddl) => match &**ddl {
-                DdlStmt::TruncateTable(name) => {
-                    let context = self
-                        .ddl_statement_context()
-                        .with_parser_config(self.vars.build_parser_config());
-                    let local = self.is_local_temporary_table_path(name);
-                    let current_db = self.vars.current_db.clone();
-                    let foreign_key_checks = !local && self.foreign_key_checks();
-                    let target = match name.as_slice() {
-                        [table] => Some((current_db.clone(), table.clone())),
-                        [db, table] => Some((db.clone(), table.clone())),
-                        _ => None,
-                    };
-                    let (schema_id, old_id, new_id) =
-                        self.with_catalog_scope(local, |catalog| {
-                            let ids = |catalog: &tidb_executor::Catalog| {
-                                target.as_ref().and_then(|(db, table)| {
-                                    Some((
-                                        catalog.database_id(db)?,
-                                        catalog.stored_table_id(db, table)?,
-                                    ))
-                                })
-                            };
-                            let before = ids(catalog);
-                            tidb_executor::run_truncate_table_in_with_foreign_key_checks(
-                                sql,
-                                catalog,
-                                &current_db,
-                                sql_mode,
-                                foreign_key_checks,
-                                &context,
-                            )?;
-                            Ok(before
-                                .zip(ids(catalog))
-                                .map(|((schema_id, old_id), (_, new_id))| {
-                                    (schema_id, old_id, new_id)
-                                })
-                                .unwrap_or_default())
-                        })?;
-                    // Go `HandleLockTablesOnSuccessSubmit`/`OnFinish`.
-                    if !local && old_id != new_id {
-                        self.move_truncated_table_lock(schema_id, old_id, new_id);
-                    }
-                    Ok(StmtOutput::Affected(0))
-                }
-                // Go `createIndex`'s hypo branch: the index joins the
-                // session's `HypoIndexes`; no job runs and no schema moves.
-                DdlStmt::CreateIndex(create)
-                    if create.options.index_type == Some(tidb_ast::IndexType::HYPO) =>
-                {
-                    let current_db = self.vars.current_db.clone();
-                    let ctx = self.statement_context(false);
-                    let mut hypo_indexes = (*self.hypo_indexes).clone();
-                    let result = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::ddl::create_hypo_index(
-                            catalog,
-                            &current_db,
-                            create,
-                            &ctx,
-                            &mut hypo_indexes,
-                        )
-                    });
-                    self.drain_eval_warnings(&ctx);
-                    result?;
-                    self.hypo_indexes = std::sync::Arc::new(hypo_indexes);
-                    Ok(StmtOutput::Affected(0))
-                }
-                // Go `dropIndex` with `isHypo`: `dropHypoIndexFromCtx`.
-                DdlStmt::DropIndex(drop) if drop.is_hypo => {
-                    let current_db = self.vars.current_db.clone();
-                    let mut hypo_indexes = (*self.hypo_indexes).clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::ddl::drop_hypo_index(
-                            catalog,
-                            &current_db,
-                            drop,
-                            &mut hypo_indexes,
-                        )
-                    })?;
-                    self.hypo_indexes = std::sync::Arc::new(hypo_indexes);
-                    Ok(StmtOutput::Affected(0))
-                }
-                // Go `AlterTableSetTiFlashReplica` with `replicaInfo.Hypo`:
-                // `setHypoTiFlashReplica`.
-                DdlStmt::AlterTable(alter)
-                    if matches!(
-                        alter.actions.as_slice(),
-                        [tidb_ast::AlterTableAction::SetTiFlashReplica { hypo: true, .. }]
-                    ) =>
-                {
-                    let [tidb_ast::AlterTableAction::SetTiFlashReplica { count, labels, .. }] =
-                        alter.actions.as_slice()
-                    else {
-                        unreachable!("matched by the guard");
-                    };
-                    let (database, table) =
-                        tidb_executor::driver::split_table_path_pub(&alter.name, &self.vars.current_db)?;
-                    let (database, table) = (database.to_owned(), table.to_owned());
-                    let mut replicas = (*self.hypo_tiflash_replicas).clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::ddl::set_hypo_tiflash_replica(
-                            catalog,
-                            &database,
-                            &table,
-                            *count,
-                            labels,
-                            &mut replicas,
-                        )
-                    })?;
-                    self.hypo_tiflash_replicas = std::sync::Arc::new(replicas);
-                    Ok(StmtOutput::Affected(0))
-                }
-                DdlStmt::DropTable(drop) => {
-                    let context = self.ddl_statement_context();
-                    let current_db = self.vars.current_db.clone();
-                    let foreign_key_checks = self.foreign_key_checks();
-                    let missing = if drop.temporary == tidb_ast::DropTemporary::Local {
-                        self.with_catalog_mut(|catalog| {
-                            tidb_executor::run_drop_table_stmt_in(
-                                drop,
-                                catalog,
-                                &current_db,
-                                false,
-                                &context,
-                            )
-                        })?
-                    } else {
-                        let (persistent, local) = self.split_local_temporary_drop(drop);
-                        let mut dropped_ids = Vec::new();
-                        let missing = self.with_persistent_catalog_mut(|catalog| {
-                            dropped_ids = persistent
-                                .names
-                                .iter()
-                                .filter_map(|path| match path.as_slice() {
-                                    [table] => catalog.stored_table_id(&current_db, table),
-                                    [db, table] => catalog.stored_table_id(db, table),
-                                    _ => None,
-                                })
-                                .collect();
-                            tidb_executor::run_drop_table_stmt_in(
-                                &persistent,
-                                catalog,
-                                &current_db,
-                                foreign_key_checks,
-                                &context,
-                            )
-                        })?;
-                        // Go `dropTableObject` releases the session's lock on
-                        // each table it dropped.
-                        self.release_dropped_table_locks(&dropped_ids);
-                        // Go completes the local leg only after every durable
-                        // target succeeds, including missing-name aggregation.
-                        self.drop_local_temporary_targets(local)?;
-                        missing
-                    };
-                    // `IF EXISTS` does not silence the missing names, it
-                    // demotes them: Go files one `Note 1051` per name it could
-                    // not drop. Captured from `gorun`,
-                    // `drop table if exists nosuchA, nosuchB` leaves TWO.
-                    for name in missing {
-                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::BadTable(
-                            name,
-                        )));
-                    }
-                    // MySQL answers DDL with a zero affected-row count.
-                    Ok(StmtOutput::Affected(0))
-                }
-                DdlStmt::CreateTable(create) => {
-                    let current_db = self.vars.current_db.clone();
-                    let foreign_key_checks = self.foreign_key_checks();
-                    let enable_check_constraint = self.enable_check_constraint();
-                    // `@@tidb_enable_clustered_index` decides whether a
-                    // declared primary key becomes the ROW HANDLE or an
-                    // ordinary unique index, so it has to be read from this
-                    // session before the table is built.
-                    let clustered_index_mode = self.clustered_index_mode();
-                    // The session's own evaluation context, which carries
-                    // `@@time_zone`: `CREATE TABLE` folds a column `DEFAULT`
-                    // and a RANGE partition bound at DDL time, and both can
-                    // read the zone.
-                    let ctx = self.statement_context(false);
-                    // Go `pkg/ddl/create_table.go` and `add_column.go` warn
-                    // once per CHECK constraint they discard, before the
-                    // table is built; the constraint itself never reaches
-                    // the stored `TableInfo`.
-                    let discarded_checks = if enable_check_constraint {
-                        0
-                    } else {
-                        tidb_executor::check_constraint_count(create)
-                    };
-                    let local = create.temporary == tidb_ast::CreateTableTemporary::Local;
-                    let done = self.with_catalog_scope(local, |catalog| {
-                        Ok(StmtOutput::Done(tidb_executor::run_create_table_in(
-                            sql,
-                            catalog,
-                            &current_db,
-                            tidb_executor::CreateTableSettings {
-                                sql_mode,
-                                parser_config,
-                                foreign_key_checks,
-                                enable_check_constraint,
-                                clustered_index_mode,
-                            },
-                            &ctx,
-                        )?))
-                    });
-                    if done.is_ok() {
-                        for _ in 0..discarded_checks {
-                            self.append_warning(
-                                WarningLevel::Warning,
-                                CHECK_CONSTRAINT_IS_OFF_CODE,
-                                CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
-                            );
-                        }
-                        // Go accepts `LINEAR HASH` and builds the plain
-                        // non-linear table, warning that it did so.
-                        if let Some(message) = tidb_executor::linear_partitioning_warning(create) {
-                            self.append_warning(
-                                WarningLevel::Warning,
-                                UNSUPPORTED_CREATE_PARTITION_CODE,
-                                message,
-                            );
-                        }
-                    }
-                    // What the BUILD itself warned about -- Go's
-                    // `buildIndexColumns` files 1071 here when a non-strict
-                    // mode truncates an over-long key part. It comes AFTER the
-                    // discarded-CHECK notes, which is the order captured over
-                    // a table that triggers both.
-                    self.drain_eval_warnings(&ctx);
-                    done
-                }
-                // Go's `CompactTableStmt` (`CompactTableTiFlashExec`): the
-                // parser spells it as a lone `ALTER TABLE ... COMPACT`, and
-                // it is a session statement, not a DDL job.
-                DdlStmt::AlterTable(alter) if crate::classify::is_compact_table(ddl) => {
-                    let current_db = self.vars.current_db.clone();
-                    let ctx = self.statement_context(false);
-                    let result = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_compact_table_in(alter, catalog, &current_db, &ctx)
-                    });
-                    self.drain_eval_warnings(&ctx);
-                    result.map(|()| StmtOutput::Affected(0))
-                }
-                // Every other DDL is a job the session's node runs (Go's
-                // `DDLExec` over the domain's DDL); only a local temporary
-                // table and a hypothetical index belong to the session.
-                other => Err(DriverError::unsupported(format!(
-                    "{} is a DDL job, which the session's node runs",
-                    variant_name(other)
-                ))),
-            },
-            Stmt::Admin(admin) => match &**admin {
-                tidb_ast::AdminStmt::CleanupTableLock(cleanup) => {
-                    let tables = cleanup.tables.clone();
-                    self.execute_cleanup_table_lock(&tables)
-                }
-                other => Err(DriverError::unsupported(format!(
-                    "this statement kind (ADMIN {}) is not supported yet",
-                    variant_name(other)
-                ))),
-            },
+            // Every other DDL is a job the session's node runs (Go's
+            // `DDLExec` over the domain's DDL); only a local temporary
+            // table and a hypothetical index belong to the session.
+            Stmt::Ddl(ddl) => Err(DriverError::unsupported(format!(
+                "{} is a DDL job, which the session's node runs",
+                variant_name(&**ddl)
+            ))),
+            // SHOW compiles itself (`run_planned_show`), and a logical
+            // ADMIN plan (`LogicalShowDDLJobs`) reaches its executor here.
+            Stmt::Admin(admin) => self.dispatch_admin_stmt(admin).and_then(|output| {
+                output.ok_or_else(|| {
+                    DriverError::unsupported(format!(
+                        "this statement kind (ADMIN {}) is not supported yet",
+                        variant_name(&**admin)
+                    ))
+                })
+            }),
             Stmt::Session(session) => Err(DriverError::unsupported(format!(
                 "this statement kind ({}) is not supported yet",
                 variant_name(&**session)
@@ -2735,9 +2414,6 @@ impl Session {
         output.map(PendingExecution::Complete)
     }
 
-    fn check_query_clauses(&self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-        Ok(())
-    }
 }
 
 pub(crate) fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
@@ -2790,28 +2466,22 @@ pub(crate) fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
 }
 
 impl Session {
-    /// Shared snapshot write admission for ordinary and routed DDL execution.
-    pub fn validate_snapshot_statement(&self, stmt: &Stmt) -> Result<(), DriverError> {
+    /// Go `validateStatementReadOnlyInStaleness` (`session.go:2822`), which
+    /// `ExecuteStmt` runs before `Compile`. It switches on the statement node
+    /// itself: a top-level SELECT's lock, the read-only question for the
+    /// statements it lists, and any DML; a lock inside a derived table or a
+    /// view body, and every DDL, pass it.
+    pub fn validate_statement_read_only_in_staleness(&self, stmt: &Stmt) -> Result<(), DriverError> {
         if !self.vars.restricted_sql
             && (self.historical_read_ts().is_some()
                 || self.vars.txn_read_ts() != 0
                 || self.external_timestamp_read_enabled())
         {
-            struct Locked(bool);
-            impl tidb_ast::Visitor for Locked {
-                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                    if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
-                        self.0 |= select.lock.is_some();
-                    }
-                    false
-                }
-                fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
-                    true
-                }
-            }
-            let mut locked = Locked(false);
-            tidb_ast::Visitable::accept(&mut stmt.clone(), &mut locked);
-            if locked.0 {
+            let locked = matches!(stmt, Stmt::Query(query) if matches!(
+                query.as_ref(),
+                tidb_ast::QueryStmt::Select(select) if select.lock.is_some()
+            ));
+            if locked {
                 return Err(DriverError::unsupported(
                     "select lock hasn't been supported in stale read yet",
                 ));
@@ -2826,6 +2496,12 @@ impl Session {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Go `ExecStmt`'s history-read refusal (`adapter.go:1067,1152`): a write
+    /// under `tidb_snapshot`, once the statement has compiled.
+    pub fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), DriverError> {
         let checked = matches!(stmt, Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Query(_))
             || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(
                 _,
@@ -2898,7 +2574,8 @@ impl Session {
 
     fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         if self.historical_read_provider.is_some() {
-            return self.validate_snapshot_statement(stmt);
+            self.validate_statement_read_only_in_staleness(stmt)?;
+            return self.validate_snapshot_write(stmt);
         }
 
         if self.vars.snapshot_ts() != 0 {

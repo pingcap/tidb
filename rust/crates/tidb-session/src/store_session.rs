@@ -23,7 +23,7 @@
 //! genuinely its own: the catalog source and the commit hooks.
 
 use tidb_ast::Stmt;
-use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::BufferCheckpoint;
 use tidb_executor::DriverError;
@@ -120,6 +120,25 @@ impl<F: CatalogFollowing> StoreSession<F> {
         };
         self.session
             .control_transaction_stmt(stmt, &mut ops)
+            .map_err(sql_query_error)
+    }
+
+    /// Go `sessiontxn.NewTxnInStmt` for the executor of the running
+    /// statement: [`Session::new_txn_in_stmt`] over this session's
+    /// transaction manager, when a transaction is open.
+    pub fn new_txn_in_stmt(&mut self) -> Result<(), SqlQueryError> {
+        if self.txn.explicit.is_none() && !self.session.in_transaction() {
+            return Ok(());
+        }
+        let hooks = self.commit_hooks();
+        let mut ops = StoreTxnOps {
+            txn: &mut self.txn,
+            slot: &self.slot,
+            follower: &mut self.follower,
+            hooks,
+        };
+        self.session
+            .new_txn_in_stmt(&mut ops)
             .map_err(sql_query_error)
     }
 

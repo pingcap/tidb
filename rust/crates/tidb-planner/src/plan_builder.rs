@@ -189,7 +189,9 @@ mod projection_group_check;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
+pub mod set;
 mod show;
+pub mod stmt_build;
 #[cfg(test)]
 mod show_tests;
 mod summary_time_range;
@@ -705,6 +707,15 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// documented planner-only boundary (the `EvaluateSeparately` outcome is
     /// reported as an error instead of a wrong plan).
     pub subquery_evaluator: Option<SubqueryEvaluator<'a>>,
+    /// Go `PlanContext`'s session-side reach for the statement builders:
+    /// the privilege manager, the login user and the session manager.
+    /// `None` builds as Go does without a privilege manager.
+    pub session_ctx: Option<&'a dyn stmt_build::SessionPlanContext>,
+    /// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s sink. `None` raises
+    /// nothing, as a builder without a session.
+    pub mpp_warning_sink: Option<&'a dyn crate::find_best_task::dispatch::MppWarningSink>,
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `evalFieldDefaultValue`, installed by the executor. `None` keeps a
     /// query's `DEFAULT(column)` unsupported, as Go's is without a plan.
     pub default_evaluator: Option<DefaultEvaluator<'a>>,
@@ -1593,6 +1604,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
             subquery_evaluator: None,
+            session_ctx: None,
+            mpp_warning_sink: None,
+            tiflash_engine_removed_due_to_strict_sql_mode: false,
             default_evaluator: None,
             insert_default_evaluator: None,
             values_scope: None,
@@ -1701,6 +1715,40 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub const fn with_subquery_evaluator(mut self, evaluator: SubqueryEvaluator<'a>) -> Self {
         self.subquery_evaluator = Some(evaluator);
+        self
+    }
+
+    /// Installs Go's `RaiseWarningWhenMPPEnforced` sink
+    /// ([`Self::mpp_warning_sink`]).
+    #[must_use]
+    pub const fn with_mpp_warning_sink(
+        mut self,
+        sink: &'a dyn crate::find_best_task::dispatch::MppWarningSink,
+    ) -> Self {
+        self.mpp_warning_sink = Some(sink);
+        self
+    }
+
+    /// Go `Optimize`'s removal of TiFlash from the isolation read engines
+    /// for a statement that is not read-only under a strict `sql_mode`.
+    pub fn set_tiflash_engine_removed_due_to_strict_sql_mode(&mut self, removed: bool) {
+        self.tiflash_engine_removed_due_to_strict_sql_mode = removed;
+        if removed {
+            self.tiflash_in_isolation_read = false;
+        }
+    }
+
+    fn raise_mpp_warning(&self, message: &str) {
+        if let Some(sink) = self.mpp_warning_sink {
+            sink.raise_mpp_warning(message);
+        }
+    }
+
+    /// Installs the session-side reach of Go's `PlanContext` the statement
+    /// builders use ([`Self::session_ctx`]).
+    #[must_use]
+    pub const fn with_session_ctx(mut self, ctx: &'a dyn stmt_build::SessionPlanContext) -> Self {
+        self.session_ctx = Some(ctx);
         self
     }
 
@@ -1841,7 +1889,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let mut query = query.clone();
         let mut handler = tidb_hint::QBHintHandler::build_query(&mut query);
         for warning in handler.take_warnings() {
-            self.ctx.append_warning(warning.code, &warning.message);
+            self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
         }
         self.qb_hint_state = Some(handler.new_build_state());
         self.qb_hint_handler = Some(handler);
@@ -1862,7 +1915,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 self.ctx.append_warning(1815, &warning);
             }
             for warning in handler.take_warnings() {
-                self.ctx.append_warning(warning.code, &warning.message);
+                self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
             }
         }
     }
@@ -1898,7 +1956,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 self.sub_query_ctx == SubQueryCtx::NotHandlingSubquery,
             );
         for warning in hint_warnings {
-            self.ctx.append_warning(warning.code, &warning.message);
+            self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
         }
         self.sub_query_hint_flags |= subquery_hint_flags;
         // Go resolves conflicting aggregation hints only when the aggregate
@@ -2869,7 +2932,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         table: &catalog::SourceTable,
     ) -> Option<catalog::SourceTable> {
         let indexes = self.source.hypo_indexes(db_name, &table.table_name);
-        let tiflash = !table.has_tiflash_replica
+        let tiflash = !table.has_tiflash_replica()
             && self
                 .source
                 .uses_hypo_tiflash_replicas(db_name, &table.table_name);
@@ -2878,7 +2941,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let mut table = table.clone();
         table.indexes.extend(indexes);
-        table.has_tiflash_replica |= tiflash;
+        // Go appends `genTiFlashPath` for a hypothetical replica whatever
+        // the real one's state.
+        if tiflash {
+            table.tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
+                available: true,
+                ..tidb_model::TiFlashReplicaInfo::default()
+            });
+        }
         Some(table)
     }
 
@@ -2989,9 +3059,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )))
             }
         };
-        if !self.source.database_exists(&db_name) {
-            return Err(PlanError::unknown_database(db_name));
-        }
+        // Go `is.TableByName` answers `ErrTableNotExists` for a schema that
+        // does not exist too: the lookups below raise it.
         // `:4945` "For tables in view, always ignore local temporary table":
         // a view keeps reading the permanent table a temporary one shadows.
         let in_view = !self.building_view_stack.is_empty();
@@ -3427,7 +3496,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             handle_is_int,
             common_handle_cols,
             common_handle_lens: table.common_handle_lens.clone(),
-            has_tiflash_replica: table.has_tiflash_replica,
+            has_tiflash_replica: table.has_tiflash_replica(),
             is_for_update_read: self.is_for_update_read,
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
@@ -3444,6 +3513,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
         // input, and that costing seam fills them later, as Go's
         // `deriveStatsByFilter` stage does.
+        // Go `getPossibleAccessPaths`: a table without an available TiFlash
+        // replica (a hypothetical one is available) blocks enforced MPP.
+        match &table.tiflash_replica {
+            None => self.raise_mpp_warning(&format!(
+                "MPP mode may be blocked because there aren't tiflash replicas of table `{}`.",
+                table.table_name
+            )),
+            Some(replica) if !replica.available => self.raise_mpp_warning(&format!(
+                "MPP mode may be blocked because tiflash replicas of table `{}` not ready.",
+                table.table_name
+            )),
+            Some(_) => {}
+        }
         let mut public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.optimizer_use_invisible_indexes,
@@ -3559,7 +3641,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .to_ascii_lowercase()
                     .contains("tiflash")
                 {
-                    ". Please check tiflash replica"
+                    if self.tiflash_engine_removed_due_to_strict_sql_mode {
+                        ". Please check tiflash replica or check if the query is not readonly and sql mode is strict"
+                    } else {
+                        ". Please check tiflash replica"
+                    }
                 } else {
                     ""
                 };
@@ -3572,6 +3658,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     self.isolation_read_engines_value,
                     available_engines.join(", ")
                 )));
+            }
+            if !self.tiflash_in_isolation_read {
+                if self.tiflash_engine_removed_due_to_strict_sql_mode {
+                    self.raise_mpp_warning(
+                        "MPP mode may be blocked because the query is not readonly and sql mode is strict.",
+                    );
+                } else {
+                    self.raise_mpp_warning(&format!(
+                        "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: '{}') not match, need 'tiflash'.",
+                        self.isolation_read_engines_value
+                    ));
+                }
             }
         }
         for index in &resolution.unknown_comment_indexes {
@@ -3674,6 +3772,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )
             }) {
                 data_source.prefer_store_type |= PREFER_TIKV;
+                self.raise_mpp_warning(&format!(
+                    "MPP mode may be blocked because you have set a hint to read table `{}` from TiKV.",
+                    hinted.table_name
+                ));
                 data_source
                     .prefer_partitions
                     .insert(PREFER_TIKV, hinted.partitions);
@@ -5083,7 +5185,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut source = select.clone();
             let mut handler = tidb_hint::QBHintHandler::build_dml_source(&mut source);
             for warning in handler.take_warnings() {
-                self.ctx.append_warning(warning.code, &warning.message);
+                self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+            tidb_util::context::WarningLevel::Warning,
+            warning.code,
+            warning.message.clone(),
+            warning.identity,
+        ));
             }
             self.qb_hint_state = Some(handler.new_build_state());
             self.qb_hint_handler = Some(handler);

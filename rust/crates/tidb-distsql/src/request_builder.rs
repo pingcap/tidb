@@ -335,7 +335,7 @@ impl RequestBuilder {
             .set_concurrency(u64::try_from(current_concurrency).unwrap_or(0))
             .from_context(context)
             .build();
-        self.request.apply_session_metadata(session);
+        crate::kv_request::apply_session_metadata(&mut self.request, session);
         if !context.request.weak_consistency
             && !context.request.rc_check_ts
             && self.request.request_type == RequestType::Analyze

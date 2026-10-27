@@ -456,8 +456,8 @@ fn alter_table_charset_collation_options_follow_go_option_order() {
         only_alter_action(&alt),
         AlterTableAction::SetTableOptions {
             options: vec![
-                TableOption::Collate("UTF8_BIN".to_string()),
-                TableOption::CharacterSet("UTF8".to_string()),
+                TableOption::Collate("utf8_bin".to_string()),
+                TableOption::CharacterSet("utf8".to_string()),
             ],
         }
     );
@@ -622,16 +622,18 @@ fn alter_table_tiflash_replica_and_compact_are_typed_and_restore_like_go() {
         "ALTER TABLE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'zone-a', 'zone-b'"
     );
 
-    let stmt = ddl_payload!(
-        parse("alter table db.t compact partition p1,p2 tiflash replica").unwrap(),
-        AlterTable
-    );
+    // Go `parseCompactTableStmt`: its own statement node, not a DDL one.
+    let Stmt::Admin(admin) = parse("alter table db.t compact partition p1,p2 tiflash replica").unwrap()
+    else {
+        panic!("expected the CompactTableStmt envelope")
+    };
     assert_eq!(
-        only_alter_action(&stmt),
-        AlterTableAction::Compact {
-            partitions: vec!["p1".to_owned(), "p2".to_owned()],
+        admin.into_inner(),
+        tidb_ast::AdminStmt::CompactTable(Box::new(tidb_ast::CompactTableStmt {
+            table: vec!["db".to_owned(), "t".to_owned()],
+            partition_names: vec!["p1".to_owned(), "p2".to_owned()],
             replica_kind: CompactReplicaKind::TiFlash,
-        }
+        }))
     );
     assert_eq!(
         r("alter table db.t compact partition p1,p2 tiflash replica"),
