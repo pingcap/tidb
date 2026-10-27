@@ -71,10 +71,11 @@ func validateAffinityCodec(codec tikv.Codec) error {
 	if codec == nil || codec.GetAPIVersion() != kvrpcpb.APIVersion_V2 || codec.GetKeyspaceMeta() == nil {
 		return errors.New(invalidCodec)
 	}
-	// Unlike client-go's NewCodecV2, which treats an unset oneof as keyspace 0,
-	// NextGen affinity intentionally requires an explicit numeric identity.
-	// An unset identity is ambiguous and must not address the default keyspace.
-	// Explicit numeric zero remains valid; APIv3 identities are unsupported.
+	// Older PD omits scalar ID 0 on the wire, leaving the keyspace oneof unset.
+	// Match client-go's CodecV2 only when the codec also identifies keyspace 0.
+	if codec.GetKeyspaceMeta().GetKeyspace() == nil && codec.GetKeyspaceID() == 0 {
+		return nil
+	}
 	identity, ok := codec.GetKeyspaceMeta().GetKeyspace().(*keyspacepb.KeyspaceMeta_Id)
 	if !ok || identity == nil || identity.Id > 0xFFFFFF || uint32(codec.GetKeyspaceID()) != identity.Id {
 		return errors.New(invalidCodec)

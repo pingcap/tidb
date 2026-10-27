@@ -93,9 +93,6 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 	require.NoError(t, err)
 
 	if kerneltype.IsNextGen() {
-		unsetCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
-		require.NoError(t, err)
-		require.Zero(t, unsetCodec.GetKeyspaceID(), "client-go treats an unset identity as zero")
 		for _, tc := range []struct {
 			name  string
 			codec tikv.Codec
@@ -103,7 +100,8 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 			{"nil", nil},
 			{"APIv1", tikv.NewCodecV1(tikv.ModeTxn)},
 			{"missing metadata", affinityTestCodec{Codec: codec}},
-			{"unset identity", unsetCodec},
+			{"unset identity with nonzero ID", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{}, id: 42}},
+			{"nil numeric identity", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: (*keyspacepb.KeyspaceMeta_Id)(nil)}}},
 			{"APIv3 identity", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{}}}},
 			{"out of range", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 16777216}}, id: 16777216}},
 			{"mismatched ID", affinityTestCodec{Codec: codec, meta: codec.GetKeyspaceMeta(), id: 43}},
@@ -131,11 +129,21 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 0},
 	})
 	require.NoError(t, err)
+	// Old PD used a proto3 scalar ID, so its wire format omits id: 0.
+	// This payload contains only name: "DEFAULT", leaving the new oneof unset.
+	legacyZeroMeta := &keyspacepb.KeyspaceMeta{}
+	require.NoError(t, legacyZeroMeta.Unmarshal([]byte("\x12\x07DEFAULT")))
+	require.Nil(t, legacyZeroMeta.GetKeyspace())
+	legacyZeroCodec, err := tikv.NewCodecV2(tikv.ModeTxn, legacyZeroMeta)
+	require.NoError(t, err)
+	require.Zero(t, legacyZeroCodec.GetKeyspaceID())
 	if kerneltype.IsNextGen() {
-		require.Equal(t, "_tidb_ks0_t_123", mustTableAffinityGroupID(t, zeroCodec, 123))
-		require.Equal(t, "_tidb_ks0_pt_123_p456", mustPartitionAffinityGroupID(t, zeroCodec, 123, 456))
+		for _, targetCodec := range []tikv.Codec{zeroCodec, legacyZeroCodec} {
+			require.Equal(t, "_tidb_ks0_t_123", mustTableAffinityGroupID(t, targetCodec, 123))
+			require.Equal(t, "_tidb_ks0_pt_123_p456", mustPartitionAffinityGroupID(t, targetCodec, 123, 456))
+		}
 	} else {
-		for _, classicCodec := range []tikv.Codec{nil, tikv.NewCodecV1(tikv.ModeTxn), zeroCodec} {
+		for _, classicCodec := range []tikv.Codec{nil, tikv.NewCodecV1(tikv.ModeTxn), zeroCodec, legacyZeroCodec} {
 			require.Equal(t, "_tidb_t_123", mustTableAffinityGroupID(t, classicCodec, 123))
 			require.Equal(t, "_tidb_pt_123_p456", mustPartitionAffinityGroupID(t, classicCodec, 123, 456))
 		}
@@ -167,8 +175,8 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		require.Equal(t, "_tidb_pt_123_p456", partitionGroupID)
 	}
 
-	// Check the ID and encoded range together using real codecs for two keyspaces.
-	for _, targetCodec := range []tikv.Codec{codec, otherCodec} {
+	// Check the ID and encoded range together, including both keyspace 0 representations.
+	for _, targetCodec := range []tikv.Codec{codec, otherCodec, zeroCodec, legacyZeroCodec} {
 		wrongCodec := codec
 		if targetCodec.GetKeyspaceID() == codec.GetKeyspaceID() {
 			wrongCodec = otherCodec
