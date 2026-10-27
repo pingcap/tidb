@@ -16,7 +16,7 @@ func (cfg *MigrateToConfig) getTargetVersion(migs stream.Migrations) (int, bool)
 		if len(migs.Layers) == 0 {
 			return 0, false
 		}
-		return migs.Layers[0].SeqNum, true
+		return migs.Layers[len(migs.Layers)-1].SeqNum, true
 	}
 	if cfg.Base {
 		return 0, true
