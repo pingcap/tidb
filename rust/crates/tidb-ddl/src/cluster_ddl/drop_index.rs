@@ -80,7 +80,10 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         && index.as_ref().is_none_or(|index| index.read().primary);
     if is_pk {
         if index.is_none() && !stored.pk_is_handle {
-            return Err(DdlPlanError::UnknownIndex("PRIMARY".to_owned()));
+            return Err(DdlPlanError::from(
+                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    .generate_with_stack_by_args(&[("PRIMARY".to_owned()).into()]),
+            ));
         }
         if stored.is_common_handle || stored.pk_is_handle {
             return Err(DdlPlanError::Admission(
@@ -104,7 +107,10 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
                 )],
             }));
         }
-        return Err(DdlPlanError::IndexDoesNotExist(index_name));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                .generate_with_stack(format!("index {} doesn't exist", (index_name))),
+        ));
     };
     let index = index.read().clone_like_go();
     crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, stored, &index)
@@ -171,7 +177,13 @@ fn check_drop_index(
             active.job.state = JobState::CANCELLED;
             return Ok((
                 stored,
-                Err((arg.if_exist, DdlPlanError::IndexDoesNotExist(name))),
+                Err((
+                    arg.if_exist,
+                    DdlPlanError::from(
+                        tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                            .generate_with_stack(format!("index {} doesn't exist", (name))),
+                    ),
+                )),
             ));
         };
         let found = index.read().clone_like_go();
@@ -206,12 +218,10 @@ pub(super) fn plan_persisted_drop_index_job_step(
     let (stored, checked) = check_drop_index(catalog, active)?;
     let indexes = match checked {
         Ok(indexes) => indexes,
-        Err((true, error)) if matches!(error, DdlPlanError::IndexDoesNotExist(_)) => {
+        Err((true, error)) if error.equal(&tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY) => {
             // Go: under IF EXISTS the job finishes with the 1091 as its
             // warning.
-            active.job.warning = Some(GoShared::new(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY.generate(error.to_string()),
-            ));
+            active.job.warning = Some(GoShared::new(error.to_job_error()));
             active.job.state = JobState::DONE;
             return Ok(PersistedDdlActionStep {
                 write: job_only_write(active.job.id, Vec::new()),

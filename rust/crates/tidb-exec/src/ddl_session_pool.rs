@@ -121,7 +121,12 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
             // Go's literal condition (HASH's signed `mod(expr, num) != index`),
             // not the row's route.
             if partitioned.exchange_row_mismatches(ordinal, &row, &context)? {
-                return Err(KvTableError::RowDoesNotMatchGivenPartitionSet);
+                return Err(KvTableError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                            .generate_with_stack_by_args(&[]),
+                    ),
+                ));
             }
             // Go applies the CHECK constraints only while
             // `vardef.EnableCheckConstraint` is on.

@@ -101,9 +101,10 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                         warnings: vec![missing_table_note(schema, table)],
                     }));
                 }
-                Err(DdlPlanError::UnknownTables(vec![format!(
-                    "{schema}.{table}"
-                )]))
+                Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                        .generate_with_stack_by_args(&[format!("{schema}.{table}").into()]),
+                ))
             };
             let Some(database) = find_database(&catalog, schema) else {
                 return missing();
@@ -139,9 +140,10 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                         warnings: vec![missing_table_note(schema, name)],
                     }));
                 }
-                return Err(DdlPlanError::UnknownTables(vec![format!(
-                    "{schema}.{name}"
-                )]));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                        .generate_with_stack_by_args(&[format!("{schema}.{name}").into()]),
+                ));
             };
             check_cluster_drop_object(schema, name, table, true)?;
             drop_table_like(

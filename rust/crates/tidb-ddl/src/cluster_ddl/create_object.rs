@@ -55,7 +55,10 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             info,
         } => {
             let Some(database) = find_database(&catalog, schema) else {
-                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                ));
             };
             tidb_ddl_build::table_lifecycle::check_view_target(
                 schema,
@@ -64,10 +67,11 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 find_table(database, name).map(|table| table.view.is_some()),
             )
             .map_err(|error| match error.code {
-                tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::TableExists {
-                    schema: schema.clone(),
-                    table: name.clone(),
-                },
+                tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                        &[format!("{}.{}", (schema.clone()), (name.clone())).into()],
+                    ),
+                ),
                 _ => DdlPlanError::from_mysql_error(error),
             })?;
             let on_exist = if *or_replace {
@@ -160,13 +164,24 @@ pub(super) fn build_create_table_with_info_job(
     warnings: &mut Vec<tidb_util::context::SqlWarn>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
-        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+        ));
     };
     let mut old_view_id = 0;
     if let Some(existing) = find_table(database, info.name.original()) {
-        let exists = || DdlPlanError::TableExists {
-            schema: schema.to_owned(),
-            table: info.name.original().to_owned(),
+        let exists = || {
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                    format!(
+                        "{}.{}",
+                        (schema.to_owned()),
+                        (info.name.original().to_owned())
+                    )
+                    .into(),
+                ]),
+            )
         };
         match on_exist {
             OnExist::Ignore => {
@@ -259,7 +274,10 @@ fn build_create_table_like_info(
     // consequently reported as a missing table.
     let source = resolve_like_source(catalog, source_schema, source_table, *temporary)?;
     let Some(database) = find_database(catalog, schema) else {
-        return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.clone()).into()]),
+        ));
     };
     // Go `BuildTableInfoWithLike` runs after the executor has found the
     // target database, but before target-name collision handling.
@@ -294,10 +312,11 @@ fn build_create_table_like_info(
                 )],
             }));
         }
-        return Err(DdlPlanError::TableExists {
-            schema: schema.clone(),
-            table: table.clone(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                format!("{}.{}", (schema.clone()), (table.clone())).into(),
+            ]),
+        ));
     }
     // `assignGIDsForJobs` draws the table's and its partitions' ids.
     info.id = 0;
@@ -318,10 +337,12 @@ pub fn resolve_like_source<'catalog>(
     // Go `is.TableByName`: a missing source database is reported as a
     // missing table.
     let Some((_, source)) = catalog.table_by_name(source_schema, source_table) else {
-        return Err(DdlPlanError::TableNotExists {
-            schema: source_schema.to_owned(),
-            table: source_table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+                (source_schema.to_owned()).into(),
+                (source_table.to_owned()).into(),
+            ]),
+        ));
     };
     tidb_ddl_build::check_create_table_like_source(source, temporary)
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
@@ -599,7 +620,10 @@ fn build_alter_sequence_job(
         unreachable!("called for ALTER SEQUENCE");
     };
     let Some(database) = find_database(catalog, schema) else {
-        return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.clone()).into()]),
+        ));
     };
     let Some(stored) = find_table(database, name) else {
         if *if_exists {
@@ -611,10 +635,10 @@ fn build_alter_sequence_job(
                 )],
             }));
         }
-        return Err(DdlPlanError::TableNotExists {
-            schema: schema.clone(),
-            table: name.clone(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.clone()).into(), (name.clone()).into()]),
+        ));
     };
     let Some(old) = stored.sequence.as_ref().map(|shared| shared.read().clone()) else {
         return Err(coded_refusal(

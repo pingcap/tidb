@@ -133,7 +133,7 @@ impl KvTable {
         match ctx {
             Some(ctx) => {
                 crate::column::cast_table_value(value, &column.field_type, &column.name, ctx, false)
-                    .map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))
+                    .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
             }
             None => Ok(value
                 .convert_to_in(&column.field_type, flags, zone)
@@ -163,18 +163,18 @@ impl KvTable {
                     tidb_datatype::STRICT_FLAGS,
                     false,
                 )
-                .map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))?,
+                .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))?,
                 None => match data.convert_to(changing, tidb_datatype::STRICT_FLAGS) {
                     Ok(converted) if converted.event.is_none() => converted.value,
                     _ => {
-                        return Err(KvTableError::ColumnCast(tidb_error::mysql::MysqlError::unknown(
+                        return Err(KvTableError::Mysql(tidb_error::mysql::MysqlError::unknown(
                             "data truncation error during modify column",
                         )))
                     }
                 },
             };
             if changing.code() == FieldTypeCode::String && datum_text(&value) != datum_text(data) {
-                return Err(KvTableError::ColumnCast(tidb_error::mysql::MysqlError::unknown(
+                return Err(KvTableError::Mysql(tidb_error::mysql::MysqlError::unknown(
                     "data truncation error during modify column",
                 )));
             }

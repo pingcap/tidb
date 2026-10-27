@@ -91,9 +91,14 @@ mod kv_table {
     /// name is part of the message.
     #[test]
     fn an_unmapped_table_error_keeps_its_variant_name_in_the_message() {
-        let error = ExecError::from(KvTableError::DuplicateKeyName("k".to_owned()));
-        let ExecError::Unsupported(message) = error else { panic!("{error:?}") };
-        assert_eq!(message, "table bytes failed to decode: DuplicateKeyName(\"k\")");
+        let error = ExecError::from(KvTableError::Encode("k".to_owned()));
+        let ExecError::Unsupported(message) = error else {
+            panic!("{error:?}")
+        };
+        assert_eq!(
+            message,
+            "table bytes failed to decode: Encode(\"k\")"
+        );
     }
 }
 

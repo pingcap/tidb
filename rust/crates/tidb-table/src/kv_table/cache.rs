@@ -54,7 +54,7 @@ impl KvTable {
     ///
     /// # Errors
     ///
-    /// [`KvTableError::CacheTableUnsupported`] for a partitioned table or a
+    /// `ErrOptOnCacheTable` for a partitioned table or a
     /// table whose encoded keys and values exceed TiDB's 64 MiB limit, and
     /// [`KvTableError::Storage`] when the backend scan fails.
     pub fn enable_cache(&mut self) -> Result<(), KvTableError> {
@@ -62,10 +62,20 @@ impl KvTable {
             return Ok(());
         }
         if self.partition.is_some() {
-            return Err(KvTableError::CacheTableUnsupported("partition mode"));
+            return Err(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                        .generate_with_stack_by_args(&["partition mode".into()]),
+                ),
+            ));
         }
         if self.cache_storage_size_exceeds(CACHE_TABLE_SIZE_LIMIT)? {
-            return Err(KvTableError::CacheTableUnsupported("table too large"));
+            return Err(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                        .generate_with_stack_by_args(&["table too large".into()]),
+                ),
+            ));
         }
         self.update_meta(|meta| {
             meta.table_cache_status_type = tidb_model::TableCacheStatusType::ENABLE;

@@ -1123,59 +1123,110 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             DdlPlanError::from(tidb_util::dbterror::ERR_DUP_KEY_NAME.generate("DDL duplicate")),
             1061,
         ),
-        (DdlPlanError::UnknownDatabase("db".into()), 1049),
-        (DdlPlanError::DatabaseExists("db".into()), 1007),
         (
-            DdlPlanError::UnknownTable {
-                schema: "db".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&["db".into()]),
+            ),
+            1049,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                    .generate_with_stack_by_args(&["db".into()]),
+            ),
+            1007,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+            ),
             1051,
         ),
-        (DdlPlanError::UnknownTables(vec!["db.t".into()]), 1051),
         (
-            DdlPlanError::TableNotExists {
-                schema: "db".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                    .generate_with_stack_by_args(&["db.t".into()]),
+            ),
+            1051,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&["db".into(), "t".into()]),
+            ),
             1146,
         ),
         (
-            DdlPlanError::TableExists {
-                schema: "db".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+            ),
             1050,
         ),
-        (DdlPlanError::DuplicateKeyName("idx".into()), 1061),
-        (DdlPlanError::DuplicateColumnName("col".into()), 1060),
         (
-            DdlPlanError::UnknownIndexColumn {
-                column: "col".into(),
-            },
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+            ),
+            1061,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    .generate_with_stack_by_args(&["col".into()]),
+            ),
+            1060,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                    .generate_with_stack(format!("column does not exist: {}", "col")),
+            ),
             1072,
         ),
         (
-            DdlPlanError::KeyNotExists {
-                index: "idx".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS
+                    .generate_with_stack_by_args(&["idx".into(), "t".into()]),
+            ),
             1176,
         ),
-        (DdlPlanError::CantDropFieldOrKey("col".into()), 1091),
-        (DdlPlanError::UnknownIndex("idx".into()), 1091),
         (
-            DdlPlanError::UnknownColumn {
-                column: "col".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    .generate_with_stack_by_args(&["col".into()]),
+            ),
+            1091,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    .generate_with_stack_by_args(&["idx".into()]),
+            ),
+            1091,
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                    .generate_with_stack_by_args(&["col".into(), "t".into()]),
+            ),
             1054,
         ),
         (
-            DdlPlanError::InvalidAutoRandom("invalid range".into()),
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM
+                    .generate_with_stack_by_args(&["invalid range".into()]),
+            ),
             8216,
         ),
-        (DdlPlanError::AutoIdReadFailed, 1467),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                    .generate_with_stack_by_args(&[]),
+            ),
+            1467,
+        ),
         (
             DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(
                 3819,
@@ -3672,13 +3723,16 @@ fn a_missing_object_without_if_exists_is_named_precisely() {
         7,
     )
     .expect_err("a missing database is an error");
-    assert_eq!(unknown_database.to_string(), "Unknown database 'nowhere'");
+    assert_eq!(
+        unknown_database.to_string(),
+        "[schema:1049]Unknown database 'nowhere'"
+    );
 
     let existing = plan_ddl(&mut store, &statement("CREATE DATABASE U6"), 7)
         .expect_err("a duplicate database is an error, case-insensitively");
     assert_eq!(
         existing.to_string(),
-        "Can't create database 'U6'; database exists"
+        "[schema:1007]Can't create database 'U6'; database exists"
     );
 }
 
@@ -4781,10 +4835,10 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
     )
     .expect_err("a duplicate index name is an error");
     assert!(
-        matches!(&refused, DdlPlanError::DuplicateKeyName(name) if name == "vi"),
+        refused.equal(&tidb_util::dbterror::ERR_DUP_KEY_NAME),
         "{refused}"
     );
-    assert_eq!(refused.to_string(), "Duplicate key name 'vi'");
+    assert_eq!(refused.to_string(), "[ddl:1061]Duplicate key name 'vi'");
 
     match plan_ddl(
         &mut store,
@@ -5144,7 +5198,10 @@ fn a_create_view_publishes_a_view_table_info() {
     // The same name again without OR REPLACE is Go's ErrTableExists.
     let error = plan_ddl(&mut store, &view_statement("u6", "v", false), 103)
         .expect_err("a duplicate view name refuses");
-    assert!(format!("{error:?}").contains("TableExists"), "{error:?}");
+    assert!(
+        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS),
+        "{error:?}"
+    );
 
     // OR REPLACE drops the old id and creates a fresh one.
     let replace = match plan_ddl(&mut store, &view_statement("u6", "v", true), 104)
@@ -5580,7 +5637,7 @@ fn modify_column_moves_the_column_and_refuses_a_self_anchor() {
     )
     .expect_err("a self-anchored MODIFY is refused");
     assert!(
-        matches!(error, DdlPlanError::UnknownColumn { ref column, .. } if column == "b"),
+        error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS),
         "{error:?}"
     );
     assert!(error.to_string().contains("Unknown column 'b'"), "{error}");
@@ -5648,7 +5705,8 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
     )
     .expect_err("a missing index is refused");
     assert!(
-        matches!(error, DdlPlanError::KeyNotExists { ref index, .. } if index == "nosuch"),
+        error.equal(&tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS)
+            && error.to_string().contains("Key 'nosuch'"),
         "{error:?}"
     );
     assert!(
@@ -6015,18 +6073,47 @@ fn cluster_column_batch_positions_keep_index_identity() {
 #[test]
 fn persisted_job_errors_carry_the_go_class() {
     for (error, rfc) in [
-        (DdlPlanError::UnknownDatabase("db".into()), "schema:1049"),
-        (DdlPlanError::DatabaseExists("db".into()), "schema:1007"),
         (
-            DdlPlanError::TableExists {
-                schema: "db".into(),
-                table: "t".into(),
-            },
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&["db".into()]),
+            ),
+            "schema:1049",
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                    .generate_with_stack_by_args(&["db".into()]),
+            ),
+            "schema:1007",
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+            ),
             "schema:1050",
         ),
-        (DdlPlanError::DuplicateKeyName("idx".into()), "ddl:1061"),
-        (DdlPlanError::CantDropFieldOrKey("c".into()), "ddl:1091"),
-        (DdlPlanError::AutoIdReadFailed, "autoid:1467"),
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+            ),
+            "ddl:1061",
+        ),
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    .generate_with_stack_by_args(&["c".into()]),
+            ),
+            "ddl:1091",
+        ),
+        (
+            DdlPlanError::from(
+                tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                    .generate_with_stack_by_args(&[]),
+            ),
+            "autoid:1467",
+        ),
     ] {
         let job_error = error.to_job_error();
         assert_eq!(job_error.rfc_code(), rfc, "{error:?}");

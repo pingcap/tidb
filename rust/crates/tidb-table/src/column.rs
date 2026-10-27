@@ -97,10 +97,10 @@ pub fn err_no_default_value(field: &str) -> MysqlError {
 impl From<ColumnError> for crate::kv_table::KvTableError {
     fn from(error: ColumnError) -> Self {
         match error {
-            ColumnError::ColumnCannotBeNull(column) => Self::ColumnCast(err_column_cant_null(&column)),
-            ColumnError::NoDefaultForField(field) => Self::ColumnCast(err_no_default_value(&field)),
-            ColumnError::Mysql(error) => Self::ColumnCast(error),
-            ColumnError::Eval(error) => Self::ColumnCast(error.to_mysql_error()),
+            ColumnError::ColumnCannotBeNull(column) => Self::Mysql(err_column_cant_null(&column)),
+            ColumnError::NoDefaultForField(field) => Self::Mysql(err_no_default_value(&field)),
+            ColumnError::Mysql(error) => Self::Mysql(error),
+            ColumnError::Eval(error) => Self::Mysql(error.to_mysql_error()),
             ColumnError::Parse(message) => Self::Decode(message),
         }
     }

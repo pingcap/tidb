@@ -22,7 +22,6 @@ use tidb_kv::cluster_storage_test_util::*;
 use crate::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
     fn mutation_batch_table(store: ClusterTableStorage) -> crate::kv_table::KvTable {
         use crate::kv_table::{KvColumn, KvIndex, KvTable};
         use tidb_datatype::{FieldType, FieldTypeCode};
@@ -467,7 +466,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
             .unwrap_err();
         assert!(matches!(
             error,
-            crate::kv_table::KvTableError::DuplicateEntry { .. }
+            crate::kv_table::KvTableError::Mysql(ref error)
+                if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
         ));
         assert!(buffer.take_presume_not_exists().is_empty());
 
@@ -495,7 +495,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
         assert!(
             matches!(
                 table.insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true),
-                Err(crate::kv_table::KvTableError::DuplicateEntry { value, .. }) if value == "7"
+                Err(crate::kv_table::KvTableError::Mysql(error))
+                    if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+                        && error.message.starts_with("Duplicate entry '7' for key")
             ),
             "a duplicate staged by this transaction is checked locally"
         );

@@ -119,7 +119,12 @@ impl KvTableDdl for KvTable {
             .iter()
             .any(|existing| existing.name.go_lower_eq(&index.name))
         {
-            return Err(KvTableError::DuplicateKeyName(index.name.clone()));
+            return Err(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DUP_KEY_NAME
+                        .generate_with_stack_by_args(&[(index.name.clone()).into()]),
+                ),
+            ));
         }
         // Go's index worker uses a full RowDecoder map. Every generated
         // column is therefore recomputed under the DDL statement context
@@ -261,13 +266,23 @@ impl KvTableDdl for KvTable {
                 continue;
             }
             if value.is_null() {
-                return Ok(Some(KvTableError::InvalidUseOfNull));
+                return Ok(Some(KvTableError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_INVALID_USE_OF_NULL
+                            .generate_with_stack_by_args(&[]),
+                    ),
+                )));
             }
             let shown = value.sql_bytes().unwrap_or_default();
-            return Ok(Some(KvTableError::DataTruncatedValue {
-                column,
-                value: String::from_utf8_lossy(&shown).into_owned(),
-            }));
+            return Ok(Some(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
+                        "Data truncated for column '{}', value is '{}'",
+                        (column),
+                        (String::from_utf8_lossy(&shown).into_owned())
+                    )),
+                ),
+            )));
         }
         Ok(None)
     }

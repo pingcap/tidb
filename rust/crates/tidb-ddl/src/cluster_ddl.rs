@@ -3263,10 +3263,12 @@ fn prepare_rename_column(
         let candidate = candidate.read();
         !candidate.hidden && candidate.name.lowercase() == wanted
     }) else {
-        return Err(DdlPlanError::UnknownColumn {
-            column: from.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+                (from.to_owned()).into(),
+                (table.to_owned()).into(),
+            ]),
+        ));
     };
     // Go asks `IsColumnRenameableWithCheckConstraint` before the
     // same-name early return and before the duplicate-name check.
@@ -3298,7 +3300,10 @@ fn prepare_rename_column(
         .iter_deref()
         .any(|candidate| candidate.read().name.lowercase() == new_name)
     {
-        return Err(DdlPlanError::DuplicateColumnName(to.to_owned()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                .generate_with_stack_by_args(&[(to.to_owned()).into()]),
+        ));
     }
     // Go `checkModifyColumnWithGeneratedColumnsConstraint`.
     if let Some(dependent) = stored.columns.iter_deref().find(|candidate| {
@@ -3590,10 +3595,12 @@ fn apply_rename_index(
     to: &str,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
     if find_index(info, from).is_none() {
-        return Err(DdlPlanError::KeyNotExists {
-            index: from.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+                (from.to_owned()).into(),
+                (table.to_owned()).into(),
+            ]),
+        ));
     }
     // Case-SENSITIVE equality is the no-op test: `inDex` -> `IndEX` is a real
     // rename that only changes the stored spelling.
@@ -3606,8 +3613,13 @@ fn apply_rename_index(
     let to_lower = to.go_to_lower();
     if from_lower != to_lower {
         if let Some(existing) = find_index(info, to) {
-            return Err(DdlPlanError::DuplicateKeyName(
-                existing.read().name.original().to_owned(),
+            return Err(DdlPlanError::from(
+                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(existing
+                    .read()
+                    .name
+                    .original()
+                    .to_owned())
+                .into()]),
             ));
         }
     }
@@ -3687,10 +3699,12 @@ fn apply_index_visibility(
     let found = find_index(info, index)
         .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
     let Some(found) = found else {
-        return Err(DdlPlanError::KeyNotExists {
-            index: index.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+                (index.to_owned()).into(),
+                (table.to_owned()).into(),
+            ]),
+        ));
     };
     // Go's early return: a visibility that already matches finishes the job
     // without touching the table.
@@ -3736,10 +3750,12 @@ fn apply_set_column_default(
         let candidate = candidate.read();
         candidate.name.lowercase() == wanted && candidate.state == tidb_model::SchemaState::PUBLIC
     }) else {
-        return Err(DdlPlanError::UnknownColumn {
-            column: column.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+                (column.to_owned()).into(),
+                (table.to_owned()).into(),
+            ]),
+        ));
     };
     // Go `ErrInvalidAutoRandom`: the shard bits own the column's values, so a
     // default could never be written.
@@ -3747,8 +3763,10 @@ fn apply_set_column_default(
         && info.auto_random_bits > 0
         && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
     {
-        return Err(DdlPlanError::InvalidAutoRandom(
-            "auto_random is incompatible with default".to_owned(),
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                ("auto_random is incompatible with default".to_owned()).into(),
+            ]),
         ));
     }
     let mut target = target.write();
@@ -4006,7 +4024,10 @@ pub(super) fn build_add_column(
                 column.name
             )));
         }
-        return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                .generate_with_stack_by_args(&[(column.name.clone()).into()]),
+        ));
     }
     tidb_ddl_build::check_too_long_identifier(&column.name)
         .map_err(DdlPlanError::from_mysql_error)?;
@@ -4081,10 +4102,13 @@ fn locate_offset_to_move(
             }
             let anchor = anchor.ok_or_else(|| {
                 // Go `infoschema.ErrColumnNotExists` (1054).
-                DdlPlanError::UnknownColumn {
-                    column: name.clone(),
-                    table: info.name.original().to_owned(),
-                }
+                DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                        .generate_with_stack_by_args(&[
+                            (name.clone()).into(),
+                            (info.name.original().to_owned()).into(),
+                        ]),
+                )
             })?;
             let anchor = usize::try_from(anchor).unwrap_or(0);
             if current_offset <= anchor {
@@ -4237,7 +4261,10 @@ fn check_is_droppable_column(
         if if_exists {
             return Ok(false);
         }
-        return Err(DdlPlanError::CantDropFieldOrKey(column.to_owned()));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                .generate_with_stack_by_args(&[(column.to_owned()).into()]),
+        ));
     };
     is_droppable_column(info, column, info.columns.len())?;
     check_drop_column_with_partition_constraint(info, &col_name)?;
@@ -4704,41 +4731,6 @@ pub enum DdlPlanError {
     Source(TerrorError),
     /// The catalog could not be read or decoded.
     Catalog(ClusterCatalogError),
-    /// The named database is not in the catalog.
-    UnknownDatabase(String),
-    /// The named database is already in the catalog.
-    DatabaseExists(String),
-    /// The named table is not in the named database.
-    UnknownTable {
-        /// The database name as written.
-        schema: String,
-        /// The table name as written.
-        table: String,
-    },
-    /// The statement named a table that is not in the catalog (Go
-    /// `infoschema.ErrTableNotExists`, 1146).
-    ///
-    /// `DROP TABLE a, b` naming tables that are not in the catalog (Go
-    /// `ErrBadTable` 1051, every missing name comma-joined).
-    UnknownTables(Vec<String>),
-    /// Go `ErrCantDropFieldOrKey` (1091): DROP COLUMN/INDEX names something
-    /// the table does not have.
-    CantDropFieldOrKey(String),
-    /// Distinct from [`Self::UnknownTable`], which is Go's `ErrBadTable`
-    /// (1051): `DROP TABLE` answers that one, and Go's own
-    /// `TestDropTableWithoutIfExists` pins the difference. Every other
-    /// statement -- ALTER, CREATE INDEX, RENAME -- resolves its table
-    /// through `getSchemaAndTableByIdent` and answers 1146.
-    TableNotExists {
-        /// The database name as written.
-        schema: String,
-        /// The table name as written.
-        table: String,
-    },
-    /// TiDB `ErrInvalidAutoRandom` (8216).
-    InvalidAutoRandom(String),
-    /// TiDB `ErrAutoincReadFailed` (1467), used by FORCE base zero.
-    AutoIdReadFailed,
     /// A source-defined DDL refusal reported as TiDB's generic 1105.
     Unsupported(String),
     /// A refusal raised by the shared admission code while the change was
@@ -4750,45 +4742,6 @@ pub enum DdlPlanError {
     /// default, 1171 for a NULL default on a primary key -- would all
     /// flatten to the generic 1105.
     Admission(tidb_ddl_build::table_info_build::DdlAdmissionError),
-    /// The named table is already in the named database.
-    TableExists {
-        /// The database name as written.
-        schema: String,
-        /// The table name as written.
-        table: String,
-    },
-    /// The table already has an index of that name (Go 1061).
-    DuplicateKeyName(String),
-    /// The table already has a column of that name (Go 1060).
-    DuplicateColumnName(String),
-    /// The named index is not on the named table (Go 1091).
-    UnknownIndex(String),
-    /// Go `dropIndex`'s 1091 for a missing index: `index %s doesn't exist`.
-    IndexDoesNotExist(String),
-    /// The statement names a column the table does not have (Go 1054,
-    /// `ErrBadField`). Go answers this for a MODIFY/CHANGE of a missing
-    /// column and for a `FIRST`/`AFTER` anchor that is missing or not
-    /// public; this port had folded them into the generic 1105.
-    UnknownColumn {
-        /// The column name as written.
-        column: String,
-        /// The table name as written.
-        table: String,
-    },
-    /// The table has no such index (Go 1176, `ErrKeyNotExists`), which is
-    /// the code Go's ALTER INDEX visibility path answers -- distinct from
-    /// the 1091 a DROP INDEX answers.
-    KeyNotExists {
-        /// The index name as written.
-        index: String,
-        /// The table name as written.
-        table: String,
-    },
-    /// The index names a column the table does not have (Go 1072).
-    UnknownIndexColumn {
-        /// The column name as written.
-        column: String,
-    },
     /// Go `GenGlobalIDs`' own limit: the user ID space is exhausted.
     GlobalIdExhausted {
         /// The ID the allocation would have reached.
@@ -4805,57 +4758,8 @@ impl fmt::Display for DdlPlanError {
         match self {
             Self::Source(error) => fmt::Display::fmt(error, formatter),
             Self::Catalog(error) => write!(formatter, "{error}"),
-            Self::UnknownDatabase(name) => write!(formatter, "Unknown database '{name}'"),
-            Self::DatabaseExists(name) => {
-                write!(formatter, "Can't create database '{name}'; database exists")
-            }
-            Self::UnknownTable { schema, table } => {
-                write!(formatter, "Unknown table '{schema}.{table}'")
-            }
-            Self::UnknownTables(names) => {
-                write!(formatter, "Unknown table '{}'", names.join(","))
-            }
-            Self::CantDropFieldOrKey(name) => {
-                write!(
-                    formatter,
-                    "Can't DROP '{name}'; check that column/key exists"
-                )
-            }
-            Self::TableNotExists { schema, table } => {
-                write!(formatter, "Table '{schema}.{table}' doesn't exist")
-            }
-            Self::InvalidAutoRandom(reason) => write!(formatter, "Invalid auto random: {reason}"),
-            Self::AutoIdReadFailed => {
-                formatter.write_str("Failed to read auto-increment value from storage engine")
-            }
             Self::Unsupported(reason) => formatter.write_str(reason),
             Self::Admission(error) => formatter.write_str(&error.reason),
-            Self::TableExists { schema, table } => {
-                write!(formatter, "Table '{schema}.{table}' already exists")
-            }
-            Self::DuplicateKeyName(name) => write!(formatter, "Duplicate key name '{name}'"),
-            Self::KeyNotExists { index, table } => {
-                write!(formatter, "Key '{index}' doesn't exist in table '{table}'")
-            }
-            Self::UnknownColumn { column, table } => {
-                write!(formatter, "Unknown column '{column}' in '{table}'")
-            }
-            Self::DuplicateColumnName(name) => {
-                write!(formatter, "Duplicate column name '{name}'")
-            }
-            // Go `ErrCantDropFieldOrKey`, the message DROP INDEX and
-            // DROP PRIMARY KEY both answer with.
-            Self::UnknownIndex(name) => {
-                write!(
-                    formatter,
-                    "Can't DROP '{name}'; check that column/key exists"
-                )
-            }
-            Self::IndexDoesNotExist(name) => write!(formatter, "index {name} doesn't exist"),
-            // Go `buildIndexColumns`' `GenWithStack("column does not exist: %s")`.
-            Self::UnknownIndexColumn { column } => {
-                write!(formatter, "column does not exist: {column}")
-            }
             Self::GlobalIdExhausted { wanted } => write!(
                 formatter,
                 "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
@@ -4883,21 +4787,6 @@ impl DdlPlanError {
         use tidb_error::tidb::errcode;
         Some(match self {
             Self::Source(error) => error.to_sql_error().code,
-            Self::UnknownDatabase(_) => errcode::ErrBadDB,
-            Self::DatabaseExists(_) => errcode::ErrDBCreateExists,
-            Self::UnknownTable { .. } | Self::UnknownTables(_) => errcode::ErrBadTable,
-            Self::TableNotExists { .. } => errcode::ErrNoSuchTable,
-            Self::TableExists { .. } => errcode::ErrTableExists,
-            Self::DuplicateKeyName(_) => errcode::ErrDupKeyName,
-            Self::DuplicateColumnName(_) => errcode::ErrDupFieldName,
-            Self::UnknownIndexColumn { .. } => errcode::ErrKeyColumnDoesNotExits,
-            Self::KeyNotExists { .. } => errcode::ErrKeyDoesNotExist,
-            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) | Self::IndexDoesNotExist(_) => {
-                errcode::ErrCantDropFieldOrKey
-            }
-            Self::UnknownColumn { .. } => errcode::ErrBadField,
-            Self::InvalidAutoRandom(_) => errcode::ErrInvalidAutoRandom,
-            Self::AutoIdReadFailed => errcode::ErrAutoincReadFailed,
             Self::Admission(error) => error.code,
             Self::Unsupported(_) => errcode::ErrUnknown,
             Self::Catalog(_)
@@ -4911,31 +4800,11 @@ impl DdlPlanError {
     /// the plain errors and the failures that are not Go errors at all.
     #[must_use]
     pub fn identity(&self) -> Option<tidb_error::terror::TerrorIdentity> {
-        use tidb_error::catalog::{autoid, infoschema};
-        use tidb_util::dbterror;
-        let proto: &TerrorError = match self {
-            Self::Source(error) => return Some(error.identity()),
-            Self::Admission(error) => return error.identity,
-            Self::UnknownDatabase(_) => &infoschema::ERR_DATABASE_NOT_EXISTS,
-            Self::DatabaseExists(_) => &infoschema::ERR_DATABASE_EXISTS,
-            Self::UnknownTable { .. } | Self::UnknownTables(_) => {
-                &infoschema::ERR_TABLE_DROP_EXISTS
-            }
-            Self::TableNotExists { .. } => &infoschema::ERR_TABLE_NOT_EXISTS,
-            Self::TableExists { .. } => &infoschema::ERR_TABLE_EXISTS,
-            Self::DuplicateKeyName(_) => &dbterror::ERR_DUP_KEY_NAME,
-            Self::DuplicateColumnName(_) => &infoschema::ERR_COLUMN_EXISTS,
-            Self::UnknownIndexColumn { .. } => &dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
-            Self::KeyNotExists { .. } => &infoschema::ERR_KEY_NOT_EXISTS,
-            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) | Self::IndexDoesNotExist(_) => {
-                &dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-            }
-            Self::UnknownColumn { .. } => &infoschema::ERR_COLUMN_NOT_EXISTS,
-            Self::InvalidAutoRandom(_) => &dbterror::ERR_INVALID_AUTO_RANDOM,
-            Self::AutoIdReadFailed => &autoid::ERR_AUTOINC_READ_FAILED,
-            _ => return None,
-        };
-        Some(proto.identity())
+        match self {
+            Self::Source(error) => Some(error.identity()),
+            Self::Admission(error) => error.identity,
+            _ => None,
+        }
     }
 
     /// Durable job error. Coded legacy errors retain their numeric envelope;
@@ -4972,8 +4841,10 @@ impl DdlPlanError {
         ddl_job_error_to_sql_error(&self.to_job_error())
     }
 
-    fn is_source_error(&self, prototype: &TerrorError) -> bool {
-        matches!(self, Self::Source(error) if prototype.equal(Some(error)))
+    /// Go `proto.Equal(err)`: whether this is the Go error `proto` raises.
+    #[must_use]
+    pub fn equal(&self, proto: &TerrorError) -> bool {
+        self.identity() == Some(proto.identity())
     }
 }
 
@@ -7291,7 +7162,7 @@ fn record_ddl_cancellation_error(
     } else {
         job.error_count += 1;
     }
-    if error.is_source_error(&tidb_util::dbterror::ERR_CANCELLED_DDL_JOB) {
+    if error.equal(&tidb_util::dbterror::ERR_CANCELLED_DDL_JOB) {
         let original = job.error.as_ref().unwrap().read().clone();
         if !tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&original)) {
             // generate retains a source identity and also preserves old Rust
@@ -7416,7 +7287,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
             if matches!(
                 active.job.type_,
                 ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-            ) && error.is_source_error(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
+            ) && error.equal(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
             {
                 active.job.state = JobState::ROLLINGBACK;
             }
@@ -8348,7 +8219,10 @@ fn build_create_table_info<S: MetaSnapshot>(
     warnings: &mut Vec<tidb_util::context::SqlWarn>,
 ) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
-        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+        ));
     };
     // Go's create-table path publishes the TableInfo the builder produced;
     // it does not call `TableInfo.Clone` on the way to
@@ -8393,10 +8267,11 @@ fn build_create_table_info<S: MetaSnapshot>(
                 )],
             )));
         }
-        return Err(DdlPlanError::TableExists {
-            schema: schema.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                format!("{}.{}", (schema.to_owned()), (table.to_owned())).into(),
+            ]),
+        ));
     }
     check_table_info_valid_extra(&info, warnings)?;
     // Go `CreateTableWithInfo` resolves a table's `PLACEMENT POLICY = name`
@@ -8818,13 +8693,18 @@ fn locate_table<'catalog>(
     table: &str,
 ) -> Result<(i64, &'catalog TableInfo), DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
-        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+        ));
     };
     let Some(stored) = find_table(database, table) else {
-        return Err(DdlPlanError::TableNotExists {
-            schema: schema.to_owned(),
-            table: table.to_owned(),
-        });
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+                (schema.to_owned()).into(),
+                (table.to_owned()).into(),
+            ]),
+        ));
     };
     Ok((database.info.id, stored))
 }
@@ -8929,8 +8809,12 @@ fn create_foreign_key(
     .is_none();
     // Go `createIndex`'s duplicate-name check for the key's index.
     if needs_index && find_index(stored, fk.name.original()).is_some() {
-        return Err(DdlPlanError::DuplicateKeyName(
-            fk.name.original().to_owned(),
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(fk
+                .name
+                .original()
+                .to_owned())
+            .into()]),
         ));
     }
     Ok(CreatedForeignKey { fk, needs_index })

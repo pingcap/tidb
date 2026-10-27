@@ -125,10 +125,14 @@ impl KvTable {
             self.store.get(key)
         };
         match value {
-            Ok(value) if !value.is_empty() => Err(KvTableError::DuplicateEntry {
-                value: duplicate_value.to_owned(),
-                key: duplicate_key.to_owned(),
-            }),
+            Ok(value) if !value.is_empty() => Err(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                        (duplicate_value.to_owned()).into(),
+                        (duplicate_key.to_owned()).into(),
+                    ]),
+                ),
+            )),
             Ok(_) => Ok(false),
             Err(StorageError::NotFound) => {
                 if lazy {

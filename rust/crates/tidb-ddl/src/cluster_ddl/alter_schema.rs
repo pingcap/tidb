@@ -40,7 +40,10 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
             collate,
         } => {
             let Some(database) = find_database(&catalog, name) else {
-                return Err(DdlPlanError::UnknownDatabase(name.clone()));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(name.clone()).into()]),
+                ));
             };
             if database.info.charset == *charset && database.info.collate == *collate {
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
@@ -65,7 +68,10 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
             placement_policy,
         } => {
             if find_database(&catalog, name).is_none() {
-                return Err(DdlPlanError::UnknownDatabase(name.clone()));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(name.clone()).into()]),
+                ));
             }
             let reference = check_and_normalize_placement_policy(snapshot, placement_policy)?;
             let policy = reference

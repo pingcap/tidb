@@ -155,8 +155,13 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
         )? {
             Some(AddIndexSubmission::Job(spec, _)) => specs.push(*spec),
             _ => {
-                return Err(DdlPlanError::DuplicateKeyName(
-                    created.fk.name.original().to_owned(),
+                return Err(DdlPlanError::from(
+                    tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(created
+                        .fk
+                        .name
+                        .original()
+                        .to_owned())
+                    .into()]),
                 ))
             }
         }

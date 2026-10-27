@@ -240,10 +240,14 @@ impl KvTable {
                 let (duplicate, previous) =
                     self.fetch_duplicated_handle_for_temp_index_key(&probe)?;
                 if duplicate.is_some() {
-                    return Err(KvTableError::DuplicateEntry {
-                        value: duplicate_value.clone(),
-                        key: self.qualified_key(&kv_index.name),
-                    });
+                    return Err(KvTableError::Mysql(
+                        tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                                (duplicate_value.clone()).into(),
+                                (self.qualified_key(&kv_index.name)).into(),
+                            ]),
+                        ),
+                    ));
                 }
                 let previous = previous.unwrap_or_default();
                 let stored = if key_is_temp {

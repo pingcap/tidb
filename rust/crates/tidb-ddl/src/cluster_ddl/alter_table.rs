@@ -417,8 +417,10 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let (schema_id, stored) = locate_table(catalog, schema, table)?;
             if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
-                return Err(DdlPlanError::InvalidAutoRandom(
-                    "alter auto_random_base of a non auto_random table".to_owned(),
+                return Err(DdlPlanError::from(
+                    tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                        ("alter auto_random_base of a non auto_random table".to_owned()).into(),
+                    ]),
                 ));
             }
             let unsigned = stored.is_auto_random_bit_col_unsigned();
@@ -431,9 +433,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let maximum = (1_u64 << incremental_bits) - 1;
             let requested = *next as u64;
             if *next < 0 || requested & maximum != requested {
-                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                return Err(DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                     "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
-                )));
+                )).into()])));
             }
             let mut new_base = *next;
             if !*force {
@@ -491,7 +493,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     };
                     let error = tidb_error::mysql::MysqlError::from_terror(
                         &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                            .generate_with_stack_by_args(&[(option).to_string().into()]),
+                            .generate_with_stack_by_args(&[option.to_string().into()]),
                     );
                     return Err(DdlPlanError::from_mysql_error(error));
                 }
@@ -587,7 +589,10 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             attributes,
         } => {
             let Some(database) = find_database(catalog, schema) else {
-                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
             let rule = label_rules::table_attributes_rule(
@@ -615,7 +620,10 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             attributes,
         } => {
             let Some(database) = find_database(catalog, schema) else {
-                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
             let partition_id = find_partition_id(stored, partition)?;
@@ -764,10 +772,13 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     .find(|stored| stored.id == *table_id || partition_of(stored, *table_id))
                     .map(|stored| (database, stored))
             }) else {
-                return Err(DdlPlanError::TableNotExists {
-                    schema: String::new(),
-                    table: format!("(physical id {table_id})"),
-                });
+                return Err(DdlPlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[
+                            (String::new()).into(),
+                            (format!("(physical id {table_id})")).into(),
+                        ]),
+                ));
             };
             let unchanged = stored.tiflash_replica.as_ref().is_none_or(|replica| {
                 let replica = replica.read();
@@ -970,7 +981,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
     found.ok_or_else(|| {
         driver_refusal(tidb_error::mysql::MysqlError::from_terror(
             &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
-                (name).to_string().into(),
+                name.to_string().into(),
                 (table.name.original().to_owned()).to_string().into(),
             ]),
         ))
@@ -1102,7 +1113,9 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
     mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), DdlPlanError> {
     if force && new_base == 0 {
-        return Err(DdlPlanError::AutoIdReadFailed);
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+        ));
     }
     let new_end = new_base.wrapping_sub(1);
     if let Some(service) = auto_increment_service(snapshot, kind, db_id, info) {
@@ -1328,7 +1341,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             let set_ttl_option = |option: &str| {
                 let error = tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                        .generate_with_stack_by_args(&[(option).to_string().into()]),
+                        .generate_with_stack_by_args(&[option.to_string().into()]),
                 );
                 DdlPlanError::from_mysql_error(error)
             };
@@ -1478,10 +1491,13 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             else {
                 return Err(cancel_ddl_job(
                     active,
-                    DdlPlanError::UnknownColumn {
-                        column: changed.name.original().to_owned(),
-                        table: table.clone(),
-                    },
+                    DdlPlanError::from(
+                        tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                            .generate_with_stack_by_args(&[
+                                (changed.name.original().to_owned()).into(),
+                                (table.clone()).into(),
+                            ]),
+                    ),
                 ));
             };
             let mut old = old.write();
@@ -1659,10 +1675,13 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             if !index_name.is_empty() && find_index(&info, &index_name).is_none() {
                 return Err(cancel_ddl_job(
                     active,
-                    DdlPlanError::KeyNotExists {
-                        index: index_name,
-                        table: table.clone(),
-                    },
+                    DdlPlanError::from(
+                        tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS
+                            .generate_with_stack_by_args(&[
+                                index_name.into(),
+                                (table.clone()).into(),
+                            ]),
+                    ),
                 ));
             }
             tidb_ddl_build::table_info_build::set_region_split_policy(&mut info, &index_name, policy);

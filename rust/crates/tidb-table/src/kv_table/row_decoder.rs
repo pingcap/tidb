@@ -822,7 +822,7 @@ impl RowDecoder {
             self.context.type_flags(),
             false,
         )
-        .map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))
+        .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
     }
 
     /// Updates both row representations before [`Self::eval_remaining`].
@@ -874,7 +874,7 @@ impl RowDecoder {
                         true,
                     )
                 };
-                cast.map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))
+                cast.map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
             },
         )?;
         for offset in &self.generated_offsets {

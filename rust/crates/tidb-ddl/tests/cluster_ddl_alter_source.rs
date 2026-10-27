@@ -292,7 +292,8 @@ fn set_and_drop_column_default_rewrite_the_stored_column() {
     )
     .expect_err("a missing column is refused");
     assert!(
-        matches!(error, DdlPlanError::UnknownColumn { ref column, .. } if column == "nope"),
+        error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS)
+            && error.to_string().contains("Unknown column 'nope'"),
         "{error:?}"
     );
 }
@@ -357,7 +358,8 @@ fn rename_index_rewrites_the_name_and_rejects_a_collision() {
     )
     .expect_err("a collision is refused");
     assert!(
-        matches!(error, DdlPlanError::DuplicateKeyName(ref name) if name == "ib"),
+        error.equal(&tidb_util::dbterror::ERR_DUP_KEY_NAME)
+            && error.to_string().contains("Duplicate key name 'ib'"),
         "{error:?}"
     );
 
@@ -369,7 +371,8 @@ fn rename_index_rewrites_the_name_and_rejects_a_collision() {
     )
     .expect_err("a missing index is refused");
     assert!(
-        matches!(error, DdlPlanError::KeyNotExists { ref index, .. } if index == "nosuch"),
+        error.equal(&tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS)
+            && error.to_string().contains("Key 'nosuch'"),
         "{error:?}"
     );
 }
@@ -662,7 +665,8 @@ fn create_table_like_copies_the_definition_and_resets_the_identity() {
     let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.cp LIKE u6.src"), 500)
         .expect_err("an existing name is refused");
     assert!(
-        matches!(error, DdlPlanError::TableExists { ref table, .. } if table == "cp"),
+        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS)
+            && error.to_string().contains("u6.cp"),
         "{error:?}"
     );
     match plan_ddl(
@@ -722,7 +726,8 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
     )
     .expect_err("a missing primary key is refused");
     assert!(
-        matches!(error, DdlPlanError::UnknownIndex(ref name) if name == "PRIMARY"),
+        error.equal(&tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY)
+            && error.to_string().contains("Can't DROP 'PRIMARY'"),
         "{error:?}"
     );
     assert!(
@@ -780,10 +785,13 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
     ] {
         let error = plan_ddl(&mut store, &statement(sql), 100).expect_err("refused");
         assert!(
-            matches!(error, DdlPlanError::TableNotExists { ref table, .. } if table == "nosuch"),
+            error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS),
             "`{sql}` must answer Go's ErrTableNotExists, got {error:?}"
         );
-        assert_eq!(error.to_string(), "Table 'u6.nosuch' doesn't exist");
+        assert_eq!(
+            error.to_string(),
+            "[schema:1146]Table 'u6.nosuch' doesn't exist"
+        );
     }
 
     // DROP TABLE keeps Go's own, different answer.

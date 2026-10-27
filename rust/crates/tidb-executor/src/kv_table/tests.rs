@@ -126,7 +126,9 @@ fn writable_check_constraints_guard_insert_and_update() {
         .expect("UNKNOWN passes CHECK");
     assert!(matches!(
         table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_expr::NoColumns),
-        Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        Err(KvTableError::Mysql(error))
+            if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
+                && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert!(matches!(
         table.update_row_with_context(
@@ -134,7 +136,9 @@ fn writable_check_constraints_guard_insert_and_update() {
             &[Datum::Int(-1), Datum::Null],
             &crate::StmtContext::for_dml(false, false, false),
         ),
-        Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        Err(KvTableError::Mysql(error))
+            if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
+                && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert_eq!(
         table
@@ -598,10 +602,9 @@ fn row_conflicts_only_include_matching_partial_indexes() {
         .unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].handle, TableHandle::Int(1));
-    assert!(
-        matches!(&conflicts[0].error, KvTableError::DuplicateEntry { value, key }
-        if value == "same" && key == "partial_conflicts.unique_s")
-    );
+    assert!(matches!(&conflicts[0].error, KvTableError::Mysql(error)
+        if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+            && error.message == "Duplicate entry 'same' for key 'partial_conflicts.unique_s'"));
 }
 
 /// Go `GenTempIdxKeyByState` with `index.create`/`index.Delete`: a

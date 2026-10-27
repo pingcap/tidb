@@ -223,8 +223,10 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
 #[test]
 fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     let invalid = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_ddl::cluster_ddl::DdlPlanError::InvalidAutoRandom(
-            "alter auto_random_base of a non auto_random table".to_owned(),
+        tidb_ddl::cluster_ddl::DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                ("alter auto_random_base of a non auto_random table".to_owned()).into(),
+            ]),
         ),
     ));
     assert_query_error_packet(
@@ -234,7 +236,9 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     );
 
     let zero = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_ddl::cluster_ddl::DdlPlanError::AutoIdReadFailed,
+        tidb_ddl::cluster_ddl::DdlPlanError::from(
+            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+        ),
     ));
     assert_query_error_packet(
         &zero,
@@ -682,39 +686,55 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
         (query_error.code, query_error.message)
     };
 
-    let (code, message) = coded(DdlPlanError::UnknownDatabase("nope".to_owned()));
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            .generate_with_stack_by_args(&[("nope".to_owned()).into()]),
+    ));
     assert_eq!(code, 1049);
     assert_eq!(message, "Unknown database 'nope'");
 
-    let (code, message) = coded(DdlPlanError::DatabaseExists("dup".to_owned()));
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+            .generate_with_stack_by_args(&[("dup".to_owned()).into()]),
+    ));
     assert_eq!(code, 1007);
     assert_eq!(message, "Can't create database 'dup'; database exists");
 
-    let (code, message) = coded(DdlPlanError::UnknownTable {
-        schema: "s".to_owned(),
-        table: "t".to_owned(),
-    });
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS.generate_with_stack_by_args(&[
+            format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
+        ]),
+    ));
     assert_eq!(code, 1051);
     assert_eq!(message, "Unknown table 's.t'");
 
-    let (code, message) = coded(DdlPlanError::TableExists {
-        schema: "s".to_owned(),
-        table: "t".to_owned(),
-    });
+    let (code, message) =
+        coded(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
+            ]),
+        ));
     assert_eq!(code, 1050);
     assert_eq!(message, "Table 's.t' already exists");
 
-    let (code, message) = coded(DdlPlanError::DuplicateColumnName("a".to_owned()));
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+            .generate_with_stack_by_args(&[("a".to_owned()).into()]),
+    ));
     assert_eq!(code, 1060);
     assert_eq!(message, "Duplicate column name 'a'");
 
-    let (code, message) = coded(DdlPlanError::DuplicateKeyName("ix".to_owned()));
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_util::dbterror::ERR_DUP_KEY_NAME
+            .generate_with_stack_by_args(&[("ix".to_owned()).into()]),
+    ));
     assert_eq!(code, 1061);
     assert_eq!(message, "Duplicate key name 'ix'");
 
-    let (code, message) = coded(DdlPlanError::UnknownIndexColumn {
-        column: "c".to_owned(),
-    });
+    let (code, message) = coded(DdlPlanError::from(
+        tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+            .generate_with_stack(format!("column does not exist: {}", ("c".to_owned()))),
+    ));
     assert_eq!((code, message.as_str()), (1072, "column does not exist: c"));
 }
 

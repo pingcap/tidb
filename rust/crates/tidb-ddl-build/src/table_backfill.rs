@@ -354,10 +354,17 @@ impl KvTableBackfill for KvTable {
                     };
                     match existing {
                         Some(owner) if entry.distinct && owner != *handle => {
-                            return Err(KvTableError::DuplicateEntry {
-                                value: duplicate_value_text(&self.index_values(&index, row)),
-                                key: self.qualified_key(&index.name),
-                            });
+                            return Err(KvTableError::Mysql(
+                                tidb_error::mysql::MysqlError::from_terror(
+                                    &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(
+                                        &[
+                                            (duplicate_value_text(&self.index_values(&index, row)))
+                                                .into(),
+                                            (self.qualified_key(&index.name)).into(),
+                                        ],
+                                    ),
+                                ),
+                            ));
                         }
                         Some(_) => {}
                         None => {
@@ -501,10 +508,19 @@ impl KvTableBackfill for KvTable {
                         // Go `checkTempIndexKey`.
                         if !record.delete {
                             if record.distinct && original != record.value {
-                                return Err(KvTableError::DuplicateEntry {
-                                    value: self.duplicate_text_of_key(&index, &record.origin_key),
-                                    key: self.qualified_key(&index.name),
-                                });
+                                return Err(KvTableError::Mysql(
+                                    tidb_error::mysql::MysqlError::from_terror(
+                                        &tidb_error::catalog::kv::ERR_KEY_EXISTS
+                                            .fast_generate_by_args(&[
+                                                (self.duplicate_text_of_key(
+                                                    &index,
+                                                    &record.origin_key,
+                                                ))
+                                                .into(),
+                                                (self.qualified_key(&index.name)).into(),
+                                            ]),
+                                    ),
+                                ));
                             }
                             record.skip = true;
                         } else if tidb_tablecodec::index_kv_is_unique(&original) {
@@ -692,9 +708,9 @@ impl KvTableBackfill for KvTable {
                 Ok(converted) => converted,
                 Err(error) => {
                     let reported = error.to_mysql_error();
-                    failure = Some(KvTableError::ColumnCast(crate::reorg_errors::reformat_reorg_error(
-                        reported, &old_name, &old_value,
-                    )));
+                    failure = Some(KvTableError::Mysql(
+                        crate::reorg_errors::reformat_reorg_error(reported, &old_name, &old_value),
+                    ));
                     break;
                 }
             };
@@ -747,11 +763,5 @@ impl KvTableBackfill for KvTable {
 /// the table layer raises it.
 #[must_use]
 pub fn index_backfill_error(error: KvTableError) -> tidb_error::mysql::MysqlError {
-    match error {
-        KvTableError::DuplicateKeyName(name) => tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_DUP_KEY_NAME
-                .generate_with_stack_by_args(&[(name).to_string().into()]),
-        ),
-        other => other.into_mysql_error(),
-    }
+    error.into_mysql_error()
 }

@@ -53,7 +53,10 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
                 )],
             }));
         }
-        return Err(DdlPlanError::DatabaseExists(name.clone()));
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                .generate_with_stack_by_args(&[(name.clone()).into()]),
+        ));
     }
     // Go `checkTooLongSchema`.
     tidb_ddl_build::check_too_long_identifier(&name.go_to_lower())

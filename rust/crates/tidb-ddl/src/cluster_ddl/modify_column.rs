@@ -129,7 +129,10 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 Ok(built) => built,
                 // Go: `ErrColumnNotExists` under IF EXISTS becomes a note
                 // and the statement succeeds.
-                Err(DdlPlanError::UnknownColumn { .. }) if *if_exists => {
+                Err(error)
+                    if *if_exists
+                        && error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS) =>
+                {
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!(
                             "column `{original_col_name}` does not exist on `{schema}`.`{table}`"
@@ -275,7 +278,10 @@ fn get_modifiable_column_job(
             let candidate = candidate.read();
             candidate.state == SchemaState::PUBLIC && candidate.name.lowercase() == new_col_name
         }) {
-            return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+            return Err(DdlPlanError::from(
+                tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    .generate_with_stack_by_args(&[(column.name.clone()).into()]),
+            ));
         }
         if let Some((proto, message)) = &err_g {
             return Err(coded_refusal(proto, message.clone()));
@@ -950,21 +956,29 @@ fn extract_auto_random_bits_from_col_def(
     };
     let shard_bits = option.shard_bits.unwrap_or(5);
     if shard_bits == 0 {
-        return Err(DdlPlanError::InvalidAutoRandom(
-            "the value of auto_random should be positive".to_owned(),
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                ("the value of auto_random should be positive".to_owned()).into(),
+            ]),
         ));
     }
     if shard_bits > 15 {
-        return Err(DdlPlanError::InvalidAutoRandom(format!(
-            "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
-            column.name
-        )));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+                "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
+                column.name
+            ))
+            .into()]),
+        ));
     }
     let range_bits = option.range_bits.unwrap_or(64);
     if !(32..=64).contains(&range_bits) {
-        return Err(DdlPlanError::InvalidAutoRandom(format!(
-            "auto_random range bits must be between 32 and 64, but got {range_bits}"
-        )));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+                "auto_random range bits must be between 32 and 64, but got {range_bits}"
+            ))
+            .into()]),
+        ));
     }
     Ok((shard_bits, range_bits))
 }
@@ -984,7 +998,12 @@ fn check_auto_random(
         (0, 0)
     };
     let (new_shard_bits, new_range_bits) = extract_auto_random_bits_from_col_def(column)?;
-    let invalid = |reason: String| DdlPlanError::InvalidAutoRandom(reason);
+    let invalid = |reason: String| {
+        DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM
+                .generate_with_stack_by_args(&[reason.into()]),
+        )
+    };
     if old_shard_bits < new_shard_bits {
         if old_shard_bits == 0 {
             let converting = old.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
@@ -1083,12 +1102,15 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
     let used_bits = u64::from(64 - (current as u64).leading_zeros());
     if used_bits > incremental_bits {
         let overflow = used_bits - incremental_bits;
-        return Err(DdlPlanError::InvalidAutoRandom(format!(
-            "max allowed auto_random shard bits is {}, but got {} on column `{}`",
-            new_shard_bits.wrapping_sub(overflow),
-            new_shard_bits,
-            old.name.original()
-        )));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+                "max allowed auto_random shard bits is {}, but got {} on column `{}`",
+                new_shard_bits.wrapping_sub(overflow),
+                new_shard_bits,
+                old.name.original()
+            ))
+            .into()]),
+        ));
     }
     info.auto_random_bits = new_shard_bits;
     if !converted {
@@ -1113,10 +1135,10 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
 
 /// Go `ErrColumnNotExists` (1054).
 fn column_not_exists(column: &str, table: &str) -> DdlPlanError {
-    DdlPlanError::UnknownColumn {
-        column: column.to_owned(),
-        table: table.to_owned(),
-    }
+    DdlPlanError::from(
+        tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+            .generate_with_stack_by_args(&[(column.to_owned()).into(), (table.to_owned()).into()]),
+    )
 }
 
 /// Go `ErrUnsupportedModifyColumn` with its reason.
@@ -1254,8 +1276,9 @@ fn check_column_already_exists(
     if new.name.lowercase() != args.old_column_name.lowercase()
         && tidb_model::column::find_column_info(&info.columns, new.name.lowercase()).is_some()
     {
-        return Err(DdlPlanError::DuplicateColumnName(
-            new.name.original().to_owned(),
+        return Err(DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                .generate_with_stack_by_args(&[(new.name.original().to_owned()).into()]),
         ));
     }
     Ok(())

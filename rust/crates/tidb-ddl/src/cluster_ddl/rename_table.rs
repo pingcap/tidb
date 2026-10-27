@@ -57,14 +57,17 @@ fn extract_tbl_infos(
         is_alter,
     })
     .map_err(|error| match error.code {
-        tidb_error::mysql::errcode::ErrNoSuchTable => DdlPlanError::TableNotExists {
-            schema: pair.from_schema.clone(),
-            table: pair.from_table.clone(),
-        },
-        tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::TableExists {
-            schema: pair.to_schema.clone(),
-            table: pair.to_table.clone(),
-        },
+        tidb_error::mysql::errcode::ErrNoSuchTable => DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+                (pair.from_schema.clone()).into(),
+                (pair.from_table.clone()).into(),
+            ]),
+        ),
+        tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                format!("{}.{}", (pair.to_schema.clone()), (pair.to_table.clone())).into(),
+            ]),
+        ),
         _ => DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)),
     })?;
     if !admitted {

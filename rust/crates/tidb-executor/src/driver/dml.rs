@@ -2087,52 +2087,18 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 pub fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
         crate::kv_table::KvTableError::Storage(error) => error.into(),
-        crate::kv_table::KvTableError::ColumnCast(error) => {
+        crate::kv_table::KvTableError::Mysql(error) => {
             DriverError::Exec(crate::ExecError::Mysql(error))
         }
-        crate::kv_table::KvTableError::DuplicateEntry { value, key } => DriverError::from(
-            tidb_error::catalog::kv::ERR_KEY_EXISTS
-                .fast_generate_by_args(&[value.into(), key.into()]),
-        ),
         crate::kv_table::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
         crate::kv_table::KvTableError::PartitionEval(eval) => {
             DriverError::Exec(crate::ExecError::Eval(eval))
         }
-        crate::kv_table::KvTableError::CheckConstraintViolated(name) => DriverError::from(
-            tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
-                .fast_generate_by_args(&[name.into()]),
-        ),
         crate::kv_table::KvTableError::CheckConstraint {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
-        // A RANGE table with no `MAXVALUE` partition rejects the row rather
-        // than storing it somewhere; 1526 is the code an application sees.
-        crate::kv_table::KvTableError::NoPartitionForValue(value) => DriverError::from(
-            tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
-                .generate_with_stack_by_args(&[value.into()]),
-        ),
-        crate::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet => DriverError::from(
-            tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
-                .generate_with_stack_by_args(&[]),
-        ),
-        // A HASH partition value with no signed reading is Go's own
-        // `ConvertTo` error surfacing out of `locateHashPartition`: 1690,
-        // naming the value and `bigint`, the type it did not fit.
-        crate::kv_table::KvTableError::PartitionValueOverflowsBigint(value) => DriverError::from(
-            tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!(
-                "constant {} overflows {}",
-                value,
-                "bigint".to_owned()
-            )),
-        ),
-        // The `_tidb_rowid` a non-clustered row needs comes off the same
-        // counter the AUTO_INCREMENT column does, so its exhaustion is the
-        // same 1467 an allocated column value would have reported.
-        crate::kv_table::KvTableError::AutoIdExhausted => DriverError::from(
-            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
-        ),
         other => DriverError::from(tidb_util::misc::syntax_error(format!(
             "row encode failed: {other:?}"
         ))),

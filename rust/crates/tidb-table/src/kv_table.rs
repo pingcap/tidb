@@ -1284,7 +1284,12 @@ impl KvTable {
         if selected.contains(&self.record_physical_id(row, ctx)?) {
             Ok(())
         } else {
-            Err(KvTableError::RowDoesNotMatchGivenPartitionSet)
+            Err(KvTableError::Mysql(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                        .generate_with_stack_by_args(&[]),
+                ),
+            ))
         }
     }
 
@@ -2273,8 +2278,11 @@ impl KvTable {
                 eval: Some(error),
             })? {
                 Some(false) => {
-                    return Err(KvTableError::CheckConstraintViolated(
-                        constraint.name.clone(),
+                    return Err(KvTableError::Mysql(
+                        tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+                                .fast_generate_by_args(&[(constraint.name.clone()).into()]),
+                        ),
                     ));
                 }
                 Some(true) | None => {}
@@ -2335,7 +2343,10 @@ impl KvTable {
                     .alloc(1, 1)
                     .map_err(|error| match error {
                         AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
-                        _ => KvTableError::AutoIdExhausted,
+                        _ => KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                                .generate_with_stack_by_args(&[]),
+                        )),
                     })?;
                 // Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
                 // shardFmt.Compose(shard, base) }`. Composing here rather
@@ -2828,10 +2839,12 @@ impl KvTable {
                 };
                 found.push(RowConflict {
                     handle,
-                    error: KvTableError::DuplicateEntry {
-                        value,
-                        key: self.qualified_key("PRIMARY"),
-                    },
+                    error: KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                            value.into(),
+                            (self.qualified_key("PRIMARY")).into(),
+                        ]),
+                    )),
                     on_record_key: true,
                 });
             }
@@ -2867,20 +2880,23 @@ impl KvTable {
                 if !found.iter().any(|conflict| conflict.handle == handle) {
                     found.push(RowConflict {
                         handle,
-                        error: KvTableError::DuplicateEntry {
-                            // Both renderings read the key's values: Go's
-                            // batch checker formats `FetchValues` after
-                            // `GenIndexKVIter`'s `Next` cut them in place.
-                            value: match text {
-                                DuplicateText::BatchChecker => {
-                                    batch_check_key_text(self.index_values(&index, row).iter())
+                        error: KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                                // Both renderings read the key's values: Go's
+                                // batch checker formats `FetchValues` after
+                                // `GenIndexKVIter`'s `Next` cut them in place.
+                                match text {
+                                    DuplicateText::BatchChecker => {
+                                        batch_check_key_text(self.index_values(&index, row).iter())
+                                    }
+                                    DuplicateText::TableLayer => {
+                                        duplicate_value_text(&self.index_values(&index, row))
+                                    }
                                 }
-                                DuplicateText::TableLayer => {
-                                    duplicate_value_text(&self.index_values(&index, row))
-                                }
-                            },
-                            key: self.qualified_key(&index.name),
-                        },
+                                .into(),
+                                self.qualified_key(&index.name).into(),
+                            ]),
+                        )),
                         on_record_key: false,
                     });
                 }
@@ -3573,7 +3589,7 @@ impl KvTable {
             if i64::try_from(self.store.size_bytes()).unwrap_or(i64::MAX)
                 > statement.tmp_table_max_size()
             {
-                return Err(KvTableError::ColumnCast(tidb_error::mysql::MysqlError::terror(
+                return Err(KvTableError::Mysql(tidb_error::mysql::MysqlError::terror(
                     &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL,
                     format!("The table '{}' is full", self.name()),
                 )));
@@ -4282,10 +4298,19 @@ fn fmt_non_ascii_printable_char_to_hex(bytes: &[u8]) -> String {
 fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError {
     match error {
         crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
-            KvTableError::NoPartitionForValue(value)
+            KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
+                    .generate_with_stack_by_args(&[value.into()]),
+            ))
         }
         crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
-            KvTableError::PartitionValueOverflowsBigint(value)
+            KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!(
+                    "constant {} overflows {}",
+                    (value),
+                    "bigint"
+                )),
+            ))
         }
         crate::partition_routing::RoutingError::Eval(error) => KvTableError::PartitionEval(error),
         crate::partition_routing::RoutingError::Conversion(error) => KvTableError::Decode(error),
@@ -4334,15 +4359,18 @@ pub fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTab
             | tidb_datatype::EvalType::Decimal
     );
     if source_is_string && numeric_target {
-        return KvTableError::TruncatedIncorrectValue {
-            kind: "DOUBLE",
-            value: text,
-        };
+        return KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                .generate_with_stack_by_args(&["DOUBLE".into(), text.into()]),
+        ));
     }
-    KvTableError::DataTruncatedValue {
-        column: column.to_owned(),
-        value: text,
-    }
+    KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+        &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
+            "Data truncated for column '{}', value is '{}'",
+            (column.to_owned()),
+            (text)
+        )),
+    ))
 }
 
 /// A datum as MySQL prints it inside an error message.

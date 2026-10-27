@@ -26,7 +26,6 @@
 //! below lift them into the executor's. The Go error prototypes are
 //! `tidb_error`'s and `tidb_util::dbterror`'s.
 
-use tidb_hack::GoToLower;
 
 mod driver_error;
 mod exec;
@@ -61,9 +60,10 @@ impl From<ExecError> for DriverError {
         match err {
             // Go's error, raised by the executor, reported unchanged.
             ExecError::Mysql(error) => DriverError::Mysql(error),
-            ExecError::MemoryExceedForQuery { conn_id } => {
-                DriverError::from(tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY.generate_with_stack_by_args(&[(conn_id).into()]))
-            }
+            ExecError::MemoryExceedForQuery { conn_id } => DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
+                    .generate_with_stack_by_args(&[conn_id.into()]),
+            ),
             ExecError::Retrieval(error) => *error,
             // go's charFunctionClass.getFunction BUILD failure: a statement-
             // level build error, not an evaluation event -- the warning buffer
@@ -193,7 +193,7 @@ impl From<KvTableError> for ExecError {
     fn from(error: KvTableError) -> Self {
         match error {
             KvTableError::Storage(error) => error.into(),
-            KvTableError::ColumnCast(error) => Self::Mysql(error),
+            KvTableError::Mysql(error) => Self::Mysql(error),
             KvTableError::Generation {
                 eval: Some(error), ..
             }
@@ -252,5 +252,3 @@ impl From<KillStop> for DriverError {
 
 #[cfg(test)]
 mod lower_layer_parity_tests;
-#[cfg(test)]
-mod ddl_build_parity_tests;

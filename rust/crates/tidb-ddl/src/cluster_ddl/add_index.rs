@@ -357,7 +357,9 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
                 )],
             }));
         }
-        return Err(DdlPlanError::DuplicateKeyName(name));
+        return Err(DdlPlanError::from(
+            tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[name.into()]),
+        ));
     }
     let hypo = index.tp == tidb_ast::IndexType::HYPO && !index.primary;
     // Go builds a hypothetical expression index over `finalColumns`, a COPY
@@ -743,8 +745,12 @@ fn check_and_build_index_info(
                     ),
                 ));
             }
-            return Err(DdlPlanError::DuplicateKeyName(
-                arg.index_name.original().to_owned(),
+            return Err(DdlPlanError::from(
+                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(arg
+                    .index_name
+                    .original()
+                    .to_owned())
+                .into()]),
             ));
         }
         return Ok(existing);
