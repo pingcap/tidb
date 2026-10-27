@@ -279,7 +279,7 @@ type StmtExecInfo struct {
 	Charset        string
 	Collation      string
 	NormalizedSQL  string
-	// SampleSQL is the original statement text.
+	// SampleSQL is the original statement text, with sensitive statements sanitized.
 	SampleSQL      string
 	Digest         string
 	PrevSQL        string
