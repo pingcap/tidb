@@ -269,6 +269,7 @@ var tokenMap = map[string]int{
 	"COMMIT":                         commit,
 	"COMMITTED":                      committed,
 	"COMPACT":                        compact,
+	"COMPARE":                        compare,
 	"COMPLETE":                       complete,
 	"COMPRESS":                       compress,
 	"COMPRESSED":                     compressed,
@@ -624,6 +625,7 @@ var tokenMap = map[string]int{
 	"OPTIMIZE":                       optimize,
 	"OPTION":                         option,
 	"OPTIONAL":                       optional,
+	"OUTPUT":                         output,
 	"OPTIONALLY":                     optionally,
 	"OR":                             or,
 	"ORDER":                          order,
@@ -951,6 +953,7 @@ var tokenMap = map[string]int{
 	"VOTER_CONSTRAINTS":              voterConstraints,
 	"VOTERS":                         voters,
 	"VIEW":                           view,
+	"VIEWS":                          views,
 	"VIRTUAL":                        virtual,
 	"VISIBLE":                        visible,
 	"WARNINGS":                       warnings,
@@ -1132,6 +1135,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                  hintLeading,
 	"SEMI_JOIN_REWRITE":        hintSemiJoinRewrite,
 	"NO_DECORRELATE":           hintNoDecorrelate,
+	"TIFLASH_LM_FILTER":        hintTiFlashLMFilter,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,
