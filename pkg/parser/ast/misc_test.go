@@ -326,6 +326,10 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
 		{
+			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"a&region=private-context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
+		},
+		{
 			input:   `backup database * to 's3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}'`,
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
@@ -351,6 +355,10 @@ func TestBRIESecureText(t *testing.T) {
 		{
 			input:   "backup database * to 's3://user:pass@bucket/prefix?region=us-west-2'",
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
+		},
+		{
+			input:   "backup database * to 'azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG'",
+			secured: `^\QBACKUP DATABASE * TO 'azure://c/p?account-name=a&sas-token=xxxxxx'\E$`,
 		},
 	}
 
@@ -405,6 +413,9 @@ func TestRedactURL(t *testing.T) {
 		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&secret_access_key=FAKE_AST_SK&other-key=benign",
 		"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign",
 		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK&secret-access-key=FAKE_AST_SK",
+		"azure://bucket/path?account-name=benign&sas-token=sv=2020-08-04&sig=FAKE_AST_SAS&FAKE_AST_SK",
+		"s3://bucket/path?region=us-east-1&new-secret=FAKE_AST_SK&FAKE_AST_AK=unknown",
+		`s3://bucket/path?sse-kms-context={"a":"x&region=FAKE_AST_SK"}`,
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			output := ast.RedactURL(rawURL)
@@ -423,7 +434,7 @@ func TestRedactURL(t *testing.T) {
 		{args{""}, ""},
 		{args{":"}, ":"},
 		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK"}, ast.InvalidURLPlaceholder},
-		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign"}, "s3://bucket/path?Access_Key=xxxxxx&other-key=benign"},
+		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign"}, "s3://bucket/path?Access_Key=xxxxxx"},
 		{args{"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign"}, "azure://bucket/path?SAS_Token=xxxxxx&account-name=benign"},
 		{args{"~/file"}, "~/file"},
 		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
@@ -433,16 +444,33 @@ func TestRedactURL(t *testing.T) {
 		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
 		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
-		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file"},
+		{args{"s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"}, "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"},
+		{args{"ks3://bucket/file?region=us-east-1&unknown-key=secret"}, "ks3://bucket/file?region=us-east-1"},
+		{args{"oss://bucket/file?provider=alibaba&access-key-typo=secret"}, "oss://bucket/file?provider=alibaba"},
+		{args{"azure://container/file?account-name=a&unknown-key=secret"}, "azure://container/file?account-name=a"},
+		{args{"azblob://container/file?access-tier=Hot&secret-name&%73ig=secret"}, "azblob://container/file?access-tier=Hot"},
+		{args{"S3://bucket/file?Region=us-east-1&Force_Path_Style=true&Region=us-west-2&unknown=secret"}, "s3://bucket/file?Force_Path_Style=true&Region=us-east-1&Region=us-west-2"},
+		{args{"s3://bucket/file?region=us-east-1&session-token=secret&session-token=another#fragment-secret"}, "s3://bucket/file?region=us-east-1&session-token=xxxxxx"},
 		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
-		// An unescaped '#' or '&' splits the raw JSON, so the whole query is dropped.
+		// Split JSON contexts drop the whole query, even if the tail matches an allowed key.
 		{args{`s3://bucket/file?sse-kms-context={"tenant":"#context-value"}`}, "s3://bucket/file"},
 		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"x&y"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{`ks3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}`}, "ks3://bucket/file"},
+		{args{`oss://bucket/file?SSE_KMS_CONTEXT={"a":"x&provider=private-context-value"}`}, "oss://bucket/file"},
+		// Malformed query encoding still drops the whole query.
 		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`}, "s3://bucket/file"},
 		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`}, "s3://bucket/file"},
 		{args{"s3://bucket/file?SSE_KMS_CONTEXT=%7B%7D&SSE_KMS_CONTEXT=%7B%22a%22%3A%22b%22%7D"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
+		{args{`s3://bucket/file?sse-kms-context=%7B%7D&sse-kms-context={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}&sse-kms-context=%7B%7D`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context=%7B%7D&SSE_KMS_CONTEXT={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{"s3://bucket/file?sse-kms-context=%7B%22a%22%3A%22x%26region%3Dprivate-context-value%22%7D&region=us-east-1"}, "s3://bucket/file?region=us-east-1&sse-kms-context=xxxxxx"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"s3://bucket/file?external-id=tenant-123&role-arn=role&profile=default"}, "s3://bucket/file?external-id=tenant-123&profile=default&role-arn=role"},
 		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
 		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
@@ -451,9 +479,12 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
 		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
+		{args{"azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG"}, "azure://c/p?account-name=a&sas-token=xxxxxx"},
+		{args{"azblob://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG"}, "azblob://c/p?account-name=a&sas-token=xxxxxx"},
 		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
+		{args{"azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"}, "azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"},
 		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
 		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
 		{args{"azure://container/file?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsv%3D2023-11-03%26sig%3Dsecret&sas-token=token"}, "azure://container/file?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"},
