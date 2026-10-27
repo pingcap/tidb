@@ -563,6 +563,7 @@ func TestParseBackend(t *testing.T) {
 		"s3:///path?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK&unknown-token=FAKE_BACKEND_TOKEN",
 		"gcs:///path?credentials=FAKE_BACKEND_GCS",
 		"azure:///path?sig=FAKE_BACKEND_SAS",
+		"s3://bucket/prefix?endpoint=" + url.QueryEscape("https://FAKE_BACKEND_USER:FAKE_BACKEND_PASS@host/path%zz?sig=FAKE_BACKEND_TOKEN"),
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			_, err := ParseBackend(rawURL, nil)
