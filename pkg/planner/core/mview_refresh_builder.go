@@ -210,6 +210,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if source.Schema().Len() != res.SourceColumnCount {
 			return nil, errors.Errorf("unexpected merge-source schema length: got %d, expected %d", source.Schema().Len(), res.SourceColumnCount)
 		}
+		mlogEmpty := mviewRefreshMLogIsEmpty(source)
 		var (
 			fullInner      base.PhysicalPlan
 			fullInnerCount int
@@ -219,7 +220,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullOutput     []int
 			fullSnapshot   *DataReaderSnapshot
 		)
-		if res.FullUpdateLookupTemplateSelect != nil {
+		if res.FullUpdateLookupTemplateSelect != nil && !mlogEmpty {
 			if res.FullUpdateLookupColumnCount <= 0 || len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
 				return nil, errors.New("mview full-update lookup template: invalid output column metadata")
 			}
@@ -268,6 +269,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}
 		plan := &MViewDeltaMerge{
 			Source:                source,
+			MLogEmpty:             mlogEmpty,
 			FullUpdateInnerSource: fullInner, FullUpdateInnerColumnCount: fullInnerCount,
 			FullUpdateIndexRanges: fullRanges, FullUpdateKeyOff2IdxOff: fullKeyMap,
 			FullUpdateKeyResultColIdxes: fullKeyResult, FullUpdateOutputMVOffsets: fullOutput,

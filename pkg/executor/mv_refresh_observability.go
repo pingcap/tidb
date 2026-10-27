@@ -1,0 +1,819 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
+)
+
+type mvRefreshObserveStepRuntime struct {
+	StartAt  time.Time
+	EndAt    time.Time
+	Err      error
+	PlanRows [][]string
+}
+
+type mvRefreshObserveCollector struct {
+	stepRuntime map[string]*mvRefreshObserveStepRuntime
+}
+
+func newMVRefreshObserveCollector() *mvRefreshObserveCollector {
+	return &mvRefreshObserveCollector{
+		stepRuntime: make(map[string]*mvRefreshObserveStepRuntime),
+	}
+}
+
+func (c *mvRefreshObserveCollector) ensureStep(step mvRefreshObserveStep) *mvRefreshObserveStepRuntime {
+	runtime, ok := c.stepRuntime[step.ID]
+	if !ok {
+		runtime = &mvRefreshObserveStepRuntime{}
+		c.stepRuntime[step.ID] = runtime
+	}
+	return runtime
+}
+
+func (c *mvRefreshObserveCollector) OnStepStart(step mvRefreshObserveStep, at time.Time) {
+	runtime := c.ensureStep(step)
+	runtime.StartAt = at
+}
+
+func (c *mvRefreshObserveCollector) OnStepEnd(step mvRefreshObserveStep, at time.Time, err error) {
+	runtime := c.ensureStep(step)
+	runtime.EndAt = at
+	runtime.Err = err
+}
+
+func (c *mvRefreshObserveCollector) OnStepPlanRows(step mvRefreshObserveStep, rows [][]string) {
+	runtime := c.ensureStep(step)
+	runtime.PlanRows = clonePlanRows(rows)
+}
+
+func (c *mvRefreshObserveCollector) getStepRuntime(step mvRefreshObserveStep) *mvRefreshObserveStepRuntime {
+	return c.stepRuntime[step.ID]
+}
+
+var planIDSuffixPattern = regexp.MustCompile(`_(\d+)\b`)
+
+// RefreshMaterializedViewDryRunExec executes "REFRESH MATERIALIZED VIEW ... DRY RUN".
+// It does not execute the refresh. It only builds and returns the planned refresh steps.
+type RefreshMaterializedViewDryRunExec struct {
+	exec.BaseExecutor
+
+	stmt *ast.RefreshMaterializedViewStmt
+
+	rows   []string
+	cursor int
+}
+
+// Next implements the Executor Next interface.
+func (e *RefreshMaterializedViewDryRunExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.rows == nil {
+		rows, err := e.generateRows(ctx)
+		if err != nil {
+			return err
+		}
+		e.rows = rows
+	}
+
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.cursor >= len(e.rows) {
+		return nil
+	}
+
+	numCurRows := min(req.Capacity(), len(e.rows)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurRows; i++ {
+		req.AppendString(0, e.rows[i])
+	}
+	e.cursor += numCurRows
+	return nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) generateRows(ctx context.Context) ([]string, error) {
+	if e.stmt == nil {
+		return nil, errors.New("dry run refresh materialized view: missing statement")
+	}
+	mode, _, err := validateRefreshMaterializedViewStmt(e.stmt, e.Ctx().GetSessionVars().InRestrictedSQL)
+	if err != nil {
+		return nil, err
+	}
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	_, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	if err != nil {
+		return nil, err
+	}
+	is := e.Ctx().GetLatestInfoSchema().(infoschema.InfoSchema)
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), is, tblInfo.MaterializedView); err != nil {
+		return nil, err
+	}
+	steps, err := buildMVRefreshObserveSteps(mode)
+	if err != nil {
+		return nil, err
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+
+	var completeDeleteRows [][]string
+	var completeInsertRows [][]string
+	var completeDeltaRows [][]string
+	var outOfPlaceLoadRows [][]string
+	switch mode {
+	case ast.RefreshMaterializedViewModeCompleteOutOfPlace:
+		outOfPlaceLoadRows, err = e.buildOutOfPlaceRefreshPlanRows(ctx)
+		if err != nil {
+			return nil, err
+		}
+	case ast.RefreshMaterializedViewModeCompleteInPlace:
+		completeDeleteRows, completeInsertRows, err = e.buildCompleteRefreshPlanRows(ctx)
+		if err != nil {
+			return nil, err
+		}
+	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
+		completeDeltaRows, err = e.buildCompleteDeltaRefreshPlanRows(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	rows := make([]string, 0, len(steps)*2)
+	for _, step := range steps {
+		rows = append(rows, fmt.Sprintf("[%s %s]", step.ID, step.Name))
+
+		var stepRows [][]string
+		switch step.Kind {
+		case mvRefreshObserveStepFastMerge:
+			stepRows, err = e.buildFastMergePlanRows(ctx)
+		case mvRefreshObserveStepCompleteDelete:
+			stepRows = completeDeleteRows
+		case mvRefreshObserveStepCompleteInsert:
+			stepRows = completeInsertRows
+		case mvRefreshObserveStepCompleteDeltaApply:
+			stepRows = completeDeltaRows
+		case mvRefreshObserveStepOutOfPlaceLoadShadow:
+			stepRows = outOfPlaceLoadRows
+		default:
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(stepRows) == 0 {
+			continue
+		}
+		rows = append(rows, formatMVRefreshDryRunPlanRows(stepRows)...)
+	}
+	return rows, nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildFastMergePlanRows(ctx context.Context) ([][]string, error) {
+	validationSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	defer e.ReleaseSysSession(ctx, validationSctx)
+
+	refreshStmt, targetRefreshReadTSO, err := e.buildImplementRefreshPlanInput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	implementOpts, err := e.loadFastRefreshImplementOptionsForDryRun(ctx, validationSctx, targetRefreshReadTSO)
+	if err != nil {
+		return nil, err
+	}
+	if targetRefreshReadTSO > 0 {
+		if targetRefreshReadTSO == implementOpts.lastSuccessfulRefreshReadTSO {
+			return nil, nil
+		}
+		if targetRefreshReadTSO < implementOpts.lastSuccessfulRefreshReadTSO {
+			return nil, errors.Errorf(
+				"refresh materialized view fast as of timestamp: target tso %d is older than LAST_SUCCESS_READ_TSO %d",
+				targetRefreshReadTSO,
+				implementOpts.lastSuccessfulRefreshReadTSO,
+			)
+		}
+	}
+	implementOpts.targetRefreshReadTSO = targetRefreshReadTSO
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, implementOpts, true)
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildCompleteDeltaRefreshPlanRows(ctx context.Context) ([][]string, error) {
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	if _, _, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt); err != nil {
+		return nil, err
+	}
+	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, refreshImplementOptions{}, false)
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanInput(
+	ctx context.Context,
+) (*ast.RefreshMaterializedViewStmt, uint64, error) {
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	targetRefreshReadTSO, err := evaluateRefreshMaterializedViewTargetTSO(ctx, e.Ctx(), refreshStmt)
+	if err != nil {
+		return nil, 0, err
+	}
+	return refreshStmt, targetRefreshReadTSO, nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildImplementRefreshPlanRows(
+	ctx context.Context,
+	refreshStmt *ast.RefreshMaterializedViewStmt,
+	implementOpts refreshImplementOptions,
+	scanUserTable bool,
+) ([][]string, error) {
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt:                  refreshStmt,
+		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
+		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
+		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
+	}
+	return e.renderPlanRowsForInternalStmt(ctx, implementStmt, scanUserTable)
+}
+
+func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshImplementOptionsForDryRun(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	targetRefreshReadTSO uint64,
+) (refreshImplementOptions, error) {
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	schemaName, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	if err != nil {
+		return refreshImplementOptions{}, err
+	}
+
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		ctx,
+		nil,
+		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		tblInfo.ID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return refreshImplementOptions{}, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
+		}
+		return refreshImplementOptions{}, err
+	}
+	if len(rows) == 0 {
+		return refreshImplementOptions{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
+	}
+	if rows[0].IsNull(0) {
+		return refreshImplementOptions{}, errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
+	}
+	opts := refreshImplementOptions{
+		lastSuccessfulRefreshReadTSO: rows[0].GetUint64(0),
+	}
+	if targetRefreshReadTSO > 0 && targetRefreshReadTSO == opts.lastSuccessfulRefreshReadTSO {
+		return opts, nil
+	}
+	is, ok := e.Ctx().GetLatestInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return refreshImplementOptions{}, errors.New("dry run refresh materialized view: invalid infoschema")
+	}
+	mlogIntegrity, err := checkFastRefreshMLogIntegrity(
+		ctx,
+		sctx.GetSQLExecutor(),
+		is,
+		schemaName,
+		tblInfo,
+		opts.lastSuccessfulRefreshReadTSO,
+	)
+	if err != nil {
+		return refreshImplementOptions{}, err
+	}
+	if mlogIntegrity.hasRetainedLowerTSO {
+		opts.mlogRetainedLowerTSO = mlogIntegrity.retainedLowerTSO
+	}
+	return opts, nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildCompleteRefreshPlanRows(ctx context.Context) (deletePlanRows, insertPlanRows [][]string, err error) {
+	if e.stmt == nil {
+		return nil, nil, errors.New("dry run refresh materialized view: missing statement")
+	}
+
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	schemaName, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM %n.%n", schemaName.O, refreshStmt.ViewName.Name.O)
+	deleteRows, err := e.renderPlanRowsForInternalSQL(ctx, deleteSQL)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, refreshStmt.ViewName.Name.O)
+	/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
+	insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
+	insertRows, err := e.renderPlanRowsForInternalSQL(ctx, insertSQL)
+	if err != nil {
+		return nil, nil, err
+	}
+	return deleteRows, insertRows, nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) buildOutOfPlaceRefreshPlanRows(ctx context.Context) ([][]string, error) {
+	if e.stmt == nil {
+		return nil, errors.New("dry run refresh materialized view: missing statement")
+	}
+
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	schemaName, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dry run explains the out-of-place load as a write statement shape (INSERT/IMPORT). We bind the
+	// target table name to the existing MV table because shadow table is not created in dry run mode.
+	targetExecutionVars := captureRefreshExecutionSessionVars(e.Ctx().GetSessionVars())
+	loadSQL, err := buildMVRefreshOutOfPlaceBuildSQL(
+		schemaName.O,
+		refreshStmt.ViewName.Name.O,
+		tblInfo,
+		e.Ctx().GetStore().Name(),
+		targetExecutionVars.ImportThreads,
+		targetExecutionVars.ImportDiskQuota,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return e.renderPlanRowsForInternalSQL(ctx, loadSQL)
+}
+
+func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx context.Context, stmt ast.StmtNode, scanUserTable bool) ([][]string, error) {
+	internalSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	defer e.ReleaseSysSession(ctx, internalSctx)
+
+	restore, err := e.prepareMVRefreshObserveInternalSession(internalSctx)
+	if err != nil {
+		return nil, err
+	}
+	defer restore()
+
+	txnPreparer, ok := internalSctx.(interface {
+		PrepareTxnCtx(context.Context, ast.StmtNode) error
+	})
+	if !ok {
+		return nil, errors.New("dry run refresh materialized view: invalid internal session")
+	}
+	if err := txnPreparer.PrepareTxnCtx(ctx, nil); err != nil {
+		return nil, err
+	}
+	if scanUserTable {
+		restoreInternalSQLScanUserTable := enableInternalSQLScanUserTableForPlan(internalSctx)
+		defer restoreInternalSQLScanUserTable()
+	}
+
+	// The MDL table cache and related-table map must belong to the same session's
+	// transaction. Reusing the outer session's schema can register a table twice.
+	is := sessiontxn.GetTxnManager(internalSctx).GetTxnInfoSchema()
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := plannercore.OptimizeAstNode(ctx, internalSctx, nodeW, is)
+	if err != nil {
+		return nil, err
+	}
+	explain := &plannercore.Explain{
+		TargetPlan: plan,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
+	}
+	if err := explain.RenderResult(); err != nil {
+		return nil, err
+	}
+	return explain.Rows, nil
+}
+
+func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalSQL(ctx context.Context, sql string) ([][]string, error) {
+	internalSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	defer e.ReleaseSysSession(ctx, internalSctx)
+
+	restore, err := e.prepareMVRefreshObserveInternalSession(internalSctx)
+	if err != nil {
+		return nil, err
+	}
+	defer restore()
+
+	planSQL := fmt.Sprintf("EXPLAIN FORMAT='%s' %s", types.ExplainFormatBrief, sql)
+	rs, err := internalSctx.GetSQLExecutor().ExecuteInternal(ctx, planSQL)
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
+	}
+	fields := rs.Fields()
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1024)
+	closeErr := rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	result := make([][]string, len(rows))
+	for i, row := range rows {
+		rowStr := make([]string, row.Len())
+		for j := range row.Len() {
+			if row.IsNull(j) {
+				rowStr[j] = "<nil>"
+				continue
+			}
+			datum := row.GetDatum(j, &fields[j].Column.FieldType)
+			value, err := datum.ToString()
+			if err != nil {
+				return nil, err
+			}
+			rowStr[j] = value
+		}
+		result[i] = rowStr
+	}
+	return result, nil
+}
+
+func formatMVRefreshDryRunPlanRows(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	ret := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+
+		id := planIDSuffixPattern.ReplaceAllString(row[0], "")
+		parts := make([]string, 0, 5)
+		parts = append(parts, id)
+
+		var estRows string
+		var task string
+		var accessObj string
+		var operatorInfo string
+		if len(row) > 1 {
+			estRows = strings.TrimSpace(row[1])
+		}
+		if len(row) > 2 {
+			task = strings.TrimSpace(row[2])
+		}
+		if len(row) >= 5 {
+			accessObj = row[3]
+			operatorInfo = row[4]
+		} else if len(row) >= 4 {
+			operatorInfo = row[len(row)-1]
+		}
+
+		if estRows != "" {
+			parts = append(parts, "estRows:"+estRows)
+		}
+		if task != "" {
+			parts = append(parts, "task:"+task)
+		}
+
+		accessObj = normalizeDryRunPlanField(accessObj)
+		operatorInfo = normalizeDryRunPlanField(operatorInfo)
+		if accessObj != "" {
+			parts = append(parts, accessObj)
+		}
+		if operatorInfo != "" {
+			parts = append(parts, operatorInfo)
+		}
+
+		ret = append(ret, "  "+strings.Join(parts, " | "))
+	}
+	return ret
+}
+
+func normalizeDryRunPlanField(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "N/A") {
+		return ""
+	}
+	return value
+}
+
+// RefreshMaterializedViewProfileExec executes "REFRESH MATERIALIZED VIEW ... WITH PROFILE".
+// It executes the refresh and returns step-level runtime information.
+type RefreshMaterializedViewProfileExec struct {
+	exec.BaseExecutor
+
+	stmt *ast.RefreshMaterializedViewStmt
+
+	rows   []string
+	cursor int
+}
+
+// Next implements the Executor Next interface.
+func (e *RefreshMaterializedViewProfileExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.rows == nil {
+		rows, err := e.generateRows(ctx)
+		if err != nil {
+			return err
+		}
+		e.rows = rows
+	}
+
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.cursor >= len(e.rows) {
+		return nil
+	}
+
+	numCurRows := min(req.Capacity(), len(e.rows)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurRows; i++ {
+		req.AppendString(0, e.rows[i])
+	}
+	e.cursor += numCurRows
+	return nil
+}
+
+func (e *RefreshMaterializedViewProfileExec) generateRows(ctx context.Context) ([]string, error) {
+	if e.stmt == nil {
+		return nil, errors.New("profile refresh materialized view: missing statement")
+	}
+	mode, _, err := validateRefreshMaterializedViewStmt(e.stmt, e.Ctx().GetSessionVars().InRestrictedSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	steps, err := buildMVRefreshObserveSteps(mode)
+	if err != nil {
+		return nil, err
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+
+	collector := newMVRefreshObserveCollector()
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor:          exec.NewBaseExecutor(e.Ctx(), nil, 0),
+		stmt:                  refreshStmt,
+		stepObserver:          collector,
+		planFormatForObserver: types.ExplainFormatBrief,
+	}
+	if err := refreshExec.executeRefreshMaterializedView(ctx, refreshStmt); err != nil {
+		return nil, err
+	}
+
+	rows := make([]string, 0, len(steps)*2)
+	for _, step := range steps {
+		runtime := collector.getStepRuntime(step)
+		rows = append(rows, formatMVRefreshProfileStepHeader(step, runtime))
+		if runtime == nil || len(runtime.PlanRows) == 0 {
+			continue
+		}
+		rows = append(rows, formatMVRefreshProfilePlanRows(runtime.PlanRows)...)
+	}
+	return rows, nil
+}
+
+func formatMVRefreshProfileStepHeader(step mvRefreshObserveStep, runtime *mvRefreshObserveStepRuntime) string {
+	info := buildMVRefreshAnalyzeExecutionInfo(runtime)
+	if info == "" {
+		return fmt.Sprintf("[%s %s]", step.ID, step.Name)
+	}
+	return fmt.Sprintf("[%s %s] %s", step.ID, step.Name, info)
+}
+
+func buildMVRefreshAnalyzeExecutionInfo(runtime *mvRefreshObserveStepRuntime) string {
+	if runtime == nil || runtime.StartAt.IsZero() || runtime.EndAt.IsZero() {
+		return ""
+	}
+	status := "success"
+	if runtime.Err != nil {
+		status = "failed"
+	}
+	return fmt.Sprintf("status:%s, time:%s", status, runtime.EndAt.Sub(runtime.StartAt))
+}
+
+func formatMVRefreshProfilePlanRows(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	ret := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		id := planIDSuffixPattern.ReplaceAllString(row[0], "")
+		parts := make([]string, 0, 9)
+		parts = append(parts, id)
+
+		var estRows string
+		var actRows string
+		var task string
+		var accessObj string
+		var execInfo string
+		var operatorInfo string
+		var memInfo string
+		var diskInfo string
+		if len(row) > 1 {
+			estRows = strings.TrimSpace(row[1])
+		}
+		if len(row) > 2 {
+			actRows = strings.TrimSpace(row[2])
+		}
+		if len(row) > 3 {
+			task = strings.TrimSpace(row[3])
+		}
+		if len(row) > 4 {
+			accessObj = row[4]
+		}
+		if len(row) > 5 {
+			execInfo = row[5]
+		}
+		if len(row) > 6 {
+			operatorInfo = row[6]
+		} else if len(row) > 1 {
+			operatorInfo = row[len(row)-1]
+		}
+		if len(row) > 7 {
+			memInfo = row[7]
+		}
+		if len(row) > 8 {
+			diskInfo = row[8]
+		}
+
+		if estRows != "" {
+			parts = append(parts, "estRows:"+estRows)
+		}
+		if actRows != "" {
+			parts = append(parts, "actRows:"+actRows)
+		}
+		if task != "" {
+			parts = append(parts, "task:"+task)
+		}
+
+		accessObj = normalizeDryRunPlanField(accessObj)
+		execInfo = normalizeDryRunPlanField(execInfo)
+		operatorInfo = normalizeDryRunPlanField(operatorInfo)
+		memInfo = normalizeDryRunPlanField(memInfo)
+		diskInfo = normalizeDryRunPlanField(diskInfo)
+
+		if accessObj != "" {
+			parts = append(parts, accessObj)
+		}
+		if execInfo != "" {
+			parts = append(parts, execInfo)
+		}
+		if operatorInfo != "" {
+			parts = append(parts, operatorInfo)
+		}
+		if memInfo != "" {
+			parts = append(parts, "memory:"+memInfo)
+		}
+		if diskInfo != "" {
+			parts = append(parts, "disk:"+diskInfo)
+		}
+
+		ret = append(ret, "  "+strings.Join(parts, " | "))
+	}
+	return ret
+}
+
+func enableMVRefreshObserveMaintenanceFlags(sctx sessionctx.Context) func() {
+	sessVars := sctx.GetSessionVars()
+	origRestricted := sessVars.InRestrictedSQL
+	origMaintenance := sessVars.InMViewMaintenance
+	sessVars.InRestrictedSQL = true
+	sessVars.InMViewMaintenance = true
+
+	planVars := sctx.GetPlanCtx().GetSessionVars()
+	origPlanRestricted := planVars.InRestrictedSQL
+	origPlanMaintenance := planVars.InMViewMaintenance
+	planVars.InRestrictedSQL = true
+	planVars.InMViewMaintenance = true
+
+	return func() {
+		planVars.InRestrictedSQL = origPlanRestricted
+		planVars.InMViewMaintenance = origPlanMaintenance
+		sessVars.InRestrictedSQL = origRestricted
+		sessVars.InMViewMaintenance = origMaintenance
+	}
+}
+
+func enableInternalSQLScanUserTableForPlan(sctx sessionctx.Context) func() {
+	sessVars := sctx.GetSessionVars()
+	origInternalSQLScanUserTable := sessVars.InternalSQLScanUserTable
+	sessVars.InternalSQLScanUserTable = true
+
+	planVars := sctx.GetPlanCtx().GetSessionVars()
+	origPlanInternalSQLScanUserTable := planVars.InternalSQLScanUserTable
+	planVars.InternalSQLScanUserTable = true
+
+	return func() {
+		planVars.InternalSQLScanUserTable = origPlanInternalSQLScanUserTable
+		sessVars.InternalSQLScanUserTable = origInternalSQLScanUserTable
+	}
+}
+
+func (e *RefreshMaterializedViewDryRunExec) prepareMVRefreshObserveInternalSession(sctx sessionctx.Context) (func(), error) {
+	sessVars := sctx.GetSessionVars()
+	restoreExecutionVars, err := applyRefreshExecutionSessionVars(
+		sessVars,
+		captureRefreshExecutionSessionVars(e.Ctx().GetSessionVars()),
+		false,
+	)
+	if err != nil {
+		return nil, err
+	}
+	origEnableMView := sessVars.EnableMView
+	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
+		restoreExecutionVars()
+		return nil, errors.Annotate(err, "dry run refresh materialized view: failed to enable materialized view support")
+	}
+	restoreObserve := enableMVRefreshObserveMaintenanceFlags(sctx)
+	return func() {
+		restoreObserve()
+		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
+			logutil.BgLogger().Warn("dry run refresh materialized view: failed to restore materialized view enablement", zap.Error(err))
+		}
+		restoreExecutionVars()
+	}, nil
+}
+
+func cloneRefreshMaterializedViewStmt(stmt *ast.RefreshMaterializedViewStmt) *ast.RefreshMaterializedViewStmt {
+	if stmt == nil {
+		return nil
+	}
+	cloned := *stmt
+	if stmt.ViewName != nil {
+		viewName := *stmt.ViewName
+		cloned.ViewName = &viewName
+	}
+	if stmt.AsOf != nil {
+		asOf := *stmt.AsOf
+		cloned.AsOf = &asOf
+	}
+	return &cloned
+}
+
+func buildMVRefreshObserveSteps(mode ast.RefreshMaterializedViewMode) ([]mvRefreshObserveStep, error) {
+	stepSet, err := newMVRefreshStepSet(mode)
+	if err != nil {
+		return nil, err
+	}
+	return stepSet.steps, nil
+}

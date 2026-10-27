@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -524,7 +525,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	var nextUnixSeconds *int64
 	shouldUpdateNext := false
 	if isInternalSQL {
-		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
+		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, schemaName.O, mlogName.O)
 		if err != nil {
 			return finalizeFailure(err)
 		}
@@ -1068,7 +1069,7 @@ func deriveMLogPurgeThrottleDeadline(
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
 	isInternalSQL bool,
-	_, _ string,
+	schemaName, mlogName string,
 	fallbackNextTime *time.Time,
 ) (*time.Time, error) {
 	failpoint.Inject("mockMLogPurgeAdaptiveDeadlineErr", func(val failpoint.Value) {
@@ -1081,7 +1082,7 @@ func deriveMLogPurgeThrottleDeadline(
 		if mlogInfo == nil || evalSctx == nil {
 			return nil, errors.New("purge materialized view log: schedule evaluation metadata is unavailable")
 		}
-		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
+		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, schemaName, mlogName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1370,6 +1371,7 @@ func deriveMLogPurgeNextUnixSeconds(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
+	schemaName, mlogName string,
 ) (*int64, bool, error) {
 	if strings.TrimSpace(mlogInfo.PurgeNext) == "" {
 		return nil, true, nil
@@ -1382,10 +1384,29 @@ func deriveMLogPurgeNextUnixSeconds(
 		return nil, false, err
 	}
 	if nextAt == nil {
+		if shouldUpdate {
+			logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(schemaName, mlogName, mlogInfo.PurgeNext)
+		}
 		return nil, shouldUpdate, nil
 	}
 	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 	return nextUnixSeconds, shouldUpdate, errors.Trace(err)
+}
+
+func logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(
+	schemaName string,
+	mlogName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mlogName),
+		zap.String("purgeNext", parser.Normalize(nextExpr, errors.RedactLogEnable)),
+	)
 }
 
 func updateMaterializedViewLogPurgeInfoOnSuccess(
