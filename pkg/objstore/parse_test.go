@@ -91,7 +91,7 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "invalid storage URL")
+	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -115,8 +115,7 @@ func TestCreateStorage(t *testing.T) {
 
 	_, err = ParseBackend("s3:///bucket/more/prefix/?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token", &BackendOptions{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "please specify the bucket for s3")
-	require.NotContains(t, err.Error(), "s3://")
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///bucket/more/prefix/?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
 	require.NotContains(t, err.Error(), "secret-id")
 	require.NotContains(t, err.Error(), "secret-key")
 	require.NotContains(t, err.Error(), "secret-token")

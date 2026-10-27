@@ -251,9 +251,6 @@ func (t TaskInfoRedacted) String() string {
 				s3Copy := *backend.S3
 				s3Copy.AccessKey = "[REDACTED]"
 				s3Copy.SecretAccessKey = "[REDACTED]"
-				if s3Copy.SessionToken != "" {
-					s3Copy.SessionToken = "[REDACTED]"
-				}
 				s3Copy.SseKmsKeyId = "[REDACTED]"
 				if s3Copy.SessionToken != "" {
 					s3Copy.SessionToken = "[REDACTED]"
