@@ -1614,9 +1614,21 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			Off,
 		},
 		{
+<<<<<<< HEAD
 			TiDBRedactLog,
 			On,
 			Off,
+=======
+			vardef.TiDBEnableAdaptiveLimitScan,
+			BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan),
+			vardef.On,
+		},
+		{vardef.TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
+		{
+			vardef.TiDBRowFormatVersion,
+			strconv.Itoa(vardef.DefTiDBRowFormatV1),
+			strconv.Itoa(vardef.DefTiDBRowFormatV2),
+>>>>>>> 42abf54ebbc (sessionctx: lower the new-cluster sampled NDV threshold to 100 million (#72453))
 		},
 		{
 			TiDBRowFormatVersion,

@@ -3803,6 +3803,7 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that
 	// all installs will have the same value.
+<<<<<<< HEAD
 	case TiDBRowFormatVersion:
 		varVal = strconv.Itoa(DefTiDBRowFormatV2)
 	case TiDBTxnAssertionLevel:
@@ -3811,6 +3812,29 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		varVal = On
 	case TiDBPessimisticTransactionFairLocking:
 		varVal = On
+=======
+	case vardef.TiDBRowFormatVersion:
+		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
+	case vardef.TiDBTxnAssertionLevel:
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
+			varVal = vardef.AssertionFastStr
+		}
+	case vardef.TiDBEnableMutationChecker:
+		varVal = vardef.On
+	case vardef.TiDBEnableAdaptiveLimitScan:
+		varVal = vardef.On
+	case vardef.TiDBAnalyzeSampledNDVThreshold:
+		// New clusters sample NDV for tables and partitions above 100 million rows.
+		varVal = "100000000"
+	case vardef.TiDBPessimisticTransactionFairLocking:
+		if kerneltype.IsNextGen() {
+			varVal = vardef.Off
+		} else {
+			varVal = vardef.On
+		}
+>>>>>>> 42abf54ebbc (sessionctx: lower the new-cluster sampled NDV threshold to 100 million (#72453))
 	}
 	return varVal
 }
