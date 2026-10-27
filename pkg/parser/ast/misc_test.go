@@ -15,11 +15,13 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -82,6 +84,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		},
 		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
 		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
+		&ast.CompareMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}, OutputTable: &ast.TableName{}},
 		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
 		&ast.RefreshMaterializedViewImplementStmt{RefreshStmt: &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}}},
 		&ast.ShutdownStmt{},
@@ -585,4 +588,30 @@ func TestSetPwdStmtSecureText(t *testing.T) {
 			require.Equal(t, c.want, c.stmt.SecureText())
 		})
 	}
+}
+
+func TestCompareMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CompareMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtRestore(t *testing.T) {
+	stmt := &ast.CompareMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv"),
+		},
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2026-05-21 10:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+		OutputTable: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv_diff"),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-05-21 10:00:00' OUTPUT INTO TABLE `test`.`mv_diff`", sb.String())
 }
