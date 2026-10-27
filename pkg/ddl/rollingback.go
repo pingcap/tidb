@@ -420,8 +420,12 @@ func rollbackReorganizePartitionWithErr(jobCtx *jobContext, job *model.Job, othe
 	return convertReorgPartitionJob2RollbackJob(jobCtx, job, otherwiseErr, tblInfo)
 }
 
-// restoreOriginalPartitionDefinitions uses IDs because reorganized LIST partitions
-// may be nonadjacent and replacement partitions may reuse their names.
+// restoreOriginalPartitionDefinitions rebuilds the original partition list in
+// OriginalPartitionIDsOrder. LIST partitions may be nonadjacent, so the current
+// and dropping definitions alone cannot determine where to restore each partition.
+// Walking only the original IDs also excludes newly added replacement partitions.
+// RANGE/HASH/KEY have consecutive replacements, but use the same restoration logic.
+// Match by physical ID because replacement partitions may reuse original names.
 func restoreOriginalPartitionDefinitions(originalIDs []int64, current, dropping []model.PartitionDefinition) ([]model.PartitionDefinition, error) {
 	definitionsByID := make(map[int64]model.PartitionDefinition, len(current)+len(dropping))
 	for _, definition := range current {

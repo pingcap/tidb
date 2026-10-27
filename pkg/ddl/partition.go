@@ -356,6 +356,12 @@ func buildAlterTablePartitionBundles(t placement.PolicyGetter, tblInfo *model.Ta
 	return append(bundles, partitionBundles...), nil
 }
 
+// alterTablePartitionBundles applies placement bundles in two phases:
+//  1. Before reorganization or writes to new partitions/global indexes, install
+//     rules covering both existing and added partitions. Preserve the old
+//     partitions' placement rules while their data is still needed.
+//  2. At finalization, call again with addDefs == nil and the final partition
+//     definitions to overwrite the table bundle with the final layout.
 func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
 	bundles, err := buildAlterTablePartitionBundles(t, tblInfo, addDefs)
 	if err != nil {
@@ -368,8 +374,9 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDe
 }
 
 func buildDropPartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
-	// Keep the dropped data's placement until GC, then remove its ranges from
-	// the table bundle. Preserve this order for both policy reads and bundles.
+	// Keep dropped data's placement in standalone partition bundles before
+	// recomputing the table bundle without those ranges. Preserve this order
+	// for both policy reads and bundles.
 	bundles, err := partitionBundlesForDroppedDefinitions(t, tblInfo, dropPartitions)
 	if err != nil {
 		return nil, err
@@ -403,8 +410,10 @@ func buildTruncatePartitionBundles(t placement.PolicyGetter, tblInfo *model.Tabl
 	return append(bundles, keepDroppedBundles...), nil
 }
 
-// partitionBundlesForDroppedDefinitions preserves placement for dropped data
-// until GC removes it, including placement inherited from the table policy.
+// When dropping or truncating a partition, keep its placement settings to avoid
+// unnecessary region scheduling before delete-range GC. Recomputing the table
+// bundle removes inherited rules for the dropped range, so create a standalone
+// partition bundle to preserve those rules until GC.
 func partitionBundlesForDroppedDefinitions(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
 	for _, def := range dropPartitions {
