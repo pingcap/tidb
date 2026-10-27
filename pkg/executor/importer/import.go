@@ -267,13 +267,13 @@ type QueryPlan struct {
 	Timestamp     int64
 	Keyspace      string
 	// Tables lists the included source tables.
-	Tables []QueryTable
+	Tables []SourceTable
 	// SessionStates are the states of the submitting session.
 	SessionStates *sessionstates.SessionStates
 }
 
-// QueryTable identifies a source table definition of an import query.
-type QueryTable struct {
+// SourceTable identifies a source table definition of an import query.
+type SourceTable struct {
 	DBID     int64
 	ID       int64
 	Revision uint64

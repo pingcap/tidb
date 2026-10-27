@@ -34,15 +34,27 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
-func parseStmt(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
+// newQueryParser returns a parser configured like the one that the planner
+// parses a view definition with.
+func newQueryParser(sctx sessionctx.Context) *parser.Parser {
 	p := parser.New()
-	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	return p
+}
+
+// parseViewDefinition parses a view definition like the planner does when it
+// expands the view: a stored definition does not depend on the SQL mode of the
+// session that reads it.
+func parseViewDefinition(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	return p.ParseOneStmt(sql, charset, collation)
+	return newQueryParser(sctx).ParseOneStmt(sql, charset, collation)
 }
 
 func parseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, ast.StmtNode, error) {
-	node, err := parseStmt(sctx, sql)
+	p := newQueryParser(sctx)
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	node, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -106,7 +118,7 @@ func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionSta
 }
 
 // checkQuerySourceTable rejects a source table that a worker cannot read the
-// same way as the submitter, including temporary tables, seqnences, and memtable.
+// same way as the submitter, including temporary tables, sequences, and memtable.
 func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
 	var kind string
 	switch {
@@ -122,7 +134,7 @@ func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error
 	return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(kind + " in IMPORT INTO FROM SELECT")
 }
 
-// collectImportQueryTables collects tables from a resolved query.
+// collectQueryTables collects tables from a resolved query.
 func collectQueryTables(
 	sctx sessionctx.Context, is infoschema.InfoSchema, node ast.StmtNode,
 	q *importer.QueryPlan, seen map[int64]bool,
@@ -149,10 +161,10 @@ func collectQueryTables(
 			continue
 		}
 		seen[tblInfo.ID] = true
-		q.Tables = append(q.Tables, importer.QueryTable{DBID: dbInfo.ID, ID: tblInfo.ID, Revision: tblInfo.Revision})
+		q.Tables = append(q.Tables, importer.SourceTable{DBID: dbInfo.ID, ID: tblInfo.ID, Revision: tblInfo.Revision})
 
 		if tblInfo.IsView() {
-			viewNode, err := parseStmt(sctx, tblInfo.View.SelectStmt)
+			viewNode, err := parseViewDefinition(sctx, tblInfo.View.SelectStmt)
 			if err != nil {
 				return err
 			}

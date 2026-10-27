@@ -32,9 +32,9 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(i bigint)")
-	sourceTables := func(q *importer.QueryPlan) map[string]importer.QueryTable {
+	sourceTables := func(q *importer.QueryPlan) map[string]importer.SourceTable {
 		is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-		tables := make(map[string]importer.QueryTable, len(q.Tables))
+		tables := make(map[string]importer.SourceTable, len(q.Tables))
 		for _, src := range q.Tables {
 			db, ok := is.SchemaByID(src.DBID)
 			require.True(t, ok)
@@ -127,7 +127,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.Len(t, latest.Columns, 2)
 		q, err := executor.GenerateImportQueryPlan(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
 		require.NoError(t, err)
-		require.Equal(t, []importer.QueryTable{{DBID: tbl.Meta().DBID, ID: tbl.Meta().ID, Revision: tbl.Meta().Revision}}, q.Tables)
+		require.Equal(t, []importer.SourceTable{{DBID: tbl.Meta().DBID, ID: tbl.Meta().ID, Revision: tbl.Meta().Revision}}, q.Tables)
 		require.Less(t, tbl.Meta().Revision, latest.Revision)
 		require.Equal(t, txnIS.SchemaMetaVersion(), q.SchemaVersion)
 		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
