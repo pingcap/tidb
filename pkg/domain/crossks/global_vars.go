@@ -40,17 +40,21 @@ const globalVarCacheRefreshInterval = 30 * time.Second
 // globalVarCache is the global variable accessor of the sessions of a runtime,
 // which have no Domain to read global variables, and only read them. Like the
 // sysvar cache of a Domain, it loads the variables through a session of the
-// pool, and reloads them periodically and when a TiDB of the keyspace notifies
-// a change, but it never applies them to this instance.
+// pool, but it never applies them to this instance. It loads them on the first
+// read after it is invalidated periodically or by a change notified by a TiDB
+// of the keyspace, so a runtime that never reads them never queries.
 type globalVarCache struct {
 	ctx  context.Context
 	ks   string
 	pool util.SessionPool
 
-	// loadMu serializes loads, so that an earlier load cannot overwrite a later one.
+	// loadMu serializes loads.
 	loadMu sync.Mutex
 	mu     sync.RWMutex
 	global map[string]string
+	// version increases on each invalidation, so that a load started before an
+	// invalidation does not fill the cache.
+	version uint64
 }
 
 var _ variable.GlobalVarAccessor = (*globalVarCache)(nil)
@@ -61,33 +65,35 @@ func newGlobalVarCache(ctx context.Context, ks string, pool util.SessionPool) *g
 
 func (c *globalVarCache) get(name string) (value string, found bool, err error) {
 	c.mu.RLock()
-	loaded := c.global != nil
-	value, found = c.global[name]
+	global := c.global
 	c.mu.RUnlock()
-	if loaded {
-		return value, found, nil
+	if global == nil {
+		if global, err = c.load(); err != nil {
+			return "", false, err
+		}
 	}
-	if err = c.load(); err != nil {
-		return "", false, err
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	value, found = c.global[name]
+	value, found = global[name]
 	return value, found, nil
 }
 
-func (c *globalVarCache) load() error {
+func (c *globalVarCache) load() (map[string]string, error) {
 	c.loadMu.Lock()
 	defer c.loadMu.Unlock()
+	c.mu.RLock()
+	global, version := c.global, c.version
+	c.mu.RUnlock()
+	if global != nil {
+		return global, nil
+	}
 	rows, err := c.query("SELECT variable_name, variable_value FROM %n.%n", mysql.SystemDB, mysql.GlobalVariablesTable)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tableContents := make(map[string]string, len(rows))
 	for _, row := range rows {
 		tableContents[row.GetString(0)] = row.GetString(1)
 	}
-	_, global := variable.SysVarCacheValues(tableContents)
+	_, global = variable.SysVarCacheValues(tableContents)
 	vars := variable.NewSessionVars(nil)
 	for name, value := range global {
 		sv := variable.GetSysVar(name)
@@ -100,9 +106,18 @@ func (c *globalVarCache) load() error {
 		}
 	}
 	c.mu.Lock()
-	c.global = global
+	if c.version == version {
+		c.global = global
+	}
 	c.mu.Unlock()
-	return nil
+	return global, nil
+}
+
+func (c *globalVarCache) invalidate() {
+	c.mu.Lock()
+	c.global = nil
+	c.version++
+	c.mu.Unlock()
 }
 
 func (c *globalVarCache) query(sql string, args ...any) ([]chunk.Row, error) {
@@ -121,7 +136,7 @@ func (c *globalVarCache) query(sql string, args ...any) ([]chunk.Row, error) {
 	return rows, err
 }
 
-// refreshLoop reloads the cache until ctx is done.
+// refreshLoop invalidates the cache until ctx is done.
 func (c *globalVarCache) refreshLoop(etcdCli *clientv3.Client) {
 	logger := logutil.BgLogger().With(zap.String("targetKS", c.ks))
 	var watchCh clientv3.WatchChan
@@ -151,9 +166,7 @@ func (c *globalVarCache) refreshLoop(etcdCli *clientv3.Client) {
 			continue
 		}
 		count = 0
-		if err := c.load(); err != nil {
-			logger.Warn("reload global variable cache failed", zap.Error(err))
-		}
+		c.invalidate()
 	}
 }
 
