@@ -89,6 +89,22 @@ impl std::fmt::Debug for MysqlServerTls {
 }
 
 impl MysqlServerTls {
+    /// The leaf certificate's `(NotBefore, NotAfter)` in Unix seconds, which
+    /// Go's `Server.Stats` reads through `x509.ParseCertificate`.
+    pub(crate) fn certificate_validity(&self) -> Result<(i64, i64), String> {
+        let leaf = self
+            .certificates
+            .first()
+            .ok_or_else(|| "no certificate".to_owned())?;
+        let (_, certificate) =
+            x509_parser::parse_x509_certificate(leaf.as_ref()).map_err(|error| error.to_string())?;
+        let validity = certificate.validity();
+        Ok((
+            validity.not_before.timestamp(),
+            validity.not_after.timestamp(),
+        ))
+    }
+
     /// Loads a PEM certificate chain and private key, as Go's
     /// `tls.LoadX509KeyPair(cert, key)` does.
     pub fn from_pem_files(cert: &Path, key: &Path) -> Result<Self, MysqlTlsError> {
@@ -1468,6 +1484,32 @@ mod account_tls_batch_handshake_tests {
         assert_eq!(
             handshake(0, true, "invalid-defaults-to-tls12"),
             (true, false, false)
+        );
+    }
+}
+
+#[cfg(test)]
+mod certificate_validity_tests {
+    use super::*;
+
+    /// Go `Server.Stats` reads `Ssl_server_not_before` / `not_after` off the
+    /// leaf certificate (`x509.ParseCertificate(...).NotBefore`).
+    #[test]
+    fn the_validity_is_the_leaf_certificate_s() {
+        let mut params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+        params.not_before = rcgen::date_time_ymd(2026, 1, 2);
+        params.not_after = rcgen::date_time_ymd(2027, 11, 12);
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = params.self_signed(&key).unwrap();
+        let tls = MysqlServerTls::from_material(
+            vec![certificate.der().clone()],
+            PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+            "test",
+        )
+        .unwrap();
+        assert_eq!(
+            tls.certificate_validity(),
+            Ok((1_767_312_000, 1_825_977_600))
         );
     }
 }

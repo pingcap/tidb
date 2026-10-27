@@ -44,7 +44,7 @@ use crate::connection_writers::{
 };
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
-    negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
+    negotiate_capabilities, parse_response, parse_response_header,
     InitialHandshake, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB,
     CLIENT_FOUND_ROWS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
     CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
@@ -1140,6 +1140,9 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             "lost connection to PD",
         )));
     }
+    // Go registers `compressionStats` in the server package's `init`, before
+    // any connection it serves.
+    crate::stat::register_compression_statistics();
     let mut lease = tracker.begin();
     // Go `server.go:303` + `conn.go:435-439`: the connection gauge enters
     // under the default label and leaves under the session's last group.
@@ -1286,7 +1289,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             reply_sequence = 3;
         }
     }
-    let response = match parse_response_with_global_sysvars(&auth_payload, &users.global_vars()) {
+    let response = match parse_response(&auth_payload) {
         Ok(response) => response,
         Err(error) => {
             // Go writes parser failures through the ordinary error boundary:
@@ -1618,19 +1621,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // than leaving the row in the process list until the client happens to
     // send something.
     let close = ConnectionClose::with_socket(stream_for_close);
+    // With mysql --compression-algorithms=zlib,zstd both flags are set, the
+    // result is Zlib.
+    let (compression, compression_algorithm) = if capabilities & CLIENT_COMPRESS != 0 {
+        (CompressionAlgorithm::Zlib, tidb_mysql::consts::CompressionZlib)
+    } else if capabilities & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
+        (CompressionAlgorithm::Zstd, tidb_mysql::consts::CompressionZstd)
+    } else {
+        (CompressionAlgorithm::None, tidb_mysql::consts::CompressionNone)
+    };
     let mut engine = match factory.open_session(SessionContext {
         connection_id,
         peer_addr,
         identity,
         client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
-        // Go `ConnectionInfo.IsSecureTransport`: TLS or a Unix socket.
-        secure_transport: socket.is_tls() || peer_addr.is_unix_socket(),
-        tls_status: socket.negotiated_tls().map(|(cipher, version)| {
-            (
-                tidb_util::tls::cipher_suite_name(cipher).to_owned(),
-                tidb_util::tls::version_name(version),
-            )
+        tls_state: socket.negotiated_tls().map(|(cipher_suite, version)| {
+            tidb_session::vars::TlsConnectionState {
+                version,
+                cipher_suite,
+            }
         }),
+        compression_algorithm,
+        compression_level: zstd_level,
         cancellation: cancellation.clone(),
         close: close.clone(),
     }) {
@@ -1715,14 +1727,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // Authentication is always ordinary MySQL packet I/O. Only after its OK
     // has been flushed does Go activate the negotiated command codec. Keep
     // that one transition here, where both read and write directions are
-    // still owned together; zlib wins when a client advertises both bits.
-    let compression = if capabilities & CLIENT_COMPRESS != 0 {
-        CompressionAlgorithm::Zlib
-    } else if capabilities & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
-        CompressionAlgorithm::Zstd
-    } else {
-        CompressionAlgorithm::None
-    };
+    // still owned together.
     // Go BufferedReadConn.DefaultReaderSize. Buffer the established command
     // stream below compression, after TLS upgrade can no longer consume raw bytes.
     let input = BufReader::with_capacity(16 * 1024, reader.into_inner());

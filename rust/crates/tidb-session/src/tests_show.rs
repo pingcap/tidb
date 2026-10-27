@@ -1331,10 +1331,13 @@ fn show_index_reports_each_index_column() {
     assert_eq!(filtered[0][3], "2");
 }
 
-/// `SHOW STATUS`, checked against captured TiDB output: the columns are
-/// `Variable_name` and `Value`, `Ssl_cipher` is empty, `Compression` is
-/// `OFF`, LIKE and WHERE filter the rows, and GLOBAL scope drops the
-/// session-only `Compression*` family.
+/// `SHOW STATUS` of a session no server hosts: the columns are
+/// `Variable_name` and `Value`, and the rows are Go's default provider's
+/// (`statusvar.go`) -- the plaintext `Ssl_*` family, the connect-attrs
+/// counters and `tidb_keys_examined`. The server's own providers
+/// (`Compression*`, `Uptime`, `Ssl_server_*`) register with the server.
+/// LIKE and WHERE filter the rows, and GLOBAL scope drops the session-only
+/// `tidb_keys_examined`.
 #[test]
 fn show_status() {
     let mut session = Session::new();
@@ -1358,63 +1361,35 @@ fn show_status() {
         }
         other => panic!("expected rows, got {other:?}"),
     }
-    // Captured: ROW [Compression OFF].
-    assert_eq!(
-        row_text(session.run("SHOW STATUS LIKE 'Compression'")),
-        [["Compression", "OFF"]]
-    );
-    // Captured: SHOW GLOBAL STATUS LIKE 'Ssl%' lists the whole family,
-    // including the server provider's certificate rows (`stat.go:34`).
     assert_eq!(
         row_text(session.run("SHOW GLOBAL STATUS LIKE 'Ssl%'")),
         [
             ["Ssl_cipher", ""],
             ["Ssl_cipher_list", ""],
-            ["Ssl_server_not_after", ""],
-            ["Ssl_server_not_before", ""],
             ["Ssl_verify_mode", "0"],
             ["Ssl_version", ""],
         ]
     );
-    // The server provider's Uptime (`stat.go:87`, pinned by `TestUptime`'s
-    // shape): absent until the hosting server pushes its start timestamp,
-    // then a non-negative seconds count in both scope views. A session on
-    // the store is hosted by its node, which pushed it at boot.
-    session.set_server_start_timestamp(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("epoch")
-            .as_secs() as i64
-            - 7,
-    );
-    let uptime = row_text(session.run("SHOW GLOBAL STATUS LIKE 'Uptime'"));
-    assert_eq!(uptime.len(), 1, "{uptime:?}");
-    assert_eq!(uptime[0][0], "Uptime");
-    assert!(
-        uptime[0][1].parse::<i64>().expect("seconds") >= 7,
-        "{uptime:?}"
-    );
-    // Captured: the WHERE form filters the same virtual rows.
     assert_eq!(
-        row_text(session.run("SHOW STATUS WHERE Variable_name = 'Compression'")),
-        [["Compression", "OFF"]]
+        row_text(session.run("SHOW STATUS WHERE Variable_name = 'Ssl_verify_mode'")),
+        [["Ssl_verify_mode", "0"]]
     );
-    // Captured: GLOBAL scope drops the session-only Compression* rows,
-    // and SESSION is the unscoped spelling.
+    // GLOBAL scope drops the session-only row, and SESSION is the unscoped
+    // spelling.
     let session_rows = row_text(session.run("SHOW SESSION STATUS"));
     assert!(
-        session_rows.iter().any(|row| row[0] == "Compression"),
+        session_rows.iter().any(|row| row[0] == "tidb_keys_examined"),
         "{session_rows:?}"
     );
     let global_rows = row_text(session.run("SHOW GLOBAL STATUS"));
     assert!(
-        global_rows
-            .iter()
-            .all(|row| !row[0].starts_with("Compression")),
+        global_rows.iter().all(|row| row[0] != "tidb_keys_examined"),
         "{global_rows:?}"
     );
     assert!(
-        global_rows.iter().any(|row| row[0] == "Ssl_version"),
+        global_rows
+            .iter()
+            .any(|row| row[0] == "Performance_schema_session_connect_attrs_lost"),
         "{global_rows:?}"
     );
 }
@@ -2224,17 +2199,17 @@ fn show_builtins_lists_every_function_go_lists() {
     }
 }
 
-/// A TLS connection fills `Ssl_cipher` and `Ssl_version` with the negotiated
-/// names — Go reads them per connection off `tls.ConnectionState`
-/// (`server.go:1329`), spelled by `pkg/util/tls`'s MySQL/OpenSSL tables. A
-/// plaintext session keeps the empty strings `show_status` above pins.
+/// A TLS connection's statuses, Go's `defaultStatusStat` over
+/// `SessionVars.TLSConnectionState`: the negotiated cipher and version in
+/// `pkg/util/tls`'s MySQL/OpenSSL spellings, Go's supported-cipher list, and
+/// `SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE`.
 #[test]
 fn show_status_reports_the_negotiated_tls_names() {
     let mut session = Session::new();
-    session.set_tls_status(Some((
-        "TLS_AES_128_GCM_SHA256".to_owned(),
-        "TLSv1.3".to_owned(),
-    )));
+    session.set_tls_state(Some(crate::vars::TlsConnectionState {
+        version: 0x0304,
+        cipher_suite: 0x1301,
+    }));
     let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl%'");
     let value = |name: &str| {
         rows.iter()
@@ -2244,14 +2219,8 @@ fn show_status_reports_the_negotiated_tls_names() {
     };
     assert_eq!(value("Ssl_cipher"), "TLS_AES_128_GCM_SHA256");
     assert_eq!(value("Ssl_version"), "TLSv1.3");
-    // The neighbours stay the table's own values.
-    assert_eq!(value("Ssl_cipher_list"), "");
-    assert_eq!(value("Ssl_verify_mode"), "0");
-
-    // Clearing restores the plaintext answer.
-    session.set_tls_status(None);
-    let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl_cipher'");
-    assert_eq!(rows[0][1], "");
+    assert!(value("Ssl_cipher_list").starts_with("RC4-SHA:DES-CBC3-SHA:"));
+    assert_eq!(value("Ssl_verify_mode"), "5");
 }
 
 /// `SHOW CREATE TABLE` prints a table's TTL back, all three clauses.

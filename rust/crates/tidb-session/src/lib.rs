@@ -512,12 +512,6 @@ pub struct Session {
     /// The cluster transaction layer owns the attempt boundary while this is
     /// true, so inner pessimistic retries do not re-arm the first-run hook.
     external_executor_breakpoint_scope: bool,
-    /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
-    /// process started, which the server-tier `Statistics` provider turns
-    /// into the `Uptime` status variable (`pkg/server/stat.go:87`). `None`
-    /// (no hosting server pushed one) leaves `Uptime` unserved, matching a
-    /// session with no registered server provider.
-    server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache:
         std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
@@ -674,9 +668,6 @@ pub struct Session {
     /// The running statement's processed keys, shared by every context it
     /// builds (Go `DistSQLContext.MaxKeysReadCounter`).
     statement_keys_read: Arc<std::sync::atomic::AtomicU64>,
-    /// Go `SessionVars.KeysExamined`, the `tidb_keys_examined` status
-    /// variable: every finished statement's processed keys.
-    keys_examined: u64,
     /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
@@ -882,9 +873,6 @@ pub struct Session {
     /// account/role storage, while authorization readers treat the session
     /// as unrestricted.
     privilege_bypassed: bool,
-    /// Negotiated TLS `(cipher, version)` names for `Ssl_cipher` /
-    /// `Ssl_version`; `None` on a plaintext connection.
-    tls_status: Option<(String, String)>,
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
@@ -974,7 +962,6 @@ impl Session {
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             external_executor_breakpoint_scope: false,
-            server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
@@ -1027,7 +1014,6 @@ impl Session {
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
-            keys_examined: 0,
             current_tso: tidb_executor::CurrentTso::default(),
             current_for_update_ts: tidb_executor::CurrentTso::default(),
             statement_txn_start_ts: 0,
@@ -1094,7 +1080,6 @@ impl Session {
             has_process_priv: false,
             privileges: None,
             privilege_bypassed: false,
-            tls_status: None,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
             protocol_session_states: Default::default(),
@@ -1330,7 +1315,7 @@ pub mod show_admin;
 mod show_create_database;
 mod show_create_placement_policy;
 mod show_index;
-pub use tidb_vardef::statusvar;
+pub use tidb_variable::statusvar;
 pub use tidb_variable::sysvar;
 pub use tidb_variable::vars;
 #[cfg(test)]
@@ -2165,12 +2150,6 @@ impl Session {
         self.vars
             .set_system_var_without_validation("collation_connection", collation)
             .map_err(|error| format!("{error:?}"))
-    }
-
-    /// Installs the hosting server's start timestamp (Go
-    /// `ServerInfo.StartTimestamp`), the `Uptime` provider's input.
-    pub fn set_server_start_timestamp(&mut self, unix_seconds: i64) {
-        self.server_start_timestamp = Some(unix_seconds);
     }
 
     /// The live `@@wait_timeout` used by the MySQL connection before reading

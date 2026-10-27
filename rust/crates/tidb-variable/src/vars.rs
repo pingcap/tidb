@@ -415,13 +415,17 @@ pub struct SessionVars {
     pub resource_group: String,
     /// Go `SessionVars.InRestrictedSQL`.
     pub restricted_sql: bool,
-    /// Whether this connection completed a TLS handshake (or an equivalent
-    /// trusted gateway assertion). Go keeps the same fact in
-    /// `SessionVars.TLSConnectionState`; `SET GLOBAL
-    /// require_secure_transport=ON` needs it to avoid locking every current
-    /// plaintext administrator out of the server.
-    /// (Go `SessionVars.TLSConnectionState is set`.)
-    pub secure_transport: bool,
+    /// Go `SessionVars.TLSConnectionState`: the connection's negotiated TLS
+    /// state, `None` for a connection without TLS.
+    pub tls_connection_state: Option<TlsConnectionState>,
+    /// Go `SessionVars.CompressionAlgorithm`: `mysql.CompressionNone`,
+    /// `CompressionZlib` or `CompressionZstd`.
+    pub compression_algorithm: u8,
+    /// Go `SessionVars.CompressionLevel`: the zstd level the client asked for.
+    pub compression_level: i32,
+    /// Go `SessionVars.KeysExamined`: the keys this session's coprocessor
+    /// reads processed, the `tidb_keys_examined` status.
+    pub keys_examined: u64,
     /// Go `SessionVars.preparedStmtID`.
     pub prepared_statement_id: u32,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
@@ -501,6 +505,15 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
     }
 }
 
+/// Go `crypto/tls.ConnectionState`, the fields TiDB reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TlsConnectionState {
+    /// Go `Version`.
+    pub version: u16,
+    /// Go `CipherSuite`.
+    pub cipher_suite: u16,
+}
+
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
@@ -510,7 +523,10 @@ impl Default for SessionVars {
             last_ddl_info: tidb_sessionstates::LastDDLInfo::default(),
             resource_group: "default".to_owned(),
             restricted_sql: false,
-            secure_transport: false,
+            tls_connection_state: None,
+            compression_algorithm: tidb_mysql::consts::CompressionNone,
+            compression_level: 0,
+            keys_examined: 0,
             prepared_statement_id: 0,
             in_multi_stmts: false,
             sys_warning_count: 0,

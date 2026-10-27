@@ -316,6 +316,9 @@ pub const DEF_TIDB_STREAM_AGG_CONCURRENCY: i64 = 1;
 /// Go `DefTiDBForcePriority` (= `mysql.NoPriority`).
 /// Resolved from mysql.NoPriority (iota).
 pub const DEF_TIDB_FORCE_PRIORITY: i64 = 0;
+/// Go `DefConnectAttrsSize`: the default max aggregate byte size of
+/// connection attributes per connection.
+pub const DEF_CONNECT_ATTRS_SIZE: i64 = 4096;
 /// Go `DefEnableWindowFunction` (= `true`).
 pub const DEF_ENABLE_WINDOW_FUNCTION: bool = true;
 /// Go `DefEnablePipelinedWindowFunction` (= `true`).

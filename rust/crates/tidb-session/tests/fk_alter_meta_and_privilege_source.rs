@@ -324,12 +324,21 @@ fn partial_index_safety_rules_match_go() {
     tk.must_exec("insert into t2 values (1, 10)");
     tk.must_get_err_code("insert into t2 values (2, 20)", 1452);
 
-    // The standalone CREATE INDEX path carries the same predicate metadata,
-    // while Go rejects a partial key on a partitioned table before backfill.
+    // The standalone CREATE INDEX path checks the same predicate: on a mock
+    // store, which has no fast-reorg (ingest) backfill, Go refuses the
+    // partial index (`index.go:1363`, captured with `gorun`), and it rejects
+    // a partial key on a partitioned table before that.
     let mut tk = TestKit::new();
     tk.must_exec("create table t (a int, b int)");
-    tk.must_exec("create index idx_b on t (b) where b is not null");
-    assert_eq!(index_names(&tk, "test", "t").len(), 1);
+    let error = tk.must_get_err_code("create index idx_b on t (b) where b is not null", 8200);
+    assert!(
+        error
+            .error_string()
+            .contains("add partial index without fast reorg is not supported"),
+        "{}",
+        error.error_string()
+    );
+    assert!(index_names(&tk, "test", "t").is_empty());
     tk.must_exec("create table tp (a int) partition by hash(a) partitions 2");
     let error = tk.must_get_err_code("create index idx_a on tp (a) where a is not null", 8200);
     assert!(

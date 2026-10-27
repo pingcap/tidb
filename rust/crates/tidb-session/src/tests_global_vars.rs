@@ -729,7 +729,10 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
         "a refused assignment cannot publish partial state"
     );
 
-    secure.set_secure_transport(true);
+    secure.set_tls_state(Some(crate::vars::TlsConnectionState {
+        version: 0x0304,
+        cipher_suite: 0x1301,
+    }));
     secure
         .run("SET GLOBAL require_secure_transport = TRUE")
         .unwrap();

@@ -24,7 +24,7 @@ tidb-cluster = { path = "../tidb-cluster" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-placement = { path = "../tidb-placement" }
-tidb-vardef = { path = "../tidb-vardef" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 

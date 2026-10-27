@@ -950,8 +950,8 @@ fn a_client_logs_in_over_the_unix_socket_like_go() {
     assert_eq!(contexts.len(), 1);
     assert_eq!(contexts[0].peer_addr, tidb_server::PeerAddress::Unix);
     assert_eq!(contexts[0].peer_addr.host(), "localhost");
-    // Go `ConnectionInfo.IsSecureTransport`: a Unix socket is secure.
-    assert!(contexts[0].secure_transport);
+    // A Unix socket negotiates no TLS: Go's `TLSConnectionState` stays nil.
+    assert_eq!(contexts[0].tls_state, None);
     assert!(!path.exists(), "the socket file goes with the listener");
 }
 

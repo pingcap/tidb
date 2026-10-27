@@ -355,3 +355,70 @@ fn zero_wait_timeout_clears_the_previous_command_deadline() {
     write_raw_packet(&mut client, 0, &[COM_QUIT]);
     assert!(worker.join().unwrap().is_ok());
 }
+
+/// Go `compressionStats` over the wire: the session records the codec the
+/// handshake negotiated (`SetCompressionAlgorithm`) and the zstd level the
+/// client asked for (`SetCompressionLevel`); zlib reports its default level.
+fn compression_statuses(algorithm: CompressionAlgorithm, capability: u32) -> Vec<(String, String)> {
+    let (address, worker) = start_server();
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut raw_reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut raw_reader, capability, 3);
+    let mut writer = PacketIoWriter::new(client.try_clone().unwrap(), algorithm).unwrap();
+    writer.set_zstd_level(3);
+    let mut reader = PacketIoReader::new(client.try_clone().unwrap(), algorithm).unwrap();
+
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"SHOW STATUS LIKE 'Compression%'");
+    writer.set_sequence(0);
+    writer.set_compressed_sequence(0);
+    writer.write_packet(&query).unwrap();
+    writer.flush().unwrap();
+    reader.set_sequence(1);
+    reader.set_compressed_sequence(writer.compressed_sequence().unwrap());
+    assert_eq!(reader.read_packet().unwrap(), [2], "two result columns");
+    reader.read_packet().unwrap();
+    reader.read_packet().unwrap();
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe {
+            break;
+        }
+        // Two length-encoded strings, each shorter than 251 bytes.
+        let name_len = usize::from(packet[0]);
+        let name = String::from_utf8(packet[1..=name_len].to_vec()).unwrap();
+        let value_len = usize::from(packet[name_len + 1]);
+        let value =
+            String::from_utf8(packet[name_len + 2..name_len + 2 + value_len].to_vec()).unwrap();
+        rows.push((name, value));
+    }
+
+    writer.set_sequence(0);
+    writer.set_compressed_sequence(0);
+    writer.write_packet(&[COM_QUIT]).unwrap();
+    writer.flush().unwrap();
+    worker.join().unwrap().unwrap();
+    rows
+}
+
+#[test]
+fn a_compressed_connection_reports_its_compression_like_go() {
+    let row = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+    assert_eq!(
+        compression_statuses(CompressionAlgorithm::Zlib, CLIENT_COMPRESS),
+        [
+            row("Compression", "ON"),
+            row("Compression_algorithm", "zlib"),
+            row("Compression_level", "6"),
+        ]
+    );
+    assert_eq!(
+        compression_statuses(CompressionAlgorithm::Zstd, CLIENT_ZSTD_COMPRESSION_ALGORITHM),
+        [
+            row("Compression", "ON"),
+            row("Compression_algorithm", "zstd"),
+            row("Compression_level", "3"),
+        ]
+    );
+}

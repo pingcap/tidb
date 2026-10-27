@@ -71,10 +71,24 @@ fn partial_index_condition_validation_matches_go() {
         false,
     );
 
+    // Adding a partial index to an existing table needs Go's fast-reorg
+    // (ingest) backfill, which a mock store does not initialize
+    // (`InitGlobalLightningEnv` needs TiKV), so Go refuses it after the
+    // condition checks pass (`index.go:1363`, captured with `gorun`); a
+    // condition that fails them is refused first.
     tk.must_exec("drop table if exists t");
     tk.must_exec("create table t (a int, b int)");
-    tk.must_exec("alter table t add index idx (b) where a = 1");
-    tk.must_get_err_code("alter table t add index bad (b) where a = '1'", 8200);
+    let error = tk.must_get_err_code("alter table t add index idx (b) where a = 1", 8200);
+    assert_eq!(
+        error.error_string(),
+        "Unsupported add partial index: add partial index without fast reorg is not supported"
+    );
+    let error = tk.must_get_err_code("alter table t add index bad (b) where a = '1'", 8200);
+    assert!(
+        error.error_string().contains("in partial index condition is not compatible"),
+        "{}",
+        error.error_string()
+    );
 }
 
 /// GO PORT of `pkg/ddl/integration_test.go:209 TestMaintainAffectColumns`.

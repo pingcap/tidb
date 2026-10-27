@@ -149,7 +149,7 @@ impl SessionVars {
                 let normalized = definition
                     .validate_in_scope(&value, crate::sysvar::SCOPE_GLOBAL)
                     .map_err(|error| validation_var_error(name, &value, error))?;
-                if normalized.value == "ON" && !self.secure_transport {
+                if normalized.value == "ON" && self.tls_connection_state.is_none() {
                     return Err(VarError::ValidationRefused(
                         "require_secure_transport can only be set to ON if the connection issuing the change is secure"
                             .to_owned(),

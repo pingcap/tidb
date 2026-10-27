@@ -785,14 +785,16 @@ pub struct SessionContext {
     /// Whether this client negotiated `CLIENT_FOUND_ROWS`, making UPDATE and
     /// duplicate-key UPDATE report successfully matched unchanged rows.
     pub client_found_rows: bool,
-    /// Whether the MySQL front end completed a TLS handshake for this
-    /// connection.
-    pub secure_transport: bool,
-    /// The negotiated TLS `(cipher, version)` in their MySQL/OpenSSL
-    /// spellings (`tidb_util::tls`), `None` on a plaintext connection.
-    /// Go reports the same pair through `Ssl_cipher`/`Ssl_version`
-    /// (`server.go:1329`).
-    pub tls_status: Option<(String, String)>,
+    /// Go `cc.tlsConn.ConnectionState()`, which `OpenCtx` hands to the
+    /// session's `SetTLSState`: `None` for a connection without TLS.
+    pub tls_state: Option<crate::vars::TlsConnectionState>,
+    /// Go `mysql.CompressionNone` / `CompressionZlib` / `CompressionZstd`:
+    /// the codec the connection switches to once the handshake OK is out,
+    /// which the session records with `SetCompressionAlgorithm`.
+    pub compression_algorithm: u8,
+    /// Go `resp.ZstdLevel`, which `openSessionAndDoAuth` records with
+    /// `SetCompressionLevel`.
+    pub compression_level: i32,
     /// Forced-drain carrier on which the session registers each active query.
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.

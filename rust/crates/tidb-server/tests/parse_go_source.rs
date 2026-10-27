@@ -14,16 +14,34 @@
 
 #![allow(missing_docs)]
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tidb_server::handshake::{
-    parse_response, parse_response_body_into_with_attrs_state, parse_response_header_into,
-    parse_response_with_attrs_state, parse_response_with_global_sysvars, ConnectionAttrsState,
+    parse_response, parse_response_body_into, parse_response_header_into,
     CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
     CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
     CLIENT_ZSTD_COMPRESSION_ALGORITHM,
 };
 use tidb_server::{HandshakeResponse41, WireString};
 use tidb_session::GlobalSysvars;
+
+/// Go's tests store `vardef.ConnectAttrsSize` and zero the counters they
+/// read before parsing.
+fn connect_attrs_size(limit: i64) {
+    tidb_vardef::CONNECT_ATTRS_SIZE.store(limit, Ordering::Relaxed);
+    tidb_vardef::CONNECT_ATTRS_LOST.store(0, Ordering::Relaxed);
+    tidb_vardef::CONNECT_ATTRS_LONGEST_SEEN.store(0, Ordering::Relaxed);
+}
+
+/// Go `vardef.ConnectAttrsLost`.
+fn lost() -> i64 {
+    tidb_vardef::CONNECT_ATTRS_LOST.load(Ordering::Relaxed)
+}
+
+/// Go `vardef.ConnectAttrsLongestSeen`.
+fn longest_seen() -> i64 {
+    tidb_vardef::CONNECT_ATTRS_LONGEST_SEEN.load(Ordering::Relaxed)
+}
 
 fn header(capability: u32) -> Vec<u8> {
     let mut packet = capability.to_le_bytes().to_vec();
@@ -94,7 +112,7 @@ fn shared_global_connection_attr_limit_reaches_the_parse_state() {
             "5".to_owned(),
         )
         .expect("SET GLOBAL limit");
-    let response = parse_response_with_global_sysvars(&packet, &globals).expect("limited response");
+    let response = parse_response(&packet).expect("limited response");
     assert_eq!(attr(&response, b"ab"), Some(b"cd".as_slice()));
     assert_eq!(
         attr(&response, b"_truncated"),
@@ -108,7 +126,7 @@ fn shared_global_connection_attr_limit_reaches_the_parse_state() {
         )
         .expect("SET GLOBAL autosize");
     let response =
-        parse_response_with_global_sysvars(&packet, &globals).expect("autosized response");
+        parse_response(&packet).expect("autosized response");
     assert_eq!(attr(&response, b"ef"), Some(b"gh".as_slice()));
 }
 
@@ -186,9 +204,9 @@ fn header_and_body_mutation_order_matches_go_on_failure() {
     let mut truncated_auth = complete_header;
     truncated_auth.extend_from_slice(b"new-user\0");
     truncated_auth.extend_from_slice(&[3, 1, 2]);
-    let state = ConnectionAttrsState::new(4096);
+    connect_attrs_size(4096);
     assert!(
-        parse_response_body_into_with_attrs_state(&mut response, &truncated_auth, 32, &state)
+        parse_response_body_into(&mut response, &truncated_auth, 32)
             .is_err()
     );
     assert_eq!(response.user.as_bytes(), b"new-user");
@@ -218,7 +236,7 @@ fn header_boundary_reads_exactly_the_source_fields() {
 
 #[test]
 fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
-    let state = ConnectionAttrsState::new(4096);
+    connect_attrs_size(4096);
     let mut response = HandshakeResponse41 {
         capability: CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA,
         auth: vec![7, 8],
@@ -228,14 +246,14 @@ fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
     let mut null_auth = header(response.capability);
     null_auth.extend_from_slice(b"root\0");
     null_auth.push(0xfb);
-    parse_response_body_into_with_attrs_state(&mut response, &null_auth, 32, &state)
+    parse_response_body_into(&mut response, &null_auth, 32)
         .expect("NULL length leaves the existing auth value untouched");
     assert_eq!(response.auth, [7, 8]);
 
     let mut marker_only = header(response.capability);
     marker_only.extend_from_slice(b"root\0");
     marker_only.push(1);
-    parse_response_body_into_with_attrs_state(&mut response, &marker_only, 32, &state)
+    parse_response_body_into(&mut response, &marker_only, 32)
         .expect("Go advances two bytes without reading the absent filler");
     assert_eq!(response.auth, [7, 8]);
 
@@ -245,7 +263,7 @@ fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
     marker_with_filler.extend_from_slice(b"root\0");
     marker_with_filler.extend_from_slice(&[1, 0xff]);
     marker_with_filler.extend_from_slice(b"plugin\0");
-    parse_response_body_into_with_attrs_state(&mut response, &marker_with_filler, 32, &state)
+    parse_response_body_into(&mut response, &marker_with_filler, 32)
         .expect("the byte after marker 1 is skipped without inspection");
     assert_eq!(response.auth_plugin.as_bytes(), b"plugin");
 }
@@ -253,8 +271,8 @@ fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
 #[test]
 fn attribute_policy_warnings_and_metrics_match_go_boundaries() {
     let attrs = [2, b'a', b'b', 2, b'c', b'd', 2, b'e', b'f', 2, b'g', b'h'];
-    let state = ConnectionAttrsState::new(5);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(5);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("framed attributes");
     assert_eq!(attr(&response, b"ab"), Some(b"cd".as_slice()));
     assert_eq!(
@@ -262,32 +280,29 @@ fn attribute_policy_warnings_and_metrics_match_go_boundaries() {
         Some(b"4".as_slice())
     );
     assert!(!response.attrs.contains_key(b"ef".as_slice()));
-    assert_eq!(state.lost(), 1);
-    assert_eq!(state.longest_seen(), 8);
+    assert_eq!(lost(), 1);
+    assert_eq!(longest_seen(), 8);
 
-    let disabled = ConnectionAttrsState::new(0);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &disabled)
+    connect_attrs_size(0);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("disabled collection");
     assert!(response.attrs.is_empty());
-    assert_eq!(disabled.lost(), 0);
-    assert_eq!(disabled.longest_seen(), 0);
+    assert_eq!(lost(), 0);
+    assert_eq!(longest_seen(), 0);
 
-    let exact = ConnectionAttrsState::new(4);
-    let response = parse_response_with_attrs_state(
-        &response_with_attrs(&[2, b'a', b'b', 2, b'c', b'd']),
-        &exact,
-    )
+    connect_attrs_size(4);
+    let response = parse_response(&response_with_attrs(&[2, b'a', b'b', 2, b'c', b'd']))
     .expect("aggregate exactly at the configured limit");
     assert_eq!(attr(&response, b"ab"), Some(b"cd".as_slice()));
     assert!(!response.attrs.contains_key(b"_truncated".as_slice()));
-    assert_eq!(exact.lost(), 0);
+    assert_eq!(lost(), 0);
 }
 
 #[test]
 fn raw_attribute_bytes_null_lengths_and_warning_order_are_preserved() {
     let attrs = [1, b'_', 1, 0xff, 0xfb, 0xfb];
-    let state = ConnectionAttrsState::new(-1);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(-1);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("Go accepts NULL key/value lengths as empty strings");
     assert_eq!(attr(&response, b"_"), Some([0xff].as_slice()));
     assert_eq!(attr(&response, b""), Some([].as_slice()));
@@ -298,15 +313,15 @@ fn sixty_four_kib_metric_boundary_does_not_update_longest_seen() {
     let mut attrs = vec![0];
     attrs.extend_from_slice(&lenenc(65_536));
     attrs.extend(std::iter::repeat_n(0, 65_536));
-    let state = ConnectionAttrsState::new(-1);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(-1);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("exact auto-size limit is accepted");
     assert_eq!(
         attr(&response, b"").map(<[u8]>::len),
         Some(65_536)
     );
-    assert_eq!(state.longest_seen(), 0);
-    assert_eq!(state.lost(), 0);
+    assert_eq!(longest_seen(), 0);
+    assert_eq!(lost(), 0);
 }
 
 #[test]
@@ -394,7 +409,7 @@ fn optional_database_plugin_and_zstd_fields_follow_source_order() {
 
 #[test]
 fn null_attribute_frame_preserves_existing_map_and_outer_errors_remain_errors() {
-    let state = ConnectionAttrsState::new(4096);
+    connect_attrs_size(4096);
     let capability = CLIENT_PROTOCOL_41 | CLIENT_CONNECT_ATTRS;
     let mut response = HandshakeResponse41 {
         capability,
@@ -404,7 +419,7 @@ fn null_attribute_frame_preserves_existing_map_and_outer_errors_remain_errors() 
     let mut null_frame = header(capability);
     null_frame.extend_from_slice(b"root\0\0");
     null_frame.push(0xfb);
-    parse_response_body_into_with_attrs_state(&mut response, &null_frame, 32, &state)
+    parse_response_body_into(&mut response, &null_frame, 32)
         .expect("NULL outer length skips attribute mutation");
     assert_eq!(attr(&response, b"old"), Some(b"value".as_slice()));
 
@@ -423,8 +438,8 @@ fn null_attribute_frame_preserves_existing_map_and_outer_errors_remain_errors() 
     let mut exact_hard_limit = vec![0];
     exact_hard_limit.extend_from_slice(&lenenc((1 << 20) - 5));
     exact_hard_limit.extend(std::iter::repeat_n(0, (1 << 20) - 5));
-    let state = ConnectionAttrsState::new(0);
-    parse_response_with_attrs_state(&response_with_attrs(&exact_hard_limit), &state)
+    connect_attrs_size(0);
+    parse_response(&response_with_attrs(&exact_hard_limit))
         .expect("the 1 MiB outer frame is admitted before policy decoding");
 }
 
@@ -437,22 +452,22 @@ fn warning_combination_duplicate_keys_and_longest_seen_cas_match_go() {
         attrs.extend_from_slice(&lenenc(value.len()));
         attrs.extend_from_slice(value.as_bytes());
     }
-    let state = ConnectionAttrsState::new(1_000);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(1_000);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("valid attributes");
     assert_eq!(attr(&response, b"dup"), Some(b"last".as_slice()));
-    let first_longest = state.longest_seen();
+    let first_longest = longest_seen();
     assert!(first_longest > 0);
 
     let smaller = [1, b'a', 1, b'b'];
-    parse_response_with_attrs_state(&response_with_attrs(&smaller), &state)
+    parse_response(&response_with_attrs(&smaller))
         .expect("smaller aggregate");
-    assert_eq!(state.longest_seen(), first_longest);
+    assert_eq!(longest_seen(), first_longest);
 
-    state.set_limit(5);
-    let _response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    tidb_vardef::CONNECT_ATTRS_SIZE.store(5, Ordering::Relaxed);
+    let _response = parse_response(&response_with_attrs(&attrs))
         .expect("truncated custom attrs");
-    assert_eq!(state.lost(), 1);
+    assert_eq!(lost(), 1);
 }
 
 #[test]
@@ -464,8 +479,8 @@ fn server_overwrites_a_client_reserved_truncation_marker() {
         attrs.extend_from_slice(&lenenc(value.len()));
         attrs.extend_from_slice(value.as_bytes());
     }
-    let state = ConnectionAttrsState::new(25);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state).unwrap();
+    connect_attrs_size(25);
+    let response = parse_response(&response_with_attrs(&attrs)).unwrap();
     assert_ne!(
         attr(&response, b"_truncated"),
         Some(b"client-value".as_slice())
@@ -474,16 +489,16 @@ fn server_overwrites_a_client_reserved_truncation_marker() {
         attr(&response, b"_truncated"),
         Some(b"18".as_slice())
     );
-    assert_eq!(state.lost(), 1);
+    assert_eq!(lost(), 1);
 }
 
 #[test]
 fn zero_attribute_limit_skips_decoding() {
-    let state = ConnectionAttrsState::new(0);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&[2, b'a']), &state)
+    connect_attrs_size(0);
+    let response = parse_response(&response_with_attrs(&[2, b'a']))
         .expect("Go returns before decoding when collection is disabled");
     assert!(response.attrs.is_empty());
-    assert_eq!(state.longest_seen(), 0);
+    assert_eq!(longest_seen(), 0);
 }
 
 #[test]
@@ -500,8 +515,8 @@ fn standard_underscore_attributes_do_not_warn() {
         attrs.extend_from_slice(key.as_bytes());
         attrs.extend_from_slice(&[1, b'v']);
     }
-    let state = ConnectionAttrsState::new(-1);
-    let _response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(-1);
+    let _response = parse_response(&response_with_attrs(&attrs))
         .expect("standard attributes");
 }
 
@@ -510,31 +525,30 @@ fn negative_attribute_limit_normalizes_to_sixty_four_kib() {
     let mut attrs = vec![0];
     attrs.extend_from_slice(&lenenc(65_537));
     attrs.extend(std::iter::repeat_n(0, 65_537));
-    let state = ConnectionAttrsState::new(-7);
-    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state)
+    connect_attrs_size(-7);
+    let response = parse_response(&response_with_attrs(&attrs))
         .expect("every negative value uses Go's autosize cap");
     assert_eq!(
         attr(&response, b"_truncated"),
         Some(b"65537".as_slice())
     );
-    assert_eq!(state.lost(), 1);
+    assert_eq!(lost(), 1);
 }
 
 #[test]
 fn concurrent_longest_seen_updates_converge_on_the_maximum() {
-    let state = Arc::new(ConnectionAttrsState::new(1_000));
+    connect_attrs_size(1_000);
     let mut threads = Vec::new();
     for size in [1_usize, 17, 3, 63, 8, 127, 32, 255] {
-        let state = Arc::clone(&state);
         threads.push(std::thread::spawn(move || {
             let mut attrs = vec![0];
             attrs.extend_from_slice(&lenenc(size));
             attrs.extend(std::iter::repeat_n(b'x', size));
-            parse_response_with_attrs_state(&response_with_attrs(&attrs), &state).unwrap();
+            parse_response(&response_with_attrs(&attrs)).unwrap();
         }));
     }
     for thread in threads {
         thread.join().unwrap();
     }
-    assert_eq!(state.longest_seen(), 255);
+    assert_eq!(longest_seen(), 255);
 }

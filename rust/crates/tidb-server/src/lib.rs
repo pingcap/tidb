@@ -75,6 +75,7 @@ mod domain_test_support;
 #[cfg(test)]
 mod production_replay;
 mod sql_node;
+mod stat;
 mod status_transport;
 pub use tidb_session::domain::wire_status;
 pub use auth_exchange::{
@@ -98,11 +99,9 @@ pub use configured_user_store::{
     AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,
 };
 pub use handshake::{
-    negotiate_capabilities, parse_response, parse_response_body,
-    parse_response_body_into_with_attrs_state, parse_response_body_with_attrs_state,
-    parse_response_header, parse_response_header_into, parse_response_with_attrs_state,
-    parse_response_with_global_sysvars, ConnectionAttrsState, HandshakeError,
-    HandshakeResponseHeader, InitialHandshake, DEFAULT_CONNECT_ATTRS_SIZE,
+    negotiate_capabilities, parse_response, parse_response_body, parse_response_body_into,
+    parse_response_header, parse_response_header_into, HandshakeError, HandshakeResponseHeader,
+    InitialHandshake,
 };
 pub use handshake_response::{HandshakeResponse41, WireString};
 pub use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};

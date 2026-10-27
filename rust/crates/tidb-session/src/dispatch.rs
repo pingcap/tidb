@@ -1800,21 +1800,13 @@ impl Session {
     /// starts is the same total by the time anything reads it.
     fn begin_statement_keys_read(&mut self) {
         let finished = std::mem::take(&mut self.statement_keys_read);
-        self.keys_examined = self
+        self.vars.keys_examined = self
+            .vars
             .keys_examined
             .saturating_add(finished.load(std::sync::atomic::Ordering::Relaxed));
         self.statement_in_select = self.statement_kind == StatementKind::Select;
     }
 
-    /// Go `FLUSH STATUS` (`SimpleExec.executeFlush`) clears `KeysExamined`.
-    pub(crate) fn flush_keys_examined(&mut self) {
-        self.keys_examined = 0;
-    }
-
-    /// Go `GetStatusVars`' `tidb_keys_examined`.
-    pub(crate) fn keys_examined(&self) -> u64 {
-        self.keys_examined
-    }
 
     fn execute_parsed_statement_inner(
         &mut self,

@@ -536,8 +536,9 @@ pub(super) fn session_context_with_identity(
         peer_addr: peer_addr.into(),
         identity,
         client_found_rows: false,
-        secure_transport: false,
-        tls_status: None,
+        tls_state: None,
+        compression_algorithm: tidb_mysql::consts::CompressionNone,
+        compression_level: 0,
         cancellation: ConnectionCancellation::default(),
         close: ConnectionClose::default(),
     }

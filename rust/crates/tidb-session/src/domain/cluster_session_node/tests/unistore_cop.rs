@@ -14485,6 +14485,39 @@ fn query_error(session: &mut ClusterServerSession, sql: &str) -> (u16, String) {
     }
 }
 
+/// The domain's `SHOW STATUS` providers (Go `ddl/stat.go`, registered by
+/// `ddl.Start`, and the binding handle's): the DDL id is this server's id,
+/// the schema version is the one `ADMIN SHOW DDL` reports, and the binding
+/// handle reports the zero time until a binding is loaded.
+#[test]
+fn the_domain_reports_its_ddl_and_binding_statuses() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1016)).unwrap();
+    let server_id = displayed(rows(
+        &mut session,
+        "SELECT DDL_ID FROM information_schema.TIDB_SERVERS_INFO",
+    ));
+    let schema_version = displayed(rows(&mut session, "ADMIN SHOW DDL"))[0][0].clone();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW GLOBAL STATUS WHERE Variable_name IN ('server_id', 'ddl_schema_version')"
+        )),
+        [
+            ["ddl_schema_version".to_owned(), schema_version],
+            ["server_id".to_owned(), server_id[0][0].clone()],
+        ]
+    );
+    // Session scope only: GLOBAL drops it.
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW STATUS LIKE 'last_plan_binding_update_time'")),
+        [["last_plan_binding_update_time", "0000-00-00 00:00:00"]]
+    );
+    assert!(
+        displayed(rows(&mut session, "SHOW GLOBAL STATUS LIKE 'last_plan_binding%'")).is_empty()
+    );
+}
+
 /// Go `copIterator` sums each response's `ScanDetailV2.ProcessedVersions`
 /// into the statement-wide `MaxKeysReadCounter`: a pushed scan past
 /// `tidb_max_keys_read` fails with 8274, an IndexLookUp's two iterators share

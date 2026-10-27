@@ -126,8 +126,9 @@ impl GcSessionFactory for NodeGcSessions {
             ),
                         identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                         client_found_rows: false,
-                        secure_transport: false,
-                        tls_status: None,
+                        tls_state: None,
+                        compression_algorithm: tidb_mysql::consts::CompressionNone,
+                        compression_level: 0,
                         cancellation: crate::domain::session_api::ConnectionCancellation::default(),
                         close: crate::domain::session_api::ConnectionClose::default(),
                     })

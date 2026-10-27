@@ -343,6 +343,11 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
 /// these atomics are the live consumer-facing authority.
 fn runtime_global_value(name: &str) -> Option<String> {
     match name {
+        tidb_vardef::tidb_vars::PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => Some(
+            tidb_vardef::CONNECT_ATTRS_SIZE
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .to_string(),
+        ),
         tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY => Some(
             if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
                 "ON".to_owned()
@@ -963,6 +968,7 @@ impl GlobalSysvars {
         matches!(
             name,
             REQUIRE_SECURE_TRANSPORT
+                | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
                 | TIDB_TTL_JOB_ENABLE
                 | TIDB_ENABLE_FOREIGN_KEY
                 | TIDB_ENABLE_CHECK_CONSTRAINT
@@ -1014,6 +1020,13 @@ impl GlobalSysvars {
         match name {
             REQUIRE_SECURE_TRANSPORT => tidb_util::tls::REQUIRE_SECURE_TRANSPORT
                 .store(!tidb_config::deploymode::is_starter() && on, SeqCst),
+            PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
+                tidb_variable::varsutil::tidb_opt_int64(
+                    value,
+                    tidb_vardef::defaults::DEF_CONNECT_ATTRS_SIZE,
+                ),
+                SeqCst,
+            ),
             TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
             // Go `SetGlobal`: `ForcePriority = Str2Priority(val)`.
             TIDB_FORCE_PRIORITY => tidb_vardef::FORCE_PRIORITY

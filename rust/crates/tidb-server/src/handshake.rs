@@ -23,11 +23,10 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
-    sync::atomic::{AtomicI64, Ordering},
+    sync::atomic::Ordering,
 };
 
 use tidb_protocol::{PacketError, PacketWriter};
-use tidb_session::GlobalSysvars;
 
 use crate::handshake_response::{HandshakeResponse41, WireString};
 
@@ -65,84 +64,7 @@ pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 pub const PROTOCOL_VERSION_10: u8 = 10;
 /// The maximum connection-attribute payload accepted by TiDB's parser.
 pub const MAX_CONNECT_ATTRS_SIZE: usize = 1 << 20;
-/// Go's default aggregate connection-attribute byte limit.
-pub const DEFAULT_CONNECT_ATTRS_SIZE: i64 = 4096;
 const AUTO_CONNECT_ATTRS_SIZE: i64 = 65_536;
-
-/// Process-wide connection-attribute policy and status counters.
-///
-/// Go stores these values in `vardef.ConnectAttrsSize`,
-/// `ConnectAttrsLongestSeen`, and `ConnectAttrsLost`. Keeping the three
-/// atomics together also permits isolated state in boundary tests without
-/// mutating process-global values.
-#[derive(Debug)]
-pub struct ConnectionAttrsState {
-    limit: AtomicI64,
-    longest_seen: AtomicI64,
-    lost: AtomicI64,
-}
-
-impl ConnectionAttrsState {
-    /// Creates an isolated state with the supplied Go policy value.
-    #[must_use]
-    pub const fn new(limit: i64) -> Self {
-        Self {
-            limit: AtomicI64::new(limit),
-            longest_seen: AtomicI64::new(0),
-            lost: AtomicI64::new(0),
-        }
-    }
-
-    /// Changes the aggregate-byte limit for subsequent responses.
-    pub fn set_limit(&self, limit: i64) {
-        self.limit.store(limit, Ordering::Relaxed);
-    }
-
-    /// Returns the configured policy value before `-1` normalization.
-    #[must_use]
-    pub fn limit(&self) -> i64 {
-        self.limit.load(Ordering::Relaxed)
-    }
-
-    /// Returns the largest aggregate below 64 KiB observed so far.
-    #[must_use]
-    pub fn longest_seen(&self) -> i64 {
-        self.longest_seen.load(Ordering::Relaxed)
-    }
-
-    /// Returns the number of responses whose attributes were truncated.
-    #[must_use]
-    pub fn lost(&self) -> i64 {
-        self.lost.load(Ordering::Relaxed)
-    }
-}
-
-static CONNECTION_ATTRS_STATE: ConnectionAttrsState =
-    ConnectionAttrsState::new(DEFAULT_CONNECT_ATTRS_SIZE);
-
-/// Parses a response after synchronizing the connection-attribute limit from
-/// the shared GLOBAL sysvar table.
-///
-/// Go's parser snapshots `vardef.ConnectAttrsSize` for each response. A local
-/// state gives this response the same snapshot while the process-wide metric
-/// atomics remain cumulative across concurrent connections and limit changes.
-pub fn parse_response_with_global_sysvars(
-    data: &[u8],
-    global_vars: &GlobalSysvars,
-) -> Result<HandshakeResponse41, HandshakeError> {
-    let limit = global_vars
-        .get("performance_schema_session_connect_attrs_size")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(DEFAULT_CONNECT_ATTRS_SIZE);
-    let local_state = ConnectionAttrsState::new(limit);
-    let result = parse_response_with_attrs_state(data, &local_state);
-    CONNECTION_ATTRS_STATE
-        .lost
-        .fetch_add(local_state.lost(), Ordering::Relaxed);
-    update_connect_attrs_longest_seen(local_state.longest_seen(), &CONNECTION_ATTRS_STATE);
-    result
-}
 
 /// The fields written by Go's `clientConn.writeInitialHandshake`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -262,17 +184,8 @@ pub fn parse_response_header_into(
 
 /// Parses a complete HandshakeResponse41 packet.
 pub fn parse_response(data: &[u8]) -> Result<HandshakeResponse41, HandshakeError> {
-    parse_response_with_attrs_state(data, &CONNECTION_ATTRS_STATE)
-}
-
-/// Parses a response with an explicit connection-attribute policy/metrics
-/// owner. This is the source-shaped seam for Go's three `vardef` atomics.
-pub fn parse_response_with_attrs_state(
-    data: &[u8],
-    attrs_state: &ConnectionAttrsState,
-) -> Result<HandshakeResponse41, HandshakeError> {
     let (header, offset) = parse_response_header(data)?;
-    parse_response_body_with_attrs_state(header, data, offset, attrs_state)
+    parse_response_body(header, data, offset)
 }
 
 /// Parses the variable body after [`parse_response_header`].
@@ -281,32 +194,21 @@ pub fn parse_response_body(
     data: &[u8],
     offset: usize,
 ) -> Result<HandshakeResponse41, HandshakeError> {
-    parse_response_body_with_attrs_state(header, data, offset, &CONNECTION_ATTRS_STATE)
-}
-
-/// Parses a variable response body with an explicit source policy owner.
-pub fn parse_response_body_with_attrs_state(
-    header: HandshakeResponseHeader,
-    data: &[u8],
-    offset: usize,
-    attrs_state: &ConnectionAttrsState,
-) -> Result<HandshakeResponse41, HandshakeError> {
     let mut response = HandshakeResponse41 {
         capability: header.capability,
         collation: header.collation,
         ..HandshakeResponse41::default()
     };
-    parse_response_body_into_with_attrs_state(&mut response, data, offset, attrs_state)?;
+    parse_response_body_into(&mut response, data, offset)?;
     Ok(response)
 }
 
 /// Mutates an existing response in Go field order and preserves mutations
 /// made before a later malformed field.
-pub fn parse_response_body_into_with_attrs_state(
+pub fn parse_response_body_into(
     response: &mut HandshakeResponse41,
     data: &[u8],
     mut offset: usize,
-    attrs_state: &ConnectionAttrsState,
 ) -> Result<(), HandshakeError> {
     let (user, next) = read_nul_bytes(data, offset, "user")?;
     response.user = WireString::from_bytes(user);
@@ -389,7 +291,7 @@ pub fn parse_response_body_into_with_attrs_state(
                 return Err(HandshakeError::ConnectionAttrsTooLarge);
             }
             let end = checked_end(offset, attrs_len, data.len(), "connection attributes")?;
-            match parse_attrs(&data[offset..end], attrs_state) {
+            match parse_attrs(&data[offset..end]) {
                 Ok((attrs, warnings)) => {
                     response.attrs = attrs;
                     if !warnings.is_empty() {
@@ -436,15 +338,15 @@ pub(crate) struct DecodedConnAttrs {
 
 type ParsedConnAttrs = (HashMap<WireString, WireString>, Vec<String>);
 
-pub(crate) fn parse_attrs(
-    data: &[u8],
-    state: &ConnectionAttrsState,
-) -> Result<ParsedConnAttrs, HandshakeError> {
-    if state.limit() == 0 {
+pub(crate) fn parse_attrs(data: &[u8]) -> Result<ParsedConnAttrs, HandshakeError> {
+    if tidb_vardef::CONNECT_ATTRS_SIZE.load(Ordering::Relaxed) == 0 {
         return Ok((HashMap::new(), Vec::new()));
     }
     let decoded = decode_conn_attrs(data)?;
-    Ok(apply_conn_attrs_policy_and_metrics(decoded, state))
+    Ok(apply_conn_attrs_policy_and_metrics(
+        decoded,
+        tidb_vardef::CONNECT_ATTRS_SIZE.load(Ordering::Relaxed),
+    ))
 }
 
 pub(crate) fn decode_conn_attrs(data: &[u8]) -> Result<DecodedConnAttrs, HandshakeError> {
@@ -476,9 +378,9 @@ pub(crate) fn decode_conn_attrs(data: &[u8]) -> Result<DecodedConnAttrs, Handsha
 
 pub(crate) fn apply_conn_attrs_policy_and_metrics(
     decoded: DecodedConnAttrs,
-    state: &ConnectionAttrsState,
+    limit: i64,
 ) -> ParsedConnAttrs {
-    let effective_limit = normalize_connect_attrs_limit(state.limit());
+    let effective_limit = normalize_connect_attrs_limit(limit);
     let mut attrs = HashMap::new();
     let mut total_size = 0_i64;
     let mut accepted_size = 0_i64;
@@ -490,7 +392,7 @@ pub(crate) fn apply_conn_attrs_policy_and_metrics(
         if total_size > effective_limit {
             if !truncated {
                 truncated = true;
-                state.lost.fetch_add(1, Ordering::Relaxed);
+                tidb_vardef::CONNECT_ATTRS_LOST.fetch_add(1, Ordering::Relaxed);
             }
             continue;
         }
@@ -500,7 +402,7 @@ pub(crate) fn apply_conn_attrs_policy_and_metrics(
         }
     }
 
-    update_connect_attrs_longest_seen(decoded.total_size, state);
+    update_connect_attrs_longest_seen(decoded.total_size);
 
     let mut warnings = Vec::with_capacity(2);
     if decoded.has_deprecated_underscore_attr {
@@ -532,17 +434,18 @@ pub(crate) fn normalize_connect_attrs_limit(limit: i64) -> i64 {
     }
 }
 
-pub(crate) fn update_connect_attrs_longest_seen(total_size: i64, state: &ConnectionAttrsState) {
+pub(crate) fn update_connect_attrs_longest_seen(total_size: i64) {
+    // Update LongestSeen only for normal-sized payloads (< 64 KiB).
     if total_size >= AUTO_CONNECT_ATTRS_SIZE {
         return;
     }
+    let longest_seen = &tidb_vardef::CONNECT_ATTRS_LONGEST_SEEN;
     loop {
-        let old = state.longest_seen.load(Ordering::Relaxed);
+        let old = longest_seen.load(Ordering::Relaxed);
         if total_size <= old {
             break;
         }
-        if state
-            .longest_seen
+        if longest_seen
             .compare_exchange_weak(old, total_size, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
         {

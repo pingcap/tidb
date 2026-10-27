@@ -1092,36 +1092,22 @@ impl Session {
         Arc::make_mut(&mut self.vars.active_roles).clear();
     }
 
-    /// Records that this connection completed a secure transport handshake.
-    ///
-    /// Go stores the full TLS state on `SessionVars`; this tier needs only
-    /// its presence bit for the transport-sensitive GLOBAL sysvar validator.
-    pub fn set_secure_transport(&mut self, secure: bool) {
-        self.vars.secure_transport = secure;
+    /// Go `session.SetTLSState`: the connection's negotiated TLS state,
+    /// left as it is for a connection without TLS.
+    pub fn set_tls_state(&mut self, tls_state: Option<crate::vars::TlsConnectionState>) {
+        if tls_state.is_some() {
+            self.vars.tls_connection_state = tls_state;
+        }
     }
 
-    /// Whether the front end established TLS for this connection.
-    #[must_use]
-    pub(crate) const fn has_secure_transport(&self) -> bool {
-        self.vars.secure_transport
+    /// Go `session.SetCompressionAlgorithm`.
+    pub fn set_compression_algorithm(&mut self, algorithm: u8) {
+        self.vars.compression_algorithm = algorithm;
     }
 
-    /// Records the negotiated TLS `(cipher, version)` names, which
-    /// `Ssl_cipher` and `Ssl_version` report — Go reads them off
-    /// `tls.ConnectionState` per connection (`server.go:1329`).
-    pub fn set_tls_status(&mut self, status: Option<(String, String)>) {
-        self.tls_status = status;
-    }
-
-    /// The negotiated TLS names, empty strings on a plaintext connection —
-    /// which is the Go capture's answer for the same rows.
-    #[must_use]
-    pub(crate) fn tls_status(&self) -> (&str, &str) {
-        self.tls_status
-            .as_ref()
-            .map_or(("", ""), |(cipher, version)| {
-                (cipher.as_str(), version.as_str())
-            })
+    /// Go `session.SetCompressionLevel`.
+    pub fn set_compression_level(&mut self, level: i32) {
+        self.vars.compression_level = level;
     }
 
     /// Whether this connection was admitted under skip-grant-table.

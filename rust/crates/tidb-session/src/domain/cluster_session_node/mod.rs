@@ -270,6 +270,7 @@ mod record_set;
 mod ru_stats_writer;
 pub mod schema_lease;
 pub mod schema_sync;
+mod stat;
 mod statistics;
 mod test_session;
 pub mod stats_maintenance;
@@ -935,6 +936,9 @@ pub struct ClusterSessionFactory {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
     binding_session_factory: Weak<ClusterSessionFactory>,
+    /// The `SHOW STATUS` providers this domain registered as it started its
+    /// DDL and binding handle, unregistered when it closes.
+    statistics: Vec<Arc<dyn crate::statusvar::Statistics>>,
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
     transactions: Arc<dyn ClusterTransactions>,
@@ -1099,6 +1103,8 @@ impl ClusterSessionFactory {
         bindings: Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>,
     ) -> Arc<Self> {
         self.bindings = Some(Arc::clone(&bindings));
+        // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.
+        self.register_statistics(Arc::new(stat::BindingStatistics(bindings.cache())));
         let factory = self.shared();
         bindings.attach_session_pool(Arc::new(binding_maintenance::BindingSessions::new(
             &factory,
@@ -1148,6 +1154,7 @@ impl ClusterSessionFactory {
         Self {
             transactions,
             bindings: None,
+            statistics: Vec::new(),
             global_config_syncer: None,
             binding_session_factory: Weak::new(),
             data_lock_waits,
@@ -1274,8 +1281,9 @@ impl ClusterSessionFactory {
             ),
             identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
             client_found_rows: false,
-            secure_transport: false,
-            tls_status: None,
+            tls_state: None,
+            compression_algorithm: tidb_mysql::consts::CompressionNone,
+            compression_level: 0,
             cancellation: crate::domain::session_api::ConnectionCancellation::default(),
             close: crate::domain::session_api::ConnectionClose::default(),
         })?;
@@ -1306,8 +1314,9 @@ impl ClusterSessionFactory {
             ),
                         identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                         client_found_rows: false,
-                        secure_transport: false,
-                        tls_status: None,
+                        tls_state: None,
+                        compression_algorithm: tidb_mysql::consts::CompressionNone,
+                        compression_level: 0,
                         cancellation: crate::domain::session_api::ConnectionCancellation::default(),
                         close: crate::domain::session_api::ConnectionClose::default(),
                     })
@@ -2155,8 +2164,20 @@ impl ClusterSessionFactory {
         self.cluster_topology = Some(Arc::new(
             tidb_domain::cluster_topology::ClusterTopology::new(Arc::clone(&syncer), None),
         ));
+        // Go `ddl.Start`: `variable.RegisterStatistics(d)`, whose id is this
+        // server's.
+        self.register_statistics(Arc::new(stat::DdlStatistics {
+            id: syncer.local_server_info().static_info.id.clone(),
+            catalog: Arc::clone(&self.catalog),
+        }));
         self.server_info = Some(syncer);
         self
+    }
+
+    /// Go `variable.RegisterStatistics`, kept for the domain's close.
+    fn register_statistics(&mut self, statistics: Arc<dyn crate::statusvar::Statistics>) {
+        crate::statusvar::register_statistics(Arc::clone(&statistics));
+        self.statistics.push(statistics);
     }
 
     /// Binds outgoing cluster administration to the process RPC owner.
@@ -2518,6 +2539,10 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
+        // Go `ddl.close` and `Domain.Close`: `variable.UnregisterStatistics`.
+        for statistics in &self.statistics {
+            crate::statusvar::unregister_statistics(statistics);
+        }
         self.plan_cache_invalidation.stop_maintenance();
         // Positive-lease maintenance has already joined. For zero/negative
         // leases this is Go's quitStatsOwner lifetime instead.
@@ -3468,8 +3493,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
             format!("{}@{}", identity.username(), context.peer_addr.host()),
         );
         session.set_client_found_rows(context.client_found_rows);
-        session.set_secure_transport(context.secure_transport);
-        session.set_tls_status(context.tls_status.clone());
+        session.set_tls_state(context.tls_state);
+        session.set_compression_level(context.compression_level);
+        session.set_compression_algorithm(context.compression_algorithm);
         if identity.in_sandbox_mode() {
             session.enable_sandbox_mode();
         }
@@ -3822,7 +3848,6 @@ impl ClusterSessionFactory {
             Arc::clone(&self.schema_pins),
             connection_id,
         )));
-        session.set_server_start_timestamp(crate::domain::real_tikv_node::server_start_unix_timestamp());
         if let Some(worker) = self.workload_repository.get() {
             session.set_workload_repository(Arc::clone(worker));
         }
@@ -4755,8 +4780,9 @@ impl tidb_workloadrepo::SessionPool for WorkloadRepositorySessionPool {
             ),
                 identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
                 client_found_rows: false,
-                secure_transport: false,
-                tls_status: None,
+                tls_state: None,
+                compression_algorithm: tidb_mysql::consts::CompressionNone,
+                compression_level: 0,
                 cancellation: crate::domain::session_api::ConnectionCancellation::default(),
                 close: crate::domain::session_api::ConnectionClose::default(),
             })

@@ -88,6 +88,19 @@ pub static MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: AtomicI64 =
 pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME);
 
+/// Go `vardef.ConnectAttrsSize`: the max aggregate byte size of connection
+/// attributes allowed per connection
+/// (`performance_schema_session_connect_attrs_size`).
+pub static CONNECT_ATTRS_SIZE: AtomicI64 = AtomicI64::new(defaults::DEF_CONNECT_ATTRS_SIZE);
+
+/// Go `vardef.ConnectAttrsLongestSeen`: the largest connection attribute
+/// aggregate size seen so far.
+pub static CONNECT_ATTRS_LONGEST_SEEN: AtomicI64 = AtomicI64::new(0);
+
+/// Go `vardef.ConnectAttrsLost`: the number of connections whose attributes
+/// were truncated.
+pub static CONNECT_ATTRS_LOST: AtomicI64 = AtomicI64::new(0);
+
 /// Go `vardef.EnableForeignKey`: DDL feature policy, independent of session row checks.
 pub static ENABLE_FOREIGN_KEY: AtomicBool = AtomicBool::new(true);
 
@@ -243,7 +256,6 @@ pub mod defaults;
 pub mod global_sysvar_initial;
 pub mod modes;
 pub mod option_values;
-pub mod statusvar;
 pub mod tidb_vars;
 
 /// `tidb_mem_oom_action`: what a statement that exceeds

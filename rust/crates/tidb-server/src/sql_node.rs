@@ -512,6 +512,8 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     /// Shared TLS owner; each accepted connection uses its current material
     /// to advertise `CLIENT_SSL` and retains that snapshot through handshake.
     tls: Arc<MysqlTlsManager>,
+    /// This server's `SHOW STATUS` provider, unregistered when it drops.
+    _statistics: crate::stat::RegisteredStatistics,
     _tls_rotation: Option<TlsRotation>,
     /// Go's `Instance.MaxConnections`: the simultaneous-connection limit,
     /// where zero means unlimited (`server.go`'s `checkConnectionCount`).
@@ -644,6 +646,12 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             .then(|| SocketListener::bind(&config.socket))
             .transpose()?;
         factory.install_tls_manager(tls.clone(), tls_variables);
+        // Go `NewServer`: `variable.RegisterStatistics(s)`.
+        let statistics = crate::stat::RegisteredStatistics::register(Arc::new(
+            crate::stat::ServerStatistics {
+                tls: Arc::clone(&tls),
+            },
+        ));
         let tls_rotation = TlsRotation::start(Arc::clone(&tls));
         let session_manager = factory.session_manager();
         let server_memory_limit = session_manager
@@ -668,6 +676,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tracker,
             max_allowed_packet: config.max_allowed_packet,
             tls,
+            _statistics: statistics,
             _tls_rotation: tls_rotation,
             worker_count: config.max_connections,
             shutdown,

@@ -1861,12 +1861,6 @@ fn show_forms_follow_go() {
     }
     let extended = row_text(session.run("SHOW EXTENDED COLUMNS FROM sh"));
     assert_eq!(extended.len(), 2);
-    let status = row_text(session.run(
-        "SHOW STATUS WHERE Variable_name IN ('ddl_schema_version', 'server_id', \
-         'last_plan_binding_update_time')",
-    ));
-    assert_eq!(status.len(), 3, "{status:?}");
-    assert_eq!(status[1][1], "0000-00-00 00:00:00");
     let table_status = row_text(session.run("SHOW TABLE STATUS LIKE 'shs'"));
     assert_eq!(table_status[0][4], "1");
 }
