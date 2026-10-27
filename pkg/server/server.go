@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"maps"
@@ -148,6 +149,7 @@ type Server struct {
 
 	statusAddr     string
 	statusListener net.Listener
+	statusWG       sync.WaitGroup
 	statusServer   atomic.Pointer[http.Server]
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
@@ -691,6 +693,14 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
+	}
+	// Closing the listener also interrupts cmux's pending protocol reads. Join
+	// startup and serving before reading the final HTTP/gRPC/AutoID pointers.
+	s.statusWG.Wait()
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
 		terror.Log(errors.Trace(err))

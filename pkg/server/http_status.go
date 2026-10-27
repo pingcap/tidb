@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -92,7 +93,11 @@ func (s *Server) startStatusHTTP() error {
 	if err != nil {
 		return err
 	}
-	go s.startHTTPServer()
+	s.statusWG.Add(1)
+	go func() {
+		defer s.statusWG.Done()
+		s.startHTTPServer()
+	}()
 	return nil
 }
 
@@ -116,8 +121,10 @@ func (s *Server) startDiagnosticHTTP() error {
 	// Publish before Serve starts so closeListener also handles early shutdown.
 	s.statusServer.Store(statusServer)
 	listener := s.statusListener
+	s.statusWG.Add(1)
 	go util.WithRecovery(func() {
-		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		defer s.statusWG.Done()
+		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed && !stderrors.Is(err, net.ErrClosed) {
 			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
 		}
 	}, nil)
@@ -171,6 +178,10 @@ func (s *Server) listenStatusHTTPServer() error {
 	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
+	}
+	if !diagnosticmode.Enabled() {
+		// Track connections before cmux can block reading their protocol prefix.
+		s.statusListener = newStatusListener(s.statusListener)
 	}
 	return nil
 }
@@ -701,12 +712,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
+	var servingWG sync.WaitGroup
+	servingWG.Add(2)
+	defer servingWG.Wait()
 	go util.WithRecovery(func() {
+		defer servingWG.Done()
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
+		defer servingWG.Done()
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
