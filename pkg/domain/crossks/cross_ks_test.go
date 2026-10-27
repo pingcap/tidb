@@ -495,11 +495,14 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		defer pool.Put(resource)
 		vars := resource.(sessionctx.Context).GetSessionVars()
 		requireGlobalVar := func(name, expected string) {
+			var (
+				value string
+				err   error
+			)
 			require.Eventually(t, func() bool {
-				value, err := vars.GlobalVarsAccessor.GetGlobalSysVar(name)
-				require.NoError(t, err)
-				return value == expected
-			}, 10*time.Second, 50*time.Millisecond)
+				value, err = vars.GlobalVarsAccessor.GetGlobalSysVar(name)
+				return err == nil && value == expected
+			}, 10*time.Second, 50*time.Millisecond, "last value %q, error %v", value, err)
 		}
 		notify := func() {
 			_, err := etcdClis[targetKS].Put(context.Background(), ddlutil.SysVarCacheKey, "")

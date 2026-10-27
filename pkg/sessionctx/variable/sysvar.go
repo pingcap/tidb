@@ -4504,7 +4504,8 @@ func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
 
 // SysVarCacheValues returns the values that a sysvar cache keeps for new
 // sessions and for the global scope, given the rows of mysql.global_variables.
-// A sysvar initialized from config keeps the value of this instance.
+// A sysvar initialized from config keeps the value of this instance. On Starter,
+// it also replaces max_allowed_packet in tableContents with the config value.
 func SysVarCacheValues(tableContents map[string]string) (session, global map[string]string) {
 	if deploymode.IsStarter() {
 		if _, ok := tableContents[vardef.MaxAllowedPacket]; ok {

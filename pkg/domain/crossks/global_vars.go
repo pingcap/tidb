@@ -75,7 +75,7 @@ func newGlobalVarCache(
 func (c *globalVarCache) get(name string) (value string, found bool, err error) {
 	global := c.loaded()
 	if global == nil {
-		if global, err = c.load(); err != nil {
+		if global, err = c.loadIfEmpty(); err != nil {
 			return "", false, err
 		}
 		c.startRefresh()
@@ -90,6 +90,17 @@ func (c *globalVarCache) loaded() map[string]string {
 	return c.global
 }
 
+// loadIfEmpty loads the cache unless another reader loaded it while this one
+// waited for loadMu, so that readers of a cold cache load it only once.
+func (c *globalVarCache) loadIfEmpty() (map[string]string, error) {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	if global := c.loaded(); global != nil {
+		return global, nil
+	}
+	return c.loadLocked()
+}
+
 // load reloads the cache. A failed load keeps the cache.
 //
 // The session that loads the cache reads global variables from the cache too,
@@ -98,6 +109,10 @@ func (c *globalVarCache) loaded() map[string]string {
 func (c *globalVarCache) load() (map[string]string, error) {
 	c.loadMu.Lock()
 	defer c.loadMu.Unlock()
+	return c.loadLocked()
+}
+
+func (c *globalVarCache) loadLocked() (map[string]string, error) {
 	rows, err := c.query("SELECT variable_name, variable_value FROM %n.%n", mysql.SystemDB, mysql.GlobalVariablesTable)
 	if err != nil {
 		return nil, err
