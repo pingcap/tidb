@@ -346,7 +346,7 @@ func TestBRIESecureText(t *testing.T) {
 		},
 		{
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
-			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?\E((access-key=irrelevant|credentials-file=/home/user/secrets\.txt)(&|'$)){2}`,
+			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix'\E$`,
 		},
 		{
 			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
@@ -415,6 +415,7 @@ func TestRedactURL(t *testing.T) {
 		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK&secret-access-key=FAKE_AST_SK",
 		"azure://bucket/path?account-name=benign&sas-token=sv=2020-08-04&sig=FAKE_AST_SAS&FAKE_AST_SK",
 		"s3://bucket/path?region=us-east-1&new-secret=FAKE_AST_SK&FAKE_AST_AK=unknown",
+		"s3://bucket/path?endpoint=https%3A%2F%2FFAKE_AST_USER%3AFAKE_AST_PASS%40host%2F%3Fsig%3DFAKE_AST_SK",
 		`s3://bucket/path?sse-kms-context={"a":"x&region=FAKE_AST_SK"}`,
 	} {
 		t.Run(rawURL, func(t *testing.T) {
@@ -440,9 +441,20 @@ func TestRedactURL(t *testing.T) {
 		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
 		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
-		// gs don't have access-key/secret-access-key, so it will NOT be redacted
-		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
-		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
+		// Schemes without a query allowlist must not expose arbitrary values.
+		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file"},
+		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file"},
+		{args{"gcs://user:pass@bucket/file?credentials-file=secret#fragment"}, "gcs://bucket/file"},
+		{args{"file:///tmp/backup?token=secret#fragment"}, "file:///tmp/backup"},
+		{args{"local:///tmp/backup?token=secret#fragment"}, "local:///tmp/backup"},
+		{args{"hdfs://user:pass@host/backup?token=secret#fragment"}, "hdfs://host/backup"},
+		{args{"noop:///?token=secret#fragment"}, "noop:///"},
+		{args{"https://user:pass@host/backup?token=secret#fragment"}, "https://host/backup"},
+		{args{"/tmp/backup?token=secret#fragment"}, "/tmp/backup"},
+		{args{"gcs://bucket/file?token=secret%zz"}, "gcs://bucket/file"},
+		{args{"GCS://bucket/file#fragment"}, "gcs://bucket/file"},
+		{args{"gcs://bucket/file?"}, "gcs://bucket/file"},
+		{args{"local:///tmp/backup?"}, "local:///tmp/backup"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"}, "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"},
@@ -492,7 +504,9 @@ func TestRedactURL(t *testing.T) {
 		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net"}, "azure://container/file?endpoint=xxxxxx"},
 		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
 		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
-		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"},
+		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=xxxxxx"},
+		{args{"ks3://bucket/file?endpoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret"}, "ks3://bucket/file?endpoint=xxxxxx"},
+		{args{"oss://bucket/file?EndPoint=first-secret&EndPoint=second-secret"}, "oss://bucket/file?EndPoint=xxxxxx"},
 		{args{"s3://user:pass@b/p?region=r"}, "s3://b/p?region=r"},
 		{args{"gs://user:pass@bucket/file"}, "gs://bucket/file"},
 	}

@@ -4253,6 +4253,7 @@ const InvalidURLPlaceholder = "(invalid URL)"
 
 // RedactURL removes userinfo, and in supported storage URLs keeps only known query options,
 // redacts sensitive values, and removes fragments.
+// Queries for other schemes are removed entirely.
 // Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
@@ -4264,6 +4265,8 @@ func RedactURL(str string) string {
 		return InvalidURLPlaceholder
 	}
 	u.User = nil
+	u.Fragment = ""
+	u.RawFragment = ""
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
@@ -4275,7 +4278,8 @@ func RedactURL(str string) string {
 	switch strings.ToLower(scheme) {
 	case "s3", "ks3", "oss":
 		queryKeys = map[string]bool{
-			"endpoint":                false,
+			// Endpoints can embed userinfo or signed query credentials.
+			"endpoint":                true,
 			"region":                  false,
 			"storage-class":           false,
 			"sse":                     false,
@@ -4308,9 +4312,6 @@ func RedactURL(str string) string {
 	}
 
 	if len(queryKeys) > 0 {
-		// An unescaped '#' in a secret query value starts a fragment.
-		u.Fragment = ""
-		u.RawFragment = ""
 		// URL.Query skips undecodable pairs, which may hide a split secret.
 		values, err := url.ParseQuery(u.RawQuery)
 		if err != nil {
@@ -4338,6 +4339,9 @@ func RedactURL(str string) string {
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
+	} else {
+		u.RawQuery = ""
+		u.ForceQuery = false
 	}
 	return u.String()
 }

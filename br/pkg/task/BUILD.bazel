@@ -14,6 +14,7 @@ go_library(
         "restore_ebs_meta.go",
         "restore_name_route.go",
         "restore_raw.go",
+        "restore_storage_identity.go",
         "restore_txn.go",
         "stream.go",
     ],
