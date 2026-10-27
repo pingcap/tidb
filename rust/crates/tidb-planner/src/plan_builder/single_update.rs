@@ -52,7 +52,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(&database, &written)
-            .ok_or_else(|| PlanError::unknown_table(format!("{database}.{written}")))?;
+            .ok_or_else(|| PlanError::unknown_table(&database, &written))?;
         let visible = table_ref.alias.as_deref().unwrap_or(&written);
         let field = |column: &str| {
             FieldName::new(FieldNameMetadata {

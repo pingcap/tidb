@@ -3038,8 +3038,9 @@ pub struct FkTriggerNode {
     pub parent_offsets: Vec<usize>,
     /// Selected index ID; None denotes the integer clustered record handle.
     pub lookup_index: Option<i64>,
-    /// The constraint clause used by Go's 1451/1452 diagnostic.
-    pub constraint: String,
+    /// Go `fk.String(db, table)`, the argument of the check's `FailedErr`
+    /// (`ErrNoReferencedRow2` / `ErrRowIsReferenced2`).
+    pub fk_string: String,
 }
 
 /// Go `physicalop.PushedDownLimit`.

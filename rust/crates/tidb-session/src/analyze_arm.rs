@@ -56,7 +56,7 @@ use tidb_executor::analyze::{
     resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement, PhysicalAnalyzeOptions,
     SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
-use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
+use tidb_executor::{DriverError, TableEntry};
 
 use crate::{Session, StmtOutput};
 use tidb_hack::GoToLower;
@@ -423,7 +423,10 @@ fn analyze_partition_ids(
         if requested.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(DriverError::PartitionManagementOnNonpartitioned);
+        return Err(DriverError::from(
+            tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     if requested.is_empty() {
         return Ok(partition
@@ -865,9 +868,13 @@ impl Session {
                     )));
                 }
                 None => {
-                    return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
-                        name.clone(),
-                    )));
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[
+                                schema.clone().into(),
+                                name.clone().into(),
+                            ]),
+                    ));
                 }
             };
             let index_tasks = select_index_tasks(&table, statement)?;

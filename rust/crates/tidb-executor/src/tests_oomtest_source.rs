@@ -48,7 +48,7 @@ fn cancelling() -> StmtContext {
 }
 
 fn is_memory_exceeded(error: &crate::DriverError) -> bool {
-    matches!(error, crate::DriverError::MemoryExceedForQuery { .. })
+    error.equal(&tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
 }
 
 fn rows(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {

@@ -630,14 +630,11 @@ impl Session {
         let parsed =
             tidb_parser::parse_with_sql_mode_and_config(sql, self.scanner_sql_mode(), config);
         parsed.map_err(|e| match e.terror {
-            Some(proto) => DriverError::ParseCoded {
-                proto,
-                message: e.message,
-            },
+            Some(proto) => DriverError::from((proto).generate_with_stack(e.message)),
             // Go's session layer wraps a positional parser error through
             // `util.SyntaxError`, whose message body is the parser's own
             // `line L column C near "..."` text — not a Debug dump.
-            None => DriverError::Parse(e.compatibility_message(sql)),
+            None => DriverError::from(tidb_util::misc::syntax_error(e.compatibility_message(sql))),
         })
     }
 
@@ -817,9 +814,12 @@ impl Session {
             [name] => (self.vars.current_db.as_str(), name.as_str()),
             _ => ("", ""),
         };
-        Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
-            format!("{}.{}", schema.go_to_lower(), name.go_to_lower()),
-        )))
+        Err(DriverError::from(
+            tidb_error::plannererrors::ERR_VIEW_INVALID.generate_with_stack_by_args(&[
+                schema.go_to_lower().into(),
+                name.go_to_lower().into(),
+            ]),
+        ))
     }
 
     /// `tidb_cdc_write_source`, which Go copies into each DDL job

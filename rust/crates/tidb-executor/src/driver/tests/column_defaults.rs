@@ -57,14 +57,34 @@ fn column_defaults_and_not_null() {
     );
 
     // An omitted NOT NULL column with no default is 1364.
-    assert!(matches!(
-        run_insert_on("INSERT INTO d (id) VALUES (3)", &mut catalog, &crate::StmtContext::for_query()),
-        Err(DriverError::NoDefaultForField(name)) if name == "n"
+    assert!((run_insert_on(
+        "INSERT INTO d (id) VALUES (3)",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(
+        |error| error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)
+            && error.to_string()
+                == DriverError::from(
+                    tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                        .generate_with_stack_by_args(&["n".into()])
+                )
+                .to_string()
     ));
     // An explicit NULL into that column is the other error, 1048.
-    assert!(matches!(
-        run_insert_on("INSERT INTO d (id, n) VALUES (3, NULL)", &mut catalog, &crate::StmtContext::for_query()),
-        Err(DriverError::ColumnCannotBeNull(name)) if name == "n"
+    assert!((run_insert_on(
+        "INSERT INTO d (id, n) VALUES (3, NULL)",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(
+        |error| error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+            && error.to_string()
+                == DriverError::from(
+                    tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                        .generate_with_stack_by_args(&["n".into()])
+                )
+                .to_string()
     ));
     // A NULL into a nullable column is fine.
     run_insert_on(
@@ -98,14 +118,12 @@ fn column_defaults_and_not_null() {
     );
 
     // A primary key is NOT NULL, so omitting it is 1364 as well.
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO e (v) VALUES (1)",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::NoDefaultForField(_))
-    ));
+    assert!((run_insert_on(
+        "INSERT INTO e (v) VALUES (1)",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)));
 
     // An AUTO_INCREMENT column supplies its own value, so omitting it is
     // never the missing-default case (see the auto_increment test).
@@ -419,21 +437,18 @@ fn generated_default_identity_matrix_and_on_duplicate_timing() {
          ON DUPLICATE KEY UPDATE g = DEFAULT(a)",
     ] {
         assert!(
-            matches!(
-                run_insert_on(sql, &mut catalog, &ctx),
-                Err(DriverError::BadGeneratedColumn { .. })
+            (run_insert_on(sql, &mut catalog, &ctx)).is_err_and(
+                |error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)
             ),
             "{sql}"
         );
     }
-    assert!(matches!(
-        run_update_on(
-            "UPDATE generated_default SET g = DEFAULT(a) WHERE id = 1",
-            &mut catalog,
-            &ctx,
-        ),
-        Err(DriverError::BadGeneratedColumn { .. })
-    ));
+    assert!((run_update_on(
+        "UPDATE generated_default SET g = DEFAULT(a) WHERE id = 1",
+        &mut catalog,
+        &ctx,
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)));
     assert!(run_select_on(
         "SELECT id FROM generated_default WHERE id = 3",
         &catalog,
@@ -501,15 +516,13 @@ fn on_duplicate_defaults_cover_conflict_and_no_conflict() {
         .unwrap(),
         vec![vec![Datum::Int(9), Datum::Int(9)]]
     );
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO duplicate_default VALUES (2, 1, 2) \
-             ON DUPLICATE KEY UPDATE a = DEFAULT(no_such_column)",
-            &mut catalog,
-            &ctx,
-        ),
-        Err(DriverError::UnknownColumnInClause { .. })
-    ));
+    assert!(run_insert_on(
+        "INSERT INTO duplicate_default VALUES (2, 1, 2) \
+         ON DUPLICATE KEY UPDATE a = DEFAULT(no_such_column)",
+        &mut catalog,
+        &ctx,
+    )
+    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN)));
     assert!(run_select_on(
         "SELECT id FROM duplicate_default WHERE id = 2",
         &catalog,
@@ -644,14 +657,12 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
     let variables = UserVars::new();
     variables.set_user_var_val("probe", Datum::Int(0));
     let ctx = crate::StmtContext::for_dml(false, true, false).with_user_vars(variables.clone());
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO select_default (g) SELECT @probe := 1",
-            &mut catalog,
-            &ctx,
-        ),
-        Err(DriverError::BadGeneratedColumn { .. })
-    ));
+    assert!((run_insert_on(
+        "INSERT INTO select_default (g) SELECT @probe := 1",
+        &mut catalog,
+        &ctx,
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)));
     assert_eq!(variables.get_user_var_val("probe"), Some(Datum::Int(0)));
 }
 

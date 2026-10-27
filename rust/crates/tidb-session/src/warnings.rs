@@ -264,11 +264,10 @@ impl Session {
                 // a failed parse carried are dropped (go's failed parse
                 // never reaches the warning copy either).
                 let mapped = match error.terror {
-                    Some(proto) => DriverError::ParseCoded {
-                        proto,
-                        message: error.message,
-                    },
-                    None => DriverError::Parse(error.compatibility_message(sql)),
+                    Some(proto) => DriverError::from((proto).generate_with_stack(error.message)),
+                    None => DriverError::from(tidb_util::misc::syntax_error(
+                        error.compatibility_message(sql),
+                    )),
                 };
                 return Err(mapped);
             }

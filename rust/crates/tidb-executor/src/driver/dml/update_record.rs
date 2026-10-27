@@ -96,9 +96,10 @@ impl<'a> UpdateRecords<'a> {
             ctx.mark_fk_cascades();
         }
         let entry = catalog.get_in(database, name).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
+            DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+            )
         })?;
         if old == new {
             // Go `addUnchangedKeysForLockByRow` locks an unchanged row only in
@@ -157,11 +158,9 @@ impl<'a> UpdateRecords<'a> {
                 )
             });
             if let Err(error) = check {
-                if matches!(
-                    error,
-                    DriverError::ForeignKeyNoReferencedRow { .. }
-                        | DriverError::ForeignKeyRowIsReferenced { .. }
-                ) {
+                if error.equal(&tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2)
+                    || error.equal(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2)
+                {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
@@ -319,7 +318,7 @@ fn ignored_write_error(
     ignore: bool,
     ctx: &crate::StmtContext,
 ) -> Result<UpdateOutcome, DriverError> {
-    if ignore && matches!(error, DriverError::DuplicateEntry { .. }) {
+    if ignore && error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS) {
         let warning = error.to_mysql_error();
         ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,

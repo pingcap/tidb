@@ -1733,9 +1733,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // "If the view is being renamed, we return the mysql compatible error
         // message."
         if self.renaming_view_name.as_ref() == Some(&key) {
-            return Err(PlanError::renaming_view_missing(format!(
-                "{db_name}.{table_name}"
-            )));
+            return Err(PlanError::renaming_view_missing(db_name, table_name));
         }
         self.building_view_stack.insert(key.clone());
         Ok(ViewBuildGuard { key })
@@ -1909,7 +1907,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 PlanErrorKind::Internal
                 | PlanErrorKind::InternalCoded { .. }
                 | PlanErrorKind::ViewRecursive
-                | PlanErrorKind::RenamingViewMissing(_)
+                | PlanErrorKind::RenamingViewMissing(..)
                 | PlanErrorKind::FieldNotInGroupBy { .. }
                 | PlanErrorKind::FieldNotInAggregatedQuery { .. }
                 | PlanErrorKind::ViewNoExplain

@@ -17,7 +17,7 @@
 use tidb_ast::{CompactReplicaKind, CompactTableStmt};
 use tidb_hack::GoCaseCompare;
 
-use crate::{Catalog, DriverError, SchemaErrorKind, StmtContext, TableEntry};
+use crate::{Catalog, DriverError, StmtContext, TableEntry};
 
 /// Go `executorBuilder.buildCompactTable` and `CompactTableTiFlashExec.Next`
 /// over the `CompactTable` plan: the replica kind and the partition list are
@@ -37,9 +37,10 @@ pub fn execute_compact_table(
 ) -> Result<(), DriverError> {
     let (database, name) = crate::driver::split_table_path_pub(&compact.table, current_db)?;
     let Some(entry) = catalog.table_in(database, name) else {
-        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        ))));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        ));
     };
     if compact.replica_kind == CompactReplicaKind::TiKv {
         return Err(DriverError::unsupported("compact tikv replica is not supported".to_owned()));
@@ -62,10 +63,12 @@ pub fn execute_compact_table(
                 .iter()
                 .any(|definition| definition.name.go_lower_eq(written))
         }) {
-            return Err(DriverError::UnknownPartition {
-                partition: unknown.clone(),
-                table: table_name.to_owned(),
-            });
+            return Err(DriverError::from(
+                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                    unknown.clone().into(),
+                    table_name.to_owned().into(),
+                ]),
+            ));
         }
     }
     if table

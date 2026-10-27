@@ -144,8 +144,11 @@ fn writable_check_constraints_guard_insert_and_update() {
         "failed UPDATE must leave the original row"
     );
 
-    let wire =
-        crate::DriverError::CheckConstraintViolated("positive_a".to_owned()).to_mysql_error();
+    let wire = crate::DriverError::from(
+        tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+            .fast_generate_by_args(&["positive_a".into()]),
+    )
+    .to_mysql_error();
     assert_eq!(
         wire.code,
         tidb_error::tidb::errcode::ErrCheckConstraintViolated

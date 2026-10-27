@@ -477,7 +477,9 @@ fn load_range_bounds(
         let values = match &definition.clause {
             PartitionDefinitionClause::LessThan(values) => values,
             PartitionDefinitionClause::In(_) => {
-                return Err(crate::partition_errors::partition_wrong_values("LIST", "VALUES IN"))
+                return Err(crate::partition_errors::partition_wrong_values(
+                    "LIST", "IN",
+                ))
             }
             _ => return Err(crate::partition_errors::partitions_must_be_defined("RANGE")),
         };
@@ -543,9 +545,9 @@ fn load_range_columns_bounds(
     for definition in definitions {
         let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
             return match &definition.clause {
-                PartitionDefinitionClause::In(_) => {
-                    Err(crate::partition_errors::partition_wrong_values("LIST", "VALUES IN"))
-                }
+                PartitionDefinitionClause::In(_) => Err(
+                    crate::partition_errors::partition_wrong_values("LIST", "IN"),
+                ),
                 _ => Err(crate::partition_errors::partitions_must_be_defined("RANGE")),
             };
         };
@@ -622,7 +624,7 @@ fn load_list_columns_values(
             PartitionDefinitionClause::LessThan(_) => {
                 return Err(crate::partition_errors::partition_wrong_values(
                     "RANGE",
-                    "VALUES LESS THAN",
+                    "LESS THAN",
                 ));
             }
             _ => return Err(crate::partition_errors::partitions_must_be_defined("LIST")),

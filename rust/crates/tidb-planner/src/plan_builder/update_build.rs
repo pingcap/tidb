@@ -115,10 +115,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .source
                         .find_table(&assigned.target.database, &assigned.target.table)
                         .ok_or_else(|| {
-                            PlanError::unknown_table(format!(
-                                "{}.{}",
-                                assigned.target.database, assigned.target.table
-                            ))
+                            PlanError::unknown_table(
+                                &assigned.target.database,
+                                &assigned.target.table,
+                            )
                         })?;
                     let id = frozen_schema.columns[assigned.position].id;
                     let Some(offset) = table.columns.iter().position(|column| column.id == id)

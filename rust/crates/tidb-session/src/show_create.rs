@@ -215,7 +215,12 @@ pub(super) fn show_create_table_text(
                                 ctx.show_default_conversion_flags(),
                                 &ctx.session_zone(),
                             )
-                            .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
+                            .map_err(|_| {
+                                DriverError::from(
+                                    tidb_error::catalog::table::ERR_GET_DEFAULT_FAILED
+                                        .generate_with_stack_by_args(&[column.name.clone().into()]),
+                                )
+                            })?
                             .unwrap_or_default()
                         }
                         _ => String::new(),
@@ -501,7 +506,7 @@ pub(super) fn show_create_table_text(
     // inserts print nothing).
     if let Some(next) = table
         .next_auto_increment_for_show()
-        .map_err(|e| DriverError::AutoIdUnavailable(e.0))?
+        .map_err(|e| DriverError::from(tidb_error::mysql::MysqlError::unknown(e.0)))?
         .filter(|next| *next > 1)
     {
         out.push_str(&format!(" AUTO_INCREMENT={next}"));
@@ -515,7 +520,7 @@ pub(super) fn show_create_table_text(
     }
     if let Some(base) = table
         .next_auto_random_for_show()
-        .map_err(|e| DriverError::AutoIdUnavailable(e.0))?
+        .map_err(|e| DriverError::from(tidb_error::mysql::MysqlError::unknown(e.0)))?
         .filter(|base| *base > 1)
     {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));

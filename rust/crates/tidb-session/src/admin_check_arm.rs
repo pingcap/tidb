@@ -208,9 +208,10 @@ fn admin_check_table_mut<'a>(
     statement: &'static str,
 ) -> Result<&'a mut tidb_executor::kv_table::KvTable, DriverError> {
     let Some(entry) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        ))));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        ));
     };
     match entry {
         // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`): a temporary
@@ -219,9 +220,10 @@ fn admin_check_table_mut<'a>(
         // refuses the statement instead of answering OK about nothing. Both
         // scopes are refused; the argument names the statement, which is why
         // the caller passes it.
-        tidb_executor::TableEntry::Kv(table) if table.is_temporary() => {
-            Err(DriverError::OptOnTemporaryTable(statement))
-        }
+        tidb_executor::TableEntry::Kv(table) if table.is_temporary() => Err(DriverError::from(
+            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&[statement.into()]),
+        )),
         tidb_executor::TableEntry::Kv(table) => Ok(std::sync::Arc::make_mut(table)),
         // A view has no rows of its own and a sequence has no index; a
         // `MemTable` has rows but stores no index entries, so "consistent"
@@ -244,9 +246,10 @@ fn admin_index_table_mut<'a>(
         Some(_) => Err(DriverError::unsupported(
             "ADMIN RECOVER/CLEANUP INDEX needs a storage-backed table",
         )),
-        None => Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        )))),
+        None => Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        )),
     }
 }
 
@@ -267,19 +270,25 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
             table_count,
             index,
             index_count,
-        } => DriverError::AdminCheckTable(format!(
-            "table count {table_count} != index({index}) count {index_count}"
-        )),
+        } => DriverError::from(
+            tidb_error::catalog::admin::ERR_ADMIN_CHECK_TABLE.generate_with_stack(format!(
+                "table count {table_count} != index({index}) count {index_count}"
+            )),
+        ),
         AdminCheckError::Inconsistent {
             table,
             index,
             handle,
             index_values,
             record_values,
-        } => DriverError::DataInconsistent(format!(
-            "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
+        } => DriverError::from(
+            tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT.generate_with_stack(
+                format!(
+                    "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
              index-values:{index_values} != record-values:{record_values}"
-        )),
+                ),
+            ),
+        ),
         AdminCheckError::ValueMismatch(mismatch) => {
             let tidb_executor::admin_check::AdminValueMismatch {
                 table,
@@ -290,11 +299,14 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
                 record_value,
                 compare_error,
             } = *mismatch;
-            DriverError::DataInconsistentMismatchIndex(format!(
+            DriverError::from(
+                tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
+                    .generate_with_stack(format!(
                 "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
                  {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
                  compare err:{compare_error}"
-            ))
+            )),
+            )
         }
         AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
             tidb_executor::ExecError::internal(format!("secondary index {index} does not exist")),
@@ -302,6 +314,9 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
         AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
             DriverError::unsupported(detail)
         }
-        AdminCheckError::PartialIndexWithoutFastCheck => DriverError::CheckPartialIndexWithoutFastCheck,
+        AdminCheckError::PartialIndexWithoutFastCheck => DriverError::from(
+            tidb_error::catalog::executor::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
+                .generate_with_stack_by_args(&[]),
+        ),
     }
 }

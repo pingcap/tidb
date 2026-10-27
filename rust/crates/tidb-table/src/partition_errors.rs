@@ -30,13 +30,7 @@ pub fn unsupported(reason: impl Into<String>) -> MysqlError {
 /// Go `util.SyntaxError`: `ErrParse.GenWithStackByArgs(SyntaxErrorPrefix,
 /// err.Error())` over ErrParse's `"%s %s"`.
 pub fn parse_error(message: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::parser::ERR_PARSE,
-        format!(
-            "You have an error in your SQL syntax; check the manual that corresponds \
-             to your TiDB version for the right syntax to use {message}"
-        ),
-    )
+    MysqlError::from_terror(&tidb_util::misc::syntax_error(message.to_string()))
 }
 
 /// Go `dbterror.ErrWrongTypeColumnValue`.
@@ -98,9 +92,9 @@ pub fn partition_field_not_found() -> MysqlError {
 
 /// Go `ast.ErrPartitionWrongValues`.
 pub fn partition_wrong_values(method: impl Display, clause: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES,
-        format!("Only {method} PARTITIONING can use {clause} in partition definition"),
+    MysqlError::from_terror(
+        &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+            .generate_with_stack_by_args(&[method.to_string().into(), clause.to_string().into()]),
     )
 }
 

@@ -80,19 +80,16 @@ fn configured_sem_v2_policy_child() {
         .message
         .contains("is not supported when security enhanced mode is enabled"));
 
-    let grant_denial = nobody
-        .run("GRANT FILE ON *.* TO 'recipient'@'%'")
-        .unwrap_err();
-    assert!(matches!(
-        grant_denial,
-        DriverError::SpecificAccessDenied(privilege) if privilege == "RESTRICTED_PRIV_ADMIN"
-    ));
-    let variable_denial = nobody.run("SET autocommit=0").unwrap_err();
-    assert!(matches!(
-        variable_denial,
-        DriverError::SpecificAccessDenied(privilege)
-            if privilege == "RESTRICTED_VARIABLES_ADMIN"
-    ));
+    crate::tests_support::assert_go_error(
+        nobody.run("GRANT FILE ON *.* TO 'recipient'@'%'"),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["RESTRICTED_PRIV_ADMIN".into()],
+    );
+    crate::tests_support::assert_go_error(
+        nobody.run("SET autocommit=0"),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["RESTRICTED_VARIABLES_ADMIN".into()],
+    );
 
     // Granted through SQL, as Go's test does: a session on a store reads its
     // privileges from the store, not from a registry edited in place.

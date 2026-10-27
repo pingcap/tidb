@@ -103,7 +103,7 @@ pub fn build_range_bounds_with_unsigned(
             // `VALUES LESS THAN`, and only LIST takes `VALUES IN`, so the
             // wrong clause under RANGE names LIST as the owner.
             PartitionDefinitionClause::In(_) => {
-                return Err(errors::partition_wrong_values("LIST", "VALUES IN"))
+                return Err(errors::partition_wrong_values("LIST", "IN"))
             }
             _ => return Err(errors::partitions_must_be_defined("RANGE")),
         };
@@ -202,7 +202,9 @@ pub fn build_range_columns_bounds(
     for (index, definition) in definitions.iter().enumerate() {
         let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
             return match &definition.clause {
-                PartitionDefinitionClause::In(_) => Err(errors::partition_wrong_values("LIST", "VALUES IN")),
+                PartitionDefinitionClause::In(_) => {
+                    Err(errors::partition_wrong_values("LIST", "IN"))
+                }
                 _ => Err(errors::partitions_must_be_defined("RANGE")),
             };
         };

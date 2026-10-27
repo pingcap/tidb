@@ -82,10 +82,16 @@ pub fn split_region(
         name => name,
     };
     if table.is_temporary() {
-        return Err(DriverError::OptOnTemporaryTable("split table"));
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["split table".into()]),
+        ));
     }
     if stmt.partition_syntax && table.partition().is_none() {
-        return Err(DriverError::PartitionClauseOnNonpartitioned);
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     let columns: Vec<(String, FieldType)> = table
         .columns()
@@ -188,11 +194,12 @@ fn plan_index_split<'a>(
         .find(|index| index.name.go_lower_eq(index_name))
         .ok_or_else(|| {
             // Go `buildSplitIndexRegion`: `plannererrors.ErrKeyDoesNotExist`.
-            DriverError::KeyNotExists {
-                key: index_name.to_owned(),
-                table: table_name.to_owned(),
-            }
-            .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST)
+            DriverError::from(
+                tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(&[
+                    index_name.to_owned().into(),
+                    table_name.to_owned().into(),
+                ]),
+            )
         })?;
     let convert_tuple = |values: &[tidb_ast::Expr]| {
         values
@@ -209,7 +216,10 @@ fn plan_index_split<'a>(
             let mut values = Vec::with_capacity(lists.len());
             for (position, list) in lists.iter().enumerate() {
                 if list.len() > index.column_offsets.len() {
-                    return Err(DriverError::WrongValueCountOnRow { row: position + 1 });
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                            .generate_with_stack_by_args(&[(position + 1).into()]),
+                    ));
                 }
                 values.push(convert_tuple(list)?);
             }
@@ -277,7 +287,10 @@ fn plan_table_split(
             .map(|(value, (name, field_type))| {
                 let converted = converter.convert(value, name, field_type)?;
                 if converted.is_null() {
-                    return Err(DriverError::ColumnCannotBeNull((*name).to_owned()));
+                    return Err(DriverError::from(
+                        tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                            .generate_with_stack_by_args(&[((*name).to_owned()).into()]),
+                    ));
                 }
                 Ok(converted)
             })
@@ -288,7 +301,13 @@ fn plan_table_split(
             .iter()
             .enumerate()
             .map(|(position, list)| {
-                convert_list(list, DriverError::WrongValueCountOnRow { row: position })
+                convert_list(
+                    list,
+                    DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                            .generate_with_stack_by_args(&[position.into()]),
+                    ),
+                )
             })
             .collect::<Result<Vec<_>, _>>()
             .map(SplitValues::Lists),
@@ -356,9 +375,14 @@ fn physical_ids(
                         .go_equal_fold(&name.go_to_lower())
                 })
                 .map(|definition| definition.id)
-                .ok_or_else(|| DriverError::UnknownPartition {
-                    partition: name.go_to_lower(),
-                    table: table_name.to_owned(),
+                .ok_or_else(|| {
+                    DriverError::from(
+                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            .generate_with_stack_by_args(&[
+                                name.go_to_lower().into(),
+                                table_name.to_owned().into(),
+                            ]),
+                    )
                 })
         })
         .collect()

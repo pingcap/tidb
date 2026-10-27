@@ -107,7 +107,10 @@ impl ExchangePartitionCheck {
             .locate_physical_id(row, ctx)
             .map_err(super::kv_write_error)?;
         if located != *partition_id && located != *standalone_id {
-            return Err(DriverError::RowDoesNotMatchGivenPartitionSet);
+            return Err(DriverError::from(
+                tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         if ctx.enable_check_constraint() {
             partitioned

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_executor::load_stats::{parse_stats_json, JsonTable};
-use tidb_executor::{KvTable, SchemaErrorKind, TableEntry};
+use tidb_executor::{KvTable, TableEntry};
 use tidb_util::stringutil::go_to_lower;
 
 use crate::*;
@@ -192,14 +192,17 @@ impl Session {
                 }
             };
             if database.is_empty() {
-                return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                ));
             }
             let table =
                 self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
                     Some(TableEntry::Kv(table)) => Ok(Arc::clone(table)),
-                    _ => Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                        "{database}.{name}"
-                    )))),
+                    _ => Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                    )),
                 })?;
             tables.push(table);
         }
@@ -285,7 +288,10 @@ pub(crate) fn get_physical_ids_and_partition_names(
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {
         if !partition_names.is_empty() {
-            return Err(DriverError::PartitionManagementOnNonpartitioned);
+            return Err(DriverError::from(
+                tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         return Ok(vec![table.table_id]);
     };

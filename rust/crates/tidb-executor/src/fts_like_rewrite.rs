@@ -135,7 +135,10 @@ fn rewrite_boolean_root(
 
 /// Go `ErrNotSupportedYet.GenWithStackByArgs` (1235).
 fn not_supported_yet(feature: &str) -> DriverError {
-    DriverError::NotSupportedYet(feature.to_owned().into())
+    DriverError::from(
+        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+            .generate_with_stack_by_args(&[feature.to_owned().into()]),
+    )
 }
 
 /// Go `matchAgainstToLike` + `BuildFTSToILikeExpression`, over the AST.
@@ -179,8 +182,14 @@ fn build_fts_like(
     // body. Anything else -- phrases, `*`, relevance operators, mid-word
     // punctuation -- tokenizes differently in MySQL FTS than a substring
     // match, and is refused rather than approximated.
-    tidb_expr::fts::validate_fts_search_string_for_like_fallback(&search, modifier)
-        .map_err(|error| DriverError::NotSupportedYet(error.message.into()))?;
+    tidb_expr::fts::validate_fts_search_string_for_like_fallback(&search, modifier).map_err(
+        |error| {
+            DriverError::from(
+                tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                    .generate_with_stack_by_args(&[error.message.into()]),
+            )
+        },
+    )?;
     let boolean = modifier.is_boolean_mode();
 
     if search.split_whitespace().next().is_none() {

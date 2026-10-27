@@ -92,24 +92,12 @@ use tidb_datatype::Datum;
 
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::kv_table::{FkAction, KvForeignKey, RowDecodeContext, TableHandle};
-use tidb_hack::GoCaseCompare;
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
 /// raises `ErrFkExceedMaxDepth` (3008).
 const MAX_CASCADE_DEPTH: usize = 15;
-
-/// Renders the constraint the way Go's error text quotes it, which is the
-/// `CONSTRAINT ... FOREIGN KEY ... REFERENCES ...` clause.
-pub(crate) fn constraint_text(foreign_key: &KvForeignKey) -> String {
-    format!(
-        "CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}` (`{}`)",
-        foreign_key.name,
-        foreign_key.cols.join("`, `"),
-        foreign_key.ref_table,
-        foreign_key.ref_cols.join("`, `"),
-    )
-}
 
 /// The key a row presents to one foreign key, or `None` when MATCH SIMPLE
 /// skips it because some component is `NULL`.
@@ -256,13 +244,18 @@ fn targets(node: &FkTriggerNode, database: &str, table: &str) -> bool {
     db.go_lower_eq(database) && name.go_lower_eq(table)
 }
 
+/// Go `FKCheck.FailedErr`, built when the check was planned.
 fn planned_violation(node: &FkTriggerNode) -> DriverError {
-    let table = format!("`{}`.`{}`", node.child_database, node.child_table);
-    let constraint = node.constraint.clone();
     if node.kind == FkTriggerKind::ChildCheck {
-        DriverError::ForeignKeyNoReferencedRow { table, constraint }
+        DriverError::from(
+            tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2
+                .fast_generate_by_args(&[node.fk_string.clone().into()]),
+        )
     } else {
-        DriverError::ForeignKeyRowIsReferenced { table, constraint }
+        DriverError::from(
+            tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2
+                .generate_with_stack_by_args(&[node.fk_string.clone().into()]),
+        )
     }
 }
 
@@ -358,6 +351,17 @@ pub fn check_foreign_key_constrain(
     require_existing_rows(catalog, database, table, &foreign_key, ctx)
 }
 
+/// Go `checkForeignKeyConstrain`'s failure:
+/// `dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))`,
+/// over `job.SchemaName` and `tblInfo.Name.L`.
+fn no_referenced_row(database: &str, table: &str, foreign_key: &KvForeignKey) -> DriverError {
+    let fk =
+        crate::driver::fk_trigger_plan::meta(foreign_key).string(database, &table.go_to_lower());
+    DriverError::from(
+        tidb_util::dbterror::ERR_NO_REFERENCED_ROW2.generate_with_stack_by_args(&[fk.into()]),
+    )
+}
+
 /// Go `checkForeignKeyConstrain`: the rows a table ALREADY holds, checked
 /// against a constraint that is being ADDED to it.
 ///
@@ -390,12 +394,9 @@ pub(crate) fn require_existing_rows(
     else {
         return Ok(());
     };
-    let index = parent.foreign_key_lookup_index(&offsets).ok_or_else(|| {
-        DriverError::ForeignKeyNoReferencedRow {
-            table: format!("`{database}`.`{table}`"),
-            constraint: constraint_text(foreign_key),
-        }
-    })?;
+    let index = parent
+        .foreign_key_lookup_index(&offsets)
+        .ok_or_else(|| no_referenced_row(database, table, foreign_key))?;
     let Some(TableEntry::Kv(child_table)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
@@ -420,10 +421,7 @@ pub(crate) fn require_existing_rows(
         )?
         .is_empty()
         {
-            return Err(DriverError::ForeignKeyNoReferencedRow {
-                table: format!("`{database}`.`{table}`"),
-                constraint: constraint_text(foreign_key),
-            });
+            return Err(no_referenced_row(database, table, foreign_key));
         }
     }
     Ok(())
@@ -493,7 +491,10 @@ fn cascade_at_depth(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if depth > MAX_CASCADE_DEPTH {
-        return Err(DriverError::ForeignKeyCascadeTooDeep);
+        return Err(DriverError::from(
+            tidb_util::dbterror::exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
+                .generate_with_stack_by_args(&[crate::foreign_key::MAX_CASCADE_DEPTH.into()]),
+        ));
     }
     let dependents: Vec<_> = triggers
         .iter()

@@ -59,25 +59,25 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
             tidb_ast::SetOprTermBody::Nested(nested) => validate_set_opr_usage(nested)?,
             tidb_ast::SetOprTermBody::Select(select) if index + 1 < stmt.terms.len() => {
                 if select.into_outfile.is_some() {
-                    return Err(DriverError::WrongUsage {
-                        first: "UNION",
-                        second: "INTO",
-                    });
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                            .generate_with_stack_by_args(&["UNION".into(), ("INTO").into()]),
+                    ));
                 }
                 if term.in_braces {
                     continue;
                 }
                 if select.limit.is_some() {
-                    return Err(DriverError::WrongUsage {
-                        first: "UNION",
-                        second: "LIMIT",
-                    });
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                            .generate_with_stack_by_args(&["UNION".into(), ("LIMIT").into()]),
+                    ));
                 }
                 if !select.order_by.is_empty() {
-                    return Err(DriverError::WrongUsage {
-                        first: "UNION",
-                        second: "ORDER BY",
-                    });
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                            .generate_with_stack_by_args(&["UNION".into(), ("ORDER BY").into()]),
+                    ));
                 }
             }
             tidb_ast::SetOprTermBody::Select(_) => {}
@@ -114,7 +114,10 @@ pub(crate) fn validate_query_usage(
                 node.downcast_ref::<tidb_ast::JoinNode>()
             {
                 if !self.oracle_mode && alias.as_ref().is_none_or(String::is_empty) {
-                    self.error = Some(DriverError::DerivedMustHaveAlias);
+                    self.error = Some(DriverError::from(
+                        tidb_util::dbterror::ERR_DERIVED_MUST_HAVE_ALIAS
+                            .generate_with_stack_by_args(&[]),
+                    ));
                     return true;
                 }
             }
@@ -202,7 +205,10 @@ pub(crate) fn plan_set_opr_meta_stmt(
             .first()
             .is_some_and(|first: &Vec<(String, FieldType)>| first.len() != columns.len())
         {
-            return Err(DriverError::WrongNumberOfColumnsInSelect);
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         terms.push(columns);
     }

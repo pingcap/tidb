@@ -25,7 +25,7 @@ use tidb_executor::{Catalog, TableEntry};
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_model::PlacementSettings;
 
-use crate::{DriverError, SchemaErrorKind, Session};
+use crate::{DriverError, Session};
 
 const PENDING: &str = "PENDING";
 const SCHEDULED: &str = "SCHEDULED";
@@ -93,9 +93,10 @@ impl Session {
                         .into_iter()
                         .find(|name| name.go_lower_eq(database))
                     else {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                            database.clone(),
-                        )));
+                        return Err(DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                                .generate_with_stack_by_args(&[(database.clone()).into()]),
+                        ));
                     };
                     Ok(database_rows(catalog, &name)?.into_iter().collect())
                 })
@@ -121,9 +122,14 @@ impl Session {
                 self.with_catalog_mut(|catalog| {
                     let (database, entry_name, entry) =
                         placement_table(catalog, &database, &table_name)?;
-                    let unknown = || DriverError::UnknownPartition {
-                        partition: partition.clone(),
-                        table: entry_name.clone(),
+                    let unknown = || {
+                        DriverError::from(
+                            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                                .generate_with_stack_by_args(&[
+                                    partition.clone().into(),
+                                    entry_name.clone().into(),
+                                ]),
+                        )
                     };
                     let TableEntry::Kv(table) = entry else {
                         return Err(unknown());
@@ -279,9 +285,10 @@ fn placement_table<'a>(
     table_name: &str,
 ) -> Result<(String, String, &'a TableEntry), DriverError> {
     let missing = || {
-        DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{table_name}"
-        )))
+        DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+        )
     };
     let Some(entry) = catalog.table_in(database, table_name) else {
         return Err(missing());

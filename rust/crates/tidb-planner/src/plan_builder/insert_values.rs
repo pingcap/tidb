@@ -77,7 +77,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(database, name)
-            .ok_or_else(|| PlanError::unknown_table(format!("{database}.{name}")))?;
+            .ok_or_else(|| PlanError::unknown_table(database, name))?;
         let mut columns: Vec<(String, FieldType)> = Vec::new();
         let mut generated = Vec::new();
         for column in table
@@ -148,9 +148,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(&target.database, &target.table)
-            .ok_or_else(|| {
-                PlanError::unknown_table(format!("{}.{}", target.database, target.table))
-            })?
+            .ok_or_else(|| PlanError::unknown_table(&target.database, &target.table))?
             .clone();
         if !table.columns.iter().any(|column| column.is_generated) {
             return Ok(Vec::new());
@@ -238,9 +236,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(&target.database, &target.table)
-            .ok_or_else(|| {
-                PlanError::unknown_table(format!("{}.{}", target.database, target.table))
-            })?
+            .ok_or_else(|| PlanError::unknown_table(&target.database, &target.table))?
             .clone();
         let (schema, names) = self.insert_mock_schema(target);
         let mut values = InsertValues::default();

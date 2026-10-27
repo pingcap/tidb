@@ -6115,7 +6115,7 @@ fn explain_refuses_noop_select_clauses_like_the_bare_select() {
     ] {
         let error = session.run(sql).unwrap_err();
         assert!(
-            format!("{error:?}").contains("FunctionsNoopImpl"),
+            error.equal(&tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL),
             "{sql}: {error:?}"
         );
     }

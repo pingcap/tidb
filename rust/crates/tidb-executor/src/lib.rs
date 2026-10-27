@@ -256,8 +256,8 @@ pub use driver::{
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog,
-    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SchemaErrorKind,
-    SelectMeta, TableEntry, TxnErrorKind, VarError, ViewDef, DEFAULT_DATABASE,
+    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
+    TableEntry, VarError, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info, ExplainFormat};

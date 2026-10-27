@@ -418,7 +418,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                             + node.child_table.capacity()
                             + node.parent_database.capacity()
                             + node.parent_table.capacity()
-                            + node.constraint.capacity()
+                            + node.fk_string.capacity()
                             + (node.child_offsets.capacity() + node.parent_offsets.capacity())
                                 * std::mem::size_of::<usize>()) as i64
                     })

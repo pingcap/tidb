@@ -143,13 +143,11 @@ pub fn plan_hash_partition_management(
             for definition in definitions {
                 let (method, clause) = match definition.clause {
                     tidb_ast::PartitionDefinitionClause::None => continue,
-                    tidb_ast::PartitionDefinitionClause::LessThan(_) => {
-                        ("RANGE", "VALUES LESS THAN")
-                    }
+                    tidb_ast::PartitionDefinitionClause::LessThan(_) => ("RANGE", "LESS THAN"),
                     tidb_ast::PartitionDefinitionClause::In(_)
-                    | tidb_ast::PartitionDefinitionClause::Default => ("LIST", "VALUES IN"),
+                    | tidb_ast::PartitionDefinitionClause::Default => ("LIST", "IN"),
                     tidb_ast::PartitionDefinitionClause::History { .. } => {
-                        ("SYSTEM_TIME", "VALUES HISTORY")
+                        ("SYSTEM_TIME", "HISTORY")
                     }
                 };
                 return Err(errors::partition_wrong_values(method, clause));

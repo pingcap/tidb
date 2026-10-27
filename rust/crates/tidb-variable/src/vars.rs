@@ -2071,29 +2071,6 @@ impl SessionVars {
     }
 }
 
-/// Renders a [`VarError`] with Go's system-variable message text for the
-/// variants Go's `SetSystemVar` produces here; the callback payloads carry
-/// the same text Go's `errors.Annotate` would.
-pub fn render_var_error(error: &VarError) -> String {
-    match error {
-        VarError::UnknownSystemVariable(name) => format!("Unknown system variable '{name}'"),
-        VarError::ReadOnlyVariable(name) => {
-            format!("Variable '{name}' is a read only variable")
-        }
-        VarError::WrongValueForVar(name, value) => {
-            format!("Wrong value for variable '{name}': '{value}'")
-        }
-        VarError::GlobalOnlyVariable(name) => {
-            format!("Variable {name} is a global variable and should be set with SET GLOBAL")
-        }
-        VarError::SessionOnlyVariable(name) => {
-            format!("Variable {name} is a session variable and can not be used with SET GLOBAL")
-        }
-        VarError::ValidationRefused(message) => message.clone(),
-        other => format!("{other:?}"),
-    }
-}
-
 /// Go `strconv.FormatFloat(value, 'f', -1, 64)`.
 fn format_double(value: f64) -> String {
     tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)

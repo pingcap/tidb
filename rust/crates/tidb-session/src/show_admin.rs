@@ -283,8 +283,9 @@ impl crate::Session {
                 Some(_) => Err(DriverError::unsupported(
                     "SPLIT names a table without regions",
                 )),
-                None => Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+                None => Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 )),
             }
         })?;
@@ -316,7 +317,10 @@ impl crate::Session {
                 match catalog.table_in(database, name) {
                     // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
                     Some(tidb_executor::TableEntry::Kv(table)) if table.is_temporary() => {
-                        return Err(DriverError::OptOnTemporaryTable("admin checksum table"));
+                        return Err(DriverError::from(
+                            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                                .generate_with_stack_by_args(&["admin checksum table".into()]),
+                        ));
                     }
                     Some(tidb_executor::TableEntry::Kv(table)) => {
                         // Every table of a session shares one storage, so
@@ -338,10 +342,9 @@ impl crate::Session {
                         ))
                     }
                     None => {
-                        return Err(DriverError::Schema(
-                            tidb_executor::SchemaErrorKind::UnknownTable(format!(
-                                "{database}.{name}"
-                            )),
+                        return Err(DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                         ))
                     }
                 }

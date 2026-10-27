@@ -413,7 +413,9 @@ fn window_ntile_argument_domain() {
         "SELECT NTILE(k) OVER (ORDER BY id) FROM ranking_live",
     ] {
         assert!(
-            matches!(session.run(sql), Err(DriverError::WrongArguments(ref name)) if name == "ntile"),
+            session.run(sql).is_err_and(|error| error
+                .equal(&tidb_error::plannererrors::ERR_WRONG_ARGUMENTS)
+                && error.to_string() == "Incorrect arguments to ntile"),
             "expected ErrWrongArguments for {sql}"
         );
     }
@@ -422,8 +424,8 @@ fn window_ntile_argument_domain() {
     // `FALSE` lowers to the integer constant `0`, which fails the
     // positivity check, not the "not a constant at all" check a plain
     // column reference like `NTILE(k)` fails. Both grounds produce the
-    // identical `DriverError::WrongArguments("ntile")` / errno 1210 /
-    // "Incorrect arguments to ntile", so asserting only the error variant
+    // identical `ErrWrongArguments.GenWithStackByArgs("ntile")` / errno 1210 /
+    // "Incorrect arguments to ntile", so asserting only the error identity
     // cannot distinguish them -- `constant_uint`'s unit tests in
     // `tidb-executor/src/window.rs` (`constant_uint_tests`) pin the actual
     // ground: `FALSE` resolves to `Some(Some(0))`, exactly like `NTILE(0)`,

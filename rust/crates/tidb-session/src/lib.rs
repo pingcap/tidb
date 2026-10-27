@@ -34,7 +34,6 @@ use std::time::Duration;
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{Catalog, DriverError, MysqlRng};
-use tidb_executor::SchemaErrorKind;
 pub use load_stats_arm::ClientLocalFileReader;
 pub use tidb_planner::txn_mode::{
     txn_mode_for_begin, txn_mode_for_statement, SessionTxnMode, StatementTxnModeInputs,
@@ -1218,7 +1217,6 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
     Arc::new(MysqlRng::new_with_time())
 }
 
-pub use tidb_executor::TxnErrorKind;
 
 mod account;
 pub mod slow_log;
@@ -2026,7 +2024,7 @@ impl Session {
     /// The current database, or Go's `ErrNoDB` when none is selected.
     fn require_current_database(&self) -> Result<&str, DriverError> {
         if self.vars.current_db.is_empty() {
-            return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+            return Err(DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[])));
         }
         Ok(&self.vars.current_db)
     }
@@ -2516,10 +2514,7 @@ impl Session {
         if !client_multi_statements {
             match self.vars().multi_statement_mode() {
                 0 => {
-                    return Err(DriverError::ParseCoded {
-                        proto: &tidb_error::catalog::servererr::ERR_MULTI_STATEMENT_DISABLED,
-                        message: DISABLED.to_owned(),
-                    })
+                    return Err(DriverError::from((&tidb_error::catalog::servererr::ERR_MULTI_STATEMENT_DISABLED).generate_with_stack(DISABLED.to_owned())))
                 }
                 1 => {}
                 _ => self.deferred_multi_statement_warning = true,
@@ -3037,7 +3032,7 @@ impl Session {
             // aggregate raised it mid-scan) takes the empty-buffer arm even
             // though `to_mysql_error` on the DRIVER error carries no
             // evaluation-origin marker.
-            let eval_fatal = matches!(error, DriverError::JsonDocumentNullKey)
+            let eval_fatal = error.equal(&tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY)
                 || (reported.is_from_evaluation()
                     && matches!(
                         reported.code,

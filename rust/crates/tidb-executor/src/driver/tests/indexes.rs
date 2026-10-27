@@ -26,19 +26,19 @@ fn unique_indexes() {
     .unwrap();
 
     // A repeated unique value is rejected, naming the index.
-    match run_insert_on(
+    let error = run_insert_on(
         "INSERT INTO u VALUES (3, 'a@x', 30)",
         &mut catalog,
         &crate::StmtContext::for_query(),
-    ) {
-        Err(DriverError::DuplicateEntry { value, key }) => {
-            assert_eq!(value, "a@x");
-            // Captured from TiDB: the key is qualified table.index, as in
-            // "Duplicate entry 'a' for key 'm.code'".
-            assert_eq!(key, "u.email");
-        }
-        other => panic!("expected a duplicate-entry error, got {other:?}"),
-    }
+    )
+    .unwrap_err();
+    assert!(
+        error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS),
+        "{error:?}"
+    );
+    // Captured from TiDB: the key is qualified table.index, as in
+    // "Duplicate entry 'a' for key 'm.code'".
+    assert_eq!(error.to_string(), "Duplicate entry 'a@x' for key 'u.email'");
     // The rejected insert wrote nothing.
     assert_eq!(
         run_select_on(
@@ -52,14 +52,12 @@ fn unique_indexes() {
     );
 
     // UPDATE is checked too, and a rejected update leaves the row alone.
-    assert!(matches!(
-        run_update_on(
-            "UPDATE u SET email = 'a@x' WHERE id = 2",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::DuplicateEntry { .. })
-    ));
+    assert!((run_update_on(
+        "UPDATE u SET email = 'a@x' WHERE id = 2",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)));
     assert_eq!(
         datum_text_for_test(
             &run_select_on(

@@ -174,14 +174,22 @@ fn rename_user_moves_the_whole_account_row() {
     );
     assert!(session.run("SHOW GRANTS FOR 'bob'@'%'").is_err());
 
-    match session.run("RENAME USER 'nosuch'@'%' TO 'x'@'%'") {
-        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(old_missing),
-        other => panic!("expected RenameUserFailed, got {other:?}"),
-    }
-    match session.run("RENAME USER 'bobby'@'%' TO 'occupied'@'%'") {
-        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(!old_missing),
-        other => panic!("expected RenameUserFailed, got {other:?}"),
-    }
+    let error = session
+        .run("RENAME USER 'nosuch'@'%' TO 'x'@'%'")
+        .unwrap_err();
+    assert!(
+        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        "{error:?}"
+    );
+    assert!(error.to_string().ends_with(" old did not exist"), "{error}");
+    let error = session
+        .run("RENAME USER 'bobby'@'%' TO 'occupied'@'%'")
+        .unwrap_err();
+    assert!(
+        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        "{error:?}"
+    );
+    assert!(error.to_string().ends_with(" new did exist"), "{error}");
 }
 
 /// Go `executeRenameUser` renames every pair in one transaction: each pair
@@ -193,10 +201,14 @@ fn rename_user_is_one_transaction() {
     let mut session = Session::on_accounts(&registry);
     session.run("CREATE USER ru3, ru4, ru6@localhost").unwrap();
 
-    match session.run("RENAME USER ru3 TO ru5@localhost, nosuch TO ru7") {
-        Err(DriverError::RenameUserFailed { old_missing, .. }) => assert!(old_missing),
-        other => panic!("expected RenameUserFailed, got {other:?}"),
-    }
+    let error = session
+        .run("RENAME USER ru3 TO ru5@localhost, nosuch TO ru7")
+        .unwrap_err();
+    assert!(
+        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        "{error:?}"
+    );
+    assert!(error.to_string().ends_with(" old did not exist"), "{error}");
     assert!(
         registry.user_exists("ru3", "%"),
         "the first pair rolled back"

@@ -231,7 +231,7 @@ pub(crate) fn set_value_for_ref_column(
                     .field_type
                     .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT);
             }
-            Err(DriverError::NoDefaultForField(_)) => {
+            Err(error) if error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE) => {
                 row[offset] = crate::bad_null::zero_value(&column.field_type);
             }
             Err(error) => return Err(error),

@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, HashSet};
 use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
-use tidb_executor::{Catalog, DriverError, KvTable, SchemaErrorKind, TableEntry};
+use tidb_executor::{Catalog, DriverError, KvTable, TableEntry};
 use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_util::stringutil::go_to_lower;
 
@@ -93,7 +93,11 @@ impl Checker<'_> {
             tidb_mysql::ShowDBPriv => return Ok(()),
             tidb_mysql::CreatePriv | tidb_mysql::CreateViewPriv => {
                 if self.has_locked_tables() {
-                    return Err(DriverError::TableNotLocked(table.to_owned()).into());
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED
+                            .generate_with_stack_by_args(&[table.to_owned().into()]),
+                    )
+                    .into());
                 }
                 return Ok(());
             }
@@ -115,7 +119,11 @@ impl Checker<'_> {
                     lock.tp,
                     TableLockType::READ | TableLockType::WRITE_LOCAL | TableLockType::READ_ONLY
                 ) {
-                    return Err(DriverError::TableNotLockedForWrite(tb.name()).into());
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+                            .generate_with_stack_by_args(&[tb.name().into()]),
+                    )
+                    .into());
                 }
             }
         }
@@ -124,9 +132,17 @@ impl Checker<'_> {
                 if check_lock_tp_meet_privilege(held.tp, privilege) {
                     return Ok(());
                 }
-                return Err(DriverError::TableNotLockedForWrite(tb.name()).into());
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+                        .generate_with_stack_by_args(&[tb.name().into()]),
+                )
+                .into());
             }
-            return Err(DriverError::TableNotLocked(tb.name()).into());
+            return Err(DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED
+                    .generate_with_stack_by_args(&[tb.name().into()]),
+            )
+            .into());
         }
         if privilege == tidb_mysql::SelectPriv
             && matches!(
@@ -150,7 +166,11 @@ impl Checker<'_> {
                 tidb_mysql::CreatePriv | tidb_mysql::DropPriv | tidb_mysql::AlterPriv
             )
         {
-            return Err(DriverError::LockOrActiveTransaction.into());
+            return Err(DriverError::from(
+                tidb_error::catalog::table::ERR_LOCK_OR_ACTIVE_TRANSACTION
+                    .generate_with_stack_by_args(&[]),
+            )
+            .into());
         }
         if privilege == tidb_mysql::CreatePriv {
             return Ok(());
@@ -357,7 +377,10 @@ impl Session {
             .collect::<Result<_, _>>()?;
         for (db, table) in &names {
             if self.is_local_temporary_table(db, table) {
-                return Err(DriverError::UnsupportedLocalTempTableDDL("LOCK TABLES"));
+                return Err(DriverError::from(
+                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                        .generate_with_stack_by_args(&[("LOCK TABLES").into()]),
+                ));
             }
         }
         let login = self
@@ -371,21 +394,33 @@ impl Session {
         let mut unique_table_id = HashSet::new();
         for (lock, (db, name)) in locks.iter().zip(&names) {
             throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
-            let schema_id = catalog
-                .database_id(db)
-                .ok_or_else(|| DriverError::Schema(SchemaErrorKind::UnknownDatabase(db.clone())))?;
+            let schema_id = catalog.database_id(db).ok_or_else(|| {
+                DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(db.clone()).into()]),
+                )
+            })?;
             let table = match catalog.table_in(db, name) {
                 Some(TableEntry::Kv(table)) => table,
-                Some(_) => return Err(DriverError::UnsupportedOp),
+                Some(_) => {
+                    return Err(DriverError::from(
+                        tidb_error::catalog::table::ERR_UNSUPPORTED_OP
+                            .generate_with_stack_by_args(&[]),
+                    ))
+                }
                 None => {
-                    return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                        "{db}.{name}"
-                    ))))
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
+                    ))
                 }
             };
             check_table_locked(table, lock.lock_type, &info)?;
             if !unique_table_id.insert(table.table_id) {
-                return Err(DriverError::NonuniqTable(table.name()));
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
+                        .generate_with_stack_by_args(&[table.name().into()]),
+                ));
             }
             lock_tables.push(TableLockTpInfo {
                 schema_id,
@@ -545,8 +580,9 @@ impl Session {
             .collect::<Result<_, _>>()?;
         for (db, table) in &names {
             if self.is_local_temporary_table(db, table) {
-                return Err(DriverError::UnsupportedLocalTempTableDDL(
-                    "ADMIN CLEANUP TABLE LOCK",
+                return Err(DriverError::from(
+                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                        .generate_with_stack_by_args(&[("ADMIN CLEANUP TABLE LOCK").into()]),
                 ));
             }
         }
@@ -561,23 +597,35 @@ impl Session {
         let mut unlocked = 0;
         for (db, name) in &names {
             throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
-            let schema_id = catalog
-                .database_id(db)
-                .ok_or_else(|| DriverError::Schema(SchemaErrorKind::UnknownDatabase(db.clone())))?;
+            let schema_id = catalog.database_id(db).ok_or_else(|| {
+                DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(db.clone()).into()]),
+                )
+            })?;
             let table = match catalog.table_in(db, name) {
                 Some(TableEntry::Kv(table)) => table,
-                Some(_) => return Err(DriverError::UnsupportedOp),
+                Some(_) => {
+                    return Err(DriverError::from(
+                        tidb_error::catalog::table::ERR_UNSUPPORTED_OP
+                            .generate_with_stack_by_args(&[]),
+                    ))
+                }
                 None => {
-                    return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                        "{db}.{name}"
-                    ))))
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
+                    ))
                 }
             };
             if !table.is_locked() {
                 unlocked += 1;
             }
             if !unique_table_id.insert(table.table_id) {
-                return Err(DriverError::NonuniqTable(table.name()));
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
+                        .generate_with_stack_by_args(&[table.name().into()]),
+                ));
             }
             cleanup.push(TableLockTpInfo {
                 schema_id,
@@ -624,9 +672,9 @@ impl Session {
     /// Go's preprocessor does.
     fn table_lock_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
         match path {
-            [_] if self.vars.current_db.is_empty() => {
-                Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
-            }
+            [_] if self.vars.current_db.is_empty() => Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            )),
             [table] => Ok((self.vars.current_db.clone(), table.clone())),
             [db, table] => Ok((db.clone(), table.clone())),
             _ => Err(DriverError::unsupported(

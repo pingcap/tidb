@@ -657,10 +657,7 @@ fn as_of_timestamp_reads_the_stores_history() {
     ] {
         let error = session.run(sql).unwrap_err();
         assert!(
-            matches!(
-                error,
-                DriverError::Schema(crate::SchemaErrorKind::UnknownTable(_))
-            ),
+            error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS),
             "{sql}: got {error:?}"
         );
     }

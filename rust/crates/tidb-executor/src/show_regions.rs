@@ -25,7 +25,7 @@ use std::collections::HashSet;
 
 use crate::kv_table::KvTable;
 use crate::region_map::{RegionMeta, RegionStore};
-use crate::{Catalog, DriverError, MysqlError, SchemaErrorKind, TableEntry};
+use crate::{Catalog, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::Datum;
 use tidb_error::tidb::errcode;
@@ -55,9 +55,10 @@ fn resolve<'a>(
     what: &'static str,
 ) -> Result<Target<'a>, DriverError> {
     let Some(entry) = catalog.table_in(database, table_name) else {
-        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{table_name}"
-        ))));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+        ));
     };
     let target = match entry {
         TableEntry::Kv(table) => Target {
@@ -89,7 +90,10 @@ fn resolve<'a>(
         },
     };
     if target.table.is_some_and(KvTable::is_temporary) {
-        return Err(DriverError::OptOnTemporaryTable(what));
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&[what.into()]),
+        ));
     }
     Ok(target)
 }
@@ -103,7 +107,10 @@ fn physical_ids(
 ) -> Result<(Vec<i64>, bool), DriverError> {
     let Some(partitioning) = target.table.and_then(KvTable::partition) else {
         if !partitions.is_empty() {
-            return Err(DriverError::PartitionClauseOnNonpartitioned);
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         return Ok((vec![target.id], false));
     };
@@ -118,9 +125,12 @@ fn physical_ids(
                     .go_to_lower()
                     .go_equal_fold(&name.go_to_lower())
             })
-            .ok_or_else(|| DriverError::UnknownPartition {
-                partition: name.go_to_lower(),
-                table: target.name.clone(),
+            .ok_or_else(|| {
+                DriverError::from(
+                    tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                        &[name.go_to_lower().into(), target.name.clone().into()],
+                    ),
+                )
             })?;
         ids.push(definition.id);
     }
@@ -371,11 +381,11 @@ pub fn show_table_regions(
                     .find(|index| index.name.go_lower_eq(name))
             });
             let Some(found) = found else {
-                return Err(DriverError::KeyNotExists {
-                    key: name.to_owned(),
-                    table: target.name.clone(),
-                }
-                .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
+                        &[name.to_owned().into(), target.name.clone().into()],
+                    ),
+                ));
             };
             if found.global {
                 physical_ids = vec![target.id];

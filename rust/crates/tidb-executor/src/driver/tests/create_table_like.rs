@@ -170,13 +170,12 @@ fn like_a_view_is_wrong_object() {
         )
         .unwrap();
 
-    assert!(matches!(
-        crate::run_create_table_on("CREATE TABLE dst LIKE v", &mut catalog),
-        Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
-            ref name,
-            expected: "BASE TABLE",
-        })) if name == "test.v"
-    ));
+    let error = crate::run_create_table_on("CREATE TABLE dst LIKE v", &mut catalog).unwrap_err();
+    assert!(
+        error.equal(&tidb_error::catalog::infoschema::ERR_WRONG_OBJECT),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "'test.v' is not BASE TABLE");
 }
 
 /// A source that does not exist is Go's `ErrTableNotExists` (1146), and an
@@ -187,18 +186,21 @@ fn like_reports_missing_source_and_existing_target() {
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT)", &mut catalog).unwrap();
 
-    assert!(matches!(
-        crate::run_create_table_on("CREATE TABLE dst LIKE nosuch", &mut catalog),
-        Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(ref name)))
-            if name == "test.nosuch"
-    ));
+    let error =
+        crate::run_create_table_on("CREATE TABLE dst LIKE nosuch", &mut catalog).unwrap_err();
+    assert!(
+        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "Table 'test.nosuch' doesn't exist");
 
     crate::run_create_table_on("CREATE TABLE dst LIKE t", &mut catalog).unwrap();
-    assert!(matches!(
-        crate::run_create_table_on("CREATE TABLE dst LIKE t", &mut catalog),
-        Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(ref name)))
-            if name == "test.dst"
-    ));
+    let error = crate::run_create_table_on("CREATE TABLE dst LIKE t", &mut catalog).unwrap_err();
+    assert!(
+        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "Table 'test.dst' already exists");
     // `IF NOT EXISTS` reports no error and creates nothing.
     assert!(
         !crate::run_create_table_on("CREATE TABLE IF NOT EXISTS dst LIKE t", &mut catalog).unwrap()

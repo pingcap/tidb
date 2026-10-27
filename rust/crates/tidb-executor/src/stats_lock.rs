@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
 use tidb_stats::StatsLockTransaction;
 
-use crate::{Catalog, DriverError, SchemaErrorKind, StmtContext, TableEntry};
+use crate::{Catalog, DriverError, StmtContext, TableEntry};
 use tidb_hack::GoToLower;
 
 /// Executes one parsed `LOCK STATS` or `UNLOCK STATS` through the ordinary
@@ -64,9 +64,14 @@ pub fn execute_catalog_stats_lock(
                 .definitions
                 .iter()
                 .find(|definition| definition.name.go_to_lower() == written_name.go_to_lower())
-                .ok_or_else(|| DriverError::UnknownPartition {
-                    partition: written_name.go_to_lower(),
-                    table: table.name(),
+                .ok_or_else(|| {
+                    DriverError::from(
+                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            .generate_with_stack_by_args(&[
+                                written_name.go_to_lower().into(),
+                                table.name().into(),
+                            ]),
+                    )
                 })?;
             partition_names.insert(definition.id, written_name.go_to_lower());
         }
@@ -139,9 +144,10 @@ fn kv_table<'a>(
 ) -> Result<&'a crate::KvTable, DriverError> {
     match catalog.table_in(database, table_name) {
         Some(TableEntry::Kv(table)) => Ok(table),
-        _ => Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{table_name}"
-        )))),
+        _ => Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+        )),
     }
 }
 

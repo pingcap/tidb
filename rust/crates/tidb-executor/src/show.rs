@@ -136,15 +136,18 @@ pub fn fetch_show_tables(
             .as_deref()
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
-        return Err(crate::DriverError::DbAccessDenied {
-            user: user.to_owned(),
-            host: host.to_owned(),
-            database: database.to_owned(),
-        });
+        return Err(crate::DriverError::from(
+            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                user.to_owned().into(),
+                host.to_owned().into(),
+                database.to_owned().into(),
+            ]),
+        ));
     }
     let Some(names) = is.table_names(database) else {
-        return Err(crate::DriverError::Schema(
-            crate::SchemaErrorKind::UnknownDatabase(database.to_owned()),
+        return Err(crate::DriverError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(database.to_owned()).into()]),
         ));
     };
     let any_but_temporary = PrivilegeType(AllPrivMask.0 & !CreateTMPTablePriv.0);

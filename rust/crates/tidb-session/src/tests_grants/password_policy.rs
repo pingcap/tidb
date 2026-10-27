@@ -19,7 +19,7 @@ fn validate_password_enforces_account_writes_and_scores_sql_values() {
     let error = session
         .run("CREATE USER 'weak'@'%' IDENTIFIED BY '1234'")
         .unwrap_err();
-    assert!(matches!(&error, DriverError::NotValidPassword { .. }));
+    assert!(&error.equal(&tidb_error::catalog::variable::ERR_NOT_VALID_PASSWORD));
     let wire = error.to_mysql_error();
     assert_eq!(wire.code, 1819);
     assert_eq!(wire.state, *b"HY000");
@@ -347,7 +347,9 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     assert!(sandbox.in_sandbox_mode());
     for sql in ["SELECT 1", "SHOW DATABASES", "BEGIN", "SET @x = 1"] {
         assert!(
-            matches!(sandbox.run(sql), Err(DriverError::MustChangePassword)),
+            sandbox.run(sql).is_err_and(
+                |error| error.equal(&tidb_util::dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD)
+            ),
             "{sql} must be gated"
         );
     }

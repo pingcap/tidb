@@ -19,7 +19,7 @@ pub mod account_password;
 pub mod account_tables;
 
 use crate::sessionctx::SessionContext;
-use crate::{Catalog, DriverError, SchemaErrorKind};
+use crate::{Catalog, DriverError};
 
 /// Go `SimpleExec.executeUse`: an invisible schema is refused (1044) before
 /// it is looked up, so it cannot be told apart from a missing one; an unknown
@@ -34,7 +34,9 @@ pub fn execute_use(
     // An empty schema name (`USE ``) is `ErrNoDB`, as Go's preprocessor
     // answers it, not an unknown database.
     if name.is_empty() {
-        return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+        ));
     }
     if !ctx.privilege_manager().db_is_visible(name) {
         let vars = ctx.session_vars();
@@ -43,16 +45,19 @@ pub fn execute_use(
             .as_deref()
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
-        return Err(DriverError::DbAccessDenied {
-            user: user.to_owned(),
-            host: host.to_owned(),
-            database: name.to_owned(),
-        });
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                user.to_owned().into(),
+                host.to_owned().into(),
+                name.to_owned().into(),
+            ]),
+        ));
     }
     let Some(charset) = is.database_charset(name) else {
-        return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-            name.to_owned(),
-        )));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(name.to_owned()).into()]),
+        ));
     };
     let vars = ctx.session_vars_mut();
     vars.current_db_changed = name != vars.current_db;
@@ -124,12 +129,13 @@ pub fn execute_set_role(
                 if checker.find_edge(&role, &account) {
                     Ok(role)
                 } else {
-                    Err(DriverError::RoleNotGranted {
-                        role: role.0,
-                        role_host: role.1,
-                        user: account.0.clone(),
-                        host: account.1.clone(),
-                    })
+                    Err(DriverError::from(
+                        tidb_util::dbterror::exeerrors::ERR_ROLE_NOT_GRANTED
+                            .generate_with_stack_by_args(&[
+                                format!("`{}`@`{}`", role.0, role.1).into(),
+                                format!("{}@{}", account.0.clone(), account.1.clone()).into(),
+                            ]),
+                    ))
                 }
             })
             .collect()

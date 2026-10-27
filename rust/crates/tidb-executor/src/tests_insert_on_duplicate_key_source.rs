@@ -157,13 +157,10 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     )
     .unwrap_err();
     assert!(
-        matches!(
-            &error,
-            crate::DriverError::UnknownColumnInClause { column, clause }
-                if column == "c" && clause == "field list"
-        ),
+        error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
         "unexpected error: {error:?}"
     );
+    assert_eq!(error.to_string(), "Unknown column 'c' in 'field list'");
 
     // insert_test.go:253-258: decimal primary key under the `SET` syntax;
     // the duplicate routes into the UPDATE and reads back as `1.0000`.

@@ -136,8 +136,9 @@ impl Session {
                     // Go `executor.CreateTable`'s `SchemaByName` (1049)
                     // precedes `BuildTableInfoWithStmt`.
                     if !catalog.has_database(&database) {
-                        return Err(DriverError::Schema(
-                            tidb_executor::SchemaErrorKind::UnknownDatabase(database.clone()),
+                        return Err(DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                                .generate_with_stack_by_args(&[(database.clone()).into()]),
                         ));
                     }
                     // Go `BuildTableInfoWithLike`: the source must be a base
@@ -148,11 +149,13 @@ impl Session {
                             | tidb_executor::TableEntry::Sequence(_),
                         ) = catalog.table_in(schema, name)
                         {
-                            return Err(DriverError::Schema(
-                                tidb_executor::SchemaErrorKind::WrongObject {
-                                    name: format!("{database}.{name}"),
-                                    expected: "BASE TABLE",
-                                },
+                            return Err(DriverError::from(
+                                tidb_error::catalog::infoschema::ERR_WRONG_OBJECT
+                                    .generate_with_stack_by_args(&[
+                                        (&database).into(),
+                                        (&name).into(),
+                                        ("BASE TABLE").into(),
+                                    ]),
                             ));
                         }
                     }
@@ -185,16 +188,21 @@ impl Session {
         }
         if let Some((_, user, host)) = self.privilege_context() {
             if !self.has_any_scoped_privilege(&database, &name, crate::privilege::any_priv_mask()) {
-                return Err(DriverError::TableAccessDenied {
-                    privilege: verb,
-                    user: user.to_owned(),
-                    host: host.to_owned(),
-                    table: name,
-                });
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                        &[
+                            verb.into(),
+                            user.to_owned().into(),
+                            host.to_owned().into(),
+                            name.into(),
+                        ],
+                    ),
+                ));
             }
         }
-        Err(DriverError::Schema(
-            tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+        Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ))
     }
 
@@ -210,8 +218,9 @@ impl Session {
             if catalog.table_in(&database, &name).is_some() {
                 Ok(())
             } else {
-                Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+                Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 ))
             }
         })
@@ -229,15 +238,15 @@ impl Session {
             tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
         self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
-            None => Err(DriverError::Schema(
-                tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+            None => Err(DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )),
             Some(tidb_executor::TableEntry::View(_) | tidb_executor::TableEntry::Sequence(_)) => {
-                Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::WrongObject {
-                        name: format!("{database}.{name}"),
-                        expected: "BASE TABLE",
-                    },
+                Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                        &[(&database).into(), (&name).into(), ("BASE TABLE").into()],
+                    ),
                 ))
             }
             Some(_) => Ok(()),
@@ -270,10 +279,10 @@ impl Session {
         // with or without IF EXISTS.
         if let DdlStatement::DropDatabase { name, .. } = statement {
             if name.go_lower_eq("mysql") {
-                return Err(DriverError::DdlCoded {
-                    proto: &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
-                    message: "Drop 'mysql' database is forbidden".to_owned(),
-                });
+                return Err(DriverError::from(
+                    (&tidb_util::dbterror::ERR_FORBIDDEN_DDL)
+                        .generate_with_stack("Drop 'mysql' database is forbidden".to_owned()),
+                ));
             }
         }
         service.check_cached_table_ddl(parsed, &self.vars.current_db)?;

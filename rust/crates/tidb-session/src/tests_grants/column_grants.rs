@@ -23,15 +23,10 @@ fn only_the_four_column_privileges_accept_a_column_list() {
             .unwrap();
     }
     for privilege in ["DELETE", "DROP", "ALTER", "INDEX", "CREATE", "GRANT OPTION"] {
-        assert!(
-            matches!(
-                session.run(&format!("GRANT {privilege} (a) ON test.t TO 'u'@'%'")),
-                Err(DriverError::WrongUsage {
-                    first: "COLUMN GRANT",
-                    second: "NON-COLUMN PRIVILEGES"
-                })
-            ),
-            "{privilege} (a) should be refused"
+        crate::tests_support::assert_go_error(
+            session.run(&format!("GRANT {privilege} (a) ON test.t TO 'u'@'%'")),
+            &tidb_util::dbterror::exeerrors::ERR_WRONG_USAGE,
+            &["COLUMN GRANT".into(), "NON-COLUMN PRIVILEGES".into()],
         );
     }
 
@@ -210,12 +205,10 @@ fn a_column_that_does_not_exist_is_refused_at_grant_time() {
         "REVOKE SELECT (nope) ON test.t FROM 'u3'@'%'",
         "REVOKE SELECT (a) ON test.t FROM 'u3'@'%'",
     ] {
-        assert!(
-            matches!(
-                session.run(statement),
-                Err(DriverError::RevokeNoTableGrant { ref table, .. }) if table == "t"
-            ),
-            "{statement} should report the table-level missing grant"
+        crate::tests_support::assert_err(
+            session.run(statement),
+            1105,
+            "There is no such grant defined for user 'u3' on host '%' on table test.t",
         );
     }
 

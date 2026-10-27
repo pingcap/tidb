@@ -68,7 +68,10 @@ impl Session {
                 // go appends the statement error into the warning buffer as
                 // well (driver_tidb.go:376's error door), so SHOW WARNINGS
                 // after the refused statement carries the same 1235 row.
-                let error = DriverError::FunctionsNoopImpl(clause);
+                let error = DriverError::from(
+                    tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                        .generate_with_stack_by_args(&[(clause).into()]),
+                );
                 self.append_driver_error(WarningLevel::Error, &error);
                 Err(error)
             }
@@ -76,7 +79,10 @@ impl Session {
                 // Go `StmtCtx.AppendWarning(expression.ErrFunctionsNoopImpl...)`.
                 self.append_driver_error(
                     WarningLevel::Warning,
-                    &DriverError::FunctionsNoopImpl(clause),
+                    &DriverError::from(
+                        tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                            .generate_with_stack_by_args(&[(clause).into()]),
+                    ),
                 );
                 Ok(())
             }
@@ -112,7 +118,10 @@ impl Session {
             return Ok(());
         }
         for clause in gated {
-            let error = DriverError::FunctionsNoopImpl(clause);
+            let error = DriverError::from(
+                tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                    .generate_with_stack_by_args(&[(clause).into()]),
+            );
             if mode == NoopFuncsMode::Off {
                 return Err(error);
             }

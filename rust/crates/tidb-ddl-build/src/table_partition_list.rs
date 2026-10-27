@@ -115,7 +115,7 @@ pub fn build_list_columns_values(
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(errors::partition_wrong_values("RANGE", "VALUES LESS THAN"));
+                return Err(errors::partition_wrong_values("RANGE", "LESS THAN"));
             }
             _ => return Err(errors::partitions_must_be_defined("LIST")),
         }

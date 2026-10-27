@@ -252,9 +252,10 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
         kv_read_error("row read failed", retryable()),
         kv_write_error(retryable()),
     ] {
-        let DriverError::Txn(TxnErrorKind::RegionUnavailable) = error else {
-            panic!("retryable storage failure lost its transaction identity")
-        };
+        assert!(
+            error.equal(&tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE),
+            "retryable storage failure lost its transaction identity"
+        );
     }
 
     let ordinary = kv_read_error(
@@ -296,7 +297,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
         &ctx,
     )
     .expect_err("an existing clustered key must not be overwritten");
-    assert!(matches!(existing, DriverError::DuplicateEntry { .. }));
+    assert!(existing.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS));
     let mut repeated_catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
@@ -309,7 +310,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
         &ctx,
     )
     .expect_err("duplicate keys in one VALUES list must be rejected");
-    assert!(matches!(repeated, DriverError::DuplicateEntry { .. }));
+    assert!(repeated.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS));
 }
 
 /// Go finishes a table-range cop task with a root TableReader before feeding

@@ -642,15 +642,20 @@ fn resolve_insert_target(
     let (database, table_name) = split_table_path(&insert.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
     let table = catalog.get_in(&database, &table_name).ok_or_else(|| {
-        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-            "{database}.{table_name}"
-        )))
+        DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+        )
     })?;
     if table.is_view() {
-        return Err(DriverError::InsertIntoViewUnsupported(table_name));
+        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+            format!("insert into view {} is not supported now", table_name),
+        )));
     }
     if table.is_sequence() {
-        return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
+        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+            format!("insert into sequence {} is not supported now", table_name),
+        )));
     }
     let TableEntry::Kv(_) = table else {
         return Err(DriverError::Mysql(MysqlError::terror(
@@ -694,10 +699,12 @@ fn resolve_insert_target(
     // a column named twice, in the column list or the SET form.
     for (position, &offset) in target_offsets.iter().enumerate() {
         if target_offsets[..position].contains(&offset) {
-            return Err(DriverError::DdlCoded {
-                proto: &tidb_error::catalog::table::ERR_DUPLICATE_COLUMN,
-                message: format!("Column '{}' specified twice", column_list[offset].0),
-            });
+            return Err(DriverError::from(
+                (&tidb_error::catalog::table::ERR_DUPLICATE_COLUMN).generate_with_stack(format!(
+                    "Column '{}' specified twice",
+                    column_list[offset].0
+                )),
+            ));
         }
     }
     Ok(InsertTargetLayout {
@@ -718,10 +725,12 @@ fn resolve_insert_target(
 fn refuse_generated_insert_select_targets(layout: &InsertTargetLayout) -> Result<(), DriverError> {
     for &offset in &layout.target_offsets {
         if layout.generated_targets[offset] {
-            return Err(DriverError::BadGeneratedColumn {
-                column: layout.column_list[offset].0.clone(),
-                table: layout.table_name.clone(),
-            });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
+                    (layout.column_list[offset].0.clone()).into(),
+                    layout.table_name.clone().into(),
+                ]),
+            ));
         }
     }
     Ok(())
@@ -741,7 +750,10 @@ pub(crate) fn validate_insert_for_explain(
     let target_width = layout.target_offsets.len();
     if insert.source.is_some() {
         if select_width.is_some_and(|width| width != target_width) {
-            return Err(DriverError::WrongValueCountOnRow { row: 1 });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                    .generate_with_stack_by_args(&[1.into()]),
+            ));
         }
         return refuse_generated_insert_select_targets(&layout);
     }
@@ -751,7 +763,10 @@ pub(crate) fn validate_insert_for_explain(
         let width = values.len();
         let expected = if index == 0 { target_width } else { previous_width };
         if (index > 0 || names_a_column || width > 0) && width != expected {
-            return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                    .generate_with_stack_by_args(&[(index + 1).into()]),
+            ));
         }
         previous_width = width;
     }
@@ -1020,13 +1035,21 @@ fn run_insert_rows(
         None
     } else {
         let Some(spec) = kv.partition() else {
-            return Err(DriverError::PartitionClauseOnNonpartitioned);
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            ));
         };
         Some(
             crate::partition_pruning::ids_for_selected_partitions(spec, &insert.partitions)
-                .map_err(|partition| DriverError::UnknownPartition {
-                    partition,
-                    table: table_name.clone(),
+                .map_err(|partition| {
+                    DriverError::from(
+                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            .generate_with_stack_by_args(&[
+                                partition.into(),
+                                table_name.clone().into(),
+                            ]),
+                    )
                 })?,
         )
     };
@@ -1098,7 +1121,10 @@ fn run_insert_rows(
             if width != expected {
                 // Go's INSERT SELECT check (planbuilder.go:4474) always
                 // reports row 1.
-                return Err(DriverError::WrongValueCountOnRow { row: 1 });
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                        .generate_with_stack_by_args(&[1.into()]),
+                ));
             }
             previous_width = width;
         }
@@ -1459,19 +1485,17 @@ fn run_insert_rows(
                         ctx.next_row_id_shard(1),
                     )
                     .map_err(|error| match error {
-                        AutoRandomError::ExplicitInsertDisabled => DriverError::InvalidAutoRandom(
-                            "Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
-                                .to_owned(),
-                        ),
+                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
+                                .to_owned()).into()])),
                         AutoRandomError::AutoId(AutoIdError::Exhausted) => {
-                            DriverError::AutoRandReadFailed
+                            DriverError::from(tidb_error::catalog::autoid::ERR_AUTO_RAND_READ_FAILED.generate_with_stack_by_args(&[]))
                         }
                         AutoRandomError::AutoId(AutoIdError::OutOfRange {
                             value,
                             type_name,
-                        }) => DriverError::ConstantOverflows { value, type_name },
+                        }) => DriverError::from(tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-                            DriverError::AutoIdUnavailable(detail.0)
+                            DriverError::from(tidb_error::mysql::MysqlError::unknown(detail.0))
                         }
                         AutoRandomError::NotApplicable
                         | AutoRandomError::RebaseOverflow { .. }
@@ -1547,7 +1571,13 @@ fn run_insert_rows(
                             // statement (insert.go `insertRows`'s caller).
                             AutoIdError::OutOfRange { value, type_name } => {
                                 if ctx.strict() && !insert.ignore {
-                                    return Err(DriverError::ConstantOverflows { value, type_name });
+                                    return Err(DriverError::from(
+                                        tidb_error::catalog::types::ERR_OVERFLOW
+                                            .generate_with_stack(format!(
+                                                "constant {} overflows {}",
+                                                value, type_name
+                                            )),
+                                    ));
                                 }
                                 ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
                                     tidb_util::context::WarningLevel::Warning,
@@ -1556,7 +1586,10 @@ fn run_insert_rows(
                                 ));
                                 if !has_on_duplicate {
                                     if !insert.ignore {
-                                        return Err(DriverError::AutoincReadFailed);
+                                        return Err(DriverError::from(
+                                            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                                                .generate_with_stack_by_args(&[]),
+                                        ));
                                     }
                                     ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
                                         tidb_util::context::WarningLevel::Warning,
@@ -1571,7 +1604,9 @@ fn run_insert_rows(
                                 ))
                             }
                             AutoIdError::Store(detail) => {
-                                return Err(DriverError::AutoIdUnavailable(detail.0));
+                                return Err(DriverError::from(
+                                    tidb_error::mysql::MysqlError::unknown(detail.0),
+                                ));
                             }
                         }
                     }
@@ -1892,7 +1927,7 @@ fn run_insert_rows(
                 &[row.to_vec()],
                 ctx,
             ) {
-                if matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
+                if error.equal(&tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2) {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
@@ -1958,7 +1993,7 @@ fn run_insert_rows(
                 // without a warning.
                 if load_restrictive.is_some()
                     && insert.ignore
-                    && matches!(rendered, DriverError::CheckConstraintViolated(_))
+                    && rendered.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
                 {
                     copied += 1;
                     continue;
@@ -2055,43 +2090,52 @@ pub fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
         crate::kv_table::KvTableError::ColumnCast(error) => {
             DriverError::Exec(crate::ExecError::Mysql(error))
         }
-        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-            DriverError::DuplicateEntry { value, key }
-        }
+        crate::kv_table::KvTableError::DuplicateEntry { value, key } => DriverError::from(
+            tidb_error::catalog::kv::ERR_KEY_EXISTS
+                .fast_generate_by_args(&[value.into(), key.into()]),
+        ),
         crate::kv_table::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
         crate::kv_table::KvTableError::PartitionEval(eval) => {
             DriverError::Exec(crate::ExecError::Eval(eval))
         }
-        crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
-            DriverError::CheckConstraintViolated(name)
-        }
+        crate::kv_table::KvTableError::CheckConstraintViolated(name) => DriverError::from(
+            tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+                .fast_generate_by_args(&[name.into()]),
+        ),
         crate::kv_table::KvTableError::CheckConstraint {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
         // A RANGE table with no `MAXVALUE` partition rejects the row rather
         // than storing it somewhere; 1526 is the code an application sees.
-        crate::kv_table::KvTableError::NoPartitionForValue(value) => {
-            DriverError::NoPartitionForValue(value)
-        }
-        crate::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet => {
-            DriverError::RowDoesNotMatchGivenPartitionSet
-        }
+        crate::kv_table::KvTableError::NoPartitionForValue(value) => DriverError::from(
+            tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
+                .generate_with_stack_by_args(&[value.into()]),
+        ),
+        crate::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet => DriverError::from(
+            tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                .generate_with_stack_by_args(&[]),
+        ),
         // A HASH partition value with no signed reading is Go's own
         // `ConvertTo` error surfacing out of `locateHashPartition`: 1690,
         // naming the value and `bigint`, the type it did not fit.
-        crate::kv_table::KvTableError::PartitionValueOverflowsBigint(value) => {
-            DriverError::ConstantOverflows {
+        crate::kv_table::KvTableError::PartitionValueOverflowsBigint(value) => DriverError::from(
+            tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!(
+                "constant {} overflows {}",
                 value,
-                type_name: "bigint".to_owned(),
-            }
-        }
+                "bigint".to_owned()
+            )),
+        ),
         // The `_tidb_rowid` a non-clustered row needs comes off the same
         // counter the AUTO_INCREMENT column does, so its exhaustion is the
         // same 1467 an allocated column value would have reported.
-        crate::kv_table::KvTableError::AutoIdExhausted => DriverError::AutoincReadFailed,
-        other => DriverError::Parse(format!("row encode failed: {other:?}")),
+        crate::kv_table::KvTableError::AutoIdExhausted => DriverError::from(
+            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+        ),
+        other => DriverError::from(tidb_util::misc::syntax_error(format!(
+            "row encode failed: {other:?}"
+        ))),
     }
 }
 
@@ -2104,22 +2148,25 @@ fn handle_partition_write_error(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     match error {
-        error @ (DriverError::NoPartitionForValue(_)
-        | DriverError::RowDoesNotMatchGivenPartitionSet
         // Go's `batchCheckAndInsert` (the IGNORE path) downgrades a violated
         // CHECK to a warning and skips the row, exactly like a duplicate key
         // (`insert_common.go:1364-1370`); a plain insert still fails the
         // statement from `addRecord`.
-        | DriverError::CheckConstraintViolated(_))
-            if ignore =>
+        error
+            if ignore
+                && (error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
+                    || error.equal(
+                        &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET,
+                    )
+                    || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)) =>
         {
             let warning = error.to_mysql_error();
             ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
+                tidb_util::context::WarningLevel::Warning,
+                warning.code,
+                warning.message.clone(),
+                warning.identity,
+            ));
             Ok(())
         }
         error => Err(error),
@@ -2391,10 +2438,10 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     if let tidb_ast::UpdateKind::Single(table) = &update.kind {
         if super::planner_bridge::is_cte(update.with.as_ref(), table) {
             super::planner_bridge::update_target_columns(update, catalog, current_db, ctx)?;
-            return Err(DriverError::NonUpdatableTable {
-                table: table.name.join("."),
-                statement: "UPDATE",
-            });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                    .generate_with_stack_by_args(&[(table.name.join(".")).into(), "UPDATE".into()]),
+            ));
         }
     }
     let source = update_source_query(update);
@@ -2545,12 +2592,18 @@ fn update_assignments_for_plan(
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
-        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        )))
+        DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        )
     })?;
     match table {
-        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        TableEntry::View(_) => {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                    .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
+            ))
+        }
         TableEntry::Sequence(_) => {
             return Err(DriverError::unsupported(
                 "UPDATE of a sequence is not a statement TiDB accepts",
@@ -3257,19 +3310,27 @@ fn run_update_with_physical(
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
-        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        )))
+        DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        )
     })?;
     if !table_ref.partitions.is_empty() && !matches!(table, TableEntry::Kv(_)) {
-        return Err(DriverError::UnknownPartition {
-            partition: table_ref.partitions[0].clone(),
-            table: name.clone(),
-        });
+        return Err(DriverError::from(
+            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                (table_ref.partitions[0].clone()).into(),
+                name.clone().into(),
+            ]),
+        ));
     }
     let physical_kv_source = matches!(table, TableEntry::Kv(_));
     match table {
-        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        TableEntry::View(_) => {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                    .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
+            ))
+        }
         TableEntry::Sequence(_) => {
             return Err(DriverError::unsupported(
                 "UPDATE of a sequence is not a statement TiDB accepts",
@@ -3384,16 +3445,25 @@ fn run_update_with_physical(
         Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
         Some(TableEntry::Kv(kv)) => {
             let Some(spec) = kv.partition() else {
-                return Err(DriverError::UnknownPartition {
-                    partition: table_ref.partitions[0].clone(),
-                    table: name.clone(),
-                });
+                return Err(DriverError::from(
+                    tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                        &[
+                            (table_ref.partitions[0].clone()).into(),
+                            name.clone().into(),
+                        ],
+                    ),
+                ));
             };
             Some(
                 crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
-                    .map_err(|partition| DriverError::UnknownPartition {
-                        partition,
-                        table: name.clone(),
+                    .map_err(|partition| {
+                        DriverError::from(
+                            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                                .generate_with_stack_by_args(&[
+                                    partition.into(),
+                                    name.clone().into(),
+                                ]),
+                        )
                     })?,
             )
         }
@@ -3701,18 +3771,24 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     if let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind {
         // `isCTE(tblW)` comes first: a CTE shadows any table of its name.
         if super::planner_bridge::is_cte(delete.with.as_ref(), table_ref) {
-            return Err(DriverError::NonUpdatableTable {
-                table: table_ref.name.join("."),
-                statement: "DELETE",
-            });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                    (table_ref.name.join(".")).into(),
+                    "DELETE".into(),
+                ]),
+            ));
         }
         let (database, name) = single_table_name(table_ref, current_db)?;
         match catalog.get_in(&database, &name) {
             Some(TableEntry::View(_)) => {
-                return Err(DriverError::DeleteViewUnsupported(name));
+                return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                    format!("delete view {} is not supported now", name),
+                )));
             }
             Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::DeleteSequenceUnsupported(name));
+                return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                    format!("delete sequence {} is not supported now", name),
+                )));
             }
             _ => {}
         }
@@ -3838,10 +3914,12 @@ fn run_delete_with_physical(
     if !table_ref.partitions.is_empty()
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
     {
-        return Err(DriverError::UnknownPartition {
-            partition: table_ref.partitions[0].clone(),
-            table: name.clone(),
-        });
+        return Err(DriverError::from(
+            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                (table_ref.partitions[0].clone()).into(),
+                name.clone().into(),
+            ]),
+        ));
     }
     let physical = physical_source
         .as_deref_mut()
@@ -3935,9 +4013,10 @@ impl PhysicalWriteShape {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let table = catalog.get_in(database, name).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
+            DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+            )
         })?;
         let TableEntry::Kv(table) = table else {
             return Err(DriverError::Mysql(MysqlError::terror(

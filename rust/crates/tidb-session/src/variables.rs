@@ -588,7 +588,10 @@ impl Session {
             return match rows.len() {
                 0 => Ok(Datum::Null),
                 1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
-                _ => Err(DriverError::SubqueryReturnsMoreThanOneRow),
+                _ => Err(DriverError::from(
+                    tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                        .generate_with_stack_by_args(&[]),
+                )),
             };
         }
         let sql = format!("SELECT {}", bound.restore());

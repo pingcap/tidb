@@ -52,14 +52,12 @@ fn integer_primary_key_is_the_row_handle() {
 
         // A repeated key is Go's ErrDupEntry.
         assert!(
-            matches!(
-                run_insert_on(
-                    "INSERT INTO p VALUES (10, 999)",
-                    &mut catalog,
-                    &crate::StmtContext::for_query()
-                ),
-                Err(DriverError::DuplicateEntry { .. })
-            ),
+            (run_insert_on(
+                "INSERT INTO p VALUES (10, 999)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ))
+            .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)),
             "{ddl}"
         );
         // The failed insert left the original row untouched.
@@ -164,14 +162,12 @@ fn a_non_integer_primary_key_is_enforced_by_its_index() {
         2
     );
     // The duplicate is now caught by the index, as in real TiDB.
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO s VALUES ('a')",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::DuplicateEntry { .. })
-    ));
+    assert!((run_insert_on(
+        "INSERT INTO s VALUES ('a')",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)));
 }
 
 /// A primary key that is not a single integer column becomes a clustered
@@ -217,14 +213,12 @@ fn clustered_common_handle() {
         vec![vec![Datum::Int(2)]]
     );
     // A repeated key is a duplicate.
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO c VALUES ('a', 9)",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::DuplicateEntry { .. })
-    ));
+    assert!((run_insert_on(
+        "INSERT INTO c VALUES ('a', 9)",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)));
 
     // Writes address the row through its clustered key.
     run_update_on(
@@ -295,14 +289,12 @@ fn clustered_common_handle() {
         ]
     );
     // Only the whole key must be unique; a repeated leading column is fine.
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO m VALUES (1, 'x', 99)",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::DuplicateEntry { .. })
-    ));
+    assert!((run_insert_on(
+        "INSERT INTO m VALUES (1, 'x', 99)",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)));
     run_insert_on(
         "INSERT INTO m VALUES (1, 'z', 40)",
         &mut catalog,

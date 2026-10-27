@@ -178,8 +178,12 @@ fn column_description(
                 ctx.show_default_conversion_flags(),
                 &ctx.session_zone(),
             )
-            .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
-            {
+            .map_err(|_| {
+                DriverError::from(
+                    tidb_error::catalog::table::ERR_GET_DEFAULT_FAILED
+                        .generate_with_stack_by_args(&[column.name.clone().into()]),
+                )
+            })? {
                 Some(text) => Datum::Bytes(text.into_bytes()),
                 None => Datum::Null,
             }
@@ -592,9 +596,10 @@ impl Session {
             let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
                 let (reported, charset) =
                     catalog.database_definition(database).ok_or_else(|| {
-                        DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                            database.clone(),
-                        ))
+                        DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                                .generate_with_stack_by_args(&[(database.clone()).into()]),
+                        )
                     })?;
                 let placement = catalog
                     .database_placement_policy(database)
@@ -653,7 +658,10 @@ impl Session {
                         (policy.name.original().to_owned(), settings)
                     })
                     .ok_or_else(|| {
-                        DriverError::PlacementPolicyNotExists(policy_name.clone())
+                        DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                                .generate_with_stack_by_args(&[policy_name.clone().into()]),
+                        )
                     })
             })?;
             return Ok(crate::show_create_placement_policy::rows(&reported, &clause));
@@ -693,9 +701,10 @@ impl Session {
         let include_local = !want_sequence && !want_view;
         let shown = self.with_catalog_scope(include_local, |catalog| {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{database}.{table_name}"
-                ))));
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                ));
             };
             match entry {
                 // Go prints the object's stored name
@@ -708,21 +717,25 @@ impl Session {
                         view.collation_connection.clone(),
                     )),
                 )),
-                _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-                    name: format!("{database}.{table_name}"),
-                    expected: "VIEW",
-                })),
+                _ if want_view => Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                        &[(&database).into(), (&table_name).into(), ("VIEW").into()],
+                    ),
+                )),
                 tidb_executor::TableEntry::Sequence(sequence) => Ok((
                     tidb_executor::show_create_sequence(sequence),
                     sequence.name.clone(),
                     None,
                 )),
-                _ if want_sequence => {
-                    Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-                        name: format!("{database}.{table_name}"),
-                        expected: "SEQUENCE",
-                    }))
-                }
+                _ if want_sequence => Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                        &[
+                            (&database).into(),
+                            (&table_name).into(),
+                            ("SEQUENCE").into(),
+                        ],
+                    ),
+                )),
                 tidb_executor::TableEntry::Kv(table) => {
                     let stored = match table.name() {
                         name if name.is_empty() => table_name.clone(),
@@ -765,9 +778,10 @@ impl Session {
         };
         let ids = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.persistent_table_in(database, table_name) else {
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{database}.{table_name}"
-                ))));
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                ));
             };
             let tidb_executor::TableEntry::Kv(table) = entry else {
                 return Err(DriverError::unsupported(
@@ -776,7 +790,7 @@ impl Session {
             };
             table
                 .next_global_row_ids()
-                .map_err(|error| DriverError::AutoIdUnavailable(error.0))
+                .map_err(|error| DriverError::from(tidb_error::mysql::MysqlError::unknown(error.0)))
         })?;
         Ok(ids
             .into_iter()
@@ -968,9 +982,13 @@ impl Session {
                 let table_name = contents.table_name.clone().unwrap_or_default();
                 self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                            "{database}.{table_name}"
-                        ))));
+                        return Err(DriverError::from(
+                            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                                .generate_with_stack_by_args(&[
+                                    (&database).into(),
+                                    (&table_name).into(),
+                                ]),
+                        ));
                     };
                     let table = match entry {
                         tidb_executor::TableEntry::Kv(table) => table,
@@ -1020,7 +1038,10 @@ impl Session {
                 let visibility = self.schema_visibility();
                 let catalog = self.table_storage_statistics_catalog(true)?;
                 if catalog.table_names(&database).is_none() {
-                    return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(database)));
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[(database).into()]),
+                    ));
                 }
                 crate::infoschema::show_table_status_rows(&catalog, &visibility, &zone, &database)
                     .into_iter()
@@ -1086,20 +1107,25 @@ impl Session {
                 &table_name,
                 crate::privilege::column_privs_mask(),
             ) {
-                return Err(DriverError::TableAccessDenied {
-                    privilege: "SELECT",
-                    user: user.to_owned(),
-                    host: host.to_owned(),
-                    table: stored_name,
-                });
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                        &[
+                            "SELECT".into(),
+                            user.to_owned().into(),
+                            host.to_owned().into(),
+                            stored_name.into(),
+                        ],
+                    ),
+                ));
             }
         }
         let ctx = self.statement_context(false);
         let rows = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{database}.{table_name}"
-                ))));
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                ));
             };
             if let tidb_executor::TableEntry::View(view) = entry {
                 // Go re-plans the body here (`tryFillViewColumnType`), so the
@@ -1171,12 +1197,14 @@ impl Session {
         if granted {
             return Ok(());
         }
-        Err(DriverError::TableAccessDenied {
-            privilege: command,
-            user: user.to_owned(),
-            host: host.to_owned(),
-            table: tidb_util::stringutil::go_to_lower(table_name),
-        })
+        Err(DriverError::from(
+            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+                command.into(),
+                user.to_owned().into(),
+                host.to_owned().into(),
+                (tidb_util::stringutil::go_to_lower(table_name)).into(),
+            ]),
+        ))
     }
 
     /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
@@ -1248,11 +1276,19 @@ impl Session {
             )),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
                 let worker = self.workload_repository.as_ref().ok_or_else(|| {
-                    DriverError::NotSupportedYet("Workload repository is not enabled".into())
+                    DriverError::from(
+                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                            .generate_with_stack_by_args(&[
+                                "Workload repository is not enabled".into()
+                            ]),
+                    )
                 })?;
                 worker.take_snapshot().map_err(|error| {
                     if error == "Workload repository is not enabled" {
-                        DriverError::NotSupportedYet(error.into())
+                        DriverError::from(
+                            tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                                .generate_with_stack_by_args(&[error.into()]),
+                        )
                     } else {
                         DriverError::unsupported(error)
                     }
@@ -1333,12 +1369,18 @@ impl Session {
             tidb_ast::AdminStmt::ExplainFor(explain_for) => {
                 let target = explain_for.connection_id;
                 let Some(guard) = self.process.as_ref() else {
-                    return Err(DriverError::UnknownThreadId(target));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                            .generate_with_stack_by_args(&[target.into()]),
+                    ));
                 };
                 let registry = guard.registry();
                 let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target)
                 else {
-                    return Err(DriverError::UnknownThreadId(target));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                            .generate_with_stack_by_args(&[target.into()]),
+                    ));
                 };
                 let plan = registry.plan_of(target);
                 // Go `buildExplainFor`: another user's connection needs SUPER,
@@ -1554,14 +1596,14 @@ impl Session {
                 // Go's executor builder names the AST node of the statements
                 // it has no executor for (`Unsupported type *ast.HelpStmt`,
                 // 8108).
-                tidb_ast::ServerControlStmt::Restart => Err(DriverError::DdlCoded {
-                    proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
-                    message: "Unsupported type *ast.RestartStmt".to_owned(),
-                }),
-                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::DdlCoded {
-                    proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
-                    message: "Unsupported type *ast.HelpStmt".to_owned(),
-                }),
+                tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
+                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                        .generate_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
+                )),
+                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
+                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                        .generate_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
+                )),
             },
             _ => Ok(None),
         }

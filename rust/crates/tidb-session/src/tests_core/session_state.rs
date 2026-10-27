@@ -519,7 +519,9 @@ fn noop_function_gate() {
         "SELECT b FROM t GROUP BY b DESC",
     ] {
         assert!(
-            matches!(session.run(sql), Err(DriverError::FunctionsNoopImpl(_))),
+            session.run(sql).is_err_and(
+                |error| error.equal(&tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL)
+            ),
             "expected a noop-function error from {sql}"
         );
     }

@@ -86,7 +86,7 @@ pub(crate) use write_cast::*;
 
 pub mod error;
 pub(crate) use error::coprocessor_evaluation_error;
-pub use error::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarError};
+pub use error::{DriverError, MysqlError, VarError};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -375,56 +375,63 @@ pub(super) fn run_physical_set_opr_stmt(
 
 pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
     match error.kind() {
-        tidb_planner::plan_base::PlanErrorKind::DuplicateColumnName(name) => {
-            DriverError::DuplicateColumnName(name.clone())
-        }
+        tidb_planner::plan_base::PlanErrorKind::DuplicateColumnName(name) => DriverError::from(
+            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                .generate_with_stack_by_args(&[name.clone().into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::IllegalReference { name, reason } => {
-            DriverError::IllegalReference {
-                name: name.clone(),
-                reason,
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_ILLEGAL_REFERENCE
+                    .generate_with_stack_by_args(&[name.clone().into(), reason.into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::Aggregation(aggregate) => {
             use tidb_expr::aggregation::AggDescError;
             match aggregate {
                 AggDescError::ApproxPercentileOutOfRange(value) => {
-                    DriverError::PercentageOutOfRange(*value)
+                    DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
                 }
-                AggDescError::ApproxPercentileArgCount => DriverError::ApproxPercentileArgument(
-                    "APPROX_PERCENTILE should take 2 arguments",
-                ),
-                AggDescError::ApproxPercentileNotConstant => DriverError::ApproxPercentileArgument(
-                    "APPROX_PERCENTILE should take a constant expression as percentage argument",
-                ),
+                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
+                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
                 AggDescError::ApproxPercentileNullPercentage => {
-                    DriverError::ApproxPercentileArgument(
-                        "APPROX_PERCENTILE: Percentage value cannot be NULL",
-                    )
+                    DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
                 }
                 AggDescError::Expr(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
                 other => DriverError::unsupported(other.to_string()),
             }
         }
         tidb_planner::plan_base::PlanErrorKind::Eval(tidb_expr::EvalError::InvalidGroupFuncUse) => {
-            DriverError::InvalidGroupFuncUse
+            DriverError::from(
+                tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE
+                    .generate_with_stack_by_args(&[]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::Eval(
             tidb_expr::EvalError::FieldInGroupingNotGroupBy(index),
-        ) => DriverError::FieldInGroupingNotGroupBy(*index),
+        ) => DriverError::from(
+            tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
+                .generate_with_stack_by_args(&[format!("#{}", *index).into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::Eval(eval) => {
             DriverError::Exec(ExecError::Eval(eval.clone()))
         }
-        tidb_planner::plan_base::PlanErrorKind::UnknownDatabase(database) => {
-            DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
-        }
+        tidb_planner::plan_base::PlanErrorKind::UnknownDatabase(database) => DriverError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(database.clone()).into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::NoDB => {
-            DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)
+            DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
         }
-        tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
-            DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
-        }
-        tidb_planner::plan_base::PlanErrorKind::RenamingViewMissing(table) => {
-            DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
+        tidb_planner::plan_base::PlanErrorKind::UnknownTable(schema, table) => DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .fast_generate_by_args(&[schema.clone().into(), table.clone().into()]),
+        ),
+        // Go `checkRecursiveView`: `plannererrors.ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)`.
+        tidb_planner::plan_base::PlanErrorKind::RenamingViewMissing(schema, table) => {
+            DriverError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_TABLE
+                    .generate_with_stack_by_args(&[schema.clone().into(), table.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::BadTable(table) => {
             DriverError::Mysql(MysqlError::terror(
@@ -433,19 +440,27 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             ))
         }
         tidb_planner::plan_base::PlanErrorKind::NonUpdatableTable(table, statement) => {
-            DriverError::NonUpdatableTable {
-                table: table.clone(),
-                statement: if statement == "UPDATE" { "UPDATE" } else { "DELETE" },
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                    table.clone().into(),
+                    (if statement == "UPDATE" {
+                        "UPDATE"
+                    } else {
+                        "DELETE"
+                    })
+                    .into(),
+                ]),
+            )
         }
-        tidb_planner::plan_base::PlanErrorKind::WrongValueCountOnRow(row) => {
-            DriverError::WrongValueCountOnRow { row: *row }
-        }
+        tidb_planner::plan_base::PlanErrorKind::WrongValueCountOnRow(row) => DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                .generate_with_stack_by_args(&[(*row).into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::BadGeneratedColumn(column, table) => {
-            DriverError::BadGeneratedColumn {
-                column: column.clone(),
-                table: table.clone(),
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                    .generate_with_stack_by_args(&[column.clone().into(), table.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
             DriverError::Mysql(MysqlError::terror(
@@ -454,13 +469,16 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             ))
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownPartition { partition, table } => {
-            DriverError::UnknownPartition {
-                partition: partition.clone(),
-                table: table.clone(),
-            }
+            DriverError::from(
+                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                    .generate_with_stack_by_args(&[partition.clone().into(), table.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::PartitionClauseOnNonpartitioned => {
-            DriverError::PartitionClauseOnNonpartitioned
+            DriverError::from(
+                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::InvalidTableSample(_) => {
             DriverError::Mysql(crate::MysqlError::terror(
@@ -468,13 +486,10 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 error.message(),
             ))
         }
-        tidb_planner::plan_base::PlanErrorKind::KeyNotExists { key, table } => {
-            DriverError::KeyNotExists {
-                key: key.clone(),
-                table: table.clone(),
-            }
-            .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST)
-        }
+        tidb_planner::plan_base::PlanErrorKind::KeyNotExists { key, table } => DriverError::from(
+            tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST
+                .generate_with_stack_by_args(&[key.clone().into(), table.clone().into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())
         }
@@ -506,24 +521,29 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             ))
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownColumnInClause { column, clause } => {
-            DriverError::UnknownColumnInClause {
-                column: column.clone(),
-                clause: clause.clone(),
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_util::stringutil::go_to_lower(&column.clone()).into(),
+                    (clause.clone()).into(),
+                ]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::AmbiguousColumnInClause { column, clause } => {
-            DriverError::AmbiguousColumnInClause {
-                column: column.clone(),
-                clause: clause.clone(),
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_AMBIGUOUS
+                    .generate_with_stack_by_args(&[column.clone().into(), clause.clone().into()]),
+            )
         }
-        tidb_planner::plan_base::PlanErrorKind::WrongNumberOfColumnsInSelect => {
-            DriverError::WrongNumberOfColumnsInSelect
-        }
-        tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
-        tidb_planner::plan_base::PlanErrorKind::ViewSelectVariable => {
-            DriverError::ViewSelectVariable
-        }
+        tidb_planner::plan_base::PlanErrorKind::WrongNumberOfColumnsInSelect => DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+                .generate_with_stack_by_args(&[]),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::from(
+            tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::ViewSelectVariable => DriverError::from(
+            tidb_util::dbterror::ERR_VIEW_SELECT_VARIABLE.generate_with_stack_by_args(&[]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::ViewNoExplain => {
             DriverError::Mysql(crate::MysqlError::terror(
                 &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN,
@@ -531,129 +551,163 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             ))
         }
         tidb_planner::plan_base::PlanErrorKind::ViewSelectTemporaryTable(table) => {
-            DriverError::ViewSelectTemporaryTable(table.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_VIEW_SELECT_TEMPORARY_TABLE
+                    .generate_with_stack_by_args(&[table.clone().into()]),
+            )
         }
-        tidb_planner::plan_base::PlanErrorKind::ViewRecursive => DriverError::DdlCoded {
-            proto: &tidb_error::plannererrors::ERR_VIEW_RECURSIVE,
-            message: error.message().to_owned(),
-        },
-        tidb_planner::plan_base::PlanErrorKind::InvalidLateralJoin(reason) => {
-            DriverError::InvalidLateralJoin(reason)
-        }
-        tidb_planner::plan_base::PlanErrorKind::ViewInvalid(name) => {
-            DriverError::Schema(SchemaErrorKind::ViewInvalid(name.clone()))
-        }
+        tidb_planner::plan_base::PlanErrorKind::ViewRecursive => DriverError::from(
+            (&tidb_error::plannererrors::ERR_VIEW_RECURSIVE)
+                .generate_with_stack(error.message().to_owned()),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::InvalidLateralJoin(reason) => DriverError::from(
+            tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN
+                .generate_with_stack_by_args(&[reason.into()]),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::ViewInvalid(schema, view) => DriverError::from(
+            tidb_error::plannererrors::ERR_VIEW_INVALID
+                .generate_with_stack_by_args(&[schema.clone().into(), view.clone().into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::WindowDefinition { code, name, base } => match code
         {
-            3579 => DriverError::WindowNoSuchWindow(name.clone()),
-            3580 => DriverError::WindowCircularity,
-            3581 => DriverError::WindowNoChildPartitioning,
-            3582 => DriverError::WindowNoInheritFrame(name.clone()),
-            3583 => DriverError::WindowNoRedefineOrderBy {
-                window: name.clone(),
-                base: base.clone(),
-            },
+            3579 => DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_NO_SUCH_WINDOW
+                    .generate_with_stack_by_args(&[name.clone().into()]),
+            ),
+            3580 => DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_CIRCULARITY_IN_WINDOW_GRAPH
+                    .generate_with_stack_by_args(&[]),
+            ),
+            3581 => DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_NO_CHILD_PARTITIONING
+                    .generate_with_stack_by_args(&[]),
+            ),
+            3582 => DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_NO_INHERENT_FRAME
+                    .generate_with_stack_by_args(&[name.clone().into()]),
+            ),
+            3583 => DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_NO_REDEFINE_ORDER_BY
+                    .generate_with_stack_by_args(&[name.clone().into(), base.clone().into()]),
+            ),
             _ => unreachable!("unsupported window definition error"),
         },
         tidb_planner::plan_base::PlanErrorKind::WindowInvalidWindowFuncUse(name) => {
-            DriverError::WindowInvalidWindowFuncUse(name.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
+                    .generate_with_stack_by_args(&[name.clone().into()]),
+            )
         }
+        // Go `ErrWindowFrame*.GenWithStackByArgs(getWindowName(spec.Name.O))`.
         tidb_planner::plan_base::PlanErrorKind::WindowFrame { code, window } => {
-            if window == "<unnamed window>" {
-                match code {
-                    3584 => DriverError::WindowFrameStartIllegal,
-                    3585 => DriverError::WindowFrameEndIllegal,
-                    3586 => DriverError::WindowFrameIllegal,
-                    3587 => DriverError::WindowRangeFrameOrderType,
-                    3588 => DriverError::WindowRangeFrameTemporalType,
-                    3589 => DriverError::WindowRangeFrameNumericType,
-                    _ => unreachable!("unsupported frame error code"),
-                }
-            } else {
-                let proto = match code {
-                    3584 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL,
-                    3585 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL,
-                    3586 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_ILLEGAL,
-                    3587 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE,
-                    3588 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_TEMPORAL_TYPE,
-                    3589 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_NUMERIC_TYPE,
-                    _ => unreachable!("unsupported frame error code"),
-                };
-                DriverError::Mysql(crate::MysqlError::terror(proto, error.to_string()))
-            }
+            let proto = match code {
+                3584 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL,
+                3585 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL,
+                3586 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_ILLEGAL,
+                3587 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE,
+                3588 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_TEMPORAL_TYPE,
+                3589 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_NUMERIC_TYPE,
+                _ => unreachable!("unsupported frame error code"),
+            };
+            DriverError::from(proto.generate_with_stack_by_args(&[window.clone().into()]))
         }
-        tidb_planner::plan_base::PlanErrorKind::WrongArguments(function) => {
-            DriverError::WrongArguments(function.clone())
-        }
-        tidb_planner::plan_base::PlanErrorKind::WrongGroupField(field) => {
-            DriverError::WrongGroupField(field.clone())
-        }
+        tidb_planner::plan_base::PlanErrorKind::WrongArguments(function) => DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                .generate_with_stack_by_args(&[function.clone().into()]),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::WrongGroupField(field) => DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_GROUP_FIELD
+                .generate_with_stack_by_args(&[field.clone().into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveRequiresUnion(name) => {
-            DriverError::CteRecursiveRequiresUnion(name.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_UNION
+                    .generate_with_stack_by_args(&[name.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveRequiresNonRecursiveFirst(name) => {
-            DriverError::CteRecursiveRequiresNonRecursiveFirst(name.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_NON_RECURSIVE_FIRST
+                    .generate_with_stack_by_args(&[name.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbidsAggregation(name) => {
-            DriverError::CteRecursiveForbidsAggregation(name.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
+                    .fast_generate_by_args(&[name.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbiddenJoinOrder(name) => {
-            DriverError::CteRecursiveForbiddenJoinOrder(name.clone())
+            DriverError::from(
+                tidb_error::plannererrors::ERR_INVALID_REQUIRES_SINGLE_REFERENCE
+                    .fast_generate_by_args(&[name.clone().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbidsLeftJoin(_) => {
-            DriverError::DdlCoded {
-                proto: &tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER,
-                message: error.message().to_owned(),
-            }
+            DriverError::from(
+                (&tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER)
+                    .generate_with_stack(error.message().to_owned()),
+            )
         }
-        tidb_planner::plan_base::PlanErrorKind::SubqueryReturnsMoreThanOneRow => {
-            DriverError::SubqueryReturnsMoreThanOneRow
-        }
+        tidb_planner::plan_base::PlanErrorKind::SubqueryReturnsMoreThanOneRow => DriverError::from(
+            tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                .generate_with_stack_by_args(&[]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::MemTableRetrievalNeeded => {
             DriverError::MemTableRetrievalNeeded
         }
-        tidb_planner::plan_base::PlanErrorKind::OptOnTemporaryTable(_) => DriverError::DdlCoded {
-            proto: &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
-            message: error.message().to_owned(),
-        },
-        tidb_planner::plan_base::PlanErrorKind::NotSupportedYet(feature) => {
-            DriverError::NotSupportedYet(feature.clone().into())
-        }
+        tidb_planner::plan_base::PlanErrorKind::OptOnTemporaryTable(_) => DriverError::from(
+            (&tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE)
+                .generate_with_stack(error.message().to_owned()),
+        ),
+        tidb_planner::plan_base::PlanErrorKind::NotSupportedYet(feature) => DriverError::from(
+            tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                .generate_with_stack_by_args(&[feature.clone().into()]),
+        ),
         tidb_planner::plan_base::PlanErrorKind::AggregateOrderNonAggQuery { position } => {
-            DriverError::AggregateOrderNonAggQuery {
-                position: *position,
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_AGGREGATE_ORDER_NON_AGG_QUERY
+                    .generate_with_stack_by_args(&[(*position).into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::FieldInOrderNotSelect { position, column } => {
-            DriverError::FieldInOrderNotSelect {
-                position: *position,
-                column: column.clone(),
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_FIELD_IN_ORDER_NOT_SELECT
+                    .generate_with_stack_by_args(&[
+                        (*position).into(),
+                        (column.clone()).into(),
+                        "DISTINCT".into(),
+                    ]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::AggregateInOrderNotSelect { position } => {
-            DriverError::AggregateInOrderNotSelect {
-                position: *position,
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_AGGREGATE_IN_ORDER_NOT_SELECT
+                    .generate_with_stack_by_args(&[(*position).into(), "DISTINCT".into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::FieldInGroupingNotGroupByArg { position } => {
-            DriverError::FieldInGroupingNotGroupByArg {
-                position: *position,
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
+                    .generate_with_stack_by_args(&[(*position).to_string().into()]),
+            )
         }
         tidb_planner::plan_base::PlanErrorKind::FieldNotInGroupBy {
             position,
             clause,
             column,
-        } => DriverError::FieldNotInGroupBy {
-            position: *position,
-            clause,
-            column: column.clone(),
-        },
+        } => {
+            DriverError::from(
+                tidb_error::plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.generate_with_stack_by_args(
+                    &[(*position).into(), clause.into(), column.clone().into()],
+                ),
+            )
+        }
         tidb_planner::plan_base::PlanErrorKind::FieldNotInAggregatedQuery { position, column } => {
-            DriverError::FieldNotInAggregatedQuery {
-                position: *position,
-                column: column.clone(),
-            }
+            DriverError::from(
+                tidb_error::plannererrors::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS
+                    .generate_with_stack_by_args(&[(*position).into(), column.clone().into()]),
+            )
         }
     }
 }
@@ -1194,9 +1248,8 @@ mod dml_batch_tests {
         let result = visit_executor_rows(exec, &types, &memory, |row| {
             accountant.account_row(&row).map_err(DriverError::from)
         });
-        assert!(matches!(
-            result,
-            Err(DriverError::MemoryExceedForQuery { conn_id: 7 })
+        assert!((result).is_err_and(
+            |error| error.equal(&tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
         ));
         assert_eq!(
             nexts.load(SeqCst),

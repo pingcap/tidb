@@ -270,7 +270,9 @@ impl Session {
         // is validated before the first one is stored.
         for binding in &bindings {
             let hinted = tidb_parser::parse(&binding.bind_sql).map_err(|error| {
-                DriverError::Parse(error.compatibility_message(&binding.bind_sql))
+                DriverError::from(tidb_util::misc::syntax_error(
+                    error.compatibility_message(&binding.bind_sql),
+                ))
             })?;
             let cross_db = binding::collect_table_names(&hinted)
                 .iter()
@@ -478,7 +480,10 @@ impl Session {
                     catalog.table_in(database, table),
                     Some(tidb_executor::TableEntry::Kv(found)) if found.is_temporary()
                 ) {
-                    return Err(DriverError::OptOnTemporaryTable("create binding"));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["create binding".into()]),
+                    ));
                 }
             }
             Ok(())
@@ -886,7 +891,11 @@ impl Session {
             &self.binding_charset(),
             &self.binding_collation(),
         )
-        .map_err(|error| DriverError::Parse(error.compatibility_message(bind_sql)))?;
+        .map_err(|error| {
+            DriverError::from(tidb_util::misc::syntax_error(
+                error.compatibility_message(bind_sql),
+            ))
+        })?;
         let Some(warning) = reparsed.warnings.into_iter().next() else {
             return Ok(());
         };
@@ -897,12 +906,12 @@ impl Session {
             return Ok(());
         }
         let message = warning.body().to_owned();
-        Err(DriverError::ParseCoded {
-            proto: warning
+        Err(DriverError::from(
+            (warning
                 .terror
-                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT),
-            message,
-        })
+                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT))
+            .generate_with_stack(message),
+        ))
     }
 
     /// Go `SessionVars.GetCharsetInfo`'s second half.

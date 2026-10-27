@@ -240,7 +240,10 @@ pub fn build_list_values_with_unsigned(
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(crate::partition_errors::partition_wrong_values("RANGE", "VALUES LESS THAN"));
+                return Err(crate::partition_errors::partition_wrong_values(
+                    "RANGE",
+                    "LESS THAN",
+                ));
             }
             _ => return Err(crate::partition_errors::partitions_must_be_defined("LIST")),
         }

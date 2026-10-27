@@ -38,6 +38,22 @@ pub(crate) fn cell_text(value: &Datum) -> String {
 /// The MySQL error code a refused statement answers with, which is what Go's
 /// tests check (`MustGetErrCode`): the typed Rust error behind it differs
 /// between the in-process tier and a session on the store.
+/// Go `require.True(t, ErrX.Equal(err))` with `require.EqualError`: the
+/// statement failed with Go's `proto`, raised with `args`.
+#[track_caller]
+pub(crate) fn assert_go_error<T: std::fmt::Debug>(
+    result: Result<T, DriverError>,
+    proto: &tidb_error::terror::TerrorError,
+    args: &[tidb_error::mysql::FormatArg],
+) {
+    let error = result.expect_err("the statement must fail");
+    assert!(error.equal(proto), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        DriverError::from(proto.generate_with_stack_by_args(args)).to_string()
+    );
+}
+
 pub(crate) fn err_code<T: std::fmt::Debug>(result: Result<T, DriverError>) -> u16 {
     result.unwrap_err().to_mysql_error().code
 }

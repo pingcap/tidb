@@ -78,7 +78,6 @@ pub fn dml_source_select(
         limit: limit.cloned(),
         lock: None,
         into_outfile: None,
-        into_vars: Vec::new(),
         query_block_offset: 0,
         as_view_schema: false,
     }

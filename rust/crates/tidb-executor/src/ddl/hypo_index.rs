@@ -232,9 +232,10 @@ pub fn set_advisor_hypo_index(
     hypo_indexes: &mut HypoIndexes,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-            format!("{database}.{table_name}"),
-        )));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+        ));
     };
     // Go: each column's offset in `tInfo.Cols()`, the public columns.
     let public = table.meta().read().cols();

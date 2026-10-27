@@ -101,7 +101,9 @@ pub(crate) fn split_table_path<'a>(
     match path {
         [name] => {
             if current_db.is_empty() {
-                return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                ));
             }
             Ok((current_db, name))
         }
@@ -604,7 +606,10 @@ impl Catalog {
             TableEntry::Kv(table) if !table.foreign_keys().is_empty()
         );
         let schema = self.database_mut(&database.go_to_lower()).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
+            DriverError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(database.to_owned()).into()]),
+            )
         })?;
         // Go's infoschema key and `TableInfo.Name` are one identity. Keep the
         // same invariant here so every metadata consumer (including the

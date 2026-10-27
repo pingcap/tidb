@@ -228,15 +228,19 @@ impl Session {
             // site; the classified 1064 lands afterwards from the
             // statement error return -- SHOW WARNINGS carries both rows.
             self.append_warning(crate::WarningLevel::Error, 1105, raw.clone());
-            DriverError::Parse(raw)
+            DriverError::from(tidb_util::misc::syntax_error(raw))
         })?;
         if statements.len() != 1 {
-            return Err(DriverError::PrepareMulti);
+            return Err(DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
+            ));
         }
         let mut statement = statements.remove(0);
         // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
         if is_unpreparable(&statement) {
-            return Err(DriverError::UnsupportedPreparedStatement);
+            return Err(DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
+            ));
         }
         // Go `Preprocess` at PREPARE (`handleTableName`): the retained
         // statement names its tables by the database current NOW, so its
@@ -484,10 +488,14 @@ impl Session {
             .prepared_statements
             .get(name)
             .cloned()
-            .ok_or(DriverError::PreparedStmtNotFound)?;
+            .ok_or(DriverError::from(
+                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
+            ))?;
         // Go `planCachePreprocess` step 1, before any value is evaluated.
         if using.len() != prepared.param_count {
-            return Err(DriverError::WrongParamCount);
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+            ));
         }
         // Go `SetParameterValuesIntoSCtx`: each `USING` entry is evaluated to
         // a Datum, and the parameter's TYPE then follows from that value
@@ -508,7 +516,12 @@ impl Session {
             match values.get(order) {
                 Some(Datum::Int(value)) if *value >= 0 => {}
                 Some(Datum::UInt(_)) => {}
-                _ => return Err(DriverError::WrongArguments("LIMIT".into())),
+                _ => {
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                            .generate_with_stack_by_args(&["LIMIT".into()]),
+                    ))
+                }
             }
         }
         // Go summarizes an EXECUTE under the digest of the statement text as
@@ -600,7 +613,9 @@ impl Session {
                 );
                 Ok(())
             }
-            None => Err(DriverError::PreparedStmtNotFound),
+            None => Err(DriverError::from(
+                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
+            )),
         }
     }
 }

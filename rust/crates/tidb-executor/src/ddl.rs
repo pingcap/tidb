@@ -252,12 +252,16 @@ pub fn create_table_in_catalog(
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     let Some(charset) = catalog.database_charset(&database) else {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database)));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(database).into()]),
+        ));
     };
     if catalog.contains_in(&database, &name) {
-        let exists = DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
-            "{database}.{name}"
-        )));
+        let exists = DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                .generate_with_stack_by_args(&[(format!("{database}.{name}")).into()]),
+        );
         if create.if_not_exists {
             ctx.append_suppressed(&exists);
             return Ok(false);
@@ -275,19 +279,27 @@ pub fn create_table_in_catalog(
             let (source_database, source_name) =
                 crate::driver::split_table_path_pub(source, current_db)?;
             let not_exists = || {
-                DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                    "{source_database}.{source_name}"
-                )))
+                DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[
+                            (&source_database).into(),
+                            (&source_name).into(),
+                        ]),
+                )
             };
             let refer = match catalog.table_in(source_database, source_name) {
                 Some(crate::TableEntry::Kv(table)) => table.meta(),
                 // A view or sequence reaches `BuildTableInfoWithLike`'s
                 // `ErrWrongObject`, which names the TARGET schema.
                 Some(crate::TableEntry::View(_) | crate::TableEntry::Sequence(_)) => {
-                    return Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
-                        name: format!("{database}.{source_name}"),
-                        expected: "BASE TABLE",
-                    }));
+                    return Err(DriverError::from(
+                        tidb_error::catalog::infoschema::ERR_WRONG_OBJECT
+                            .generate_with_stack_by_args(&[
+                                (&database).into(),
+                                (&source_name).into(),
+                                ("BASE TABLE").into(),
+                            ]),
+                    ));
                 }
                 Some(crate::TableEntry::Mem(_)) => {
                     return Err(DriverError::unsupported(
@@ -386,7 +398,8 @@ pub fn run_create_table_on_with(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse(sql)
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
     };
@@ -481,7 +494,10 @@ pub(crate) fn refuse_local_temporary_table_ddl(
     if matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
         if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
     {
-        return Err(DriverError::UnsupportedLocalTempTableDDL(statement));
+        return Err(DriverError::from(
+            tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                .generate_with_stack_by_args(&[(statement).into()]),
+        ));
     }
     Ok(())
 }
@@ -497,7 +513,8 @@ pub fn run_create_system_table_in(
     database: &str,
     table_id: i64,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse(sql)
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
     };

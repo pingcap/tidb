@@ -81,7 +81,10 @@ impl Session {
             // go `plannererrors.ErrUnknownExplainFormat` (1791) names the
             // format it could not match (oracle: `EXPLAIN FORMAT='tree'`
             // answers `Unknown EXPLAIN format name: 'tree'`).
-            return Err(DriverError::UnknownExplainFormat(explain.format.clone()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_UNKNOWN_EXPLAIN_FORMAT
+                    .generate_with_stack_by_args(&[explain.format.clone().into()]),
+            ));
         };
         if explain.analyze && matches!(format, tidb_executor::ExplainFormat::PlanTree) {
             return Err(DriverError::unsupported(

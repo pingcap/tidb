@@ -32,7 +32,7 @@ use tidb_executor::cluster_storage::BufferCheckpoint;
 use tidb_executor::{Catalog, DriverError};
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
-use crate::{Session, SessionTxnMode, TxnErrorKind};
+use crate::{Session, SessionTxnMode};
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
 pub struct HistoricalRead {
@@ -464,7 +464,12 @@ impl Session {
         // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
         const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
         let value = self.eval_value(expr)?;
-        let as_of_error = |cause: &str| DriverError::Txn(TxnErrorKind::AsOf(cause.to_owned()));
+        let as_of_error = |cause: &str| {
+            DriverError::from(
+                tidb_error::plannererrors::ERR_AS_OF
+                    .generate_with_stack_by_args(&[(cause.to_owned()).into()]),
+            )
+        };
         if matches!(value, Datum::Null) {
             return Err(as_of_error("as of timestamp cannot be NULL"));
         }
@@ -963,7 +968,10 @@ impl Session {
             // go appends the statement error into the warning buffer as well
             // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
             // refused ROLLBACK TO carries the same 1305 row.
-            let error = DriverError::SavepointNotExists(name.to_owned());
+            let error = DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
+                    .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
+            );
             self.append_driver_error(crate::WarningLevel::Error, &error);
             return Err(error);
         };
@@ -985,7 +993,10 @@ impl Session {
             .as_mut()
             .is_some_and(|ctx| ctx.savepoints.release(name));
         if !released {
-            let error = DriverError::SavepointNotExists(name.to_owned());
+            let error = DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
+                    .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
+            );
             self.append_driver_error(crate::WarningLevel::Error, &error);
             return Err(error);
         }

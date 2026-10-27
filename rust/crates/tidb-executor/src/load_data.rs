@@ -29,7 +29,7 @@ pub mod csv_parser;
 use tidb_ast::{ColumnOrUserVar, LoadDataOnDuplicate, LoadDataStmt};
 use tidb_datatype::{Collation, Datum, FieldTypeCode};
 
-use crate::{Catalog, DriverError, SchemaErrorKind, TableEntry};
+use crate::{Catalog, DriverError, TableEntry};
 use csv_parser::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
@@ -86,17 +86,17 @@ impl PreparedLoadData {
 fn wrong_format_config_by_args(detail: &str) -> DriverError {
     // `ErrLoadDataWrongFormatConfig`'s message is empty, so Go's
     // `GenWithStackByArgs` renders its argument as an extra.
-    DriverError::DdlCoded {
-        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG,
-        message: format!("%!(EXTRA string={detail})"),
-    }
+    DriverError::from(
+        (&tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
+            .generate_with_stack(format!("%!(EXTRA string={detail})")),
+    )
 }
 
 fn wrong_format_config(detail: String) -> DriverError {
-    DriverError::DdlCoded {
-        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG,
-        message: detail,
-    }
+    DriverError::from(
+        (&tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
+            .generate_with_stack(detail),
+    )
 }
 
 fn plain_error(message: impl Into<String>) -> DriverError {
@@ -117,22 +117,25 @@ pub fn prepare_load_data(
     let (database, name) = match load.table.as_slice() {
         [database, name] => (database.clone(), name.clone()),
         [_] if current_db.is_empty() => {
-            return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            ));
         }
         [name] => (current_db.to_owned(), name.clone()),
         _ => return Err(DriverError::unsupported("LOAD DATA names a table path")),
     };
     let Some(entry) = catalog.table_in(&database, &name) else {
-        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        ))));
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        ));
     };
     check_privileges(&database, &name)?;
     let TableEntry::Kv(table) = entry else {
-        return Err(DriverError::NonUpdatableTable {
-            table: name,
-            statement: "LOAD",
-        });
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                .generate_with_stack_by_args(&[name.into(), "LOAD".into()]),
+        ));
     };
 
     // Go `NewPlanFromLoadDataPlan`.
@@ -173,10 +176,11 @@ pub fn prepare_load_data(
 
     // Go `LoadDataController.checkFieldParams`.
     if load.path.is_empty() {
-        return Err(DriverError::DdlCoded {
-            proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_EMPTY_PATH,
-            message: "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
-        });
+        return Err(DriverError::from(
+            (&tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_EMPTY_PATH).generate_with_stack(
+                "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
+            ),
+        ));
     }
     if null_value_opt_enclosed && fields_enclosed_by.is_empty() {
         return Err(wrong_format_config_by_args(
@@ -251,17 +255,19 @@ pub fn prepare_load_data(
                     .then(|| "_tidb_rowid".to_owned())
             });
         let Some(found) = found else {
-            return Err(DriverError::UnknownColumnInClause {
-                column: name.clone(),
-                clause: "field list".to_owned(),
-            });
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_util::stringutil::go_to_lower(&name.clone()).into(),
+                    ("field list".to_owned()).into(),
+                ]),
+            ));
         };
         // Go `table.CheckOnce`.
         if seen.iter().any(|earlier| earlier.go_lower_eq(&found)) {
-            return Err(DriverError::DdlCoded {
-                proto: &tidb_error::catalog::table::ERR_DUPLICATE_COLUMN,
-                message: format!("Column '{found}' specified twice"),
-            });
+            return Err(DriverError::from(
+                (&tidb_error::catalog::table::ERR_DUPLICATE_COLUMN)
+                    .generate_with_stack(format!("Column '{found}' specified twice")),
+            ));
         }
         seen.push(found);
     }
@@ -368,12 +374,9 @@ fn decompress(path: &str, data: &[u8]) -> Result<Vec<u8>, DriverError> {
 }
 
 fn read_failure(error: &CsvError) -> DriverError {
-    DriverError::DdlCoded {
-        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_CANT_READ,
-        message: format!(
+    DriverError::from((&tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_CANT_READ).generate_with_stack(format!(
             "Failed to read source files. Reason: {error}. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)"
-        ),
-    }
+        )))
 }
 
 /// Go `LoadDataExec.Next` for a client file: decodes `data`, encodes every
@@ -403,16 +406,17 @@ pub fn run_load_data(
     let TableEntry::Kv(table) = catalog
         .table_in(&prepared.database, &prepared.table)
         .ok_or_else(|| {
-            DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                "{}.{}",
-                prepared.database, prepared.table
-            )))
+            DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                    &[(&prepared.database).into(), (&prepared.table).into()],
+                ),
+            )
         })?
     else {
-        return Err(DriverError::NonUpdatableTable {
-            table: prepared.table.clone(),
-            statement: "LOAD",
-        });
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                .generate_with_stack_by_args(&[prepared.table.clone().into(), "LOAD".into()]),
+        ));
     };
     let columns = table.columns().to_vec();
 
@@ -432,10 +436,12 @@ pub fn run_load_data(
     for assignment in &prepared.assignments {
         let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
-                tidb_expr::EvalError::UnknownColumn(column) => DriverError::UnknownColumnInClause {
-                    column: column.go_to_lower(),
-                    clause: "expression".to_owned(),
-                },
+                tidb_expr::EvalError::UnknownColumn(column) => DriverError::from(
+                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                        tidb_util::stringutil::go_to_lower(&column.go_to_lower()).into(),
+                        ("expression".to_owned()).into(),
+                    ]),
+                ),
                 other => DriverError::Exec(crate::ExecError::Eval(other)),
             })?;
         assignment_exprs.push(expr);
@@ -496,7 +502,7 @@ pub fn run_load_data(
         };
         if let Some((proto, message)) = mismatch {
             if restrictive {
-                return Err(DriverError::DdlCoded { proto, message });
+                return Err(DriverError::from((proto).generate_with_stack(message)));
             }
             ctx.append_warning_parts(proto.to_sql_error().code, &message);
         }

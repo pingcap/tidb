@@ -130,19 +130,24 @@ fn selected_partition_ids(
         return Ok(None);
     };
     let TableEntry::Kv(kv) = entry else {
-        return Err(DriverError::UnknownPartition {
-            partition: first.clone(),
-            table: name.to_owned(),
-        });
+        return Err(DriverError::from(
+            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                .generate_with_stack_by_args(&[first.clone().into(), name.to_owned().into()]),
+        ));
     };
     let Some(spec) = kv.partition() else {
-        return Err(DriverError::PartitionClauseOnNonpartitioned);
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     crate::partition_pruning::ids_for_selected_partitions(spec, partitions)
         .map(Some)
-        .map_err(|partition| DriverError::UnknownPartition {
-            partition,
-            table: name.to_owned(),
+        .map_err(|partition| {
+            DriverError::from(
+                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                    .generate_with_stack_by_args(&[partition.into(), name.to_owned().into()]),
+            )
         })
 }
 
@@ -173,12 +178,17 @@ pub(crate) fn run_multi_update(
         .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
     let mut updated = Vec::with_capacity(tables.len());
     for table in tables {
-        let entry = catalog.get_in(&table.database, &table.table).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{}.{}",
-                table.database, table.table
-            )))
-        })?;
+        let entry = catalog
+            .get_in(&table.database, &table.table)
+            .ok_or_else(|| {
+                DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[
+                            (&table.database).into(),
+                            (&table.table).into(),
+                        ]),
+                )
+            })?;
         let TableEntry::Kv(kv) = entry else {
             return Err(DriverError::unsupported(
                 "a multi-table UPDATE target is not a base table",

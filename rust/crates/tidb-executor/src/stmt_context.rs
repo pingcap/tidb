@@ -3691,7 +3691,7 @@ impl StmtContext {
     /// flag cannot be honored by one tier and dropped by the next.
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, crate::DriverError> {
         tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode(), self.parser_config)
-            .map_err(|e| crate::DriverError::Parse(format!("{e:?}")))
+            .map_err(|e| crate::DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))
     }
 
     /// A context for a query, where Go always warns on a zero divisor and

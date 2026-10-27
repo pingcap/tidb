@@ -284,7 +284,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some([schema, name]) => (schema.as_str(), name.as_str()),
                         _ => ("", ""),
                     };
-                    return Err(PlanError::unknown_table(format!("{schema}.{name}")));
+                    return Err(PlanError::unknown_table(schema, name));
                 };
                 let is_temporary = table
                     .table_info

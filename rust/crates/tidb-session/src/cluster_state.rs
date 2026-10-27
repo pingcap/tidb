@@ -53,7 +53,10 @@ impl ViewerState {
             return Ok(Vec::new());
         }
         if !self.config_scoped {
-            return Err(DriverError::SpecificAccessDenied("CONFIG".into()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["CONFIG".into()]),
+            ));
         }
         let client = self.cluster_config.clone().ok_or_else(|| {
             DriverError::unsupported("CLUSTER_CONFIG live retrieval is not installed")
@@ -167,7 +170,10 @@ impl ViewerState {
             return Ok(Vec::new());
         };
         if !self.process_scoped {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
         let refusal = if extractor.start_time == 0 {
             Some("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
@@ -414,7 +420,10 @@ impl ViewerState {
             "TIDB_TRX" => self.tidb_trx_rows(ctx, registry, needs("CURRENT_SQL_DIGEST_TEXT"))?,
             "DEADLOCKS" => {
                 if !self.has_process {
-                    return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                            .generate_with_stack_by_args(&["PROCESS".into()]),
+                    ));
                 }
                 self.deadlock_history_rows(ctx, catalog, 
                     needs("CURRENT_SQL_DIGEST_TEXT"),
@@ -604,7 +613,10 @@ impl ViewerState {
         use tidb_datatype::Datum;
 
         if !self.has_process {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
         let Some(provider) = self.data_lock_waits.as_ref().map(std::sync::Arc::clone) else {
             return Ok(Vec::new());
@@ -856,7 +868,10 @@ impl ViewerState {
             return Ok(Vec::new());
         }
         if !self.process_scoped {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
         // Go `infoschema.GetPDServerInfo`, whose per-member failures are
         // warnings.
@@ -900,7 +915,10 @@ impl ViewerState {
             (self.process_scoped, "PROCESS", ServerInfoType::SystemInfo)
         };
         if !allowed {
-            return Err(DriverError::SpecificAccessDenied(name.to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+            ));
         }
         let extractors = [extractor
             .and_then(tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor::as_cluster_table)
@@ -1043,7 +1061,10 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for ClusterTablesRetr
         }
         // CLUSTER_INFO: Go `memtableRetriever.retrieve` needs PROCESS.
         if !self.viewer.process_scoped {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
         self.viewer.cluster_info_rows(ctx)
     }

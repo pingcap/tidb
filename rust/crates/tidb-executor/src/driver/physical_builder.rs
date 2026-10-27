@@ -1923,14 +1923,20 @@ fn build_window(
                     .args
                     .first()
                     .cloned()
-                    .ok_or(DriverError::WrongArguments("window value function".into()))?;
+                    .ok_or(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                            .generate_with_stack_by_args(&["window value function".into()]),
+                    ))?;
                 let nth = if name == "nth_value" {
                     let (value, is_null) = descriptor
                         .base
                         .args
                         .get(1)
                         .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
-                        .ok_or(DriverError::WrongArguments("nth_value".into()))?;
+                        .ok_or(DriverError::from(
+                            tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                                .generate_with_stack_by_args(&["nth_value".into()]),
+                        ))?;
                     (!is_null).then_some(value)
                 } else {
                     Some(1)
@@ -1947,15 +1953,18 @@ fn build_window(
                     Some(arg) => {
                         tidb_expr::expr_util::get_uint64_from_constant(arg, ctx)
                             .filter(|(_, is_null)| !is_null)
-                            .ok_or(DriverError::WrongArguments("lead/lag".into()))?
+                            .ok_or(DriverError::from(
+                                tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                                    .generate_with_stack_by_args(&["lead/lag".into()]),
+                            ))?
                             .0
                     }
                     None => 1,
                 };
-                let arg = args
-                    .first()
-                    .cloned()
-                    .ok_or(DriverError::WrongArguments("lead/lag".into()))?;
+                let arg = args.first().cloned().ok_or(DriverError::from(
+                    tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                        .generate_with_stack_by_args(&["lead/lag".into()]),
+                ))?;
                 let mut default = args.get(2).cloned();
                 // Go buildLeadLag converts a constant default to RetTp.
                 if let Some(Expression::Constant(constant)) = &default {
@@ -1985,7 +1994,10 @@ fn build_window(
                     .args
                     .first()
                     .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
-                    .ok_or(DriverError::WrongArguments("ntile".into()))?;
+                    .ok_or(DriverError::from(
+                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                            .generate_with_stack_by_args(&["ntile".into()]),
+                    ))?;
                 WindowFunction::Ntile((!value.1).then_some(value.0))
             }
             _ => {

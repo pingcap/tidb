@@ -577,8 +577,9 @@ impl SessionOptimizer<'_> {
                     .map(|column| (column.name.go_to_lower(), column.field_type.clone()))
                     .collect()),
                 Some(_) => Ok(Vec::new()),
-                None => Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{schema}.{table}")),
+                None => Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 )),
             })
     }
@@ -695,11 +696,12 @@ impl Optimizer for SessionOptimizer<'_> {
             let Some(tidb_executor::TableEntry::Kv(table)) =
                 catalog.table_in(&index.schema_name, &index.table_name)
             else {
-                return Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!(
-                        "{}.{}",
-                        index.schema_name, index.table_name
-                    )),
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[
+                            (&index.schema_name).into(),
+                            (&index.table_name).into(),
+                        ]),
                 ));
             };
             for stored in table.indexes() {
@@ -728,8 +730,9 @@ impl Optimizer for SessionOptimizer<'_> {
         }
         self.session.with_catalog_mut(|catalog| {
             let Some(names) = catalog.table_names(&schema) else {
-                return Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownDatabase(schema.clone()),
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
             let mut found = Vec::new();
@@ -767,8 +770,9 @@ impl Optimizer for SessionOptimizer<'_> {
         self.session.with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_in(schema, table)
             else {
-                return Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{schema}.{table}")),
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 ));
             };
             Ok(stored
@@ -782,8 +786,9 @@ impl Optimizer for SessionOptimizer<'_> {
         self.session.with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_in(database, table)
             else {
-                return Err(DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{table}")),
+                return Err(DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[(&database).into(), (&table).into()]),
                 ));
             };
             let statistics = catalog.table_statistics(stored.table_id);

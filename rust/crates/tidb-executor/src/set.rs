@@ -94,7 +94,10 @@ fn set_sys_variable(
                 } else {
                     format!("SUPER or {privilege}")
                 };
-                return Err(DriverError::SpecificAccessDenied(msg));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                        .generate_with_stack_by_args(&[msg.into()]),
+                ));
             }
         }
     }
@@ -105,8 +108,9 @@ fn set_sys_variable(
             .privilege_manager()
             .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)
     {
-        return Err(DriverError::SpecificAccessDenied(
-            "RESTRICTED_VARIABLES_ADMIN".to_owned(),
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                .generate_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
         ));
     }
     if sys_var.is_noop() && !ctx.session_vars().noop_variables_enabled() {

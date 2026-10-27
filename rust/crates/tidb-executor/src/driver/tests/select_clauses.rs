@@ -346,14 +346,16 @@ fn plain_having_filters_and_sees_only_the_select_list() {
         ("SELECT b AS a FROM ht HAVING ht.a > 1", "ht.a"),
         ("SELECT a FROM ht t1 HAVING ht.a > 1", "ht.a"),
     ] {
-        match run(sql) {
-            Err(DriverError::UnknownColumnInClause { column, clause }) => assert_eq!(
-                (column.as_str(), clause.as_str()),
-                (name, "having clause"),
-                "{sql}"
-            ),
-            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
-        }
+        let error = run(sql).unwrap_err();
+        assert!(
+            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            "expected 1054 for `{sql}`, got {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("Unknown column '{name}' in 'having clause'"),
+            "{sql}"
+        );
     }
 }
 
@@ -505,14 +507,16 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
             "ht.b",
         ),
     ] {
-        match run(sql) {
-            Err(DriverError::UnknownColumnInClause { column, clause }) => assert_eq!(
-                (column.as_str(), clause.as_str()),
-                (name, "having clause"),
-                "{sql}"
-            ),
-            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
-        }
+        let error = run(sql).unwrap_err();
+        assert!(
+            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            "expected 1054 for `{sql}`, got {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("Unknown column '{name}' in 'having clause'"),
+            "{sql}"
+        );
     }
 }
 

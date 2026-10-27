@@ -24,6 +24,7 @@ use std::fmt::Display;
 
 use tidb_error::mysql::MysqlError;
 use tidb_error::terror::TerrorError;
+use tidb_hack::GoToLower;
 
 pub use tidb_table::partition_errors::{
     parse_error, partition_column_list, partition_column_value_wrong_type,
@@ -76,10 +77,14 @@ pub fn wrong_table_name(name: impl Display) -> MysqlError {
 }
 
 /// Go `dbterror.ErrSequenceInvalidData` (4136).
-pub fn sequence_values_conflicting(name: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::ERR_SEQUENCE_INVALID_DATA,
-        format!("Sequence '{name}' values are conflicting"),
+/// Go names the schema and sequence lower-cased (`ident.Schema.L`,
+/// `ident.Name.L`) -- captured as `'test.nosuch'`.
+pub fn sequence_values_conflicting(database: &str, name: &str) -> MysqlError {
+    MysqlError::from_terror(
+        &tidb_util::dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
+            database.go_to_lower().into(),
+            name.go_to_lower().into(),
+        ]),
     )
 }
 
@@ -195,10 +200,13 @@ pub fn opt_on_cache_table(operation: &str) -> MysqlError {
 }
 
 /// Go `infoschema.ErrWrongObject` (1347): `name` is not an `expected`.
-pub fn wrong_object(name: &str, expected: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT,
-        format!("'{name}' is not {expected}"),
+pub fn wrong_object(database: &str, name: &str, expected: &str) -> MysqlError {
+    MysqlError::from_terror(
+        &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+            database.into(),
+            name.into(),
+            expected.into(),
+        ]),
     )
 }
 
@@ -211,10 +219,10 @@ pub fn table_exists(name: &str) -> MysqlError {
 }
 
 /// Go `infoschema.ErrTableNotExists` (1146).
-pub fn table_not_exists(name: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS,
-        format!("Table '{name}' doesn't exist"),
+pub fn table_not_exists(database: &str, name: &str) -> MysqlError {
+    MysqlError::from_terror(
+        &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            .generate_with_stack_by_args(&[database.into(), name.into()]),
     )
 }
 

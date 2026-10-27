@@ -45,10 +45,11 @@ fn rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
 }
 
 fn is_memory_exceeded(error: &DriverError) -> bool {
-    // The dedicated variant, not `Exec(..)`: only this one renders as 8175 on
-    // the wire (`DriverError`'s `From<ExecError>` lifts it, and a write path
-    // that wrapped it in the generic `Exec` arm reached the client as 1105).
-    matches!(error, DriverError::MemoryExceedForQuery { .. })
+    // Go's `exeerrors.ErrMemoryExceedForQuery`, not `Exec(..)`: only it
+    // renders as 8175 on the wire (`DriverError`'s `From<ExecError>` lifts
+    // it, and a write path that wrapped it in the generic `Exec` arm reached
+    // the client as 1105).
+    error.equal(&tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
 }
 
 #[test]

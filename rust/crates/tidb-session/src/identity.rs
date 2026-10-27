@@ -50,12 +50,14 @@ impl Session {
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };
-        Err(DriverError::TableAccessDenied {
-            privilege: privilege.print_name(),
-            user: user.to_owned(),
-            host: host.to_owned(),
-            table: go_to_lower(table),
-        })
+        Err(DriverError::from(
+            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+                privilege.print_name().into(),
+                user.to_owned().into(),
+                host.to_owned().into(),
+                (go_to_lower(table)).into(),
+            ]),
+        ))
     }
 
     /// Go `buildShow` (`planbuilder.go:3632`) for SHOW STATS_META,
@@ -68,12 +70,14 @@ impl Session {
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };
-        Err(DriverError::TableAccessDenied {
-            privilege: "SHOW",
-            user: user.to_owned(),
-            host: host.to_owned(),
-            table: table.to_owned(),
-        })
+        Err(DriverError::from(
+            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+                "SHOW".into(),
+                user.to_owned().into(),
+                host.to_owned().into(),
+                table.to_owned().into(),
+            ]),
+        ))
     }
 
     /// The account table plus this session's authenticated identity -- what
@@ -273,11 +277,13 @@ impl Session {
             return Ok(());
         }
         let (user, host) = self.current_identity().unwrap_or_default();
-        Err(DriverError::DbAccessDenied {
-            user: user.to_owned(),
-            host: host.to_owned(),
-            database: database.to_owned(),
-        })
+        Err(DriverError::from(
+            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                user.to_owned().into(),
+                host.to_owned().into(),
+                database.to_owned().into(),
+            ]),
+        ))
     }
 
     /// Go `RequestDynamicVerification(activeRoles, name, grantable)`. The
@@ -319,8 +325,9 @@ impl Session {
 
     pub(crate) fn require_sem_visible_sysvar(&self, name: &str) -> Result<(), DriverError> {
         if self.sem_hides_sysvar(name) {
-            Err(DriverError::SpecificAccessDenied(
-                "RESTRICTED_VARIABLES_ADMIN".to_owned(),
+            Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
             ))
         } else {
             Ok(())
@@ -674,12 +681,11 @@ impl Session {
         };
         for (schema, table) in missing {
             if !self.has_any_scoped_privilege(&schema, &table, u64::MAX) {
-                return Err(DriverError::TableAccessDenied {
-                    privilege: command,
-                    user,
-                    host,
-                    table,
-                });
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                        &[command.into(), user.into(), host.into(), table.into()],
+                    ),
+                ));
             }
         }
         Ok(())
@@ -783,7 +789,10 @@ impl Session {
                     .as_ref()
                     .is_some_and(|name| self.is_local_temporary_table_path(name))
                 {
-                    return Err(DriverError::OptOnTemporaryTable("create table like"));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["create table like".into()]),
+                    ));
                 }
             }
         }
@@ -804,7 +813,10 @@ impl Session {
                                     if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
                             })
                         {
-                            return Err(DriverError::DropTableOnTemporaryTable);
+                            return Err(DriverError::from(
+                                tidb_error::plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE
+                                    .generate_with_stack_by_args(&[]),
+                            ));
                         }
                     }
                 }
@@ -884,49 +896,72 @@ impl Session {
                 continue;
             }
             if let Some(denial) = request.specific_denial {
-                return Err(DriverError::SpecificAccessDenied(denial.to_owned()));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                        .generate_with_stack_by_args(&[denial.to_owned().into()]),
+                ));
             }
             if !request.dynamic_privileges.is_empty() {
                 // Go `ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)`
                 // prints the slice.
-                return Err(DriverError::PrivilegeCheckFail(format!(
-                    "[{}]",
-                    request.dynamic_privileges.join(" ")
-                )));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_PRIVILEGE_CHECK_FAIL
+                        .generate_with_stack_by_args(&[(format!(
+                            "[{}]",
+                            request.dynamic_privileges.join(" ")
+                        ))
+                        .into()]),
+                ));
             }
             if request.view_no_explain {
                 return Err(view_no_explain());
             }
             return Err(if request.database_named_in_error {
-                DriverError::DbAccessDenied {
-                    user,
-                    host,
-                    database: request
-                        .database_in_error
-                        .clone()
-                        .unwrap_or_else(|| request.database.clone()),
-                }
+                DriverError::from(
+                    tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                        user.into(),
+                        host.into(),
+                        (request
+                            .database_in_error
+                            .clone()
+                            .unwrap_or_else(|| request.database.clone()))
+                        .into(),
+                    ]),
+                )
             } else if request.table_named_in_error {
                 // Go returns the visit's `authErr` as the planner built it:
                 // the uppercase command and the table as that call site
                 // spells it (`Name.L` mostly, `Name.O` for
                 // `requireInsertAndSelectPriv`).
                 match &request.table_error_override {
-                    Some((command, table)) => DriverError::TableAccessDenied {
-                        privilege: command,
-                        user,
-                        host,
-                        table: table.clone(),
-                    },
-                    None => DriverError::TableAccessDenied {
-                        privilege: request.privilege.print_name(),
-                        user,
-                        host,
-                        table: go_to_lower(&request.table),
-                    },
+                    Some((command, table)) => DriverError::from(
+                        tidb_error::plannererrors::ERR_TABLEACCESS_DENIED
+                            .generate_with_stack_by_args(&[
+                                command.into(),
+                                user.into(),
+                                host.into(),
+                                table.clone().into(),
+                            ]),
+                    ),
+                    None => DriverError::from(
+                        tidb_error::plannererrors::ERR_TABLEACCESS_DENIED
+                            .generate_with_stack_by_args(&[
+                                request.privilege.print_name().into(),
+                                user.into(),
+                                host.into(),
+                                (go_to_lower(&request.table)).into(),
+                            ]),
+                    ),
                 }
             } else {
-                DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())
+                DriverError::from(
+                    tidb_error::plannererrors::ERR_PRIVILEGE_CHECK_FAIL
+                        .generate_with_stack_by_args(&[(request
+                            .privilege
+                            .check_fail_name()
+                            .to_owned())
+                        .into()]),
+                )
             });
         }
         Ok(())
@@ -1293,7 +1328,10 @@ impl Session {
         match stmt {
             Stmt::Session(session) if matches!(*session, SessionStmt::SetPassword(_)) => Ok(()),
             Stmt::Admin(admin) if matches!(*admin, tidb_ast::AdminStmt::AlterUser(_)) => Ok(()),
-            _ => Err(DriverError::MustChangePassword),
+            _ => Err(DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD
+                    .generate_with_stack_by_args(&[]),
+            )),
         }
     }
 

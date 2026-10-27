@@ -71,7 +71,6 @@ fn do_projection_query(exprs: &[tidb_ast::Expr]) -> Stmt {
             limit: None,
             lock: None,
             into_outfile: None,
-            into_vars: Vec::new(),
             query_block_offset: 0,
             as_view_schema: false,
         }),
@@ -774,7 +773,10 @@ impl Session {
             && (table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
                 || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST"))
         {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
 
         let mut rows = Vec::new();
@@ -1381,9 +1383,11 @@ impl Session {
                 Some(previous) if previous == ts => {}
                 Some(_) => {
                     // Go refuses a statement naming two different instants.
-                    return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
-                        "can not set different time in the as of".to_owned(),
-                    )));
+                    return Err(DriverError::from(
+                        tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                            ("can not set different time in the as of".to_owned()).into(),
+                        ]),
+                    ));
                 }
             }
         }
@@ -1394,9 +1398,11 @@ impl Session {
             }
             self.vars.use_txn_read_ts();
             self.cleanup_txn_read_ts();
-            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
-                "can't use select as of while already set transaction as of".into(),
-            )));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                    "can't use select as of while already set transaction as of".into(),
+                ]),
+            ));
         }
         let output = self.run_statement_as_of(ts, stripped);
         Some(output).transpose()
@@ -1597,7 +1603,10 @@ impl Session {
             } else {
                 String::from_utf8_lossy(stmt.text()).into_owned()
             };
-            return Err(DriverError::NotSupportedWithSem(statement));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
+                    .generate_with_stack_by_args(&[statement.into()]),
+            ));
         }
         Ok(())
     }
@@ -1688,9 +1697,11 @@ impl Session {
             }
         }
         if scan.has_as_of && self.in_transaction() {
-            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
-                "as of timestamp can't be set in transaction.".into(),
-            )));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                    "as of timestamp can't be set in transaction.".into(),
+                ]),
+            ));
         }
         if scan.has_as_of && !self.in_transaction() {
             if let Some(output) = self.execute_as_of_statement(&stmt)? {
@@ -1824,42 +1835,6 @@ impl Session {
         // failed INSERT leaves 0).
         self.statement_kind = statement_kind_of(&stmt);
         self.begin_statement_keys_read();
-        // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
-        // its one row lands in the named user variables. Intercepted at this
-        // one door so text and prepared spellings share the rules: more than
-        // one row is 1172, a row with the wrong width is 1222, and zero rows
-        // leave every variable untouched (MySQL warns 1329; the OK is still
-        // an OK).
-        if let Stmt::Query(query) = &mut stmt {
-            if let tidb_ast::QueryStmt::Select(select) = &mut **query {
-                if !select.into_vars.is_empty() {
-                    let names = std::mem::take(&mut select.into_vars);
-                    let output = self.execute_parsed_statement(sql, stmt, prepared)?;
-                    let StmtOutput::Rows { rows, .. } = output else {
-                        return Err(DriverError::unsupported(
-                            "SELECT INTO expected a row-producing query",
-                        ));
-                    };
-                    if rows.len() > 1 {
-                        return Err(DriverError::SelectIntoMoreThanOneRow);
-                    }
-                    if let Some(row) = rows.first() {
-                        if row.len() != names.len() {
-                            return Err(DriverError::SelectIntoColumnMismatch);
-                        }
-                        for (name, value) in names.iter().zip(row.iter()) {
-                            self.user_vars.set_user_var_val(
-                                &tidb_util::stringutil::go_to_lower(name),
-                                value.clone(),
-                            );
-                        }
-                    }
-                    return Ok(PendingExecution::Complete(StmtOutput::Affected(u64::from(
-                        !rows.is_empty(),
-                    ))));
-                }
-            }
-        }
         // Go `buildDo`: DO evaluates its expressions as a Projection over a
         // one-row TableDual and discards the row, so `DO @a := 1` assigns and
         // the expressions' errors and warnings surface, while the client
@@ -2368,10 +2343,10 @@ impl Session {
                         // go's unsupported-statement wall names the AST node:
                         // `executor/executor.go`'s `Unsupported type
                         // *ast.CallStmt` (8108), not a generic 1105.
-                        Err(DriverError::DdlCoded {
-                            proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
-                            message: "Unsupported type *ast.CallStmt".to_owned(),
-                        })
+                        Err(DriverError::from(
+                            (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                                .generate_with_stack("Unsupported type *ast.CallStmt".to_owned()),
+                        ))
                     }
                     DmlStmt::LoadData(load) => self.run_load_data_stmt(load, &stmt),
                     DmlStmt::Batch(batch) => self.run_non_transactional_dml(batch),
@@ -2603,7 +2578,10 @@ pub(crate) fn statement_summary_rows(
 
     if table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED") {
         if !has_process {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    .generate_with_stack_by_args(&["PROCESS".into()]),
+            ));
         }
         let full: Vec<Vec<tidb_datatype::Datum>> = if tidb_config::config_tree::config::get_global_config()
             .instance
@@ -2652,8 +2630,10 @@ pub(crate) fn statement_summary_rows(
         // Go refuses cumulative retrieval in v2; never silently substitute
         // an unrelated v1 map for the selected persistent owner.
         if cumulative {
-            return Err(DriverError::NotSupportedYet(
-                "cumulative statement summary table with persistent mode (v2)".into(),
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
+                    "cumulative statement summary table with persistent mode (v2)".into(),
+                ]),
             ));
         }
         let mut rows = tidb_stmtsummary::v2::reader::new_mem_reader(

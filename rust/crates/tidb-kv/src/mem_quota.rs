@@ -90,12 +90,11 @@ impl KillStop {
     #[must_use]
     pub fn to_mysql_error(self) -> tidb_error::mysql::MysqlError {
         match self {
-            KillStop::MemoryExceedForQuery { conn_id } => {
-                let sql_error = memory_exceed_for_query(conn_id);
-                let mut state = *b"HY000";
-                state.copy_from_slice(sql_error.state.as_bytes());
-                tidb_error::mysql::MysqlError::from_parts(sql_error.code, state, sql_error.message)
-            }
+            // Go `sqlkiller`: `exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(connID)`.
+            KillStop::MemoryExceedForQuery { conn_id } => tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
+                    .generate_with_stack_by_args(&[conn_id.into()]),
+            ),
             KillStop::Killed(error) => tidb_error::mysql::MysqlError::from_sql_error(error),
         }
     }

@@ -489,7 +489,8 @@ fn insert_with_an_empty_values_row_takes_every_default() {
         .unwrap();
     let error = session.run("INSERT INTO ev2 VALUES ()").unwrap_err();
     assert!(
-        matches!(&error, DriverError::NoDefaultForField(name) if name == "a"),
+        error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)
+            && error.to_string() == "Field 'a' doesn't have a default value",
         "expected 1364 for field a, got {error:?}"
     );
     let rendered = error.to_mysql_error();

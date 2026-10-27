@@ -374,12 +374,12 @@ pub enum PlanErrorKind {
     NoDB,
     /// Go `plannererrors.ErrOptOnTemporaryTable` (8006), naming the operation.
     OptOnTemporaryTable(String),
-    /// Go `infoschema.ErrTableNotExists`.
-    UnknownTable(String),
+    /// Go `infoschema.ErrTableNotExists`, with the schema and table names.
+    UnknownTable(String, String),
     /// Go `plannererrors.ErrNoSuchTable` raised by `checkRecursiveView` for the
     /// view being renamed: unlike an ordinary missing table it is not turned
     /// into `ErrViewInvalid` by a view that reads it.
-    RenamingViewMissing(String),
+    RenamingViewMissing(String, String),
     /// Go `plannererrors.ErrBadTable` (1051).
     BadTable(String),
     /// Go ErrUnknownTable (1109), with the clause owning name resolution.
@@ -432,8 +432,8 @@ pub enum PlanErrorKind {
     ViewWrongList,
     /// Go `plannererrors.ErrViewRecursive` (1462), carrying its message.
     ViewRecursive,
-    /// Go plannererrors.ErrViewInvalid (1356), with the qualified view name.
-    ViewInvalid(String),
+    /// Go plannererrors.ErrViewInvalid (1356), with the schema and view names.
+    ViewInvalid(String, String),
     /// Go `plannererrors.ErrViewSelectVariable` (1351).
     ViewSelectVariable,
     /// Go `plannererrors.ErrViewNoExplain` (1345).
@@ -692,21 +692,21 @@ impl PlanError {
 
     /// Go `infoschema.ErrTableNotExists`.
     #[must_use]
-    pub fn unknown_table(table: impl Into<String>) -> Self {
-        let table = table.into();
+    pub fn unknown_table(schema: impl Into<String>, table: impl Into<String>) -> Self {
+        let (schema, table) = (schema.into(), table.into());
         Self {
-            message: format!("Table '{table}' doesn't exist"),
-            kind: PlanErrorKind::UnknownTable(table),
+            message: format!("Table '{schema}.{table}' doesn't exist"),
+            kind: PlanErrorKind::UnknownTable(schema, table),
         }
     }
 
     /// Go `plannererrors.ErrNoSuchTable` for the view being renamed.
     #[must_use]
-    pub fn renaming_view_missing(table: impl Into<String>) -> Self {
-        let table = table.into();
+    pub fn renaming_view_missing(schema: impl Into<String>, table: impl Into<String>) -> Self {
+        let (schema, table) = (schema.into(), table.into());
         Self {
-            message: format!("Table '{table}' doesn't exist"),
-            kind: PlanErrorKind::RenamingViewMissing(table),
+            message: format!("Table '{schema}.{table}' doesn't exist"),
+            kind: PlanErrorKind::RenamingViewMissing(schema, table),
         }
     }
 
@@ -863,12 +863,11 @@ impl PlanError {
     /// Go plannererrors.ErrViewInvalid.
     #[must_use]
     pub fn view_invalid(database: &str, view: &str) -> Self {
-        let name = format!("{database}.{view}");
         Self {
             message: format!(
-                "View '{name}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
+                "View '{database}.{view}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
             ),
-            kind: PlanErrorKind::ViewInvalid(name),
+            kind: PlanErrorKind::ViewInvalid(database.to_owned(), view.to_owned()),
         }
     }
 

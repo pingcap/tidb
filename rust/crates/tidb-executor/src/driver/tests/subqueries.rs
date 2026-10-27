@@ -1302,14 +1302,12 @@ fn correlated_subqueries() {
     // A correlated subquery returning several rows is still the 1242 case,
     // raised from inside the apply loop and reported as the same error the
     // folded path reports.
-    assert!(matches!(
-        run_select_on(
-            "SELECT id FROM o WHERE v = (SELECT w FROM i WHERE i.id = o.id)",
-            &catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::SubqueryReturnsMoreThanOneRow)
-    ));
+    assert!((run_select_on(
+        "SELECT id FROM o WHERE v = (SELECT w FROM i WHERE i.id = o.id)",
+        &catalog,
+        &crate::StmtContext::for_query()
+    ))
+    .is_err_and(|error| error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
 
     // Correlated IN / NOT IN and ANY / ALL: the same Apply, folding this
     // outer row's inner result into the three-valued answer. id 3's inner
@@ -1447,16 +1445,16 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
         "SELECT a FROM ht GROUP BY a HAVING a IN (SELECT x FROM hs WHERE hs.y = ht.b)",
         "SELECT max(b) FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
     ] {
-        match run_select_on(sql, &catalog, &crate::StmtContext::for_query()) {
-            Err(DriverError::UnknownColumnInClause { column, clause }) => {
-                assert_eq!(
-                    (column.as_str(), clause.as_str()),
-                    ("ht.b", "having clause"),
-                    "{sql}"
-                );
-            }
-            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
-        }
+        let error = run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap_err();
+        assert!(
+            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            "expected 1054 for `{sql}`, got {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "Unknown column 'ht.b' in 'having clause'",
+            "{sql}"
+        );
     }
 
     // A grouped column, an UNcorrelated subquery, and a column the select list

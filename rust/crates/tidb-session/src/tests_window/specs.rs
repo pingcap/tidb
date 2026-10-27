@@ -491,7 +491,9 @@ fn window_errors_and_refusals() {
         "SELECT NTILE(v) OVER (ORDER BY v) FROM t",
     ] {
         assert!(
-            matches!(session.run(sql), Err(DriverError::WrongArguments(ref name)) if name == "ntile"),
+            session.run(sql).is_err_and(|error| error
+                .equal(&tidb_error::plannererrors::ERR_WRONG_ARGUMENTS)
+                && error.to_string() == "Incorrect arguments to ntile"),
             "expected ErrWrongArguments for {sql}"
         );
     }
@@ -593,7 +595,7 @@ fn window_errors_and_refusals() {
             "SELECT SUM(v) OVER (PARTITION BY g ORDER BY v ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM t",
         ] {
             assert!(
-                matches!(session.run(sql), Err(DriverError::WindowFrameIllegal)),
+                (session.run(sql)).is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_WINDOW_FRAME_ILLEGAL)),
                 "expected 3586 for {sql}"
             );
         }
@@ -633,7 +635,7 @@ fn window_errors_and_refusals() {
             "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM rs",
         ] {
             assert!(
-                matches!(session.run(sql), Err(DriverError::WindowRangeFrameOrderType)),
+                (session.run(sql)).is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE)),
                 "expected 3587 for {sql}"
             );
         }

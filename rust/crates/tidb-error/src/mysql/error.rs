@@ -269,6 +269,24 @@ impl From<&str> for FormatArg {
     }
 }
 
+impl From<&&str> for FormatArg {
+    fn from(value: &&str) -> Self {
+        Self::from(*value)
+    }
+}
+
+impl From<&&String> for FormatArg {
+    fn from(value: &&String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl From<&String> for FormatArg {
+    fn from(value: &String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
 impl From<String> for FormatArg {
     fn from(value: String) -> Self {
         Self {

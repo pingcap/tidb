@@ -18,7 +18,7 @@
 //! The foreign key metadata is reached through [`ForeignKeyCatalog`], the part
 //! of Go's `table.Table` and `infoschema.InfoSchema` these functions read.
 
-use tidb_hack::GoCaseCompare;
+use tidb_hack::{GoCaseCompare, GoToLower};
 
 use crate::physical::{FkTriggerKind, FkTriggerNode};
 use crate::plan_base::PlanIdAllocator;
@@ -64,16 +64,55 @@ pub struct FkMeta {
 }
 
 impl FkMeta {
-    /// The constraint's `SHOW CREATE TABLE` text, which a violation reports.
+    /// Go `FKInfo.String(db, tb)`: the child table and the constraint as a
+    /// violation reports them. The referenced schema and table are
+    /// lower-cased, and the schema is omitted when it equals `db`.
     #[must_use]
-    pub fn constraint_text(&self) -> String {
-        format!(
-            "CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}` (`{}`)",
+    pub fn string(&self, db: &str, tb: &str) -> String {
+        let quoted = |cols: &[String]| {
+            cols.iter()
+                .map(|col| format!("`{col}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let ref_schema = self.ref_schema.to_lowercase();
+        let mut buf = format!(
+            "`{db}`.`{tb}`, CONSTRAINT `{}` FOREIGN KEY ({}) REFERENCES `",
             self.name,
-            self.cols.join("`, `"),
-            self.ref_table,
-            self.ref_cols.join("`, `"),
-        )
+            quoted(&self.cols)
+        );
+        if ref_schema != db {
+            buf.push_str(&ref_schema);
+            buf.push_str("`.`");
+        }
+        buf.push_str(&self.ref_table.to_lowercase());
+        buf.push_str("` (");
+        buf.push_str(&quoted(&self.ref_cols));
+        buf.push(')');
+        if let Some(action) = self.on_delete.refer_option_string() {
+            buf.push_str(" ON DELETE ");
+            buf.push_str(action);
+        }
+        if let Some(action) = self.on_update.refer_option_string() {
+            buf.push_str(" ON UPDATE ");
+            buf.push_str(action);
+        }
+        buf
+    }
+}
+
+impl FkAction {
+    /// Go `ReferOptionType.String`, `None` for `ReferOptionNoOption`.
+    #[must_use]
+    pub const fn refer_option_string(self) -> Option<&'static str> {
+        match self {
+            Self::NoOption => None,
+            Self::Restrict => Some("RESTRICT"),
+            Self::Cascade => Some("CASCADE"),
+            Self::SetNull => Some("SET NULL"),
+            Self::NoAction => Some("NO ACTION"),
+            Self::SetDefault => Some("SET DEFAULT"),
+        }
     }
 }
 
@@ -138,20 +177,12 @@ pub struct FkPlanSpec {
 /// Why a trigger could not be planned.
 #[derive(Clone, Debug)]
 pub enum FkPlanError {
-    /// Go `ErrNoReferencedRow2`: a child-side check has no access path.
-    NoReferencedRow {
-        /// The quoted child table.
-        table: String,
-        /// The constraint text.
-        constraint: String,
-    },
-    /// Go `ErrRowIsReferenced2`: a parent-side check has no access path.
-    RowIsReferenced {
-        /// The quoted child table.
-        table: String,
-        /// The constraint text.
-        constraint: String,
-    },
+    /// Go `ErrNoReferencedRow2`: a child-side check has no access path;
+    /// the payload is the foreign key's `FKInfo.String`.
+    NoReferencedRow(String),
+    /// Go `ErrRowIsReferenced2`: a parent-side check has no access path;
+    /// the payload is the foreign key's `FKInfo.String`.
+    RowIsReferenced(String),
     /// A message-only refusal.
     Unsupported(String),
 }
@@ -305,19 +336,13 @@ fn compile_trigger(
     };
     let child_offsets = offsets(&child, &fk.cols)?;
     let parent_offsets = offsets(&parent, &fk.ref_cols)?;
-    let constraint = fk.constraint_text();
+    // Go `fk.String(dbName, tblInfo.Name.L)` / `(ChildSchema.L, ChildTable.L)`.
+    let fk_string = fk.string(&child_db.go_to_lower(), &child_table.go_to_lower());
     let failure = || {
-        let table = format!("`{child_db}`.`{child_table}`");
         if kind == FkTriggerKind::ChildCheck {
-            FkPlanError::NoReferencedRow {
-                table,
-                constraint: constraint.clone(),
-            }
+            FkPlanError::NoReferencedRow(fk_string.clone())
         } else {
-            FkPlanError::RowIsReferenced {
-                table,
-                constraint: constraint.clone(),
-            }
+            FkPlanError::RowIsReferenced(fk_string.clone())
         }
     };
     let (table_schema, table_name, columns) = if kind == FkTriggerKind::ChildCheck {
@@ -380,7 +405,7 @@ fn compile_trigger(
         child_offsets,
         parent_offsets,
         lookup_index: lookup_id,
-        constraint,
+        fk_string,
     }))
 }
 
@@ -562,7 +587,7 @@ mod tests {
                 &spec("parent"),
                 &ids
             ),
-            Err(FkPlanError::RowIsReferenced { .. })
+            Err(FkPlanError::RowIsReferenced(_))
         ));
         assert!(matches!(
             build_fk_triggers(
@@ -572,7 +597,7 @@ mod tests {
                 &spec("child"),
                 &ids
             ),
-            Err(FkPlanError::NoReferencedRow { .. })
+            Err(FkPlanError::NoReferencedRow(_))
         ));
     }
 

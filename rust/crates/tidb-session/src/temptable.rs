@@ -23,7 +23,7 @@
 use tidb_model::db::DBInfo;
 use tidb_util::stringutil::go_to_lower;
 
-use crate::{DriverError, SchemaErrorKind, Session};
+use crate::{DriverError, Session};
 
 /// Go `temptable.TemporaryTableDDL`: the three DDL operations on the
 /// session's LOCAL temporary tables.
@@ -76,7 +76,10 @@ impl Session {
 
 /// Go `checkLocalTemporaryExistsAndReturn`'s `ErrTableNotExists`.
 fn local_temporary_not_exists(schema: &str, name: &str) -> DriverError {
-    DriverError::Schema(SchemaErrorKind::UnknownTable(format!("{schema}.{name}")))
+    DriverError::from(
+        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            .generate_with_stack_by_args(&[(&schema).into(), (&name).into()]),
+    )
 }
 
 impl TemporaryTableDdl<'_> {

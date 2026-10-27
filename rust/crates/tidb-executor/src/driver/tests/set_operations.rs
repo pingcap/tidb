@@ -304,13 +304,13 @@ fn set_operations() {
     );
 
     // Captured: a term of a different width is 1222.
-    assert!(matches!(
-        run_select_on(
-            "SELECT a FROM u1 UNION SELECT a, a FROM u2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::WrongNumberOfColumnsInSelect)
+    assert!(run_select_on(
+        "SELECT a FROM u1 UNION SELECT a, a FROM u2",
+        &catalog,
+        &crate::StmtContext::for_query()
+    )
+    .is_err_and(
+        |error| error.equal(&tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT)
     ));
 }
 

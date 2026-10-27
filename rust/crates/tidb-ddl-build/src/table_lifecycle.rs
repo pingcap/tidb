@@ -53,7 +53,7 @@ pub fn check_drop_object(
     }
     match expected {
         DropObjectKind::View if actual != DropObjectKind::View => {
-            Err(errors::wrong_object(&format!("{schema}.{name}"), "VIEW"))
+            Err(errors::wrong_object(schema, name, "VIEW"))
         }
         DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
         DropObjectKind::Table if cached => Err(errors::opt_on_cache_table("Drop Table")),
@@ -125,7 +125,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         if !is_alter && target_exists {
             return Err(occupied());
         }
-        return Err(errors::table_not_exists(&format!("{from_db}.{from_name}")));
+        return Err(errors::table_not_exists(from_db, from_name));
     }
     if is_alter
         && from_db.go_to_lower() == to_db.go_to_lower()
@@ -189,7 +189,7 @@ pub fn check_view_target(
 ) -> Result<(), MysqlError> {
     match existing {
         Some(_) if !or_replace => Err(errors::table_exists(&format!("{database}.{name}"))),
-        Some(false) => Err(errors::wrong_object(&format!("{database}.{name}"), "VIEW")),
+        Some(false) => Err(errors::wrong_object(database, name, "VIEW")),
         _ => Ok(()),
     }
 }

@@ -126,7 +126,6 @@ fn empty_select() -> crate::SelectStmt {
         limit: None,
         lock: None,
         into_outfile: None,
-        into_vars: Vec::new(),
         query_block_offset: 0,
         as_view_schema: false,
     }

@@ -30,7 +30,6 @@
 //! MERGE`'s effect on planning.
 
 use crate::driver::{Catalog, DriverError, ViewDef};
-use crate::SchemaErrorKind;
 use tidb_ast::{CreateViewStmt, QueryStmt, SetOprTermBody, Stmt};
 use tidb_datatype::FieldType;
 
@@ -55,8 +54,9 @@ pub fn resolve_view_definition(
     // SELECT of the body into `SelectLockNone`, and `handleTableName` gives
     // every unqualified table name the current database.
     let locked_terms = check_create_view_with_select(&mut create.query)?;
-    tidb_planner::preprocess::handle_table_name(&mut create, current_db)
-        .map_err(|_| DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))?;
+    tidb_planner::preprocess::handle_table_name(&mut create, current_db).map_err(|_| {
+        DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
+    })?;
     // Go `buildDDL` builds the body and reads its schema; the body never runs
     // (a view over a large table must not scan it at CREATE time).
     let body_types =
@@ -126,10 +126,10 @@ pub fn resolve_view_definition(
 pub fn check_create_view_with_select(query: &mut QueryStmt) -> Result<Vec<bool>, DriverError> {
     fn check(select: &mut tidb_ast::SelectStmt, locked: &mut Vec<bool>) -> Result<(), DriverError> {
         if select.into_outfile.is_some() {
-            return Err(DriverError::DdlCoded {
-                proto: &tidb_util::dbterror::ERR_VIEW_SELECT_CLAUSE,
-                message: "View's SELECT contains a 'INFO' clause".to_owned(),
-            });
+            return Err(DriverError::from(
+                (&tidb_util::dbterror::ERR_VIEW_SELECT_CLAUSE)
+                    .generate_with_stack("View's SELECT contains a 'INFO' clause".to_owned()),
+            ));
         }
         locked.push(select.lock.take().is_some());
         Ok(())

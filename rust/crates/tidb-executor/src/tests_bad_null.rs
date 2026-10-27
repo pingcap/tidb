@@ -49,17 +49,19 @@ fn test_handle_bad_null() {
     assert_eq!(value, Datum::Null);
 
     let not_null = nullable.with_flags(NOT_NULL_FLAG);
-    assert!(matches!(
-        handle_bad_null(
-            &mut Datum::Null,
-            &not_null,
-            "a",
-            NullLevel::Error,
-            &context,
+    assert!(
+        (handle_bad_null(&mut Datum::Null, &not_null, "a", NullLevel::Error, &context,)
+            .map_err(DriverError::from))
+        .is_err_and(
+            |error| error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+                && error.to_string()
+                    == DriverError::from(
+                        tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                            .generate_with_stack_by_args(&["a".into()])
+                    )
+                    .to_string()
         )
-        .map_err(DriverError::from),
-        Err(DriverError::ColumnCannotBeNull(column)) if column == "a"
-    ));
+    );
 
     let mut warned = Datum::Null;
     assert!(handle_bad_null(&mut warned, &not_null, "a", NullLevel::Warn, &context,).unwrap());

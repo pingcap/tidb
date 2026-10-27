@@ -29,7 +29,7 @@
 use tidb_ast::{DdlStmt, Stmt};
 use tidb_executor::DriverError;
 
-use crate::{SchemaErrorKind, Session, StmtOutput};
+use crate::{Session, StmtOutput};
 
 /// Where Go `DDLExec.Next` takes one DDL statement.
 pub(crate) enum DdlExecNext<'a> {
@@ -161,7 +161,10 @@ impl Session {
                             .map(|(schema, name)| format!("{schema}.{name}"))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let error = DriverError::Schema(SchemaErrorKind::BadTable(names.join(",")));
+                let error = DriverError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                        .generate_with_stack_by_args(&[(names.join(",")).into()]),
+                );
                 if !if_exists {
                     return Err(error);
                 }
@@ -178,7 +181,10 @@ impl Session {
                     .truncate_local_temporary_table(schema, table)?;
             }
             DdlExecNext::UnsupportedLocalTempTableDdl(statement) => {
-                return Err(DriverError::UnsupportedLocalTempTableDDL(statement));
+                return Err(DriverError::from(
+                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                        .generate_with_stack_by_args(&[(statement).into()]),
+                ));
             }
             DdlExecNext::DropTableJob { .. } => return Ok(None),
             DdlExecNext::Job => return Ok(None),
@@ -228,13 +234,16 @@ impl Session {
             None => None,
         };
         let Some((database, _)) = info_schema.schema_by_name(schema) else {
-            return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                schema.to_owned(),
-            )));
+            return Err(DriverError::from(
+                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+            ));
         };
         if self.is_local_temporary_table(schema, table) {
-            let exists =
-                DriverError::Schema(SchemaErrorKind::TableExists(format!("{schema}.{table}")));
+            let exists = DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                    .generate_with_stack_by_args(&[(format!("{schema}.{table}")).into()]),
+            );
             if create.if_not_exists {
                 self.append_suppressed(exists);
                 return Ok(());

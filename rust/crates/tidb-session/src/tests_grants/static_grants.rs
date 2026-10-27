@@ -153,12 +153,11 @@ fn grant_revoke_and_show_grants_round_trip() {
     );
 
     session.run("DROP USER 'u1'@'%'").unwrap();
-    match session.run("DROP USER 'nosuchuser'@'%'") {
-        Err(DriverError::DropUserMissing { accounts }) => {
-            assert_eq!(accounts, "nosuchuser@%");
-        }
-        other => panic!("expected DropUserMissing, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("DROP USER 'nosuchuser'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_CANNOT_USER,
+        &["DROP USER".into(), "nosuchuser@%".into()],
+    );
 }
 
 /// CAPTURED: `SHOW GRANTS` with no `FOR` reports the current session's
@@ -180,13 +179,11 @@ fn show_grants_for_current_user_reports_root_bootstrap() {
 fn create_user_rejects_a_duplicate_account() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'dup1'@'%'").unwrap();
-    match session.run("CREATE USER 'dup1'@'%'") {
-        Err(DriverError::CreateUserAlreadyExists { user, host }) => {
-            assert_eq!(user, "dup1");
-            assert_eq!(host, "%");
-        }
-        other => panic!("expected CreateUserAlreadyExists, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("CREATE USER 'dup1'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_CANNOT_USER,
+        &["CREATE USER".into(), "'dup1'@'%'".into()],
+    );
 }
 
 /// CAPTURED: `GRANT ... TO` an account that was never created is
@@ -210,10 +207,11 @@ fn grant_to_an_unknown_user_is_refused() {
 fn granting_an_unregistered_privilege_name_is_refused() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'dup1'@'%'").unwrap();
-    match session.run("GRANT FOOBAR ON *.* TO 'dup1'@'%'") {
-        Err(DriverError::DynamicPrivilegeNotRegistered(name)) => assert_eq!(name, "FOOBAR"),
-        other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("GRANT FOOBAR ON *.* TO 'dup1'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
+        &["FOOBAR".into()],
+    );
 }
 
 /// CAPTURED: `REVOKE ... FROM` an account that does not exist is Go's
@@ -221,13 +219,11 @@ fn granting_an_unregistered_privilege_name_is_refused() {
 #[test]
 fn revoke_from_an_unknown_user_is_refused() {
     let mut session = session_with_privileges();
-    match session.run("REVOKE SELECT ON *.* FROM 'nouser'@'%'") {
-        Err(DriverError::RevokeUnknownUser { user, host }) => {
-            assert_eq!(user, "nouser");
-            assert_eq!(host, "%");
-        }
-        other => panic!("expected RevokeUnknownUser, got {other:?}"),
-    }
+    crate::tests_support::assert_err(
+        session.run("REVOKE SELECT ON *.* FROM 'nouser'@'%'"),
+        1105,
+        "Unknown user: nouser@%",
+    );
 }
 
 /// `ALL PRIVILEGES` grants every modeled global privilege, which folds
@@ -416,18 +412,11 @@ fn db_scope_revoke_without_any_grant_row_is_refused() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'u1'@'%'").unwrap();
     session.run("CREATE DATABASE emptydb").unwrap();
-    match session.run("REVOKE SELECT ON emptydb.* FROM 'u1'@'%'") {
-        Err(DriverError::RevokeNoDbGrant {
-            user,
-            host,
-            database,
-        }) => {
-            assert_eq!(user, "u1");
-            assert_eq!(host, "%");
-            assert_eq!(database, "emptydb");
-        }
-        other => panic!("expected RevokeNoDbGrant, got {other:?}"),
-    }
+    crate::tests_support::assert_err(
+        session.run("REVOKE SELECT ON emptydb.* FROM 'u1'@'%'"),
+        1105,
+        "There is no such grant defined for user 'u1' on host '%' on database emptydb",
+    );
 }
 
 /// CAPTURED end to end: TABLE-scope `GRANT`/`REVOKE`/`SHOW GRANTS`,
@@ -485,20 +474,11 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
 
     // REVOKE for an account with no `mysql.Tables_priv` row at all.
     session.run("CREATE TABLE db1.t2 (a INT)").unwrap();
-    match session.run("REVOKE SELECT ON db1.t2 FROM 'u1'@'%'") {
-        Err(DriverError::RevokeNoTableGrant {
-            user,
-            host,
-            database,
-            table,
-        }) => {
-            assert_eq!(user, "u1");
-            assert_eq!(host, "%");
-            assert_eq!(database, "db1");
-            assert_eq!(table, "t2");
-        }
-        other => panic!("expected RevokeNoTableGrant, got {other:?}"),
-    }
+    crate::tests_support::assert_err(
+        session.run("REVOKE SELECT ON db1.t2 FROM 'u1'@'%'"),
+        1105,
+        "There is no such grant defined for user 'u1' on host '%' on table db1.t2",
+    );
 }
 
 /// Go GrantExec.grantGlobalPriv and tlsOption2GlobalPriv apply REQUIRE at
@@ -588,12 +568,11 @@ fn create_and_drop_role_lists_are_atomic() {
         1396,
         "Operation CREATE ROLE failed for 'r2'@'%'",
     );
-    match session.run("DROP ROLE r1, r2, r3") {
-        Err(DriverError::CannotUserRole { operation, target }) => {
-            assert_eq!((operation, target.as_str()), ("DROP ROLE", "r1@%"));
-        }
-        other => panic!("expected CannotUserRole, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("DROP ROLE r1, r2, r3"),
+        &tidb_util::dbterror::exeerrors::ERR_CANNOT_USER,
+        &["DROP ROLE".into(), "r1@%".into()],
+    );
     session.run("DROP ROLE r2").unwrap();
     session.run("DROP USER IF EXISTS r2").unwrap();
     assert_eq!(

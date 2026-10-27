@@ -36,7 +36,7 @@ fn action(action: FkAction) -> tidb_planner::fk_plan::FkAction {
     }
 }
 
-fn meta(fk: &KvForeignKey) -> FkMeta {
+pub(crate) fn meta(fk: &KvForeignKey) -> FkMeta {
     FkMeta {
         version: fk.version,
         name: fk.name.clone(),
@@ -116,12 +116,13 @@ pub(crate) fn build_fk_triggers(
         plan_ids,
     )
     .map_err(|error| match error {
-        FkPlanError::NoReferencedRow { table, constraint } => {
-            DriverError::ForeignKeyNoReferencedRow { table, constraint }
-        }
-        FkPlanError::RowIsReferenced { table, constraint } => {
-            DriverError::ForeignKeyRowIsReferenced { table, constraint }
-        }
+        FkPlanError::NoReferencedRow(fk) => DriverError::from(
+            tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2.fast_generate_by_args(&[fk.into()]),
+        ),
+        FkPlanError::RowIsReferenced(fk) => DriverError::from(
+            tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2
+                .generate_with_stack_by_args(&[fk.into()]),
+        ),
         FkPlanError::Unsupported(message) => DriverError::unsupported(message),
     })
 }

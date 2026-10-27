@@ -372,7 +372,10 @@ impl MemTableRetriever for InstanceStateRetriever {
         if table.go_lower_eq("METRICS_SUMMARY") || table.go_lower_eq("METRICS_SUMMARY_BY_LABEL") {
             // Go checks PROCESS before it looks at the extractor.
             if !self.viewer.process_scoped {
-                return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                        .generate_with_stack_by_args(&["PROCESS".into()]),
+                ));
             }
             let Some(Extractor::MetricSummaryTable(extractor)) = &read.extractor else {
                 return Ok(Vec::new());

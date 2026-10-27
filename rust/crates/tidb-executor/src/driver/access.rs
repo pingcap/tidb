@@ -3110,10 +3110,14 @@ pub(crate) fn try_batch_point_get_stmt(
                     constant_rows.push(constant_row);
                     let encoded =
                         tidb_codec::encode_key_in_timezone(zone, &key_values).map_err(|e| {
-                            DriverError::Parse(format!("common handle encode failed: {e:?}"))
+                            DriverError::from(tidb_util::misc::syntax_error(format!(
+                                "common handle encode failed: {e:?}"
+                            )))
                         })?;
                     let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|e| {
-                        DriverError::Parse(format!("common handle build failed: {e:?}"))
+                        DriverError::from(tidb_util::misc::syntax_error(format!(
+                            "common handle build failed: {e:?}"
+                        )))
                     })?;
                     let handle = TableHandle::Common(handle.encoded().to_vec());
                     if !handles.contains(&handle) {

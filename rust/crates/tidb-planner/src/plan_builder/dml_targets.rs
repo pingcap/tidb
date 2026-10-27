@@ -168,7 +168,7 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
             let meta = self
                 .source
                 .find_table(database, table)
-                .ok_or_else(|| PlanError::unknown_table(format!("{database}.{table}")))?;
+                .ok_or_else(|| PlanError::unknown_table(database, table))?;
             let target = DeleteTarget {
                 database: meta.db_name.clone(),
                 table: meta.table_name.clone(),

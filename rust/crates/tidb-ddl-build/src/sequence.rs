@@ -23,7 +23,6 @@ use tidb_error::mysql::MysqlError;
 
 use crate::errors;
 use tidb_ast::SequenceOption;
-use tidb_hack::GoToLower;
 
 /// Go `model.Default*Sequence*Value`: the defaults depend on the SIGN of the
 /// increment, and only apply to the bounds the statement left unwritten.
@@ -134,7 +133,8 @@ fn sequence_options_are_valid(info: &SequenceInfo) -> bool {
 /// The options a `CREATE SEQUENCE` describes, or 4136 when they conflict.
 fn build_sequence_info(
     options: &[SequenceOption],
-    qualified: &str,
+    database: &str,
+    name: &str,
 ) -> Result<SequenceInfo, MysqlError> {
     // Go starts from a struct whose bounds are ZERO, so an unwritten bound is
     // filled by `apply_sequence_options` rather than inherited.
@@ -149,16 +149,9 @@ fn build_sequence_info(
     };
     let info = apply_sequence_options(base, options, true);
     if !sequence_options_are_valid(&info) {
-        return Err(errors::sequence_values_conflicting(qualified.to_owned(),
-        ));
+        return Err(errors::sequence_values_conflicting(database, name));
     }
     Ok(info)
-}
-
-/// Go's qualified name in a sequence error, which is LOWERCASED
-/// (`ident.Schema.L`, `ident.Name.L`) -- captured as `'test.nosuch'`.
-fn qualified(database: &str, name: &str) -> String {
-    format!("{}.{}", database.go_to_lower(), name.go_to_lower())
 }
 
 /// Go passes `TableOption.StrValue` to
@@ -256,7 +249,7 @@ pub fn build_create_sequence(
     // RESTART is an ALTER-only option, and the PARSER already refuses it on a
     // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
     // is an error there too). No check is needed here.
-    let info = build_sequence_info(&create.options, &qualified(database, name))?;
+    let info = build_sequence_info(&create.options, database, name)?;
     Ok((info, comment))
 }
 
@@ -271,8 +264,7 @@ pub fn alter_sequence_options(
 ) -> Result<(SequenceInfo, Option<i64>), MysqlError> {
     let info = apply_sequence_options(existing, options, false);
     if !sequence_options_are_valid(&info) {
-        return Err(errors::sequence_values_conflicting(qualified(database, name),
-        ));
+        return Err(errors::sequence_values_conflicting(database, name));
     }
     let restart = options.iter().find_map(|option| match option {
         SequenceOption::RestartWith(value) => Some(*value),

@@ -121,10 +121,11 @@ fn release_drops_the_named_savepoint_and_its_successors_but_no_data() {
     // The row written after s1 is untouched by the release.
     assert_eq!(ids(&mut session), ["1"]);
     for name in ["s1", "s2"] {
-        assert!(matches!(
+        crate::tests_support::assert_go_error(
             session.run(&format!("ROLLBACK TO {name}")),
-            Err(DriverError::SavepointNotExists(_))
-        ));
+            &tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS,
+            &["SAVEPOINT".into(), name.into()],
+        );
     }
 }
 
@@ -299,9 +300,8 @@ fn ending_the_transaction_clears_the_savepoint_stack() {
         session.run(ending).unwrap();
         session.run("BEGIN").unwrap();
         assert!(
-            matches!(
-                session.run("ROLLBACK TO s1"),
-                Err(DriverError::SavepointNotExists(_))
+            session.run("ROLLBACK TO s1").is_err_and(
+                |error| error.equal(&tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS)
             ),
             "{ending} left a savepoint behind"
         );

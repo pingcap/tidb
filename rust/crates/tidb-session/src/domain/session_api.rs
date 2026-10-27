@@ -295,8 +295,11 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
         }
         ClusterAnalyzeError::MissingIndex(detail) => SqlQueryError::new(8109, *b"HY000", detail),
         ClusterAnalyzeError::PartitionManagementOnNonpartitioned => {
-            let error =
-                tidb_executor::DriverError::PartitionManagementOnNonpartitioned.to_mysql_error();
+            let error = tidb_executor::DriverError::from(
+                tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            )
+            .to_mysql_error();
             SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
         }
     }

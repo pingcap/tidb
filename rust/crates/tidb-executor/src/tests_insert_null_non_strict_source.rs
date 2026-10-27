@@ -123,7 +123,8 @@ fn non_strict_insert_null_semantics_follow_the_values_path() {
     )
     .unwrap_err();
     assert!(
-        matches!(&error, crate::DriverError::ColumnCannotBeNull(name) if name == "col1"),
+        error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+            && error.to_string() == "Column 'col1' cannot be null",
         "unexpected error: {error:?}"
     );
     let error = run_insert_reporting(
@@ -134,7 +135,8 @@ fn non_strict_insert_null_semantics_follow_the_values_path() {
     )
     .unwrap_err();
     assert!(
-        matches!(&error, crate::DriverError::ColumnCannotBeNull(name) if name == "col1"),
+        error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+            && error.to_string() == "Column 'col1' cannot be null",
         "unexpected error: {error:?}"
     );
 

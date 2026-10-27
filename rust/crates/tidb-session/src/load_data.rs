@@ -62,12 +62,16 @@ impl crate::Session {
             let granted = crate::table_privilege::mem_db_verdict_mask(schema, privilege.bit())
                 .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
             if !granted {
-                return Err(DriverError::TableAccessDenied {
-                    privilege: privilege.print_name(),
-                    user: user.to_owned(),
-                    host: host.to_owned(),
-                    table: table.to_owned(),
-                });
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                        &[
+                            privilege.print_name().into(),
+                            user.to_owned().into(),
+                            host.to_owned().into(),
+                            table.to_owned().into(),
+                        ],
+                    ),
+                ));
             }
         }
         Ok(())
@@ -142,22 +146,20 @@ impl crate::Session {
         // Go `handleLoadData` refuses a LOCAL load the connection did not
         // accept before anything else runs.
         if load.local && (!self.local_infile_accepted || data.is_none()) {
-            return Err(DriverError::DdlCoded {
-                proto: &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND,
-                message: "The used command is not allowed with this MySQL version".to_owned(),
-            });
+            return Err(DriverError::from(
+                (&tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND).generate_with_stack(
+                    "The used command is not allowed with this MySQL version".to_owned(),
+                ),
+            ));
         }
         let prepared = self.prepare_load_data(load)?;
         if !load.local {
             // Go `InitDataFiles`: only a remote URL is read; a server path is
             // refused once the executor is built.
-            return Err(DriverError::DdlCoded {
-                proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK,
-                message: format!(
+            return Err(DriverError::from((&tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK).generate_with_stack(format!(
                     "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
                     load.path
-                ),
-            });
+                ))));
         }
         let data = data.unwrap_or_default();
         let env = self.load_data_env();

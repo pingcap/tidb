@@ -3118,10 +3118,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // Go `ErrTableNotExists.FastGenByArgs(schema, table)` names the
             // schema in lower case and the table as written (captured on the
             // oracle: `ACC2.NonExistent` answers `acc2.NonExistent`).
-            return Err(PlanError::unknown_table(format!(
-                "{}.{table_name}",
-                tidb_util::stringutil::go_to_lower(&db_name)
-            )));
+            return Err(PlanError::unknown_table(
+                tidb_util::stringutil::go_to_lower(&db_name),
+                table_name,
+            ));
         };
         // `:4957` `tryLockMDLAndUpdateSchemaIfNecessary`: a stored table joins
         // the transaction's metadata-lock map. A temporary table is never

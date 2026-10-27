@@ -406,8 +406,8 @@ impl Session {
         }
         if unqualified && current_db.is_empty() {
             // Go `ErrNoDB`.
-            return Err(DriverError::Schema(
-                tidb_executor::SchemaErrorKind::NoDatabaseSelected,
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             ));
         }
         let mut qualify = Qualify {
@@ -693,8 +693,9 @@ impl Session {
     ) -> Result<std::sync::Arc<tidb_executor::kv_table::KvTable>, DriverError> {
         self.with_catalog_mut(|catalog| match catalog.table_in(schema, name) {
             Some(TableEntry::Kv(kv)) => Ok(std::sync::Arc::clone(kv)),
-            _ => Err(DriverError::Schema(
-                tidb_executor::SchemaErrorKind::UnknownTable(format!("{schema}.{name}")),
+            _ => Err(DriverError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&schema).into(), (&name).into()]),
             )),
         })
     }
@@ -983,17 +984,14 @@ fn non_transactional_job_failure(run: &JobRun, index: usize) -> Option<DriverErr
     if run.ignore_error {
         return None;
     }
-    Some(DriverError::DdlCoded {
-        proto: &tidb_error::catalog::session::ERR_NON_TRANSACTIONAL_JOB_FAILURE,
-        message: format!(
+    Some(DriverError::from((&tidb_error::catalog::session::ERR_NON_TRANSACTIONAL_JOB_FAILURE).generate_with_stack(format!(
             "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {}",
             job.job_id,
             go_datum_string(&job.start),
             go_datum_string(&job.end),
             job.describe(&run.redact),
             error.error_string(),
-        ),
-    })
+        ))))
 }
 
 /// Go `checkReadClauses`.

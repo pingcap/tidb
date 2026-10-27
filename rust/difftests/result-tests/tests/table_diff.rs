@@ -41,7 +41,8 @@ fn corpus_dir() -> PathBuf {
 /// Runs one statement against a live [`Session`], returning its outcome
 /// label.
 fn run_stmt(session: &mut Session, sql: &str) -> Result<String, DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse(sql)
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     let ordered = statement_is_ordered(&stmt);
     match session.run(sql)? {
         StmtResult::Rows(rows) => Ok(rows_label(&rows, ordered)),

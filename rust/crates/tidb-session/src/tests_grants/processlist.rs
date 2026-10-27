@@ -180,8 +180,10 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
         Some(target.clone()),
     );
     tidb_util::sem::enable();
-    assert!(
-        matches!(bob.run(&kill_victim), Err(DriverError::SpecificAccessDenied(name)) if name == "RESTRICTED_CONNECTION_ADMIN")
+    crate::tests_support::assert_go_error(
+        bob.run(&kill_victim),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["RESTRICTED_CONNECTION_ADMIN".into()],
     );
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     bob.run("SET ROLE killer").unwrap();
@@ -592,11 +594,12 @@ fn kill_of_another_users_connection_requires_super() {
     );
 
     // Killing root's connection without SUPER is refused.
-    match bob.run("kill 4") {
-        // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
-        other => panic!("expected SUPER or CONNECTION_ADMIN, got {other:?}"),
-    }
+    // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
+    crate::tests_support::assert_go_error(
+        bob.run("kill 4"),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["SUPER or CONNECTION_ADMIN".into()],
+    );
 
     // Granting SUPER lets the same KILL through.
     boot.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
@@ -636,11 +639,12 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     );
     bob.attach_process(2, bob_guard);
 
-    match bob.run("kill 4") {
-        // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
-        other => panic!("expected SUPER or CONNECTION_ADMIN, got {other:?}"),
-    }
+    // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
+    crate::tests_support::assert_go_error(
+        bob.run("kill 4"),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["SUPER or CONNECTION_ADMIN".into()],
+    );
 
     boot.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
         .unwrap();
@@ -661,10 +665,11 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
 
     boot.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
         .unwrap();
-    match bob.run("kill 4") {
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "SUPER or CONNECTION_ADMIN" => {}
-        other => panic!("expected SUPER or CONNECTION_ADMIN after REVOKE, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        bob.run("kill 4"),
+        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &["SUPER or CONNECTION_ADMIN".into()],
+    );
 }
 
 /// `PROCESS` granted through `GRANT` (not the test-only

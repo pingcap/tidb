@@ -78,7 +78,6 @@ fn static_global_index_point_lookup(
         || select.lock.is_some()
         || !select.hints.is_empty()
         || select.into_outfile.is_some()
-        || !select.into_vars.is_empty()
         || ctx.select_limit() != u64::MAX
         || ctx
             .optimizer_fix_control()
@@ -1702,7 +1701,7 @@ pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<RegisteredScalarSubquery
 /// back when the statement unwinds.
 fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::PlanError {
     match error {
-        crate::DriverError::SubqueryReturnsMoreThanOneRow => {
+        error if error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW) => {
             tidb_planner::plan_base::PlanError::subquery_returns_more_than_one_row()
         }
         crate::DriverError::MemTableRetrievalNeeded => {
@@ -1752,33 +1751,30 @@ fn default_evaluator_using<'a>(
             })?;
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
-        let value = super::dml::materialize_column_default(
-            &meta,
-            default_use,
-            ctx,
-            chunk.get_row(0),
-        )
-        .map_err(|error| match error {
-            crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
-            // Go `table.ErrNoDefaultValue.GenWithStackByArgs(colName)`.
-            crate::DriverError::NoDefaultForField(name) => tidb_expr::EvalError::Conversion(
-                tidb_error::terror::TerrorError::registered(
-                    tidb_error::terror::TerrorClass::Table,
-                    tidb_error::terror::TerrorCode::new(1364),
-                    format!("Field '{name}' doesn't have a default value"),
-                ),
-            ),
-            // Any other refusal (a default whose own conversion truncates, for
-            // instance) keeps the code the client would have seen.
-            error => {
-                let error = error.to_mysql_error();
-                tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::registered(
-                    tidb_error::terror::TerrorClass::Types,
-                    tidb_error::terror::TerrorCode::new(error.code as isize),
-                    error.message,
-                ))
-            }
-        })?;
+        let value =
+            super::dml::materialize_column_default(&meta, default_use, ctx, chunk.get_row(0))
+                .map_err(|error| match error {
+                    crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
+                    // Go `table.ErrNoDefaultValue.GenWithStackByArgs(colName)`.
+                    error if error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE) => {
+                        tidb_expr::EvalError::Conversion(
+                            tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                                .generate(error.to_string()),
+                        )
+                    }
+                    // Any other refusal (a default whose own conversion truncates, for
+                    // instance) keeps the code the client would have seen.
+                    error => {
+                        let error = error.to_mysql_error();
+                        tidb_expr::EvalError::Conversion(
+                            tidb_error::terror::TerrorError::registered(
+                                tidb_error::terror::TerrorClass::Types,
+                                tidb_error::terror::TerrorCode::new(error.code as isize),
+                                error.message,
+                            ),
+                        )
+                    }
+                })?;
         Ok(Expression::Constant(tidb_expr::constant::Constant::new(
             value,
             meta.field_type,
@@ -2305,7 +2301,7 @@ pub(crate) fn view_column_types(
             .find_view(database, view_name)
             .cloned()
             .ok_or_else(|| {
-                tidb_planner::plan_base::PlanError::unknown_table(format!("{database}.{view_name}"))
+                tidb_planner::plan_base::PlanError::unknown_table(database, view_name)
             })?;
         let plan = builder.build_data_source_from_view(&view)?;
         let types = logical_column_types(&plan);

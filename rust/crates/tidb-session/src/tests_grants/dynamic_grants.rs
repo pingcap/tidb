@@ -26,27 +26,29 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     // (3619) at DB and TABLE scope, and it fires BEFORE the
     // is-it-registered check.
     for level in ["db1.*", "db1.t"] {
-        match session.run(&format!("GRANT BACKUP_ADMIN ON {level} TO 'u1'@'%'")) {
-            Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
-            other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
-        }
+        crate::tests_support::assert_go_error(
+            session.run(&format!("GRANT BACKUP_ADMIN ON {level} TO 'u1'@'%'")),
+            &tidb_util::dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+            &["BACKUP_ADMIN".into()],
+        );
     }
-    match session.run("REVOKE BACKUP_ADMIN ON db1.* FROM 'u1'@'%'") {
-        Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "BACKUP_ADMIN"),
-        other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("REVOKE BACKUP_ADMIN ON db1.* FROM 'u1'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+        &["BACKUP_ADMIN".into()],
+    );
     // An UNREGISTERED name is 3929 at `*.*` -- and 3619 elsewhere, since
     // the level check runs first.
-    match session.run("GRANT NOT_A_REAL_PRIV ON *.* TO 'u1'@'%'") {
-        Err(DriverError::DynamicPrivilegeNotRegistered(name)) => {
-            assert_eq!(name, "NOT_A_REAL_PRIV");
-        }
-        other => panic!("expected DynamicPrivilegeNotRegistered, got {other:?}"),
-    }
-    match session.run("GRANT NOT_A_REAL_PRIV ON db1.* TO 'u1'@'%'") {
-        Err(DriverError::IllegalPrivilegeLevel(name)) => assert_eq!(name, "NOT_A_REAL_PRIV"),
-        other => panic!("expected IllegalPrivilegeLevel, got {other:?}"),
-    }
+    crate::tests_support::assert_go_error(
+        session.run("GRANT NOT_A_REAL_PRIV ON *.* TO 'u1'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
+        &["NOT_A_REAL_PRIV".into()],
+    );
+    crate::tests_support::assert_go_error(
+        session.run("GRANT NOT_A_REAL_PRIV ON db1.* TO 'u1'@'%'"),
+        &tidb_util::dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+        &["NOT_A_REAL_PRIV".into()],
+    );
 
     // The registered names are accepted case-insensitively.
     session

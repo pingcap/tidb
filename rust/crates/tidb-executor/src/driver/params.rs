@@ -41,7 +41,7 @@ pub fn bind_parameters(
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<String, DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
-        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     bind_statement(stmt, values).map(|stmt| stmt.restore())
 }
 
@@ -55,7 +55,9 @@ pub fn bind_statement(mut stmt: Stmt, values: &[Datum]) -> Result<Stmt, DriverEr
     let mut bound = 0usize;
     bind_statement_markers(&mut stmt, values, &mut bound)?;
     if bound != values.len() {
-        return Err(DriverError::WrongParamCount);
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(stmt)
 }
@@ -71,7 +73,9 @@ pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, Dr
     let mut bound = 0usize;
     install_statement_marker_values(&mut bound_stmt, values, &mut bound)?;
     if bound != values.len() {
-        return Err(DriverError::WrongParamCount);
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(bound_stmt)
 }
@@ -98,7 +102,9 @@ pub fn bound_parameter_values(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .map(|values| Some(values.into()))
-        .ok_or(DriverError::WrongParamCount)
+        .ok_or(DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+        ))
 }
 
 /// Rebinds markers on the complete statement retained by a cached DML root.
@@ -112,7 +118,9 @@ pub(crate) fn bind_prepared_statement_in_place(
     let mut bound = 0usize;
     install_statement_marker_values(stmt, values, &mut bound)?;
     if bound != values.len() {
-        return Err(DriverError::WrongParamCount);
+        return Err(DriverError::from(
+            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(())
 }
@@ -151,7 +159,12 @@ fn install_marker_values<T: tidb_ast::Visitable>(
                 *in_execute = true;
                 *bound += 1;
             }
-            None => failure = Some(DriverError::WrongParamCount),
+            None => {
+                failure = Some(DriverError::from(
+                    tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT
+                        .generate_with_stack_by_args(&[]),
+                ))
+            }
         }
     });
     match failure {
@@ -164,7 +177,7 @@ fn install_marker_values<T: tidb_ast::Visitable>(
 /// reports to the client.
 pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usize, DriverError> {
     let mut stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
-        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     let mut counted = 0usize;
     // Counting binds nothing: every marker reports itself and stays put.
     count_statement_markers(&mut stmt, &mut counted);
@@ -226,7 +239,12 @@ fn bind_statement_markers<N: tidb_ast::Visitable>(
                 }
                 Err(error) => failure = Some(error),
             },
-            None => failure = Some(DriverError::WrongParamCount),
+            None => {
+                failure = Some(DriverError::from(
+                    tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT
+                        .generate_with_stack_by_args(&[]),
+                ))
+            }
         }
     });
     match failure {

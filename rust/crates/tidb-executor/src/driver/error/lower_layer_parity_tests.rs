@@ -22,7 +22,7 @@ mod storage {
     use tidb_table::kv_table::KvTableError;
     #[allow(unused_imports)]
     use tidb_kv::storage::StorageError;
-    use crate::{DriverError, ExecError, TxnErrorKind};
+    use crate::{DriverError, ExecError};
     use tidb_error::mysql::MysqlError;
 
     /// The SQL layer's rendering of each storage failure, pinned before the
@@ -37,7 +37,7 @@ mod storage {
         assert_eq!(
             DriverError::from(StorageError::Retryable("epoch not match".to_owned()))
                 .to_mysql_error(),
-            DriverError::Txn(TxnErrorKind::RegionUnavailable).to_mysql_error()
+            DriverError::from(tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE.generate_with_stack_by_args(&[])).to_mysql_error()
         );
         for (error, text) in [
             (StorageError::NotFound, "key not found"),
@@ -115,84 +115,67 @@ mod cast {
         let column = || "c".to_owned();
         for (old, new) in [
             (
-                DriverError::IncorrectValue {
-                    type_name: "int".to_owned(),
-                    value: "abc".to_owned(),
-                    column: column(),
-                    row: 3,
-                },
-                incorrect_value("int", "abc", "c", 3),
-            ),
-            (
-                DriverError::IncorrectValue {
-                    type_name: "string".to_owned(),
-                    value: "\\x81".to_owned(),
-                    column: column(),
-                    row: 0,
-                },
-                incorrect_value("string", "\\x81", "c", 0),
-            ),
-            (
-                DriverError::IncorrectValue {
-                    type_name: "int".to_owned(),
-                    value: "abc".to_owned(),
-                    column: String::new(),
-                    row: 0,
-                },
-                incorrect_value("int", "abc", "", 0),
-            ),
-            (
-                DriverError::IncorrectTemporalValue {
-                    type_name: "datetime".to_owned(),
-                    value: "x".to_owned(),
-                    column: column(),
-                    row: 2,
-                },
+                DriverError::from(
+                    tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+                        .fast_generate_by_args(&[
+                            "datetime".into(),
+                            "x".into(),
+                            column().into(),
+                            2.into(),
+                        ]),
+                ),
                 incorrect_temporal_value("datetime", "x", "c", 2),
             ),
             (
-                DriverError::DataOutOfRange {
-                    column: column(),
-                    row: 1,
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+                        .generate_with_stack_by_args(&[column().into(), 1.into()]),
+                ),
                 data_out_of_range("c", 1),
             ),
             (
-                DriverError::DataTooLong {
-                    column: column(),
-                    row: 1,
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_DATA_TOO_LONG
+                        .generate_with_stack_by_args(&[column().into(), 1.into()]),
+                ),
                 data_too_long("c", 1),
             ),
             (
-                DriverError::DataTruncatedAtRow {
-                    column: column(),
-                    row: 4,
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_TRUNCATED
+                        .generate_with_stack_by_args(&[column().into(), 4.into()]),
+                ),
                 data_truncated_at_row("c", 4),
             ),
             (
-                DriverError::TruncatedIncorrectValue {
-                    kind: "DOUBLE".to_owned(),
-                    value: "abc".to_owned(),
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                        .generate_with_stack_by_args(&["DOUBLE".into(), "abc".into()]),
+                ),
                 truncated_incorrect_value("DOUBLE", "abc"),
             ),
             (
-                DriverError::IncorrectValueRaw {
-                    type_name: "date".to_owned(),
-                    value: "x".to_owned(),
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_WRONG_VALUE
+                        .generate_with_stack_by_args(&["date".into(), "x".into()]),
+                ),
                 incorrect_value_raw("date", "x"),
             ),
             (
-                DriverError::DataTooLongRaw {
-                    field_len: 3,
-                    data_len: 7,
-                },
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_DATA_TOO_LONG.generate_with_stack(format!(
+                        "Data Too Long, field len {}, data len {}",
+                        3, 7
+                    )),
+                ),
                 data_too_long_raw(3, 7),
             ),
-            (DriverError::DataTruncatedUnformatted, data_truncated_unformatted()),
+            (
+                DriverError::from(
+                    tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack_by_args(&[]),
+                ),
+                data_truncated_unformatted(),
+            ),
         ] {
             let old = old.to_mysql_error();
             assert_eq!(old, new);
@@ -223,10 +206,10 @@ mod cast {
         let mysql = data_too_long("c", 1);
         assert_eq!(
             DriverError::from(CastError::Column(mysql.clone())).to_mysql_error(),
-            DriverError::DataTooLong {
-                column: "c".to_owned(),
-                row: 1,
-            }
+            DriverError::from(
+                tidb_error::catalog::types::ERR_DATA_TOO_LONG
+                    .generate_with_stack_by_args(&["c".into(), 1.into()])
+            )
             .to_mysql_error()
         );
         assert_eq!(CastError::Column(mysql.clone()).to_string(), mysql.message);
@@ -248,7 +231,10 @@ mod autoinc {
     /// The allocator's 1467 renders as the driver variant it replaced.
     #[test]
     fn autoinc_read_failed_matches_the_driver_variant() {
-        let old = crate::DriverError::AutoincReadFailed.to_mysql_error();
+        let old = crate::DriverError::from(
+            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+        )
+        .to_mysql_error();
         let new = tidb_table::kv_table::autoinc_read_failed();
         assert_eq!(old, new);
         assert_eq!(old.identity, new.identity);
@@ -266,9 +252,18 @@ mod default_error {
         for (new, old) in [
             (
                 DefaultError::FunctionNotAllowed("rand".to_owned()),
-                DriverError::DefaultFunctionNotAllowed("c".to_owned(), "rand".to_owned()),
+                DriverError::from(
+                    tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&["c".into(), "rand".into()]),
+                ),
             ),
-            (DefaultError::InvalidDefault, DriverError::InvalidDefault("c".to_owned())),
+            (
+                DefaultError::InvalidDefault,
+                DriverError::from(
+                    tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                        .generate_with_stack_by_args(&["c".into()]),
+                ),
+            ),
             (
                 DefaultError::WrongParameterCount("now"),
                 DriverError::Exec(ExecError::Eval(tidb_expr::EvalError::WrongParameterCount(
@@ -277,7 +272,10 @@ mod default_error {
             ),
             (
                 DefaultError::UnsupportedSequenceDefaultType,
-                DriverError::UnsupportedSequenceDefaultType("c".to_owned()),
+                DriverError::from(
+                    tidb_util::dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
+                        .generate_with_stack_by_args(&["c".into()]),
+                ),
             ),
             (
                 DefaultError::Unsupported("a DEFAULT this node cannot evaluate"),
@@ -285,10 +283,12 @@ mod default_error {
             ),
             (
                 DefaultError::UnknownColumn("ÀB".to_owned()),
-                DriverError::UnknownColumnInClause {
-                    column: "ÀB".to_owned(),
-                    clause: "expression".to_owned(),
-                },
+                DriverError::from(
+                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                        tidb_util::stringutil::go_to_lower(&"ÀB".to_owned()).into(),
+                        ("expression".to_owned()).into(),
+                    ]),
+                ),
             ),
         ] {
             assert_eq!(new.to_mysql_error("c"), old.to_mysql_error());

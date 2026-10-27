@@ -56,7 +56,7 @@ impl<'a> DeleteRecords<'a> {
                 &[ParentChange::Delete(old)],
                 ctx,
             ) {
-                if matches!(error, DriverError::ForeignKeyRowIsReferenced { .. }) {
+                if error.equal(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2) {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
