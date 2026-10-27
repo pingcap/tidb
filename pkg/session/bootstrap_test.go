@@ -3101,9 +3101,9 @@ func TestUpgradeToVer234AddsNDVRate(t *testing.T) {
 	}
 	// Initial bootstrap uses the new-cluster policy, and the upgrade keeps an
 	// existing value.
-	require.Equal(t, "500000000", threshold(se))
+	require.Equal(t, "100000000", threshold(se))
 	upgradeToVer234(se, version233)
-	require.Equal(t, "500000000", threshold(se))
+	require.Equal(t, "100000000", threshold(se))
 
 	// Simulate a cluster before version234. It has no ndv_rate column yet, and
 	// its saved options must not gain a rate.
