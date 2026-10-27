@@ -23,9 +23,29 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
+
+// QueryPlan records source metadata and session settings after tenant privilege checks.
+type QueryPlan struct {
+	ReadTS        uint64
+	SchemaVersion int64
+	Timestamp     int64
+	Keyspace      string
+	// Tables lists the included source tables.
+	Tables []SourceTable
+	// SessionStates are the states of the submitting session.
+	SessionStates *sessionstates.SessionStates
+}
+
+// SourceTable identifies a source table definition of an import query.
+type SourceTable struct {
+	DBID     int64
+	ID       int64
+	Revision uint64
+}
 
 // importQueryWorkerVars are decided by the worker instead of the submitter:
 // the snapshot and transaction it reads in, and its memory budget.
