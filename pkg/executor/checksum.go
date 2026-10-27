@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -141,7 +142,17 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 			physicalTableID: task.physicalTableID,
 			indexID:         task.indexID,
 		}
-		result.response, result.err = e.handleChecksumRequest(task.request)
+		// This worker runs in a bare goroutine, and handleChecksumRequest can
+		// panic deep in the distsql/proto layer. Recover here so a panic becomes
+		// this task's error instead of crashing the whole tidb-server, and keep
+		// serving the remaining tasks so Open's result loop does not block.
+		util.WithRecovery(func() {
+			result.response, result.err = e.handleChecksumRequest(task.request)
+		}, func(r any) {
+			if r != nil {
+				result.err = util.GetRecoverError(r)
+			}
+		})
 		resultCh <- result
 	}
 }
