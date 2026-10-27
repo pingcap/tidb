@@ -359,6 +359,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(4, 4, 4))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
+		TotalKeysSize:             123,
 		ProcessedKeys:             10,
 		ProcessedKeysSize:         10,
 		RocksdbDeleteSkippedCount: 5,
@@ -445,14 +446,24 @@ func TestCopRuntimeStats(t *testing.T) {
 		require.Equal(t, uint64(3), snapshot.ObservedSummaries)
 	})
 
-	firstEstimate, ok := EstimateScanBytes(10, 1, 100)
+	t.Run("reported scan bytes", func(t *testing.T) {
+		for _, counts := range [][3]int64{{10, 2, 6}, {10, 0, 0}, {0, 0, 0}} {
+			size, ok := EstimateScanBytes(counts[0], counts[1], counts[2], 123)
+			require.True(t, ok)
+			require.Equal(t, float64(123), size)
+		}
+		_, ok := EstimateScanBytes(10, 2, 6, -1)
+		require.False(t, ok)
+	})
+
+	firstEstimate, ok := EstimateScanBytes(10, 1, 100, 0)
 	require.True(t, ok)
-	secondEstimate, ok := EstimateScanBytes(9, 9, 9)
+	secondEstimate, ok := EstimateScanBytes(9, 9, 9, 0)
 	require.True(t, ok)
-	zeroEstimate, ok := EstimateScanBytes(10, 0, 0)
+	zeroEstimate, ok := EstimateScanBytes(10, 0, 0, 0)
 	require.True(t, ok)
 	require.Zero(t, zeroEstimate)
-	_, ok = EstimateScanBytes(10, 0, 1)
+	_, ok = EstimateScanBytes(10, 0, 1, 0)
 	require.False(t, ok)
 	stats.RecordAnalyzeScanBytes(tableReaderID, firstEstimate)
 	stats.RecordAnalyzeScanBytes(tableReaderID, secondEstimate)

@@ -312,7 +312,7 @@ const (
 	groupSlotsOffset = ctrlGroupsSize
 )
 
-func (g *groupReference) cap(typ *mapType) uint64 {
+func (*groupReference) cap(_ *mapType) uint64 {
 	// GroupSize includes padding, and split groups may have zero strides.
 	// Neither layout's capacity can be inferred by dividing by a slot size.
 	return mapGroupSlots
