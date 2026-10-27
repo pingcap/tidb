@@ -2462,6 +2462,16 @@ func (a *ExecStmt) GetOriginalSQL() string {
 	return stmt.String()
 }
 
+// GetUnredactedSQL returns a statement-summary sample before log redaction.
+// Sensitive statements retain their own credential protection.
+func (a *ExecStmt) GetUnredactedSQL() string {
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		return sensitiveStmt.SecureText()
+	}
+	sessVars := a.Ctx.GetSessionVars()
+	return sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
+}
+
 // GetEncodedPlan implements StmtExecLazyInfo interface.
 func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
 	defer func() {
