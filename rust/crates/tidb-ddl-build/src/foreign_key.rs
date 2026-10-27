@@ -52,7 +52,7 @@ pub fn coded(
     proto: &'static tidb_error::terror::TerrorError,
     message: impl Into<String>,
 ) -> DdlAdmissionError {
-    DdlAdmissionError::with_proto(proto, message.into())
+    DdlAdmissionError::from_terror(&proto.generate_with_stack(message.into()))
 }
 
 /// Go `ast.ReferOptionType` ordinal.

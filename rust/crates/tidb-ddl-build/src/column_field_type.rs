@@ -753,54 +753,36 @@ pub enum ColumnAttributeError {
 }
 
 impl ColumnAttributeError {
-    /// The MySQL/TiDB errno go raises for each refused attribute.
+    /// The error Go raises for the declaring column `column`: the `types`
+    /// definition with the column name where the `%-.192s` verbs put it, or
+    /// `types.CheckVectorDimValid`'s plain HY000 error.
     #[must_use]
-    pub fn go_code(&self) -> u16 {
-        match self {
-            Self::MBiggerThanD => 1427,
-            Self::TooBigPrecision { .. } => 1426,
-            Self::DuplicatedValueInType { .. } => 1291,
-            Self::TooLongEnumSetValue => 3505,
-            // Go `types.CheckVectorDimValid`'s plain HY000 error.
-            Self::InvalidVectorDimension(_) => 1105,
-        }
-    }
-
-    /// The Go definition each refused attribute is raised as, `None` for the
-    /// plain HY000 error.
-    #[must_use]
-    pub fn go_proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
-        Some(match self {
-            Self::MBiggerThanD => &tidb_error::catalog::types::ERR_M_BIGGER_THAN_D,
-            Self::TooBigPrecision { .. } => &tidb_error::catalog::types::ERR_TOO_BIG_PRECISION,
-            Self::DuplicatedValueInType { .. } => {
-                &tidb_error::catalog::types::ERR_DUPLICATED_VALUE_IN_TYPE
+    pub fn refusal(&self, column: &str) -> tidb_error::mysql::MysqlError {
+        use tidb_error::catalog::types;
+        let error = match self {
+            Self::MBiggerThanD => {
+                types::ERR_M_BIGGER_THAN_D.generate_with_stack_by_args(&[column.into()])
             }
-            Self::TooLongEnumSetValue => &tidb_util::dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE,
-            Self::InvalidVectorDimension(_) => return None,
-        })
-    }
-
-    /// The client-visible message go raises, formatted with the declaring
-    /// column's name exactly as the `%-.192s` verbs render it.
-    #[must_use]
-    pub fn go_message(&self, column: &str) -> String {
-        match self {
-            Self::MBiggerThanD => format!(
-                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{column}')."
-            ),
-            Self::TooBigPrecision { precision, maximum } => format!(
-                "Too-big precision {precision} specified for '{column}'. Maximum is {maximum}."
-            ),
-            Self::DuplicatedValueInType { value, type_name } => format!(
-                "Column '{column}' has duplicated value '{value}' in {type_name}"
-            ),
+            Self::TooBigPrecision { precision, maximum } => types::ERR_TOO_BIG_PRECISION
+                .generate_with_stack_by_args(&[
+                    (*precision).into(),
+                    column.into(),
+                    (*maximum).into(),
+                ]),
+            Self::DuplicatedValueInType { value, type_name } => types::ERR_DUPLICATED_VALUE_IN_TYPE
+                .generate_with_stack_by_args(&[
+                    column.into(),
+                    value.as_str().into(),
+                    (*type_name).into(),
+                ]),
             // Go `ErrTooLongValueForType.GenWithStackByArgs(col.Name)`.
-            Self::TooLongEnumSetValue => {
-                format!("Too long enumeration/set value for column {column}.")
+            Self::TooLongEnumSetValue => tidb_util::dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE
+                .generate_with_stack_by_args(&[column.into()]),
+            Self::InvalidVectorDimension(message) => {
+                return tidb_error::mysql::MysqlError::unknown(message.as_str())
             }
-            Self::InvalidVectorDimension(message) => message.clone(),
-        }
+        };
+        tidb_error::mysql::MysqlError::from_terror(&error)
     }
 }
 

@@ -105,8 +105,6 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
-use tidb_error::tidb::errcode;
-
 /// The one query `fetchTableValues` runs.
 pub const SYSVAR_TABLE_QUERY: &str =
     "SELECT variable_name, variable_value FROM mysql.global_variables";
@@ -125,21 +123,31 @@ pub enum SysVarCacheError {
 }
 
 impl SysVarCacheError {
+    /// The Go error this raises, `None` for the executor's own error.
+    #[must_use]
+    pub fn to_terror(&self) -> Option<tidb_error::terror::TerrorError> {
+        match self {
+            Self::UnknownSystemVar(name) => Some(
+                tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[name.as_str().into()]),
+            ),
+            Self::Exec(_) => None,
+        }
+    }
+
     /// The MySQL error code, where there is one.
     #[must_use]
     pub fn code(&self) -> Option<u16> {
-        match self {
-            Self::UnknownSystemVar(_) => Some(errcode::ErrUnknownSystemVariable),
-            Self::Exec(_) => None,
-        }
+        self.to_terror().map(|error| error.to_sql_error().code)
     }
 }
 
 impl std::fmt::Display for SysVarCacheError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnknownSystemVar(name) => write!(f, "Unknown system variable '{name}'"),
-            Self::Exec(msg) => f.write_str(msg),
+        match (self.to_terror(), self) {
+            (Some(error), _) => f.write_str(error.message()),
+            (None, Self::Exec(msg)) => f.write_str(msg),
+            (None, Self::UnknownSystemVar(_)) => unreachable!("an unknown variable is Go's error"),
         }
     }
 }

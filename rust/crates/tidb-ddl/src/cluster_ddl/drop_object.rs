@@ -195,9 +195,9 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                     }));
                 }
                 // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-                    &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS,
-                    format!("Can't drop database '{name}'; database doesn't exist"),
+                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                    &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS
+                        .generate_with_stack_by_args(&[name.into()]),
                 )));
             };
             // Go `DropSchema`: `checkDatabaseHasForeignKeyReferred`.

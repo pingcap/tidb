@@ -334,9 +334,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 )));
             }
             if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS,
-                    "Unsupported shard_row_id_bits for table with primary key as row id",
+                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
+                        .generate_with_stack_by_args(&[]),
                 )));
             }
             (

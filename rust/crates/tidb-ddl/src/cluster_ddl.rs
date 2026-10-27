@@ -1432,9 +1432,9 @@ pub fn lower_ddl_with_context(
                 .count()
                 > 1
             {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
-                    "Unsupported multi schema change for set tiflash replica",
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
+                        .generate_with_stack_by_args(&["set tiflash replica".into()]),
                 ));
             }
             // Go `AlterSchema`'s option loop: ENCRYPTION is parsed and
@@ -1491,11 +1491,9 @@ pub fn lower_ddl_with_context(
             // so far, is `ErrConflictingDeclarations` (1302).
             let mut chosen: Option<String> = None;
             let conflict = |current: &str, other: &str| {
-                DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
-                    format!(
-                        "Conflicting declarations: 'CHARACTER SET {current}' and 'CHARACTER SET {other}'"
-                    ),
+                DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS
+                        .generate_with_stack_by_args(&[current.into(), other.into()]),
                 )
             };
             for option in options {
@@ -1567,9 +1565,9 @@ pub fn lower_ddl_with_context(
             // statement wrong in both ways reports the contradiction
             // (`ddl/executor.go:6808`).
             if create.or_replace && create.if_not_exists {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_WRONG_USAGE,
-                    "Incorrect usage of OR REPLACE and IF NOT EXISTS".to_owned(),
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_USAGE
+                        .generate_with_stack("Incorrect usage of OR REPLACE and IF NOT EXISTS"),
                 ));
             }
             Ok(Some(DdlStatement::CreatePlacementPolicy {
@@ -1757,9 +1755,9 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
         return Ok(None);
     }
     let Some(policy) = find_policy(snapshot, name)? else {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
-            format!("Unknown placement policy '{name}'"),
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                .generate_with_stack_by_args(&[name.into()]),
         )));
     };
     Ok(Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
@@ -1858,9 +1856,9 @@ fn placement_settings_from_options(
 /// Go `fillMultiSchemaInfo`'s default arm:
 /// `dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())`.
 fn go_unsupported_multi_schema_change(job: &str) -> DdlAdmissionError {
-    DdlAdmissionError::with_proto(
-        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
-        format!("Unsupported multi schema change for {job}"),
+    DdlAdmissionError::from_terror(
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
+            .generate_with_stack_by_args(&[job.into()]),
     )
 }
 
@@ -1926,7 +1924,9 @@ fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmi
                     },
                     _ => continue,
                 };
-                return Err(DdlAdmissionError::with_proto(proto, message));
+                return Err(DdlAdmissionError::from_terror(
+                    &proto.generate_with_stack(message),
+                ));
             }
             // `STATS_PERSISTENT` and `PRE_SPLIT_REGIONS` fall to the option
             // switch's `default` arm: `ErrUnsupportedAlterTableOption`.
@@ -1939,9 +1939,8 @@ fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmi
                     )
                 }) =>
             {
-                return Err(DdlAdmissionError::with_proto(
-                    &dbt::ERR_UNSUPPORTED_ALTER_TABLE_OPTION,
-                    "This type of ALTER TABLE is currently unsupported",
+                return Err(DdlAdmissionError::from_terror(
+                    &dbt::ERR_UNSUPPORTED_ALTER_TABLE_OPTION.generate_with_stack_by_args(&[]),
                 ));
             }
             _ => {}
@@ -2053,9 +2052,8 @@ fn resolve_alter_algorithm(
         supported = name(supported),
     );
     if rank(specify) > rank(supported) {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED,
-            message,
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED.generate_with_stack(message),
         ));
     }
     context.append_sql_warn(tidb_util::context::SqlWarn::of(
@@ -2291,9 +2289,9 @@ fn lower_alter_table_catalog(
                             option if is_noop_table_option(option) => {}
                             // Go's `default: err = dbterror.ErrUnsupportedAlterTableOption`.
                             _ => actions.push(AlterColumnAction::Refused(
-                                DdlAdmissionError::with_proto(
-                                    &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION,
-                                    "This type of ALTER TABLE is currently unsupported",
+                                DdlAdmissionError::from_terror(
+                                    &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+                                        .generate_with_stack_by_args(&[]),
                                 ),
                             )),
                         }
@@ -2728,9 +2726,9 @@ fn lower_alter_table_catalog(
                 // Go `AlterTable`'s option switch default:
                 // `dbterror.ErrUnsupportedAlterTableOption`.
                 _ => {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION,
-                        "This type of ALTER TABLE is currently unsupported",
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+                            .generate_with_stack_by_args(&[]),
                     ))
                 }
             };
@@ -2816,9 +2814,9 @@ fn lower_alter_table_catalog(
                 // answers `ErrUnknownCharacterSet` (1115) when the name is
                 // not a charset — a collation name, say.
                 if tidb_datatype::get_charset_info(name).is_err() {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
-                        format!("Unknown character set: '{name}'"),
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                            .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
             }
@@ -3108,9 +3106,9 @@ fn lower_alter_table_catalog(
                 warning: None,
             }))
         }
-        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION,
-            "This type of ALTER TABLE is currently unsupported",
+        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+                .generate_with_stack_by_args(&[]),
         )),
         // Go `AlterTable`'s default arm: the specifications it has no job for.
         tidb_ast::AlterTableAction::Force
@@ -3118,9 +3116,8 @@ fn lower_alter_table_catalog(
         | tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::ImportTablespace { .. }
             | tidb_ast::AlterPartitionAction::DiscardTablespace { .. },
-        ) => Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC,
-            "Unsupported Unsupported/unknown ALTER TABLE specification",
+        ) => Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC.generate_with_stack_by_args(&[]),
         )),
         _ => Ok(None),
     }
@@ -3191,10 +3188,11 @@ fn lower_alter_add_index(
             Some(tidb_ast::PrimaryKeyStorage::Clustered)
         )
     {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY,
-            "Adding clustered primary key is not supported. Please consider adding \
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+                "Adding clustered primary key is not supported. Please consider adding \
              NONCLUSTERED primary key instead",
+            ),
         ));
     }
     let kind = match index.kind {
@@ -3208,9 +3206,10 @@ fn lower_alter_add_index(
             // prefix `Unsupported ` onto a sentence that already reads as a
             // refusal (oracle g-alter: `8200 FULLTEXT index is only
             // supported in starter deployment mode`).
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX,
-                "FULLTEXT index is only supported in starter deployment mode",
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
+                    "FULLTEXT index is only supported in starter deployment mode",
+                ),
             ));
         }
         IndexConstraintKind::Vector => {
@@ -3280,9 +3279,8 @@ fn prepare_rename_column(
             constraint.name.original(),
             from,
         );
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            error.proto,
-            error.message,
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &error.proto.generate_with_stack(error.message),
         )));
     }
     if wanted == to.go_to_lower() {
@@ -3779,9 +3777,9 @@ fn apply_set_column_default(
 fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlanError> {
     if charset.is_empty() && collate.is_empty() {
         return Err(DdlPlanError::Admission(
-            tidb_ddl_build::table_info_build::DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
-                "Unknown character set: ''".to_owned(),
+            tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                    .generate_with_stack_by_args(&["".into()]),
             ),
         ));
     }
@@ -4234,7 +4232,9 @@ fn check_unsupported_column_constraint(
 }
 
 fn coded_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, message.into()))
+    DdlPlanError::Admission(DdlAdmissionError::from_terror(
+        &proto.generate_with_stack(message.into()),
+    ))
 }
 
 /// Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`): one DROP COLUMN as
@@ -4594,9 +4594,8 @@ fn split_name(
         // answered `1049 Unknown database ''` where TiDB answers 1046 -- and
         // on a node that defaulted its sessions into `test`, the same
         // statement had silently created the table in the wrong schema.
-        [object] if default_schema.is_empty() => Err(DdlAdmissionError::with_proto(
-            &tidb_error::plannererrors::ERR_NO_DB,
-            "No database selected",
+        [object] if default_schema.is_empty() => Err(DdlAdmissionError::from_terror(
+            &tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
@@ -5004,9 +5003,9 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                     })
                 })
             {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
-                    format!("Duplicate check constraint name '{}'.", constraint.name),
+                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
+                        .generate_with_stack_by_args(&[constraint.name.original().into()]),
                 )));
             }
             // Go's executor submits StateNone/ID zero. The first owner step
@@ -5037,9 +5036,9 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .iter_deref()
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND,
-                        format!("Constraint '{name}' does not exist."),
+                    DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                            .generate_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
             let job = new_check_constraint_job(
@@ -5068,9 +5067,9 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .iter_deref()
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND,
-                        format!("Constraint '{name}' does not exist."),
+                    DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                            .generate_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
             let job = new_check_constraint_job(
@@ -7828,9 +7827,9 @@ fn stored_partition_spec(
     stored: &TableInfo,
 ) -> Result<tidb_table::partition_routing::PartitionSpec, DdlPlanError> {
     let partition = stored.partition.as_ref().ok_or_else(|| {
-        DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED,
-            "Partition management on a not partitioned table is not possible".to_owned(),
+        DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
         ))
     })?;
     let columns = stored.columns.iter_deref().collect::<Vec<_>>();
@@ -7882,7 +7881,9 @@ fn apply_partition_change(
 }
 
 fn exchange_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, message.into()))
+    DdlPlanError::Admission(DdlAdmissionError::from_terror(
+        &proto.generate_with_stack(message.into()),
+    ))
 }
 
 /// Pinned Go `checkFieldTypeCompatible`.
@@ -8535,9 +8536,11 @@ fn check_modify_charset_and_collation(
 }
 
 fn unsupported_charset_change(proto: &'static TerrorError, reason: String) -> DdlPlanError {
-    DdlPlanError::Admission(tidb_ddl_build::table_info_build::DdlAdmissionError::with_proto(
-        proto, reason,
-    ))
+    DdlPlanError::Admission(
+        tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+            &proto.generate_with_stack(reason),
+        ),
+    )
 }
 
 /// Go `types.IsVarcharTooBigFieldLength`: the declared length is in

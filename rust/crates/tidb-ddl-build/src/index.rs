@@ -1381,9 +1381,11 @@ pub fn resolve_index_columns(
             .position(|column| column.name.lowercase() == part.name.lowercase())
         else {
             // Go `buildIndexColumns`' `GenWithStack("column does not exist: %s")`.
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
-                format!("column does not exist: {}", part.name.original()),
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack(format!(
+                    "column does not exist: {}",
+                    part.name.original()
+                )),
             ));
         };
         offsets.push(offset);

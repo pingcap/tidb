@@ -130,20 +130,20 @@ impl DdlAdmissionError {
     /// it. Refusing under Go's own errno is what lets a client tell "this
     /// server does not do that" from an internal failure.
     pub fn unsupported(what: impl Into<String>) -> Self {
-        Self::with_proto(
-            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
-            format!("Unsupported {}", what.into()),
+        Self::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                .generate_with_stack_by_args(&[what.into().into()]),
         )
     }
 
-    /// Builds a refusal that carries one of Go's own errors, for the
-    /// statements TiDB itself rejects rather than the ones this node merely
-    /// declines to serve.
-    pub fn with_proto(proto: &tidb_error::terror::TerrorError, reason: impl Into<String>) -> Self {
+    /// The refusal for a Go error raised as Go raises it
+    /// (`ErrX.GenWithStackByArgs(...)`).
+    #[must_use]
+    pub fn from_terror(error: &tidb_error::terror::TerrorError) -> Self {
         Self {
-            reason: reason.into(),
-            code: proto.to_sql_error().code,
-            identity: Some(proto.identity()),
+            reason: error.message().to_owned(),
+            code: error.to_sql_error().code,
+            identity: Some(error.identity()),
         }
     }
 
@@ -487,11 +487,10 @@ pub fn build_table_info_in_schema(
     // duplicate explicit names fail (1061, 1826, 3822) and every anonymous key
     // is named -- before the hidden columns of an expression index, which are
     // named after their index.
-    let settled = crate::constraint_names::check_constraint_names(
-        create,
-        enable_check_constraint,
-    )
-    .map_err(|error| DdlAdmissionError::with_proto(error.proto, error.message))?;
+    let settled = crate::constraint_names::check_constraint_names(create, enable_check_constraint)
+        .map_err(|error| {
+            DdlAdmissionError::from_terror(&error.proto.generate_with_stack(error.message))
+        })?;
     let table_index_names = create
         .table_constraints
         .iter()
@@ -537,9 +536,9 @@ pub fn build_table_info_in_schema(
         if seen.contains(&lowercase) {
             // Go `ErrDupFieldName` (1060): `Duplicate column name '%-.192s'`
             // -- the lowercased collision is reported by its original name.
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS,
-                format!("Duplicate column name '{}'", column.name.original()),
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    .generate_with_stack_by_args(&[column.name.original().into()]),
             ));
         }
         seen.push(lowercase);
@@ -735,10 +734,11 @@ pub fn build_table_info_in_schema(
                 .iter_deref()
                 .any(|index| index.read().has_condition())
             {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX,
-                    "Unsupported add partial index: partial index is not supported on partitioned \
-                     table",
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                        .generate_with_stack_by_args(&[
+                            "partial index is not supported on partitioned table".into(),
+                        ]),
                 ));
             }
         }
@@ -780,9 +780,11 @@ pub fn build_table_info_with_like(
     // (`ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name,
     // "BASE TABLE")`).
     if refer.is_sequence() || refer.is_view() {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_WRONG_OBJECT,
-            format!("'{schema}.{}' is not BASE TABLE", refer.name.original()),
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_OBJECT.generate_with_stack(format!(
+                "'{schema}.{}' is not BASE TABLE",
+                refer.name.original()
+            )),
         ));
     }
     let temp_table_type = crate::set_temporary_type(temporary, on_commit_delete)
@@ -882,8 +884,10 @@ pub fn check_table_info_valid_with_stmt(
 ) -> Refusal<()> {
     // Check if table has a primary key if required.
     if ctx.primary_key_required() && tb_info.get_pk_name().original().is_empty() {
-        let proto = &*tidb_error::catalog::infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY;
-        return Err(DdlAdmissionError::with_proto(proto, proto.to_sql_error().message));
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     if tb_info.ttl_info.is_some() {
         // Whether another table's foreign key refers to this one is the
@@ -920,8 +924,9 @@ pub fn check_table_info_valid_extra(
     check_too_many_indexes(tb_info.indices.len()).map_err(default_admission_error)?;
     for column in &columns {
         let column = column.read();
-        crate::column_field_type::check_column_attributes(&column.field_type)
-            .map_err(|error| column_attribute_refusal(&error, column.name.original()))?;
+        crate::column_field_type::check_column_attributes(&column.field_type).map_err(|error| {
+            DdlAdmissionError::from_mysql_error(error.refusal(column.name.original()))
+        })?;
     }
     check_global_indexes(append_warning, tb_info)?;
     check_charset_and_collation(&tb_info.charset, &tb_info.collate)?;
@@ -935,9 +940,9 @@ fn check_duplicate_column(cols: &[GoShared<ColumnInfo>]) -> Refusal<()> {
     for col in cols {
         let col = col.read();
         if !col_names.insert(col.name.lowercase().to_owned()) {
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS,
-                format!("Duplicate column name '{}'", col.name.original()),
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    .generate_with_stack_by_args(&[col.name.original().into()]),
             ));
         }
     }
@@ -949,9 +954,8 @@ fn check_duplicate_column(cols: &[GoShared<ColumnInfo>]) -> Refusal<()> {
 pub(crate) fn check_too_many_columns(column_count: usize) -> Refusal<()> {
     let limit = tidb_config::config_tree::config::get_global_config().table_column_count_limit;
     if u64::try_from(column_count).unwrap_or(u64::MAX) > u64::from(limit) {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
-            tidb_error::mysql::errname::ErrTooManyFields.raw,
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_MANY_FIELDS.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -990,9 +994,9 @@ fn check_global_indexes(
             continue;
         }
         if !is_partitioned {
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
-                "Unsupported Global Index on non-partitioned table",
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                    .generate_with_stack_by_args(&["Global Index on non-partitioned table".into()]),
             ));
         }
         validate_global_index_with_generated_columns(append_warning, tb_info, &index_info);
@@ -1030,9 +1034,9 @@ fn validate_global_index_with_generated_columns(
 /// Go `checkCharsetAndCollation` (`executor.go:1546`).
 fn check_charset_and_collation(cs: &str, co: &str) -> Refusal<()> {
     if !tidb_datatype::valid_charset_and_collation(cs, co) {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
-            format!("Unknown character set: '{cs}'"),
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                .generate_with_stack_by_args(&[cs.into()]),
         ));
     }
     if !co.is_empty() {
@@ -1067,9 +1071,8 @@ pub fn check_invisible_index_on_pk(tbl_info: &TableInfo) -> Refusal<()> {
         .get_primary_key()
         .is_some_and(|primary| primary.read().invisible)
     {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE,
-            "A primary key index cannot be invisible",
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -1317,7 +1320,9 @@ pub fn append_check_constraints(
         mode,
         context,
     )
-    .map_err(|error| DdlAdmissionError::with_proto(error.proto, error.message))?;
+    .map_err(|error| {
+        DdlAdmissionError::from_terror(&error.proto.generate_with_stack(error.message))
+    })?;
     for info in infos {
         table.constraints.push_go(info);
     }
@@ -1425,23 +1430,24 @@ fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> R
     for part in &constraint.parts {
         let Some(column) = table.find_public_column_by_name(&tidb_hack::go_to_lower(&part.name))
         else {
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
-                format!("Key column '{}' doesn't exist in table", part.name),
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                    .generate_with_stack_by_args(&[part.name.clone().into()]),
             ));
         };
         let column = column.read();
         if column.is_virtual_generated() {
             if column.hidden {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
-                    "The primary key cannot be an expression index",
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
+                        .generate_with_stack_by_args(&[]),
                 ));
             }
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
-                "'Defining a virtual generated column as primary key' is not supported for \
-                 generated columns.",
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
+                    .generate_with_stack_by_args(&[
+                        "Defining a virtual generated column as primary key".into(),
+                    ]),
             ));
         }
     }
@@ -1463,9 +1469,10 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         // Go `checkFullTextSupportedInStarter`: a classic deployment refuses
         // a FULLTEXT key outright, with its own wording and the 8200 code.
         IndexConstraintKind::Fulltext => {
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX,
-                "FULLTEXT index is only supported in starter deployment mode",
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
+                    "FULLTEXT index is only supported in starter deployment mode",
+                ),
             ))
         }
         other => {
@@ -1477,9 +1484,9 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
     // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
     if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_CLUSTERED_SECONDARY_KEY,
-            "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_CLUSTERED_SECONDARY_KEY
+                .generate_with_stack_by_args(&[]),
         ));
     }
     let mut parts = Vec::with_capacity(index.parts.len());
@@ -1595,9 +1602,9 @@ fn synthesize_expression_index_columns(
             }
             // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
             // (3756): the primary key cannot be an expression index.
-            return Err(DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
-                "The primary key cannot be an expression index",
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
+                    .generate_with_stack_by_args(&[]),
             ));
         }
         let parts: Vec<_> = exprs
@@ -1808,10 +1815,10 @@ pub fn build_added_column(
             .iter()
             .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
     {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
-            "'Adding generated stored column through ALTER TABLE' is not supported \
-                 for generated columns.",
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.generate_with_stack_by_args(
+                &["Adding generated stored column through ALTER TABLE".into()],
+            ),
         ));
     }
     // Go `checkAutoIncrementRef` (`AddColumn`): unless
@@ -1824,12 +1831,11 @@ pub fn build_added_column(
             .find(|existing| existing.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT));
         if let Some(auto_increment) = auto_increment {
             if info.dependences.contains(auto_increment.name.lowercase()) {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
-                    format!(
-                        "Generated column '{}' cannot refer to auto-increment column.",
-                        tidb_hack::go_to_lower(&column.name)
-                    ),
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
+                        .generate_with_stack_by_args(
+                            &[tidb_hack::go_to_lower(&column.name).into()],
+                        ),
                 ));
             }
         }
@@ -1895,9 +1901,9 @@ pub fn process_modify_column_options(
     let lower = tidb_hack::go_to_lower(&name);
     // Go `ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`.
     let unsupported = |reason: &str| {
-        DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
-            format!("Unsupported modify column: {reason}"),
+        DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
+                .generate_with_stack_by_args(&[reason.into()]),
         )
     };
     let mut field_type = info.field_type.clone();
@@ -1939,9 +1945,10 @@ pub fn process_modify_column_options(
                     InlineKeyKind::Primary { .. } => "PRIMARY KEY",
                     InlineKeyKind::Unique => "UNIQUE KEY",
                 };
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
-                    format!("can't change column constraint ({constraint})"),
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack(
+                        format!("can't change column constraint ({constraint})"),
+                    ),
                 ));
             }
             ColumnOption::OnUpdate(expr) => {
@@ -1952,9 +1959,9 @@ pub fn process_modify_column_options(
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 ) || !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type))
                 {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE,
-                        format!("Invalid ON UPDATE clause for '{name}' column"),
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                            .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
                 field_type.add_flags(FieldTypeFlags::ON_UPDATE_NOW);
@@ -2031,7 +2038,7 @@ pub fn process_modify_column_options(
         ));
     }
     crate::column_field_type::check_column_value_constraint(&field_type)
-        .map_err(|error| column_attribute_refusal(&error, &name))?;
+        .map_err(|error| DdlAdmissionError::from_mysql_error(error.refusal(&name)))?;
     // Go `checkDefaultValue`, with the final flags in place.
     info.field_type = field_type;
     if let Some(staged_default) = staged_default {
@@ -2147,9 +2154,8 @@ fn expression_default_origin(
             FieldTypeCode::Enum | FieldTypeCode::Set
         )
     {
-        return Err(DdlAdmissionError::with_proto(
+        return Err(DdlAdmissionError::from_terror(
             &tidb_error::catalog::types::ERR_TRUNCATED,
-            "Data truncated for column '%s' at row %d",
         ));
     }
     let value = converted.value;
@@ -2429,21 +2435,8 @@ fn build_column_field_type(
     // text (1426/1427/3505); flattening them to a generic 1105 turned them
     // into a Rust Debug leak on the wire.
     crate::column_field_type::check_column_attributes(&field_type)
-        .map_err(|error| column_attribute_refusal(&error, name))?;
+        .map_err(|error| DdlAdmissionError::from_mysql_error(error.refusal(name)))?;
     Ok(field_type)
-}
-
-/// A [`crate::column_field_type::ColumnAttributeError`] as Go reports it for
-/// column `name`.
-fn column_attribute_refusal(
-    error: &crate::column_field_type::ColumnAttributeError,
-    name: &str,
-) -> DdlAdmissionError {
-    let message = error.go_message(name);
-    match error.go_proto() {
-        Some(proto) => DdlAdmissionError::with_proto(proto, message),
-        None => DdlAdmissionError::plain(message),
-    }
 }
 
 /// Go `buildColumnAndConstraint` + `columnDefToCol` for one column.
@@ -2461,9 +2454,9 @@ fn build_column(
     // Go `buildColumnAndConstraint`: the hidden handle's name is reserved.
     let lower = tidb_hack::go_to_lower(name);
     if lower == "_tidb_rowid" {
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME,
-            format!("Incorrect column name '{lower}'"),
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME
+                .generate_with_stack_by_args(&[lower.into()]),
         ));
     }
     // A table-qualified column name (`CREATE TABLE t (t.a INT)`) was judged
@@ -2474,7 +2467,7 @@ fn build_column(
     // Go `checkColumnValueConstraint` (1291 for a duplicate ENUM/SET member),
     // asked of the declared type, as this builder always has.
     crate::column_field_type::check_column_value_constraint(&field_type)
-        .map_err(|error| column_attribute_refusal(&error, name))?;
+        .map_err(|error| DdlAdmissionError::from_mysql_error(error.refusal(name)))?;
 
     let mut info = ColumnInfo {
         id: 0,
@@ -2592,15 +2585,15 @@ fn build_column(
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 ) {
                     // Go `ErrInvalidOnUpdate` (1294).
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE,
-                        format!("Invalid ON UPDATE clause for '{name}' column"),
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                            .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
                 if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE,
-                        format!("Invalid ON UPDATE clause for '{name}' column"),
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                            .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
                 field_type.add_flags(FieldTypeFlags::ON_UPDATE_NOW);
@@ -2811,25 +2804,23 @@ fn generated_column_admission_error(
     match error {
         // Go `checkDependedColExist` reports a key of `findDependedColumnNames`'s
         // map, which is the name's lowercase form.
-        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_BAD_FIELD,
-            format!(
+        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_BAD_FIELD.generate_with_stack(format!(
                 "Unknown column '{}' in 'generated column function'",
                 tidb_hack::go_to_lower(&name)
-            ),
+            )),
         ),
-        GeneratedDdlError::NonPrior => DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
-            "Generated column can refer only to generated columns defined prior to it.",
+        GeneratedDdlError::NonPrior => DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR.generate_with_stack_by_args(&[]),
         ),
         GeneratedDdlError::IllegalFunction(error) => DdlAdmissionError::from_mysql_error(error),
-        GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
-            format!("Generated column '{column}' cannot refer to auto-increment column."),
+        GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
+                .generate_with_stack_by_args(&[column.into()]),
         ),
-        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
-            format!("'{reason}' is not supported for generated columns."),
+        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
+                .generate_with_stack_by_args(&[reason.into()]),
         ),
         GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
         GeneratedDdlError::Eval(error) => {
@@ -3079,9 +3070,8 @@ fn build_table(
         > 1
     {
         // Go `ErrMultiplePriKey` (1068).
-        return Err(DdlAdmissionError::with_proto(
-            &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
-            "Multiple primary key defined",
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY.generate_with_stack_by_args(&[]),
         ));
     }
 
@@ -3090,10 +3080,11 @@ fn build_table(
             check_pk_on_generated_column(&table, constraint)?;
             // Go `buildTableInfo` blocks every partial primary key.
             if constraint.condition.is_some() {
-                return Err(DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX,
-                    "Unsupported add partial index: create an primary key with partial index is \
-                     not supported",
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                        .generate_with_stack_by_args(&[
+                            "create an primary key with partial index is not supported".into(),
+                        ]),
                 ));
             }
             let single_int = is_single_int_primary_key(constraint, &table);
@@ -3111,15 +3102,18 @@ fn build_table(
                 // Go `buildTableInfo`: a clustered primary key can be neither
                 // invisible nor global.
                 if constraint.invisible {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE,
-                        "A primary key index cannot be invisible",
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE
+                            .generate_with_stack_by_args(&[]),
                     ));
                 }
                 if constraint.global {
-                    return Err(DdlAdmissionError::with_proto(
-                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
-                        "Unsupported create an index that is both a global index and a clustered index",
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                            .generate_with_stack_by_args(&[
+                                "create an index that is both a global index and a clustered index"
+                                    .into(),
+                            ]),
                     ));
                 }
             }

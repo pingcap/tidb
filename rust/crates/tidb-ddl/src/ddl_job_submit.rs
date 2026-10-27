@@ -409,52 +409,47 @@ pub enum JobSubmitError {
 }
 
 impl JobSubmitError {
-    /// MySQL/TiDB error code when Go exposes a named SQL error.
+    /// The Go error this refusal is raised as, `None` for the plain errors
+    /// `jobsubmit` builds with `errors.Errorf`.
     #[must_use]
-    pub const fn code(&self) -> u16 {
-        match self {
-            Self::InvalidTableModeSet { .. } => tidb_error::tidb::errcode::ErrInvalidTableModeSet,
-            Self::InvalidInvolvingSchemaInfo(_) => tidb_error::mysql::errcode::ErrUnknown,
-            Self::BdrRestricted(_) => tidb_error::tidb::errcode::ErrBDRRestrictedDDL,
-            Self::FlashbackClusterJob => tidb_error::mysql::errcode::ErrUnknown,
-        }
-    }
-}
-
-impl JobSubmitError {
-    /// The Go definition this refusal is raised as, `None` for the plain
-    /// errors `jobsubmit` builds with `errors.Errorf`.
-    #[must_use]
-    pub fn proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
-        match self {
-            Self::InvalidTableModeSet { .. } => {
-                Some(&tidb_error::catalog::infoschema::ERR_INVALID_TABLE_MODE_SET)
-            }
-            Self::BdrRestricted(_) => Some(&tidb_util::dbterror::ERR_BDR_RESTRICTED_DDL),
-            Self::InvalidInvolvingSchemaInfo(_) | Self::FlashbackClusterJob => None,
-        }
-    }
-}
-
-impl fmt::Display for JobSubmitError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn to_terror(&self) -> Option<tidb_error::terror::TerrorError> {
         match self {
             Self::InvalidTableModeSet {
                 current,
                 target,
                 table,
-            } => write!(
-                formatter,
-                "Invalid mode set from (or by default) {current} to {target} for table {table}"
+            } => Some(
+                tidb_error::catalog::infoschema::ERR_INVALID_TABLE_MODE_SET
+                    .generate_with_stack_by_args(&[
+                        current.to_string().into(),
+                        target.to_string().into(),
+                        table.as_str().into(),
+                    ]),
             ),
-            Self::InvalidInvolvingSchemaInfo(message) => formatter.write_str(message),
-            Self::BdrRestricted(role) => write!(
-                formatter,
-                "The operation is not allowed while the bdr role of this cluster is set to {role}."
+            Self::BdrRestricted(role) => Some(
+                tidb_util::dbterror::ERR_BDR_RESTRICTED_DDL
+                    .generate_with_stack_by_args(&[role.as_str().into()]),
             ),
-            Self::FlashbackClusterJob => {
-                formatter.write_str("Can't add ddl job, have flashback cluster job")
-            }
+            Self::InvalidInvolvingSchemaInfo(_) | Self::FlashbackClusterJob => None,
+        }
+    }
+
+    /// The MySQL error number Go reports for this refusal.
+    #[must_use]
+    pub fn code(&self) -> u16 {
+        self.to_terror()
+            .map_or(tidb_error::mysql::errcode::ErrUnknown, |error| {
+                error.to_sql_error().code
+            })
+    }
+}
+
+impl fmt::Display for JobSubmitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.to_terror(), self) {
+            (Some(error), _) => formatter.write_str(error.message()),
+            (None, Self::InvalidInvolvingSchemaInfo(message)) => formatter.write_str(message),
+            (None, _) => formatter.write_str("Can't add ddl job, have flashback cluster job"),
         }
     }
 }
@@ -564,10 +559,8 @@ pub fn prepare_spec_for_submit(
 }
 
 pub(crate) fn submit_error(error: JobSubmitError) -> DdlPlanError {
-    match error.proto() {
-        Some(proto) => {
-            DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, error.to_string()))
-        }
+    match error.to_terror() {
+        Some(go) => DdlPlanError::Admission(DdlAdmissionError::from_terror(&go)),
         None => DdlPlanError::plain_refusal(error.to_string()),
     }
 }

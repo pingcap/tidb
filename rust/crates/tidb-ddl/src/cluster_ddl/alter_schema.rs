@@ -245,22 +245,22 @@ pub fn schema_tiflash_replica_tables<'catalog>(
     name: &str,
 ) -> Result<(String, Vec<&'catalog TableInfo>), DdlPlanError> {
     let Some((database, tables)) = catalog.schema_by_name(name) else {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS,
-            format!("Unknown database '{name}'"),
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                .generate_with_stack_by_args(&[name.into()]),
         )));
     };
     if tidb_metadef::is_mem_or_sys_db(database.name.lowercase()) {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE,
-            "Unsupported `set TiFlash replica` settings for system table and memory table",
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
+                .generate_with_stack_by_args(&[]),
         )));
     }
     let tables = tables.iter().collect::<Vec<_>>();
     if tables.is_empty() {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
-            &tidb_error::catalog::infoschema::ERR_EMPTY_DATABASE,
-            format!("Empty database '{name}'"),
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_EMPTY_DATABASE
+                .generate_with_stack(format!("Empty database '{name}'")),
         )));
     }
     Ok((database.name.original().to_owned(), tables))

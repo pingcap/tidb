@@ -87,10 +87,10 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         }
         if stored.is_common_handle || stored.pk_is_handle {
             return Err(DdlPlanError::Admission(
-                tidb_ddl_build::table_info_build::DdlAdmissionError::with_proto(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY,
-                    "Unsupported drop primary key when the table is using clustered index"
-                        .to_owned(),
+                tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+                        "Unsupported drop primary key when the table is using clustered index",
+                    ),
                 ),
             ));
         }

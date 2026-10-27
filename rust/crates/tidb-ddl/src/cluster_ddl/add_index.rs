@@ -330,9 +330,9 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
-            tidb_ddl_build::table_info_build::DdlAdmissionError::with_proto(
-                &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
-                "Multiple primary key defined",
+            tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                    .generate_with_stack_by_args(&[]),
             ),
         ));
     }
@@ -739,9 +739,9 @@ fn check_and_build_index_info(
         if existing.read().state == SchemaState::PUBLIC {
             if is_pk {
                 return Err(DdlPlanError::Admission(
-                    tidb_ddl_build::table_info_build::DdlAdmissionError::with_proto(
-                        &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
-                        "Multiple primary key defined",
+                    tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                        &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                            .generate_with_stack_by_args(&[]),
                     ),
                 ));
             }
