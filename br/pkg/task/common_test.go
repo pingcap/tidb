@@ -60,6 +60,11 @@ func TestUrlNoQuery(t *testing.T) {
 		{"azblob.account-key", "FAKE_FLAG_AZURE_KEY", "<redacted>"},
 		{"azblob.sas-token", "FAKE_FLAG_SAS", "<redacted>"},
 		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@account.blob.core.windows.net/container?sig=FAKE_FLAG_SIGNATURE", "https://account.blob.core.windows.net/container"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			field := flagToZapField(&pflag.Flag{Name: testCase.name, Value: fakeValue(testCase.input)})

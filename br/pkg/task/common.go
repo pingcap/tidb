@@ -987,7 +987,7 @@ func formatStorageURLForLog(rawURL string) string {
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
 	case flagStorage, FlagStreamFullBackupStorage, FlagPiTRAddIndexSQLStorage, flagCheckpointStorage,
-		"azblob.endpoint", "upstream-storage", "downstream-storage":
+		"s3.endpoint", "gcs.endpoint", "azblob.endpoint", "upstream-storage", "downstream-storage":
 		return zap.String(f.Name, formatStorageURLForLog(f.Value.String()))
 	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token", "s3.sse-kms-context":
 		return zap.String(f.Name, "<redacted>")
