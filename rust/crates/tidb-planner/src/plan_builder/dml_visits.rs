@@ -209,7 +209,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             tidb_hack::go_to_lower(&cte.name) == tidb_hack::go_to_lower(name)
                         })
                     }) {
-                        return Err(PlanError::non_updatable_table(table.name.join("."), "DELETE"));
+                        return Err(PlanError::from(
+                            tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                                .generate_with_stack_by_args(&[
+                                    (table.name.join(".")).into(),
+                                    "DELETE".into(),
+                                ]),
+                        ));
                     }
                 }
                 vec![self.update_table_path(table)?]

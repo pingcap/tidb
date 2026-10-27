@@ -329,13 +329,11 @@ pub struct PlanError {
     message: String,
 }
 
-/// The planner error classes whose MySQL identity survives the plan boundary.
+/// What a planner failure carries across the plan boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanErrorKind {
-    /// Go ErrDupFieldName (1060), preserving the original column spelling.
-    DuplicateColumnName(String),
-    /// Go ErrIllegalReference (1247), including the referenced alias.
-    IllegalReference { name: String, reason: &'static str },
+    /// The error value Go's planner returns, raised as Go raises it.
+    Mysql(tidb_error::mysql::MysqlError),
     /// Aggregate descriptor validation before executor construction.
     Aggregation(tidb_expr::aggregation::AggDescError),
     /// An expression error whose MySQL identity must survive the planner
@@ -343,247 +341,22 @@ pub enum PlanErrorKind {
     /// the typed error avoids turning it into generic 1105 merely because
     /// plan construction crossed crates.
     Eval(EvalError),
-    /// Go `plannererrors.ErrInternal` and message-only planner failures.
+    /// A message-only refusal: what this tier does not plan.
     Internal,
-    /// Go `plannererrors.ErrNonUniqTable` (1066), naming the repeated alias.
-    NonUniqTable(String),
-    /// Go `plannererrors.ErrWrongArguments` (1210).
-    WrongArguments(String),
-    /// Go ErrWindowInvalidWindowFuncUse (3593).
-    WindowInvalidWindowFuncUse(String),
-    /// Go named-window lookup and inheritance errors (3579-3583).
-    WindowDefinition {
-        code: u16,
-        name: String,
-        base: String,
-    },
-    /// Go `ErrInternal` (1815) carrying a planner message verbatim: the
-    /// client renders the errno template (`Internal : %s`) around it.
-    InternalCoded { message: String },
-    /// Go `infoschema.ErrCannotAddForeign` (1215).
-    CannotAddForeign,
-    /// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStack(msg)` (8200).
-    GeneralUnsupportedDdl { message: String },
-    /// Go `plannererrors.ErrUnsupportedType` (8108), with its rendered diagnostic.
-    UnsupportedType { message: String },
-    /// Go window frame errors, retaining the original window name.
-    WindowFrame { code: u16, window: String },
-    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
-    UnknownDatabase(String),
-    /// Go `plannererrors.ErrNoDB` (1046).
-    NoDB,
-    /// Go `plannererrors.ErrOptOnTemporaryTable` (8006), naming the operation.
-    OptOnTemporaryTable(String),
-    /// Go `infoschema.ErrTableNotExists`, with the schema and table names.
-    UnknownTable(String, String),
-    /// Go `plannererrors.ErrNoSuchTable` raised by `checkRecursiveView` for the
-    /// view being renamed: unlike an ordinary missing table it is not turned
-    /// into `ErrViewInvalid` by a view that reads it.
-    RenamingViewMissing(String, String),
-    /// Go `plannererrors.ErrBadTable` (1051).
-    BadTable(String),
-    /// Go ErrUnknownTable (1109), with the clause owning name resolution.
-    UnknownTableInClause(String, String),
-    /// Go `plannererrors.ErrNonUpdatableTable` (1288): the table, and the
-    /// statement (`DELETE` or `UPDATE`) that named it.
-    NonUpdatableTable(String, String),
-    /// Go `plannererrors.ErrBadGeneratedColumn` (3105): the generated column
-    /// and its table.
-    BadGeneratedColumn(String, String),
-    /// Go `plannererrors.ErrWrongValueCountOnRow` (1136): the 1-based row.
-    WrongValueCountOnRow(usize),
-    /// Go `table.ErrUnknownPartition` (1735).
-    UnknownPartition {
-        /// The lower-cased partition name, matching `FindPartitionByName`.
-        partition: String,
-        /// The table name from `TableInfo.Name.O`.
-        table: String,
-    },
-    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
-    PartitionClauseOnNonpartitioned,
-    /// Go `expression.ErrInvalidTableSample` (8128), carrying the reason.
-    InvalidTableSample(String),
-    /// Go `infoschema.ErrKeyNotExists` (1176).
-    KeyNotExists {
-        /// The index name as written.
-        key: String,
-        /// The table name from `TableInfo.Name.O`.
-        table: String,
-    },
-    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
-    UnknownColumnInClause {
-        /// The name as written, including any qualifier.
-        column: String,
-        /// Go's `clauseMsg` spelling, for example `having clause`.
-        clause: String,
-    },
-    /// Go `expression.errNonUniq` (1052): `FindFieldName`'s multi
-    /// non-redundant match, which names the clause `field list` there.
-    AmbiguousColumnInClause {
-        /// The name as written, including any qualifier.
-        column: String,
-        /// Go's `clauseMsg` spelling: `field list`, or `group statement`
-        /// where `gbyResolver` rewrites the error.
-        clause: String,
-    },
-    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
-    WrongNumberOfColumnsInSelect,
-    /// Go `dbterror.ErrViewWrongList` (1353).
-    ViewWrongList,
-    /// Go `plannererrors.ErrViewRecursive` (1462), carrying its message.
-    ViewRecursive,
-    /// Go plannererrors.ErrViewInvalid (1356), with the schema and view names.
-    ViewInvalid(String, String),
-    /// Go `plannererrors.ErrViewSelectVariable` (1351).
-    ViewSelectVariable,
-    /// Go `plannererrors.ErrViewNoExplain` (1345).
-    ViewNoExplain,
-    /// Go `plannererrors.ErrViewSelectTemporaryTable` (1352), with the table
-    /// name as written.
-    ViewSelectTemporaryTable(String),
-    /// Go plannererrors.ErrInvalidLateralJoin (3809).
-    InvalidLateralJoin(&'static str),
-    /// Go `plannererrors.ErrWrongGroupField` (1056).
-    WrongGroupField(String),
-    /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
-    CteRecursiveRequiresUnion(String),
-    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (3574).
-    CteRecursiveRequiresNonRecursiveFirst(String),
-    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation` (3575).
-    CteRecursiveForbidsAggregation(String),
-    /// Go `plannererrors.ErrInvalidRequiresSingleReference` (3577).
-    CteRecursiveForbiddenJoinOrder(String),
-    /// Go `plannererrors.ErrCTERecursiveForbiddenJoinOrder` (3576): the
-    /// recursive table sits in the right argument of a LEFT JOIN.
-    CteRecursiveForbidsLeftJoin(String),
-    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242), raised when a
-    /// separately evaluated scalar child produced more than one row. The
-    /// executor's `MaxOneRowExec` detects it; this variant carries the typed
-    /// identity back across the planner boundary.
-    SubqueryReturnsMoreThanOneRow,
     /// An uncorrelated subquery evaluated during planning
     /// (`EvalSubqueryFirstRow`) scanned a memory table whose rows the session
     /// has yet to retrieve. Not a Go error: the executor tier asks the session
     /// for the rows and plans again.
     MemTableRetrievalNeeded,
-    /// Go `plannererrors.ErrNotSupportedYet` (1235).
-    NotSupportedYet(String),
-    /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).
-    AggregateOrderNonAggQuery {
-        /// One-based position of the first ORDER BY aggregate.
-        position: usize,
-    },
-    /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065).
-    FieldInOrderNotSelect {
-        /// One-based ORDER BY item position.
-        position: usize,
-        /// Qualified name of the unreported column.
-        column: String,
-    },
-    /// Go `plannererrors.ErrAggregateInOrderNotSelect` (3066).
-    AggregateInOrderNotSelect {
-        /// One-based ORDER BY item position.
-        position: usize,
-    },
-    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602): the
-    /// only-full-group-by arm a `WITH ROLLUP` query takes — go's
-    /// `checkOnlyFullGroupByWithGroupClause` rewrites the offending select
-    /// item through the rollup GROUPING lens and names the item's position.
-    FieldInGroupingNotGroupByArg {
-        /// The offending expression's 1-based position in the SELECT list.
-        position: usize,
-    },
-    /// Go `plannererrors.ErrFieldNotInGroupBy` (1055).
-    FieldNotInGroupBy {
-        /// One-based expression position.
-        position: usize,
-        /// SELECT list or ORDER BY, as named by the resolver.
-        clause: &'static str,
-        /// Qualified column name.
-        column: String,
-    },
-    /// Go `plannererrors.ErrMixOfGroupFuncAndFields` (8123).
-    FieldNotInAggregatedQuery {
-        /// One-based SELECT field position.
-        position: usize,
-        /// Written column name.
-        column: String,
-    },
 }
 
 impl PlanError {
-    /// Preserve Go's named-window diagnostics and their original names.
-    #[must_use]
-    pub fn window_definition(code: u16, name: &str, base: &str) -> Self {
-        let message = match code {
-            3579 => format!("Window name '{name}' is not defined."),
-            3580 => "There is a circularity in the window dependency graph.".to_owned(),
-            3581 => "A window which depends on another cannot define partitioning.".to_owned(),
-            3582 => format!("Window '{name}' has a frame definition, so cannot be referenced by another window."),
-            3583 => format!("Window '{name}' cannot inherit '{base}' since both contain an ORDER BY clause."),
-            _ => unreachable!("unsupported window definition error"),
-        };
-        Self {
-            message,
-            kind: PlanErrorKind::WindowDefinition {
-                code,
-                name: name.to_owned(),
-                base: base.to_owned(),
-            },
-        }
-    }
-    /// A window call without a resolved window output in this query block.
-    #[must_use]
-    pub fn invalid_window_use(name: &str) -> Self {
-        let name = name.to_ascii_lowercase();
-        Self {
-            message: format!("You cannot use the window function '{name}' in this context.'"),
-            kind: PlanErrorKind::WindowInvalidWindowFuncUse(name),
-        }
-    }
-    /// Construct one of Go's frame shape, offset, or type errors (3584-3589).
-    #[must_use]
-    pub fn window_frame(code: u16, window: impl Into<String>) -> Self {
-        let window = window.into();
-        let range_reason = match code {
-            3587 => Some("with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type"),
-            3588 => Some("with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed."),
-            3589 => Some("with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed."),
-            _ => None,
-        };
-        if let Some(reason) = range_reason {
-            return Self {
-                message: format!("Window '{window}' {reason}"),
-                kind: PlanErrorKind::WindowFrame { code, window },
-            };
-        }
-        let reason = match code {
-            3584 => "frame start cannot be UNBOUNDED FOLLOWING.",
-            3585 => "frame end cannot be UNBOUNDED PRECEDING.",
-            3586 => "frame start or end is negative, NULL or of non-integral type",
-            _ => unreachable!("unsupported frame error code"),
-        };
-        Self {
-            message: format!("Window '{window}': {reason}"),
-            kind: PlanErrorKind::WindowFrame { code, window },
-        }
-    }
     /// An expression error that must retain its typed client-facing identity.
     #[must_use]
     pub fn eval(error: EvalError) -> Self {
         Self {
             message: format!("{error:?}"),
             kind: PlanErrorKind::Eval(error),
-        }
-    }
-
-    /// Go `plannererrors.ErrNonUniqTable.GenWithStackByArgs(alias)`.
-    #[must_use]
-    pub fn non_uniq_table(alias: impl Into<String>) -> Self {
-        let alias = alias.into();
-        Self {
-            message: format!("Not unique table/alias: '{alias}'"),
-            kind: PlanErrorKind::NonUniqTable(alias),
         }
     }
 
@@ -596,392 +369,12 @@ impl PlanError {
         }
     }
 
-    /// Go `plannererrors.ErrUnsupportedType.GenWithStack`, preserving its diagnostic.
-    #[must_use]
-    pub fn unsupported_type(message: impl Into<String>) -> Self {
-        let message = message.into();
-        Self {
-            kind: PlanErrorKind::UnsupportedType {
-                message: message.clone(),
-            },
-            message,
-        }
-    }
-
-    /// Go `ErrInternal.GenWithStack(msg)` (errno 1815): the message IS the
-    /// whole diagnostic; the errno template prefixes `Internal : `.
-    #[must_use]
-    pub fn internal_coded(message: impl Into<String>) -> Self {
-        let message = message.into();
-        Self {
-            kind: PlanErrorKind::InternalCoded {
-                message: message.clone(),
-            },
-            message,
-        }
-    }
-
-    /// Go `infoschema.ErrCannotAddForeign` (1215).
-    #[must_use]
-    pub fn cannot_add_foreign() -> Self {
-        Self {
-            kind: PlanErrorKind::CannotAddForeign,
-            message: "Cannot add foreign key constraint".to_owned(),
-        }
-    }
-
-    /// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStack(msg)` (8200): the
-    /// message is the whole diagnostic.
-    #[must_use]
-    pub fn general_unsupported_ddl(message: impl Into<String>) -> Self {
-        let message = message.into();
-        Self {
-            kind: PlanErrorKind::GeneralUnsupportedDdl {
-                message: message.clone(),
-            },
-            message,
-        }
-    }
-
-    /// Go ErrIllegalReference for a reference unavailable in this clause.
-    #[must_use]
-    pub fn illegal_reference(name: String, reason: &'static str) -> Self {
-        Self {
-            message: format!("Reference '{name}' not supported ({reason})"),
-            kind: PlanErrorKind::IllegalReference { name, reason },
-        }
-    }
-
     /// Preserve aggregate validation errors across planning.
     #[must_use]
     pub fn aggregation(error: tidb_expr::aggregation::AggDescError) -> Self {
         Self {
             message: error.to_string(),
             kind: PlanErrorKind::Aggregation(error),
-        }
-    }
-
-    /// Go `plannererrors.ErrWrongArguments.GenWithStackByArgs`.
-    #[must_use]
-    pub fn wrong_arguments(function: impl Into<String>) -> Self {
-        let function = function.into();
-        Self {
-            message: format!("Incorrect arguments to {function}"),
-            kind: PlanErrorKind::WrongArguments(function),
-        }
-    }
-
-    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
-    #[must_use]
-    pub fn unknown_database(database: impl Into<String>) -> Self {
-        let database = database.into();
-        Self {
-            message: format!("Unknown database '{database}'"),
-            kind: PlanErrorKind::UnknownDatabase(database),
-        }
-    }
-
-    /// Go `plannererrors.ErrNoDB`.
-    #[must_use]
-    pub fn no_db() -> Self {
-        Self {
-            message: "No database selected".to_owned(),
-            kind: PlanErrorKind::NoDB,
-        }
-    }
-
-    /// Go `infoschema.ErrTableNotExists`.
-    #[must_use]
-    pub fn unknown_table(schema: impl Into<String>, table: impl Into<String>) -> Self {
-        let (schema, table) = (schema.into(), table.into());
-        Self {
-            message: format!("Table '{schema}.{table}' doesn't exist"),
-            kind: PlanErrorKind::UnknownTable(schema, table),
-        }
-    }
-
-    /// Go `plannererrors.ErrNoSuchTable` for the view being renamed.
-    #[must_use]
-    pub fn renaming_view_missing(schema: impl Into<String>, table: impl Into<String>) -> Self {
-        let (schema, table) = (schema.into(), table.into());
-        Self {
-            message: format!("Table '{schema}.{table}' doesn't exist"),
-            kind: PlanErrorKind::RenamingViewMissing(schema, table),
-        }
-    }
-
-    /// Go `plannererrors.ErrBadTable` (1051): a wildcard that expands to no
-    /// column names the table portion it carried (empty for a bare `*`).
-    #[must_use]
-    pub fn bad_table(table: impl Into<String>) -> Self {
-        let table = table.into();
-        Self {
-            message: format!("Unknown table '{table}'"),
-            kind: PlanErrorKind::BadTable(table),
-        }
-    }
-
-    /// Go `plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(row)`.
-    pub fn wrong_value_count_on_row(row: usize) -> Self {
-        Self {
-            message: format!("Column count doesn't match value count at row {row}"),
-            kind: PlanErrorKind::WrongValueCountOnRow(row),
-        }
-    }
-
-    /// Go `plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(column, table)`.
-    pub fn bad_generated_column(column: impl Into<String>, table: impl Into<String>) -> Self {
-        let column = column.into();
-        let table = table.into();
-        Self {
-            message: format!(
-                "The value specified for generated column '{column}' in table '{table}' is not allowed."
-            ),
-            kind: PlanErrorKind::BadGeneratedColumn(column, table),
-        }
-    }
-
-    /// Go `plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(table, statement)`.
-    pub fn non_updatable_table(table: impl Into<String>, statement: impl Into<String>) -> Self {
-        let table = table.into();
-        let statement = statement.into();
-        Self {
-            message: format!("The target table {table} of the {statement} is not updatable"),
-            kind: PlanErrorKind::NonUpdatableTable(table, statement),
-        }
-    }
-
-    /// A table reference that is absent from this clause's visible sources.
-    pub fn unknown_table_in_clause(table: impl Into<String>, clause: impl Into<String>) -> Self {
-        let table = table.into();
-        let clause = clause.into();
-        Self {
-            message: format!("Unknown table '{table}' in {clause}"),
-            kind: PlanErrorKind::UnknownTableInClause(table, clause),
-        }
-    }
-
-    /// Go `table.ErrUnknownPartition.GenWithStackByArgs(partition, table)`.
-    #[must_use]
-    pub fn unknown_partition(partition: impl Into<String>, table: impl Into<String>) -> Self {
-        let partition = tidb_mysql::to_lowercase(&partition.into());
-        let table = table.into();
-        Self {
-            message: format!("Unknown partition '{partition}' in table '{table}'"),
-            kind: PlanErrorKind::UnknownPartition { partition, table },
-        }
-    }
-
-    /// Go `expression.ErrInvalidTableSample.GenWithStackByArgs(reason)`.
-    #[must_use]
-    pub fn invalid_table_sample(reason: impl Into<String>) -> Self {
-        let reason = reason.into();
-        Self {
-            message: format!("Invalid TABLESAMPLE: {reason}"),
-            kind: PlanErrorKind::InvalidTableSample(reason),
-        }
-    }
-
-    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned`.
-    #[must_use]
-    pub fn partition_clause_on_nonpartitioned() -> Self {
-        Self {
-            kind: PlanErrorKind::PartitionClauseOnNonpartitioned,
-            message: "PARTITION () clause on non partitioned table".to_owned(),
-        }
-    }
-
-    /// Go `plannererrors.ErrKeyDoesNotExist.FastGenByArgs(key, table)`.
-    #[must_use]
-    pub fn key_not_exists(key: impl Into<String>, table: impl Into<String>) -> Self {
-        let key = key.into();
-        let table = table.into();
-        Self {
-            message: format!("Key '{key}' doesn't exist in table '{table}'"),
-            kind: PlanErrorKind::KeyNotExists { key, table },
-        }
-    }
-
-    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
-    #[must_use]
-    pub fn unknown_column_in_clause(column: impl Into<String>, clause: impl Into<String>) -> Self {
-        let column = column.into();
-        let clause = clause.into();
-        Self {
-            message: format!("Unknown column '{column}' in '{clause}'"),
-            kind: PlanErrorKind::UnknownColumnInClause { column, clause },
-        }
-    }
-
-    /// Go `expression.errNonUniq` (1052), which `FindFieldName` raises for a
-    /// multi non-redundant match; its clause is hardcoded `field list` there.
-    #[must_use]
-    pub fn ambiguous_column(column: impl Into<String>) -> Self {
-        Self::ambiguous_column_in(column, "field list")
-    }
-
-    /// Go `plannererrors.ErrAmbiguous.GenWithStackByArgs(column, clause)`.
-    #[must_use]
-    pub fn ambiguous_column_in(column: impl Into<String>, clause: &str) -> Self {
-        let column = column.into();
-        Self {
-            message: format!("Column '{column}' in {clause} is ambiguous"),
-            kind: PlanErrorKind::AmbiguousColumnInClause {
-                column,
-                clause: clause.to_owned(),
-            },
-        }
-    }
-
-    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect`.
-    #[must_use]
-    pub fn wrong_number_of_columns_in_select() -> Self {
-        Self {
-            kind: PlanErrorKind::WrongNumberOfColumnsInSelect,
-            message: "The used SELECT statements have a different number of columns".to_owned(),
-        }
-    }
-
-    /// Go `plannererrors.ErrViewRecursive` (1462).
-    #[must_use]
-    pub fn view_recursive(database: &str, view: &str) -> Self {
-        Self {
-            kind: PlanErrorKind::ViewRecursive,
-            message: format!("`{database}`.`{view}` contains view recursion"),
-        }
-    }
-
-    /// Go `dbterror.ErrViewWrongList`.
-    #[must_use]
-    pub fn view_wrong_list() -> Self {
-        Self {
-            kind: PlanErrorKind::ViewWrongList,
-            message: "View's SELECT and view's field list have different column counts".to_owned(),
-        }
-    }
-
-    /// Go plannererrors.ErrViewInvalid.
-    #[must_use]
-    pub fn view_invalid(database: &str, view: &str) -> Self {
-        Self {
-            message: format!(
-                "View '{database}.{view}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
-            ),
-            kind: PlanErrorKind::ViewInvalid(database.to_owned(), view.to_owned()),
-        }
-    }
-
-    /// Go `plannererrors.ErrViewNoExplain`.
-    #[must_use]
-    pub fn view_no_explain() -> Self {
-        Self {
-            kind: PlanErrorKind::ViewNoExplain,
-            message: "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table"
-                .to_owned(),
-        }
-    }
-
-    /// Go `plannererrors.ErrViewSelectVariable`.
-    #[must_use]
-    pub fn view_select_variable() -> Self {
-        Self {
-            kind: PlanErrorKind::ViewSelectVariable,
-            message: "View's SELECT contains a variable or parameter".to_owned(),
-        }
-    }
-
-    /// Go `plannererrors.ErrViewSelectTemporaryTable`.
-    #[must_use]
-    pub fn view_select_temporary_table(table: &str) -> Self {
-        Self {
-            kind: PlanErrorKind::ViewSelectTemporaryTable(table.to_owned()),
-            message: format!("View's SELECT refers to a temporary table '{table}'"),
-        }
-    }
-
-    /// Go plannererrors.ErrInvalidLateralJoin.
-    #[must_use]
-    pub fn invalid_lateral_join(reason: &'static str) -> Self {
-        Self {
-            message: format!("Invalid LATERAL join: {reason}"),
-            kind: PlanErrorKind::InvalidLateralJoin(reason),
-        }
-    }
-
-    /// Go plannererrors.ErrDupFieldName.
-    #[must_use]
-    pub fn duplicate_column_name(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!("Duplicate column name '{name}'"),
-            kind: PlanErrorKind::DuplicateColumnName(name),
-        }
-    }
-
-    /// Go `plannererrors.ErrCTERecursiveRequiresUnion`.
-    #[must_use]
-    pub fn cte_recursive_requires_union(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!("Recursive Common Table Expression '{name}' should contain a UNION"),
-            kind: PlanErrorKind::CteRecursiveRequiresUnion(name),
-        }
-    }
-
-    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst`.
-    #[must_use]
-    pub fn cte_recursive_requires_non_recursive_first(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!(
-                "Recursive Common Table Expression '{name}' should have one or more non-recursive query blocks followed by one or more recursive ones"
-            ),
-            kind: PlanErrorKind::CteRecursiveRequiresNonRecursiveFirst(name),
-        }
-    }
-
-    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation`.
-    #[must_use]
-    pub fn cte_recursive_forbids_aggregation(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!(
-                "Recursive Common Table Expression '{name}' can contain neither aggregation nor window functions in recursive query block"
-            ),
-            kind: PlanErrorKind::CteRecursiveForbidsAggregation(name),
-        }
-    }
-
-    /// Go `plannererrors.ErrInvalidRequiresSingleReference`.
-    #[must_use]
-    pub fn cte_recursive_forbidden_join_order(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!(
-                "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
-            ),
-            kind: PlanErrorKind::CteRecursiveForbiddenJoinOrder(name),
-        }
-    }
-
-    /// Go `plannererrors.ErrCTERecursiveForbiddenJoinOrder` (3576).
-    #[must_use]
-    pub fn cte_recursive_forbids_left_join(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            message: format!(
-                "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints"
-            ),
-            kind: PlanErrorKind::CteRecursiveForbidsLeftJoin(name),
-        }
-    }
-
-    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242).
-    #[must_use]
-    pub fn subquery_returns_more_than_one_row() -> Self {
-        Self {
-            message: "Subquery returns more than 1 row".to_owned(),
-            kind: PlanErrorKind::SubqueryReturnsMoreThanOneRow,
         }
     }
 
@@ -995,118 +388,10 @@ impl PlanError {
         }
     }
 
-    /// Go `plannererrors.ErrOptOnTemporaryTable`.
+    /// Go `proto.Equal(err)`: whether this is the Go error `proto` raises.
     #[must_use]
-    pub fn opt_on_temporary_table(operation: impl Into<String>) -> Self {
-        let operation = operation.into();
-        Self {
-            message: format!("`{operation}` is unsupported on temporary tables."),
-            kind: PlanErrorKind::OptOnTemporaryTable(operation),
-        }
-    }
-
-    /// Go `plannererrors.ErrNotSupportedYet`.
-    #[must_use]
-    pub fn not_supported_yet(feature: impl Into<String>) -> Self {
-        let feature = feature.into();
-        Self {
-            message: format!("This version of TiDB doesn't yet support '{feature}'"),
-            kind: PlanErrorKind::NotSupportedYet(feature),
-        }
-    }
-
-    /// Go `plannererrors.ErrAggregateOrderNonAggQuery.GenWithStackByArgs`.
-    #[must_use]
-    pub fn aggregate_order_non_agg_query(position: usize) -> Self {
-        Self {
-            message: format!(
-                "Expression #{position} of ORDER BY contains aggregate function and applies to the \
-                 result of a non-aggregated query"
-            ),
-            kind: PlanErrorKind::AggregateOrderNonAggQuery { position },
-        }
-    }
-
-    /// Go `plannererrors.ErrFieldInOrderNotSelect` for DISTINCT.
-    #[must_use]
-    pub fn field_in_order_not_select(position: usize, column: impl Into<String>) -> Self {
-        let column = column.into();
-        Self {
-            message: format!(
-                "Expression #{position} of ORDER BY clause is not in SELECT list, references column \
-                 '{column}' which is not in SELECT list; this is incompatible with DISTINCT"
-            ),
-            kind: PlanErrorKind::FieldInOrderNotSelect { position, column },
-        }
-    }
-
-    /// Go `plannererrors.ErrAggregateInOrderNotSelect` for DISTINCT.
-    #[must_use]
-    pub fn aggregate_in_order_not_select(position: usize) -> Self {
-        Self {
-            message: format!(
-                "Expression #{position} of ORDER BY clause is not in SELECT list, contains aggregate \
-                 function; this is incompatible with DISTINCT"
-            ),
-            kind: PlanErrorKind::AggregateInOrderNotSelect { position },
-        }
-    }
-
-    /// Go `plannererrors.ErrFieldNotInGroupBy`.
-    #[must_use]
-    pub fn field_not_in_group_by(
-        position: usize,
-        clause: &'static str,
-        column: impl Into<String>,
-    ) -> Self {
-        let column = column.into();
-        Self {
-            message: format!(
-                "Expression #{position} of {clause} is not in GROUP BY clause and contains nonaggregated \
-                 column '{column}' which is not functionally dependent on columns in GROUP BY clause; \
-                 this is incompatible with sql_mode=only_full_group_by"
-            ),
-            kind: PlanErrorKind::FieldNotInGroupBy {
-                position,
-                clause,
-                column,
-            },
-        }
-    }
-
-    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602), the
-    /// `checkOnlyFullGroupByWithGroupClause` rollup arm (`:3577`).
-    #[must_use]
-    pub fn field_in_grouping_not_group_by_arg(position: usize) -> Self {
-        Self {
-            message: format!(
-                "Argument {position} of GROUPING function is not in GROUP BY"
-            ),
-            kind: PlanErrorKind::FieldInGroupingNotGroupByArg { position },
-        }
-    }
-
-    /// Go `plannererrors.ErrMixOfGroupFuncAndFields`.
-    #[must_use]
-    pub fn field_not_in_aggregated_query(position: usize, column: impl Into<String>) -> Self {
-        let column = column.into();
-        Self {
-            message: format!(
-                "In aggregated query without GROUP BY, expression #{position} of SELECT list contains \
-                 nonaggregated column '{column}'; this is incompatible with sql_mode=only_full_group_by"
-            ),
-            kind: PlanErrorKind::FieldNotInAggregatedQuery { position, column },
-        }
-    }
-
-    /// Go `plannererrors.ErrWrongGroupField`, preserving the field label.
-    #[must_use]
-    pub fn wrong_group_field(field: impl Into<String>) -> Self {
-        let field = field.into();
-        Self {
-            message: format!("Can't group on '{field}'"),
-            kind: PlanErrorKind::WrongGroupField(field),
-        }
+    pub fn equal(&self, proto: &tidb_error::terror::TerrorError) -> bool {
+        matches!(&self.kind, PlanErrorKind::Mysql(error) if error.equal(proto))
     }
 
     /// The stable error class used by the statement layer.
@@ -1119,6 +404,21 @@ impl PlanError {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+}
+
+impl From<tidb_error::mysql::MysqlError> for PlanError {
+    fn from(error: tidb_error::mysql::MysqlError) -> Self {
+        Self {
+            message: error.message.clone(),
+            kind: PlanErrorKind::Mysql(error),
+        }
+    }
+}
+
+impl From<tidb_error::terror::TerrorError> for PlanError {
+    fn from(error: tidb_error::terror::TerrorError) -> Self {
+        tidb_error::mysql::MysqlError::from_terror(&error).into()
     }
 }
 

@@ -120,9 +120,10 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
                 [name] => (String::new(), name.as_str()),
                 [schema, name] => (go_to_lower(schema), name.as_str()),
                 _ => {
-                    return Err(PlanError::unknown_table_in_clause(
-                        target.join("."),
-                        "MULTI DELETE",
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_UNKNOWN_TABLE.generate_with_stack_by_args(
+                            &[(target.join(".")).into(), "MULTI DELETE".into()],
+                        ),
                     ))
                 }
             };
@@ -141,10 +142,16 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
                 found = names.updatable.get(&key).map(|can| (*can, key));
             }
             let Some((can_update, key)) = found else {
-                return Err(PlanError::unknown_table_in_clause(written, "MULTI DELETE"));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_UNKNOWN_TABLE
+                        .generate_with_stack_by_args(&[written.into(), "MULTI DELETE".into()]),
+                ));
             };
             if !can_update {
-                return Err(PlanError::non_updatable_table(written, "DELETE"));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                        .generate_with_stack_by_args(&[written.into(), "DELETE".into()]),
+                ));
             }
             let table_ref = names
                 .tables
@@ -165,10 +172,12 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
                     "delete sequence {written} is not supported now"
                 )));
             }
-            let meta = self
-                .source
-                .find_table(database, table)
-                .ok_or_else(|| PlanError::unknown_table(database, table))?;
+            let meta = self.source.find_table(database, table).ok_or_else(|| {
+                PlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .fast_generate_by_args(&[database.into(), table.into()]),
+                )
+            })?;
             let target = DeleteTarget {
                 database: meta.db_name.clone(),
                 table: meta.table_name.clone(),

@@ -765,7 +765,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .clone()
                         .or_else(|| field.text.clone())
                         .unwrap_or_default();
-                    return Err(PlanError::wrong_group_field(label));
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_WRONG_GROUP_FIELD
+                            .generate_with_stack_by_args(&[label.into()]),
+                    ));
                 }
                 resolved.push(field.expr.clone());
                 continue;
@@ -792,11 +795,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let index = match resolve_from_select_fields(path, fields, false) {
                     Ok(index) => index,
                     Err(_) => {
-                        error = Some(PlanError::ambiguous_column_in(
-                            path.last()
-                                .map(|name| tidb_mysql::to_lowercase(name))
-                                .unwrap_or_default(),
-                            "group statement",
+                        error = Some(PlanError::from(
+                            tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(
+                                &[
+                                    (path
+                                        .last()
+                                        .map(|name| tidb_mysql::to_lowercase(name))
+                                        .unwrap_or_default())
+                                    .into(),
+                                    "group statement".into(),
+                                ],
+                            ),
                         ));
                         return true;
                     }
@@ -809,14 +818,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 };
                 let field = &fields[index];
                 if aggregate_anywhere(&field.expr) {
-                    error = Some(PlanError::illegal_reference(
-                        path.last().cloned().unwrap_or_default(),
-                        "reference to group function",
+                    error = Some(PlanError::from(
+                        tidb_error::plannererrors::ERR_ILLEGAL_REFERENCE
+                            .generate_with_stack_by_args(&[
+                                (path.last().cloned().unwrap_or_default()).into(),
+                                "reference to group function".into(),
+                            ]),
                     ));
                 } else if has_window_flag(&field.expr) {
-                    error = Some(PlanError::illegal_reference(
-                        path.last().cloned().unwrap_or_default(),
-                        "reference to window function",
+                    error = Some(PlanError::from(
+                        tidb_error::plannererrors::ERR_ILLEGAL_REFERENCE
+                            .generate_with_stack_by_args(&[
+                                (path.last().cloned().unwrap_or_default()).into(),
+                                "reference to window function".into(),
+                            ]),
                     ));
                 } else {
                     *node = field.expr.clone();
@@ -948,11 +963,15 @@ pub fn resolve_from_select_fields(
                 // Go: ambiguous unless one name is a PREFIX-qualified form of
                 // the other (`Name.Match`), naming the later column.
                 if !column_paths_match(earlier, current) {
-                    return Err(PlanError::ambiguous_column(
-                        current
-                            .last()
-                            .map(|name| tidb_mysql::to_lowercase(name))
-                            .unwrap_or_default(),
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                            (current
+                                .last()
+                                .map(|name| tidb_mysql::to_lowercase(name))
+                                .unwrap_or_default())
+                            .into(),
+                            "field list".into(),
+                        ]),
                     ));
                 }
             }
@@ -1030,7 +1049,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // as it goes.
         visit_exprs(having, &mut |node| {
             if let Expr::Window { name, .. } = node {
-                error = Some(PlanError::invalid_window_use(name));
+                error = Some(PlanError::from(
+                    tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
+                        .generate_with_stack_by_args(&[(name).to_ascii_lowercase().into()]),
+                ));
                 return true;
             }
             if !is_aggregate_call(node) {
@@ -1178,9 +1200,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .iter()
                 .any(|scope| find_field_name(scope, &path).is_some())
             {
-                error = Some(PlanError::unknown_column_in_clause(
-                    path.join("."),
-                    "having clause",
+                error = Some(PlanError::from(
+                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                        tidb_hack::go_to_lower(path.join(".")).into(),
+                        "having clause".into(),
+                    ]),
                 ));
             }
             true
@@ -1347,10 +1371,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     _ => None,
                 };
                 let resolved = match position {
-                    Some((position, text)) => args
-                        .get(position.wrapping_sub(1))
-                        .cloned()
-                        .ok_or_else(|| PlanError::unknown_column_in_clause(text, "order clause"))?,
+                    Some((position, text)) => {
+                        args.get(position.wrapping_sub(1)).cloned().ok_or_else(|| {
+                            PlanError::from(
+                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                    .generate_with_stack_by_args(&[
+                                        tidb_hack::go_to_lower(text).into(),
+                                        "order clause".into(),
+                                    ]),
+                            )
+                        })?
+                    }
                     None => item.expr.clone(),
                 };
                 let (next_plan, built) = self.rewrite_aggregate_operand(

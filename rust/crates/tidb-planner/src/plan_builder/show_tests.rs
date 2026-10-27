@@ -166,5 +166,5 @@ fn show_tables_without_a_database_is_no_db() {
     let error = builder
         .build_show(&parse_show("show tables", ""))
         .expect_err("no database is selected");
-    assert_eq!(error.kind(), &crate::plan_base::PlanErrorKind::NoDB);
+    assert!(error.equal(&tidb_error::plannererrors::ERR_NO_DB));
 }

@@ -1471,9 +1471,9 @@ pub fn apply_table_index_hints(
                     result.unknown_comment_indexes.push(name.clone());
                     continue;
                 }
-                return Err(crate::plan_base::PlanError::key_not_exists(
-                    name,
-                    &table.table_name,
+                return Err(crate::plan_base::PlanError::from(
+                    tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST
+                        .generate_with_stack_by_args(&[name.into(), (&table.table_name).into()]),
                 ));
             };
             if kind == IndexHintKind::Ignore {

@@ -67,9 +67,11 @@ pub(super) fn path_column(path: &[String]) -> Result<QualifiedColumnName, PlanEr
         [column] => Ok(QualifiedColumnName::new("", "", column)),
         [table, column] => Ok(QualifiedColumnName::new("", table, column)),
         [database, table, column] => Ok(QualifiedColumnName::new(database, table, column)),
-        _ => Err(PlanError::unknown_column_in_clause(
-            path.join("."),
-            "field list",
+        _ => Err(PlanError::from(
+            tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_hack::go_to_lower(path.join(".")).into(),
+                "field list".into(),
+            ]),
         )),
     }
 }
@@ -84,7 +86,9 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
     /// missing schema.
     pub(super) fn update_table_path(&self, table: &TableRef) -> Result<(String, String), PlanError> {
         match table.name.as_slice() {
-            [_] if self.source.current_database().is_empty() => Err(PlanError::no_db()),
+            [_] if self.source.current_database().is_empty() => Err(PlanError::from(
+                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            )),
             [name] => Ok((self.source.current_database().to_owned(), name.clone())),
             [database, name] => Ok((database.clone(), name.clone())),
             _ => Err(PlanError::internal("a table reference has no name")),
@@ -135,7 +139,14 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
             }
             break;
         }
-        target.ok_or_else(|| PlanError::non_updatable_table(name.table.original.clone(), "UPDATE"))
+        target.ok_or_else(|| {
+            PlanError::from(
+                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                    (name.table.original.clone()).into(),
+                    "UPDATE".into(),
+                ]),
+            )
+        })
     }
 
     /// The columns an UPDATE writes, each once, in assignment order.
@@ -182,15 +193,26 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
         let mut targets: Vec<UpdateTarget> = Vec::new();
         for assignment in &update.assignments {
             let column = assignment_column(assignment)?;
-            let index = tidb_expr::find_field_name(plan.output_names(), &column)
-                .map_err(|_| PlanError::ambiguous_column_in(column.display_name(), "field list"))?
-                .ok_or_else(|| {
-                    PlanError::unknown_column_in_clause(
-                        column.column.original.clone(),
-                        "field list",
-                    )
-                })?;
-            let target = self.updatable_table_of(update, &tables, &plan.output_names()[index].names)?;
+            let index =
+                tidb_expr::find_field_name(plan.output_names(), &column)
+                    .map_err(|_| {
+                        PlanError::from(
+                            tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(
+                                &[(column.display_name()).into(), "field list".into()],
+                            ),
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        PlanError::from(
+                            tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                .generate_with_stack_by_args(&[
+                                    tidb_hack::go_to_lower(column.column.original.clone()).into(),
+                                    "field list".into(),
+                                ]),
+                        )
+                    })?;
+            let target =
+                self.updatable_table_of(update, &tables, &plan.output_names()[index].names)?;
             // One write target per table column, compared as Go's `.L` names.
             if !targets.iter().any(|existing| {
                 go_to_lower(&existing.database) == go_to_lower(&target.database)

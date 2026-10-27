@@ -49,10 +49,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         };
         let (database, written) = self.update_table_path(table_ref)?;
-        let table = self
-            .source
-            .find_table(&database, &written)
-            .ok_or_else(|| PlanError::unknown_table(&database, &written))?;
+        let table = self.source.find_table(&database, &written).ok_or_else(|| {
+            PlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .fast_generate_by_args(&[(&database).into(), (&written).into()]),
+            )
+        })?;
         let visible = table_ref.alias.as_deref().unwrap_or(&written);
         let field = |column: &str| {
             FieldName::new(FieldNameMetadata {
@@ -78,7 +80,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut resolved = Vec::with_capacity(update.assignments.len());
         for assignment in &update.assignments {
             let column = find_field_name(&names, &assignment.col).ok_or_else(|| {
-                PlanError::unknown_column_in_clause(assignment.col.join("."), "field list")
+                PlanError::from(
+                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                        tidb_hack::go_to_lower(assignment.col.join(".")).into(),
+                        "field list".into(),
+                    ]),
+                )
             })?;
             if extra_handle && column == columns.len() && !allow_write_row_id {
                 return Err(PlanError::internal(WRITE_ROW_ID_REFUSED));
@@ -90,9 +97,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     _ => false,
                 };
                 if !own_default {
-                    return Err(PlanError::bad_generated_column(
-                        columns[column].name.clone(),
-                        written,
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                            .generate_with_stack_by_args(&[
+                                (columns[column].name.clone()).into(),
+                                written.into(),
+                            ]),
                     ));
                 }
                 resolved.push(SingleUpdateAssignment {

@@ -1125,7 +1125,10 @@ mod tests {
             }
             fn wait(&self) -> Result<(), PlanError> {
                 if self.fail_wait {
-                    Err(PlanError::internal_coded("wait failed"))
+                    Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_INTERNAL
+                            .generate_with_stack_by_args(&["wait failed".into()]),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -1135,7 +1138,13 @@ mod tests {
                 plan: LogicalPlan,
             ) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
                 self.initializations.set(self.initializations.get() + 1);
-                Err((plan, PlanError::internal_coded("estimation failed")))
+                Err((
+                    plan,
+                    PlanError::from(
+                        tidb_error::plannererrors::ERR_INTERNAL
+                            .generate_with_stack_by_args(&["estimation failed".into()]),
+                    ),
+                ))
             }
         }
         for fail_wait in [true, false] {
@@ -1156,11 +1165,16 @@ mod tests {
             assert_eq!(returned.table_id, 7);
             assert_eq!(
                 error,
-                PlanError::internal_coded(if fail_wait {
-                    "wait failed"
-                } else {
-                    "estimation failed"
-                })
+                PlanError::from(
+                    tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
+                        (if fail_wait {
+                            "wait failed"
+                        } else {
+                            "estimation failed"
+                        })
+                        .into()
+                    ])
+                )
             );
             assert_eq!(requester.initializations.get(), usize::from(!fail_wait));
         }

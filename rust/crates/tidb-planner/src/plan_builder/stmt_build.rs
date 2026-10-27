@@ -181,7 +181,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::AnalyzeTable(analyze) => {
                 // Go `buildAnalyze`.
                 if analyze.no_write_to_binlog {
-                    return Err(PlanError::not_supported_yet("[NO_WRITE_TO_BINLOG | LOCAL]"));
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                            .generate_with_stack_by_args(&["[NO_WRITE_TO_BINLOG | LOCAL]".into()]),
+                    ));
                 }
                 self.require_insert_and_select_priv(analyze.tables.iter());
                 Plan::Analyze(Box::new(admin.clone()))
@@ -210,8 +213,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Go `PlanBuilder.Build` has no builder for `ast.ProcedureInfo`
                 // (a plain `stmtNode`, not a `DDLNode`): the statement falls
                 // through to the closing `ErrUnsupportedType`.
-                return Err(PlanError::unsupported_type(
-                    "Unsupported type *ast.ProcedureInfo",
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE
+                        .generate_with_stack("Unsupported type *ast.ProcedureInfo"),
                 ));
             }
             AdminStmt::SplitRegion(split) => return self.build_split_region(split),
@@ -423,7 +427,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 _ => {}
             },
             Stmt::Session(session) => match session.as_ref() {
-                SessionStmt::Use(name) if name.is_empty() => return Err(PlanError::no_db()),
+                SessionStmt::Use(name) if name.is_empty() => {
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    ))
+                }
                 SessionStmt::SetPassword(set) => {
                     if let Some(user) = &set.user {
                         if !user.current_user {
@@ -533,7 +541,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if db_name.is_empty() && !is_global {
             let current = self.source.current_database();
             if current.is_empty() {
-                return Err(PlanError::no_db());
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                ));
             }
             db_name = if is_grant {
                 current.to_owned()
@@ -635,7 +645,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if database.as_deref().is_none_or(str::is_empty) {
                     let current = self.source.current_database();
                     if current.is_empty() {
-                        return Err(PlanError::no_db());
+                        return Err(PlanError::from(
+                            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        ));
                     }
                     *database = Some(current.to_owned());
                 }
@@ -729,10 +741,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         {
             let info = info.read();
             if info.temp_table_type != tidb_model::TempTableType::NONE {
-                return Err(PlanError::opt_on_temporary_table("split table"));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        .generate_with_stack_by_args(&["split table".into()]),
+                ));
             }
             if split.partition_syntax && info.partition.is_none() {
-                return Err(PlanError::partition_clause_on_nonpartitioned());
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                        .generate_with_stack_by_args(&[]),
+                ));
             }
         }
         Ok(Plan::SplitRegion(Box::new(split.clone())))
@@ -808,10 +826,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::AlterDdlJobs(alter) => Plan::AlterDdlJob(alter.clone()),
             AdminStmt::CreateWorkloadSnapshot => Plan::WorkloadRepoCreate,
             _ => {
-                return Err(PlanError::unsupported_type(format!(
-                    "Unsupported ast.AdminStmt({}) for buildAdmin",
-                    stmt.label()
-                )));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(format!(
+                        "Unsupported ast.AdminStmt({}) for buildAdmin",
+                        stmt.label()
+                    )),
+                ));
             }
         };
         // Admin command can only be executed by administrator.
@@ -834,7 +854,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .clone()
                     .unwrap_or_else(|| self.source.current_database().to_owned());
                 if database.is_empty() {
-                    return Err(PlanError::no_db());
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    ));
                 }
                 self.visit_info.push(visit(
                     tidb_mysql::AlterPriv,
@@ -954,7 +976,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .iter()
                     .any(|constraint| matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_)));
                 if temporary && has_fk {
-                    return Err(PlanError::cannot_add_foreign());
+                    return Err(PlanError::from(
+                        tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
                 let (database, table, _) = self.qualified(&create.name);
                 // The privilege check of a LOCAL temporary table is towards
@@ -1215,7 +1240,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 specific("SUPER or RESOURCE_GROUP_ADMIN"),
             )),
             DdlStmt::OptimizeTable(_) => {
-                return Err(PlanError::general_unsupported_ddl("OPTIMIZE TABLE is not supported"));
+                return Err(PlanError::from(
+                    tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                        .generate_with_stack("OPTIMIZE TABLE is not supported"),
+                ));
             }
             _ => {}
         }

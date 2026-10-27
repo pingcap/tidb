@@ -90,12 +90,13 @@ pub(crate) fn fill_index_path(
             .detach_index_range(conditions, &cols, &lengths)
             .map_err(|error| match error {
                 crate::ranger::points::PointBuilderError::Eval(error) => error.into(),
-                crate::ranger::points::PointBuilderError::Value(error) => {
-                    PlanError::internal_coded(error.to_string())
-                }
-                crate::ranger::points::PointBuilderError::Unsupported(message) => {
-                    PlanError::unsupported_type(message)
-                }
+                crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+                    tidb_error::plannererrors::ERR_INTERNAL
+                        .generate_with_stack_by_args(&[(error.to_string()).into()]),
+                ),
+                crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+                ),
             })?
     };
     // IndexMerge partial readers do not rebuild ranges per outer row yet, so
@@ -333,12 +334,13 @@ pub(crate) fn detach_table_path(
         common_index.map_or_else(Vec::new, |index| source.index_range_columns(index));
     let map_error = |error| match error {
         crate::ranger::points::PointBuilderError::Eval(error) => PlanError::from(error),
-        crate::ranger::points::PointBuilderError::Value(error) => {
-            PlanError::internal_coded(error.to_string())
-        }
-        crate::ranger::points::PointBuilderError::Unsupported(message) => {
-            PlanError::unsupported_type(message)
-        }
+        crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+            tidb_error::plannererrors::ERR_INTERNAL
+                .generate_with_stack_by_args(&[(error.to_string()).into()]),
+        ),
+        crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+            tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+        ),
     };
     let mut correlated_access_count = 0;
     let detached = if common_index.is_some() {
@@ -584,5 +586,10 @@ pub(crate) fn estimate_int_table_path(
         &context.estimator_options,
     )
     .map(|estimate| estimate.est)
-    .map_err(|error| PlanError::internal_coded(error.to_string()))
+    .map_err(|error| {
+        PlanError::from(
+            tidb_error::plannererrors::ERR_INTERNAL
+                .generate_with_stack_by_args(&[(error.to_string()).into()]),
+        )
+    })
 }

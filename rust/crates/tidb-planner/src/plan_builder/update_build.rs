@@ -87,12 +87,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let column = assignment_column(assignment)?;
                     let position = tidb_expr::find_field_name(&frozen_names, &column)
                         .map_err(|_| {
-                            PlanError::ambiguous_column_in(column.display_name(), "field list")
+                            PlanError::from(
+                                tidb_error::plannererrors::ERR_AMBIGUOUS
+                                    .generate_with_stack_by_args(&[
+                                        (column.display_name()).into(),
+                                        "field list".into(),
+                                    ]),
+                            )
                         })?
                         .ok_or_else(|| {
-                            PlanError::unknown_column_in_clause(
-                                column.column.original.clone(),
-                                "field list",
+                            PlanError::from(
+                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                    .generate_with_stack_by_args(&[
+                                        tidb_hack::go_to_lower(column.column.original.clone())
+                                            .into(),
+                                        "field list".into(),
+                                    ]),
                             )
                         })?;
                     let target = builder.updatable_table_of(
@@ -115,9 +125,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .source
                         .find_table(&assigned.target.database, &assigned.target.table)
                         .ok_or_else(|| {
-                            PlanError::unknown_table(
-                                &assigned.target.database,
-                                &assigned.target.table,
+                            PlanError::from(
+                                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                                    .fast_generate_by_args(&[
+                                        (&assigned.target.database).into(),
+                                        (&assigned.target.table).into(),
+                                    ]),
                             )
                         })?;
                     let id = frozen_schema.columns[assigned.position].id;
@@ -140,9 +153,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         _ => false,
                     };
                     if !same {
-                        return Err(PlanError::bad_generated_column(
-                            table.columns[offset].name.clone(),
-                            table.table_name.clone(),
+                        return Err(PlanError::from(
+                            tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                                .generate_with_stack_by_args(&[
+                                    (table.columns[offset].name.clone()).into(),
+                                    (table.table_name.clone()).into(),
+                                ]),
                         ));
                     }
                     assigned.own_default = true;

@@ -751,7 +751,10 @@ pub fn is_table_alias_duplicate(
         } else {
             existing
         };
-        return Err(PlanError::non_uniq_table(existing));
+        return Err(PlanError::from(
+            tidb_error::plannererrors::ERR_NON_UNIQ_TABLE
+                .generate_with_stack_by_args(&[existing.into()]),
+        ));
     }
     table_aliases.insert(key, display.to_owned());
     Ok(())
@@ -949,7 +952,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !column_names.is_empty() {
             let visible = names.iter().filter(|name| !name.hidden).count();
             if visible != column_names.len() {
-                return Err(PlanError::view_wrong_list());
+                return Err(PlanError::from(
+                    tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                ));
             }
             let mut aliases = column_names.iter();
             for name in names.iter_mut().filter(|name| !name.hidden) {
@@ -963,8 +968,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut seen = BTreeSet::new();
         for name in &names {
             if !seen.insert(name.names.column.original.clone()) {
-                return Err(PlanError::duplicate_column_name(
-                    &name.names.column.original,
+                return Err(PlanError::from(
+                    tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                        .generate_with_stack_by_args(&[(&name.names.column.original).into()]),
                 ));
             }
         }
@@ -1054,7 +1060,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // LEFT JOIN."
         if let LogicalPlan::CTETable(cte) = &right_plan {
             if join_node.tp == JoinType::Left {
-                return Err(PlanError::cte_recursive_forbids_left_join(cte.name.clone()));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER
+                        .generate_with_stack_by_args(&[(cte.name.clone()).into()]),
+                ));
             }
         }
 
@@ -1206,25 +1215,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:961` "NATURAL JOIN and USING clauses are not supported with
         // LATERAL derived tables."
         if join_node.natural {
-            return Err(PlanError::invalid_lateral_join(
-                "NATURAL JOIN is not supported with LATERAL",
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                    "NATURAL JOIN is not supported with LATERAL".into(),
+                ]),
             ));
         }
         if !join_node.using.is_empty() {
-            return Err(PlanError::invalid_lateral_join(
-                "USING clause is not supported with LATERAL",
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                    "USING clause is not supported with LATERAL".into(),
+                ]),
             ));
         }
         // `:984` "Currently supports INNER JOIN and comma syntax".
         let join_type = match join_node.tp {
             JoinType::Left => {
-                return Err(PlanError::invalid_lateral_join(
-                    "LEFT JOIN is not supported with LATERAL",
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN
+                        .generate_with_stack_by_args(&[
+                            "LEFT JOIN is not supported with LATERAL".into()
+                        ]),
                 ))
             }
             JoinType::Right => {
-                return Err(PlanError::invalid_lateral_join(
-                    "RIGHT JOIN is not supported with LATERAL",
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN
+                        .generate_with_stack_by_args(&[
+                            "RIGHT JOIN is not supported with LATERAL".into()
+                        ]),
                 ))
             }
             // Comma syntax and an explicit `INNER JOIN` are the same node.
@@ -1523,7 +1542,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(filter) = filter.as_deref() {
             if !filter.is_empty() && filter.len() != common_len {
                 if let Some((column, _)) = filter.iter().find(|(_, not_exist)| **not_exist) {
-                    return Err(PlanError::unknown_column_in_clause(column, "from clause"));
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                            &[tidb_hack::go_to_lower(column).into(), "from clause".into()],
+                        ),
+                    ));
                 }
             }
         }
@@ -1728,12 +1751,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // "If this view has already been on the building stack, it means this
         // view contains a recursive definition."
         if self.building_view_stack.contains(&key) {
-            return Err(PlanError::view_recursive(db_name, table_name));
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_VIEW_RECURSIVE
+                    .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
+            ));
         }
         // "If the view is being renamed, we return the mysql compatible error
         // message."
         if self.renaming_view_name.as_ref() == Some(&key) {
-            return Err(PlanError::renaming_view_missing(db_name, table_name));
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_TABLE
+                    .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
+            ));
         }
         self.building_view_stack.insert(key.clone());
         Ok(ViewBuildGuard { key })
@@ -1807,7 +1836,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     "",
                     tidb_mysql::SelectPriv,
                 ) {
-                    return Err(PlanError::view_no_explain());
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
             }
         }
@@ -1822,7 +1854,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         &visit.column,
                         visit.privilege,
                     ) {
-                        return Err(PlanError::view_invalid(&view.db_name, &view.view_name));
+                        return Err(PlanError::from(
+                            tidb_error::plannererrors::ERR_VIEW_INVALID
+                                .generate_with_stack_by_args(&[
+                                    (&view.db_name).into(),
+                                    (&view.view_name).into(),
+                                ]),
+                        ));
                     }
                 }
             }
@@ -1901,18 +1939,26 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.building_cte = saved_building_cte;
         let plan = built.map_err(|error| {
             use crate::plan_base::PlanErrorKind;
+            use tidb_error::plannererrors as pe;
             // Go BuildDataSourceFromView preserves these planner errors;
             // ordinary missing dependencies instead invalidate the view.
-            match error.kind() {
-                PlanErrorKind::Internal
-                | PlanErrorKind::InternalCoded { .. }
-                | PlanErrorKind::ViewRecursive
-                | PlanErrorKind::RenamingViewMissing(..)
-                | PlanErrorKind::FieldNotInGroupBy { .. }
-                | PlanErrorKind::FieldNotInAggregatedQuery { .. }
-                | PlanErrorKind::ViewNoExplain
-                | PlanErrorKind::NotSupportedYet(_) => error,
-                _ => view_invalid(&view.db_name, &view.view_name),
+            // A message-only refusal of this tier is `ErrInternal`'s kind.
+            if matches!(error.kind(), PlanErrorKind::Internal)
+                || [
+                    &pe::ERR_VIEW_RECURSIVE,
+                    &pe::ERR_NO_SUCH_TABLE,
+                    &pe::ERR_INTERNAL,
+                    &pe::ERR_FIELD_NOT_IN_GROUP_BY,
+                    &pe::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS,
+                    &pe::ERR_VIEW_NO_EXPLAIN,
+                    &pe::ERR_NOT_SUPPORTED_YET,
+                ]
+                .into_iter()
+                .any(|proto| error.equal(proto))
+            {
+                error
+            } else {
+                view_invalid(&view.db_name, &view.view_name)
             }
         })?;
 
@@ -2147,12 +2193,18 @@ fn is_extra_column_name(lower: &str) -> bool {
 
 /// Go `plannererrors.ErrAmbiguous.GenWithStackByArgs(name, "from clause")`.
 fn ambiguous(column: &str) -> PlanError {
-    PlanError::ambiguous_column_in(column, "from clause")
+    PlanError::from(
+        tidb_error::plannererrors::ERR_AMBIGUOUS
+            .generate_with_stack_by_args(&[column.into(), "from clause".into()]),
+    )
 }
 
 /// Go `plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, name.O)`.
 fn view_invalid(db_name: &str, view_name: &str) -> PlanError {
-    PlanError::view_invalid(db_name, view_name)
+    PlanError::from(
+        tidb_error::plannererrors::ERR_VIEW_INVALID
+            .generate_with_stack_by_args(&[db_name.into(), view_name.into()]),
+    )
 }
 
 /// A `MarkerKind`-keyed empty map, for a clause with no marker producer.

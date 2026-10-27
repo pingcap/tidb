@@ -138,7 +138,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             T::Databases | T::Variables | T::Tables | T::Columns | T::TableStatus | T::Collation
             | T::Affinity => {
                 if matches!(show.tp, T::Tables | T::TableStatus) && show.db_name.is_empty() {
-                    return Err(PlanError::no_db());
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    ));
                 }
                 if let Some(extractor) = ShowBaseExtractor::extract(show) {
                     p.extractor = Some(ShowPredicateExtractor::Base(extractor));
@@ -284,22 +286,32 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some([schema, name]) => (schema.as_str(), name.as_str()),
                         _ => ("", ""),
                     };
-                    return Err(PlanError::unknown_table(schema, name));
+                    return Err(PlanError::from(
+                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .fast_generate_by_args(&[schema.into(), name.into()]),
+                    ));
                 };
                 let is_temporary = table
                     .table_info
                     .as_ref()
                     .is_some_and(|info| info.read().temp_table_type != TempTableType::NONE);
                 if is_temporary {
-                    return Err(PlanError::opt_on_temporary_table(if show.tp == T::Regions {
-                        "show table regions"
-                    } else {
-                        "show table distributions"
-                    }));
+                    return Err(PlanError::from(
+                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&[(if show.tp == T::Regions {
+                                "show table regions"
+                            } else {
+                                "show table distributions"
+                            })
+                            .into()]),
+                    ));
                 }
             }
             T::ReplicaStatus => {
-                return Err(PlanError::not_supported_yet("SHOW {REPLICA | SLAVE} STATUS"));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                        .generate_with_stack_by_args(&["SHOW {REPLICA | SLAVE} STATUS".into()]),
+                ));
             }
             _ => {}
         }

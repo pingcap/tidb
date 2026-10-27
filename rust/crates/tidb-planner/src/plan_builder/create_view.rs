@@ -367,7 +367,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         create: &mut CreateViewStmt,
     ) -> Result<LogicalPlan, PlanError> {
         if check_for_user_variables(&create.query) {
-            return Err(PlanError::view_select_variable());
+            return Err(PlanError::from(
+                tidb_util::dbterror::ERR_VIEW_SELECT_VARIABLE.generate_with_stack_by_args(&[]),
+            ));
         }
         let view_name = create.name.last().cloned().unwrap_or_default();
         // Go numbers every query block when the statement's `QBHintHandler`
@@ -406,7 +408,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .collect();
         }
         if create.columns.len() != schema_len {
-            return Err(PlanError::view_wrong_list());
+            return Err(PlanError::from(
+                tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+            ));
         }
         Ok(plan)
     }

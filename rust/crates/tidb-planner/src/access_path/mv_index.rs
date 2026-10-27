@@ -392,12 +392,13 @@ fn build_partial_path_for_mv_index(
         .detach_index_range(access_filters, &cols, &lengths)
         .map_err(|error| match error {
             crate::ranger::points::PointBuilderError::Eval(error) => error.into(),
-            crate::ranger::points::PointBuilderError::Value(error) => {
-                PlanError::internal_coded(error.to_string())
-            }
-            crate::ranger::points::PointBuilderError::Unsupported(message) => {
-                PlanError::unsupported_type(message)
-            }
+            crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+                tidb_error::plannererrors::ERR_INTERNAL
+                    .generate_with_stack_by_args(&[(error.to_string()).into()]),
+            ),
+            crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+                tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+            ),
         })?;
     // Not all filters are used in this case.
     if detached.access_conds.len() != access_filters.len() || !detached.remained_conds.is_empty() {

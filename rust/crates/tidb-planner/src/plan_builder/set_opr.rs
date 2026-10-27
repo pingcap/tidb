@@ -224,7 +224,10 @@ fn divide_union_select_plans(
 
 /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (MySQL 1222).
 fn wrong_number_of_columns() -> PlanError {
-    PlanError::wrong_number_of_columns_in_select()
+    PlanError::from(
+        tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+            .generate_with_stack_by_args(&[]),
+    )
 }
 
 /// Go `*expression.Column.RetType`, which is never nil for a column a builder

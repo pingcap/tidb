@@ -331,22 +331,34 @@ fn set_own_output_names(plan: &mut LogicalPlan, names: Vec<tidb_datatype::FieldN
 
 /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (MySQL 3574).
 fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
-    PlanError::cte_recursive_requires_non_recursive_first(name)
+    PlanError::from(
+        tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_NON_RECURSIVE_FIRST
+            .generate_with_stack_by_args(&[name.into()]),
+    )
 }
 
 /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (MySQL 3573).
 fn err_recursive_requires_union(name: &str) -> PlanError {
-    PlanError::cte_recursive_requires_union(name)
+    PlanError::from(
+        tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_UNION
+            .generate_with_stack_by_args(&[name.into()]),
+    )
 }
 
 /// Go `plannererrors.ErrInvalidRequiresSingleReference` (MySQL 3577).
 fn err_invalid_requires_single_reference(name: &str) -> PlanError {
-    PlanError::cte_recursive_forbidden_join_order(name)
+    PlanError::from(
+        tidb_error::plannererrors::ERR_INVALID_REQUIRES_SINGLE_REFERENCE
+            .fast_generate_by_args(&[name.into()]),
+    )
 }
 
 /// Go `plannererrors.ErrNotSupportedYet` (MySQL 1235).
 fn err_not_supported_yet(what: &str) -> PlanError {
-    PlanError::not_supported_yet(what)
+    PlanError::from(
+        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+            .generate_with_stack_by_args(&[what.into()]),
+    )
 }
 
 /// Go `plannererrors.ErrNonUniqTable` (MySQL 1066).
@@ -356,7 +368,7 @@ fn err_non_uniq_table() -> PlanError {
 
 /// Go `dbterror.ErrViewWrongList` (MySQL 1353).
 fn err_view_wrong_list() -> PlanError {
-    PlanError::view_wrong_list()
+    PlanError::from(tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]))
 }
 
 /// Whether `op` is one of the two operators a recursive CTE's fixpoint is
@@ -855,7 +867,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<LogicalPlan, PlanError> {
         let recur_schema = recur.schema().cloned().unwrap_or_default();
         if seed_schema.columns.len() != recur_schema.columns.len() {
-            return Err(PlanError::wrong_number_of_columns_in_select());
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         let res_schema = self.get_result_cte_schema(seed_schema);
         let mut exprs = Vec::with_capacity(recur_schema.columns.len());
@@ -1200,7 +1215,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if !cte.col_name_list.is_empty() {
             if cte.col_name_list.len() != names.len() {
-                return Err(PlanError::view_wrong_list());
+                return Err(PlanError::from(
+                    tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                ));
             }
             for (name, new_name) in names.iter_mut().zip(&cte.col_name_list) {
                 name.names.column = IdentifierMetadata::new(new_name);

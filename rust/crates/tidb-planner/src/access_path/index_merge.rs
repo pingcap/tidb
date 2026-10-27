@@ -686,7 +686,12 @@ pub(super) fn estimate_index_ranges(
         &columns,
         &ctx.estimator_options,
     )
-    .map_err(|error| PlanError::internal_coded(error.to_string()))
+    .map_err(|error| {
+        PlanError::from(
+            tidb_error::plannererrors::ERR_INTERNAL
+                .generate_with_stack_by_args(&[(error.to_string()).into()]),
+        )
+    })
 }
 
 #[derive(Clone, Debug)]

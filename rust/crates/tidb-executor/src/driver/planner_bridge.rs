@@ -1701,9 +1701,8 @@ pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<RegisteredScalarSubquery
 /// back when the statement unwinds.
 fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::PlanError {
     match error {
-        error if error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW) => {
-            tidb_planner::plan_base::PlanError::subquery_returns_more_than_one_row()
-        }
+        // Go's `EvalSubqueryFirstRow` returns the executor's error as it is.
+        crate::DriverError::Mysql(error) => tidb_planner::plan_base::PlanError::from(error),
         crate::DriverError::MemTableRetrievalNeeded => {
             tidb_planner::plan_base::PlanError::mem_table_retrieval_needed()
         }
@@ -2301,7 +2300,10 @@ pub(crate) fn view_column_types(
             .find_view(database, view_name)
             .cloned()
             .ok_or_else(|| {
-                tidb_planner::plan_base::PlanError::unknown_table(database, view_name)
+                tidb_planner::plan_base::PlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .fast_generate_by_args(&[database.into(), view_name.into()]),
+                )
             })?;
         let plan = builder.build_data_source_from_view(&view)?;
         let types = logical_column_types(&plan);
@@ -3839,7 +3841,10 @@ mod statistics_initialization_tests {
                     tidb_planner::ranger::points::PointBuilderError::Eval(error) => error.into(),
                     tidb_planner::ranger::points::PointBuilderError::Unsupported(message) => {
                         assert!(message.ends_with("is not evaluated"));
-                        tidb_planner::plan_base::PlanError::unsupported_type(message)
+                        tidb_planner::plan_base::PlanError::from(
+                            tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE
+                                .generate_with_stack(message),
+                        )
                     }
                     other => panic!("unexpected error: {other:?}"),
                 });
@@ -3867,10 +3872,7 @@ mod statistics_initialization_tests {
                 } else {
                     assert_eq!(optimized.err(), expected_error.clone());
                     if let Some(error) = expected_error {
-                        if matches!(
-                            error.kind(),
-                            tidb_planner::plan_base::PlanErrorKind::UnsupportedType { .. }
-                        ) {
+                        if error.equal(&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE) {
                             let expected_message = error.to_string();
                             let crate::DriverError::Mysql(mysql) =
                                 crate::driver::planner_error_to_driver(error)
@@ -4052,5 +4054,30 @@ impl tidb_planner::optimize::OptimizeContext for crate::StmtContext {
     }
     fn set_physical_opt(&self, duration: std::time::Duration) {
         self.phase_durations().set_physical_opt(duration);
+    }
+}
+
+#[cfg(test)]
+mod subquery_error_identity_tests {
+    use super::driver_error_to_plan;
+
+    /// Go's `EvalSubqueryFirstRow` returns the executor's error as it is, so
+    /// any Go error a planning-time subquery raises -- here a recursive CTE
+    /// that never stops -- reaches the client with its own code, not 1105.
+    #[test]
+    fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
+        let raised = tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+            .generate_with_stack_by_args(&[1000_i64.into()]);
+        let planned = driver_error_to_plan(crate::DriverError::from(raised.clone()));
+        assert!(planned.equal(&tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
+        let crate::DriverError::Mysql(back) = crate::driver::planner_error_to_driver(planned)
+        else {
+            panic!("the Go error was flattened");
+        };
+        assert_eq!(back.code, 3636);
+        assert_eq!(
+            back.message,
+            tidb_error::mysql::MysqlError::from_terror(&raised).message
+        );
     }
 }

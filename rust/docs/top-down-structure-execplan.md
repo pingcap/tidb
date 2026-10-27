@@ -260,3 +260,5 @@ The duplicated connection setup (`open_session` versus `create_session_4_test`) 
 ## Outcomes and retrospective
 
 None yet.
+
+- `tidb-planner::PlanError` carries Go's error value (`PlanErrorKind::Mysql`) beside the three non-Go transports (`Aggregation`, `Eval`, `Internal`) and `MemTableRetrievalNeeded`: its 54 hand-typed kinds and their 54-arm bridge are gone, each site raises `ErrX.GenWithStackByArgs` as Go does (checked against the bridge's old rendering on 58 sample cases), and `BuildDataSourceFromView`'s keep-or-invalidate rule is Go's `ErrorNotEqual` chain. `EvalSubqueryFirstRow` now returns the executor's Go error as it is (it was flattened to 1105).

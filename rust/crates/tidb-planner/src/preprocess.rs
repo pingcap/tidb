@@ -145,7 +145,9 @@ pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result
     };
     node.accept(&mut pinner);
     if pinner.unresolved {
-        return Err(PlanError::no_db());
+        return Err(PlanError::from(
+            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(())
 }
@@ -185,7 +187,9 @@ pub fn resolve_show_stmt(
     if let Some(table) = node.table.as_mut() {
         if let [name] = table.as_slice() {
             if current_db.is_empty() {
-                return Err(PlanError::no_db());
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                ));
             }
             *table = vec![current_db.to_owned(), name.clone()];
         }

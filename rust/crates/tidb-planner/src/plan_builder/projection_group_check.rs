@@ -90,9 +90,16 @@ pub(super) fn check(
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| column.orig_name.clone());
         return Err(if ungrouped {
-            PlanError::field_not_in_aggregated_query(offset + 1, name)
+            PlanError::from(
+                tidb_error::plannererrors::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS
+                    .generate_with_stack_by_args(&[(offset + 1).into(), name.into()]),
+            )
         } else {
-            PlanError::field_not_in_group_by(offset + 1, "SELECT list", name)
+            PlanError::from(
+                tidb_error::plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.generate_with_stack_by_args(
+                    &[(offset + 1).into(), "SELECT list".into(), name.into()],
+                ),
+            )
         });
     }
     projection.fd_group_check_complete = true;

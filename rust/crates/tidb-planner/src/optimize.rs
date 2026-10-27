@@ -469,7 +469,11 @@ pub fn optimize_physical<C: OptimizeContext>(
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)
         .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
-        PlanError::internal_coded("Can't find a proper physical plan for this query")
+        PlanError::from(
+            tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
+                "Can't find a proper physical plan for this query".into(),
+            ]),
+        )
     })?;
     // Go caches each operator's cost while `findBestTask` compares tasks
     // (`PlanCostInit`), and EXPLAIN shows that cost for the finished plan even

@@ -69,15 +69,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// so the name falls through to the ordinary `ErrUnknownColumn`.
     pub fn resolve_insert_target(&self, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
         let (database, name) = match insert.table.as_slice() {
-            [_] if self.source.current_database().is_empty() => return Err(PlanError::no_db()),
+            [_] if self.source.current_database().is_empty() => {
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                ))
+            }
             [name] => (self.source.current_database(), name.as_str()),
             [database, name] => (database.as_str(), name.as_str()),
             _ => return Err(PlanError::internal("an INSERT target has no name")),
         };
-        let table = self
-            .source
-            .find_table(database, name)
-            .ok_or_else(|| PlanError::unknown_table(database, name))?;
+        let table = self.source.find_table(database, name).ok_or_else(|| {
+            PlanError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .fast_generate_by_args(&[database.into(), name.into()]),
+            )
+        })?;
         let mut columns: Vec<(String, FieldType)> = Vec::new();
         let mut generated = Vec::new();
         for column in table
@@ -120,7 +126,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     columns
                         .iter()
                         .position(|(candidate, _)| go_to_lower(candidate) == go_to_lower(name))
-                        .ok_or_else(|| PlanError::unknown_column_in_clause(name.clone(), "field list"))
+                        .ok_or_else(|| {
+                            PlanError::from(
+                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                    .generate_with_stack_by_args(&[
+                                        tidb_hack::go_to_lower(name.clone()).into(),
+                                        "field list".into(),
+                                    ]),
+                            )
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?
         } else {
@@ -148,7 +162,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(&target.database, &target.table)
-            .ok_or_else(|| PlanError::unknown_table(&target.database, &target.table))?
+            .ok_or_else(|| {
+                PlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                        (&target.database).into(),
+                        (&target.table).into(),
+                    ]),
+                )
+            })?
             .clone();
         if !table.columns.iter().any(|column| column.is_generated) {
             return Ok(Vec::new());
@@ -211,13 +232,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         select_width: usize,
     ) -> Result<(), PlanError> {
         if select_width != target.offsets.len() {
-            return Err(PlanError::wrong_value_count_on_row(1));
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                    .generate_with_stack_by_args(&[1.into()]),
+            ));
         }
         for &offset in &target.offsets {
             if target.generated[offset] {
-                return Err(PlanError::bad_generated_column(
-                    target.columns[offset].0.clone(),
-                    target.table.clone(),
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                        .generate_with_stack_by_args(&[
+                            (target.columns[offset].0.clone()).into(),
+                            (target.table.clone()).into(),
+                        ]),
                 ));
             }
         }
@@ -236,7 +263,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self
             .source
             .find_table(&target.database, &target.table)
-            .ok_or_else(|| PlanError::unknown_table(&target.database, &target.table))?
+            .ok_or_else(|| {
+                PlanError::from(
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                        (&target.database).into(),
+                        (&target.table).into(),
+                    ]),
+                )
+            })?
             .clone();
         let (schema, names) = self.insert_mock_schema(target);
         let mut values = InsertValues::default();
@@ -247,7 +281,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // column list and the first list are empty (`INSERT t VALUES ()`).
             let width = row.len();
             if (index > 0 || names_a_column || width > 0) && width != previous_width {
-                return Err(PlanError::wrong_value_count_on_row(index + 1));
+                return Err(PlanError::from(
+                    tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                        .generate_with_stack_by_args(&[(index + 1).into()]),
+                ));
             }
             previous_width = width;
             let mut list = Vec::with_capacity(width);
@@ -310,14 +347,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .iter()
                         .find(|column| go_to_lower(&column.name) == go_to_lower(written))
                         .ok_or_else(|| {
-                            PlanError::unknown_column_in_clause(written.clone(), "field list")
+                            PlanError::from(
+                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                    .generate_with_stack_by_args(&[
+                                        tidb_hack::go_to_lower(written.clone()).into(),
+                                        "field list".into(),
+                                    ]),
+                            )
                         })?;
                     // `DEFAULT(generated column)` only for the same column.
                     let same = go_to_lower(&found.name) == go_to_lower(column_name);
                     if !same && (generated || found.is_generated) {
-                        return Err(PlanError::bad_generated_column(
-                            column_name.clone(),
-                            target.table.clone(),
+                        return Err(PlanError::from(
+                            tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                                .generate_with_stack_by_args(&[
+                                    (column_name.clone()).into(),
+                                    (target.table.clone()).into(),
+                                ]),
                         ));
                     }
                     if same && generated {
@@ -344,9 +390,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         // Go: a generated column written explicitly accepts only DEFAULT.
         if generated {
-            return Err(PlanError::bad_generated_column(
-                column_name.clone(),
-                target.table.clone(),
+            return Err(PlanError::from(
+                tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
+                    (column_name.clone()).into(),
+                    (target.table.clone()).into(),
+                ]),
             ));
         }
         Ok(Some(expression))
