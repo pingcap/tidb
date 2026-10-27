@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"maps"
 
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -321,4 +322,41 @@ func ClearCleanerFactory() {
 	cleanerFactoryMap.Lock()
 	defer cleanerFactoryMap.Unlock()
 	cleanerFactoryMap.m = make(map[proto.TaskType]cleanerFactoryFn)
+}
+
+// TaskKeeper does owner-side periodic work for the unfinished tasks of a task
+// type. Implementations must be idempotent and return promptly when ctx is done.
+type TaskKeeper interface {
+	// NeedKeep check if the task needs to be kept.
+	NeedKeep(task *proto.TaskBase) bool
+	// KeepTask keeps one task.
+	KeepTask(ctx context.Context, task *proto.Task, acquireRuntime func() (sqlsvrapi.Runtime, func(), error)) error
+}
+
+var taskKeeperMap = struct {
+	syncutil.RWMutex
+	m map[proto.TaskType]TaskKeeper
+}{
+	m: make(map[proto.TaskType]TaskKeeper),
+}
+
+// RegisterTaskKeeper registers the keeper of a task type.
+func RegisterTaskKeeper(taskType proto.TaskType, keeper TaskKeeper) {
+	taskKeeperMap.Lock()
+	defer taskKeeperMap.Unlock()
+	taskKeeperMap.m[taskType] = keeper
+}
+
+// getTaskKeepers returns a snapshot of registered task keepers.
+func getTaskKeepers() map[proto.TaskType]TaskKeeper {
+	taskKeeperMap.RLock()
+	defer taskKeeperMap.RUnlock()
+	return maps.Clone(taskKeeperMap.m)
+}
+
+// ClearTaskKeepers is only used in test.
+func ClearTaskKeepers() {
+	taskKeeperMap.Lock()
+	defer taskKeeperMap.Unlock()
+	taskKeeperMap.m = make(map[proto.TaskType]TaskKeeper)
 }

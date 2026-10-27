@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -47,6 +48,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/mock/gomock"
 )
 
@@ -534,6 +536,50 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+}
+
+func TestQueryGCBarrierKeeper(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	gcStates := store.(kv.StorageWithPD).GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
+	barriers := func() []string {
+		state, err := gcStates.GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+		require.NoError(t, err)
+		bs, err := state.GetGCBarriers()
+		require.NoError(t, err)
+		ids := make([]string, 0, len(bs))
+		for _, b := range bs {
+			ids = append(ids, b.BarrierID)
+		}
+		return ids
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	acquired := 0
+	acquireRuntime := func() (sqlsvrapi.Runtime, func(), error) {
+		acquired++
+		return newImportTestRuntime(ctrl, store, nil), func() {}, nil
+	}
+	keeper := importinto.QueryGCBarrierKeeper{}
+	keep := func(query *importer.QueryPlan, step proto.Step) {
+		bs, err := (&importinto.LogicalPlan{Plan: importer.Plan{Query: query}}).ToTaskMeta()
+		require.NoError(t, err)
+		task := &proto.Task{TaskBase: proto.TaskBase{ID: 1, Type: proto.ImportInto, Step: step}, Meta: bs}
+		require.NoError(t, keeper.KeepTask(ctx, task, acquireRuntime))
+	}
+	require.True(t, keeper.NeedKeep(&proto.TaskBase{Step: proto.StepInit}))
+	require.True(t, keeper.NeedKeep(&proto.TaskBase{Step: proto.ImportStepQuery}))
+	require.False(t, keeper.NeedKeep(&proto.TaskBase{Step: proto.ImportStepMergeSort}))
+	keep(nil, proto.StepInit)
+	keep(&importer.QueryPlan{}, proto.ImportStepQuery)
+	require.Empty(t, barriers())
+	require.Zero(t, acquired)
+	keep(&importer.QueryPlan{ReadTS: ver.Ver}, proto.ImportStepQuery)
+	require.Equal(t, []string{importinto.QueryGCBarrierID(ver.Ver)}, barriers())
+	require.Equal(t, 1, acquired)
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {
