@@ -1353,6 +1353,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	OptTemporary                           "TEMPORARY or empty"
 	OptOrder                               "Optional ordering keyword: ASC/DESC. Default to ASC"
 	Order                                  "Ordering keyword: ASC or DESC"
+	NullsOrder                             "NULLS FIRST or NULLS LAST"
 	OptionLevel                            "3 levels used by lightning config"
 	OrderBy                                "ORDER BY clause"
 	OrReplace                              "or replace"
@@ -8879,6 +8880,40 @@ ByItem:
 			}
 		}
 		$$ = &ast.ByItem{Expr: expr, Desc: $2.(bool)}
+	}
+|	Expression NullsOrder
+	{
+		expr := $1
+		valueExpr, ok := expr.(ast.ValueExpr)
+		if ok {
+			position, isPosition := valueExpr.GetValue().(int64)
+			if isPosition {
+				expr = &ast.PositionExpr{N: int(position)}
+			}
+		}
+		$$ = &ast.ByItem{Expr: expr, NullOrder: true, NullsOrder: $2.(ast.NullsOrderType)}
+	}
+|	Expression Order NullsOrder
+	{
+		expr := $1
+		valueExpr, ok := expr.(ast.ValueExpr)
+		if ok {
+			position, isPosition := valueExpr.GetValue().(int64)
+			if isPosition {
+				expr = &ast.PositionExpr{N: int(position)}
+			}
+		}
+		$$ = &ast.ByItem{Expr: expr, Desc: $2.(bool), NullsOrder: $3.(ast.NullsOrderType)}
+	}
+
+NullsOrder:
+	"NULLS" "FIRST"
+	{
+		$$ = ast.NullsOrderFirst
+	}
+|	"NULLS" "LAST"
+	{
+		$$ = ast.NullsOrderLast
 	}
 
 Order:

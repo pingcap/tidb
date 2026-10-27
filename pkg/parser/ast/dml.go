@@ -934,13 +934,35 @@ func (n *TableRefsClause) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// NullsOrderType is the explicit NULLS FIRST / NULLS LAST of a by item.
+type NullsOrderType byte
+
+const (
+	// NullsOrderDefault means no NULLS FIRST / NULLS LAST was specified.
+	NullsOrderDefault NullsOrderType = iota
+	// NullsOrderFirst is NULLS FIRST.
+	NullsOrderFirst
+	// NullsOrderLast is NULLS LAST.
+	NullsOrderLast
+)
+
 // ByItem represents an item in order by or group by.
 type ByItem struct {
 	node
 
-	Expr      ExprNode
-	Desc      bool
-	NullOrder bool
+	Expr ExprNode
+	Desc bool
+	// NullOrder is true when neither ASC nor DESC was specified.
+	NullOrder  bool
+	NullsOrder NullsOrderType
+}
+
+// NullsHigh reports whether the item requires NULLs to sort as if they were
+// greater than any other value (ASC NULLS LAST, DESC NULLS FIRST). MySQL sorts
+// NULLs as the smallest value, so only these two combinations differ from the
+// default ordering.
+func (n *ByItem) NullsHigh() bool {
+	return (n.NullsOrder == NullsOrderLast && !n.Desc) || (n.NullsOrder == NullsOrderFirst && n.Desc)
 }
 
 // Restore implements Node interface.
@@ -950,6 +972,12 @@ func (n *ByItem) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Desc {
 		ctx.WriteKeyWord(" DESC")
+	}
+	switch n.NullsOrder {
+	case NullsOrderFirst:
+		ctx.WriteKeyWord(" NULLS FIRST")
+	case NullsOrderLast:
+		ctx.WriteKeyWord(" NULLS LAST")
 	}
 	return nil
 }
