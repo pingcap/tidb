@@ -346,7 +346,7 @@ func TestBRIESecureText(t *testing.T) {
 		},
 		{
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
-			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix'\E$`,
+			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?credentials-file=xxxxxx'\E$`,
 		},
 		{
 			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
@@ -441,10 +441,14 @@ func TestRedactURL(t *testing.T) {
 		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
 		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
-		// Schemes without a query allowlist must not expose arbitrary values.
+		{args{"gs://bucket/file?storage-class=NEARLINE&predefined-acl=private&unknown=secret"}, "gs://bucket/file?predefined-acl=private&storage-class=NEARLINE"},
+		{args{"gcs://bucket/file?storage-class=COLDLINE&predefined-acl=private&credentials-file=secret"}, "gcs://bucket/file?credentials-file=xxxxxx&predefined-acl=private&storage-class=COLDLINE"},
+		{args{"GS://user:pass@bucket/file?Credentials_File=first-secret&Credentials_File=second-secret&EndPoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret#fragment"}, "gs://bucket/file?Credentials_File=xxxxxx&EndPoint=xxxxxx"},
+		{args{"gcs://bucket/file?endpoint=first-secret&endpoint=second-secret&storage-class=STANDARD"}, "gcs://bucket/file?endpoint=xxxxxx&storage-class=STANDARD"},
+		// Unknown options must not expose arbitrary values.
 		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file"},
 		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file"},
-		{args{"gcs://user:pass@bucket/file?credentials-file=secret#fragment"}, "gcs://bucket/file"},
+		{args{"gcs://user:pass@bucket/file?credentials-file=secret#fragment"}, "gcs://bucket/file?credentials-file=xxxxxx"},
 		{args{"file:///tmp/backup?token=secret#fragment"}, "file:///tmp/backup"},
 		{args{"local:///tmp/backup?token=secret#fragment"}, "local:///tmp/backup"},
 		{args{"hdfs://user:pass@host/backup?token=secret#fragment"}, "hdfs://host/backup"},

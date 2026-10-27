@@ -4297,6 +4297,14 @@ func RedactURL(str string) string {
 			"session-token":           true,
 			"sse-kms-context":         true,
 		}
+	case "gs", "gcs":
+		u.ForceQuery = false
+		queryKeys = map[string]bool{
+			"endpoint":         true,
+			"storage-class":    false,
+			"predefined-acl":   false,
+			"credentials-file": true,
+		}
 	case "azure", "azblob":
 		queryKeys = map[string]bool{
 			"account-name":     false,
