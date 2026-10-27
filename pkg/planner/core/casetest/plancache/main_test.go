@@ -45,7 +45,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/executor.(*slowQueryCache).loop"),
 	}
 
 	callback := func(i int) int {

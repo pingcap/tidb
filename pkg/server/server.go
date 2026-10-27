@@ -78,6 +78,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -498,8 +499,10 @@ func (s *Server) reportConfig() {
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
 	// The plaintext slow-query worker is independent of tidb_redact_log.
-	// Diagnostic mode does not start it.
-	executor.StartSlowQueryCache()
+	// Tests start it explicitly when they exercise slow-query cache behavior.
+	if !intest.InTest {
+		executor.StartSlowQueryCache()
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
