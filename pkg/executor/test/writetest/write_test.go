@@ -34,10 +34,50 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPessimisticRetryExplicitInsertID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	owner := testkit.NewTestKit(t, store)
+	competitor := testkit.NewTestKit(t, store)
+	owner.MustExec("use test")
+	competitor.MustExec("use test")
+	owner.MustExec("create table id_src(id int primary key, explicit_id bigint, u int)")
+	owner.MustExec("create table id_gate(id int primary key)")
+	owner.MustExec("create table id_dst(id bigint auto_increment primary key, u int unique)")
+	owner.MustExec("insert into id_src values (1, 42, 1)")
+	owner.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	competitor.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	var once sync.Once
+	var concurrentErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeInsertRowsForTest", func(ctx sessionctx.Context) {
+		if ctx != owner.Session() {
+			return
+		}
+		once.Do(func() {
+			for _, sql := range []string{"begin pessimistic", "insert into id_dst values (2, 1)", "insert into id_gate values (1)", "commit"} {
+				if _, concurrentErr = competitor.Exec(sql); concurrentErr != nil {
+					return
+				}
+			}
+		})
+	})
+	owner.MustExec("begin pessimistic")
+	owner.MustExec(`insert into id_dst(id,u) select explicit_id,u from id_src s
+		where not exists (select 1 from id_gate g where g.id=s.id)`)
+	require.NoError(t, concurrentErr)
+	require.Greater(t, owner.Session().GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+	require.Zero(t, owner.Session().AffectedRows())
+	require.Zero(t, owner.Session().LastInsertID())
+	owner.MustExec("commit")
+	owner.MustQuery("select * from id_dst order by id").Check(testkit.Rows("2 1"))
+	owner.MustExec("insert into id_dst values (43, 3)")
+	require.Equal(t, uint64(43), owner.Session().LastInsertID())
+}
 
 func TestInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
