@@ -64,7 +64,7 @@ pub trait ProcessKillTarget: Send + Sync {
 /// What `ProcessInfo.Plan` holds for a connection (`EXPLAIN FOR CONNECTION`).
 pub enum ProcessPlan {
     /// A statement plan.
-    Plan(tidb_executor::StoredPlan),
+    Plan(crate::StoredPlan),
     /// An `Explain` plan, which renders as no rows.
     Explain,
     /// No plan: the statement had none to publish.
@@ -187,8 +187,8 @@ struct ProcessEntry {
     kill: Option<Arc<dyn ProcessKillTarget>>,
     transaction: Option<TransactionEntry>,
     external_transaction_owner: bool,
-    transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
-    process_plan_info: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
+    transaction_history: Arc<crate::txn_summary::TransactionHistoryRecorder>,
+    process_plan_info: Option<Arc<Mutex<crate::ProcessPlanInfo>>>,
     /// An internal session's entry: its statements are restricted SQL (Go
     /// `StmtCtx.InRestrictedSQL`).
     restricted: bool,
@@ -217,7 +217,7 @@ impl ProcessEntry {
                     self.digest.clear();
                     self.digest.push_str(digest);
                 }
-                None => self.digest = crate::normalize_statement_digest(sql).1.to_string(),
+                None => self.digest = normalize_statement_digest(sql).1.to_string(),
             }
             self.since = Instant::now();
             self.started_at = Utc::now();
@@ -323,7 +323,7 @@ pub struct ProcessRegistry {
     internal: Arc<Mutex<HashMap<usize, SharedProcessEntry>>>,
     systems: Arc<Mutex<HashMap<u64, SystemProcess>>>,
     tls: Arc<Mutex<Option<Arc<dyn TlsManager>>>>,
-    transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
+    transaction_history: Arc<crate::txn_summary::TransactionHistoryRecorder>,
 }
 
 impl Default for ProcessRegistry {
@@ -333,7 +333,7 @@ impl Default for ProcessRegistry {
             internal: Arc::default(),
             systems: Arc::default(),
             tls: Arc::default(),
-            transaction_history: Arc::clone(&tidb_exec::txn_summary::RECORDER),
+            transaction_history: Arc::clone(&crate::txn_summary::RECORDER),
         }
     }
 }
@@ -347,9 +347,9 @@ impl std::fmt::Debug for ProcessRegistry {
 }
 
 impl ProcessRegistry {
-    #[cfg(test)]
-    pub(crate) fn with_transaction_history(
-        history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn with_transaction_history(
+        history: Arc<crate::txn_summary::TransactionHistoryRecorder>,
     ) -> Self {
         Self {
             transaction_history: history,
@@ -371,7 +371,7 @@ impl ProcessRegistry {
     }
 
     /// Go ALTER INSTANCE uses the same manager as the connection accept path.
-    pub(crate) fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
+    pub fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
         let manager = self
             .tls
             .lock()
@@ -574,7 +574,9 @@ impl ProcessRegistry {
         });
     }
 
-    pub(crate) fn statement_metadata(
+    /// Go `SetProcessInfo`'s transaction and memory fields for the
+    /// connection's running statement.
+    pub fn statement_metadata(
         &self,
         id: u64,
         cur_txn_start_ts: u64,
@@ -594,13 +596,14 @@ impl ProcessRegistry {
 
     /// Publishes the running statement's resource group, which a statement
     /// hint may override once the statement is parsed.
-    pub(crate) fn statement_resource_group(&self, id: u64, resource_group_name: String) {
+    pub fn statement_resource_group(&self, id: u64, resource_group_name: String) {
         self.with_entry(id, |entry| {
             entry.resource_group_name = resource_group_name;
         });
     }
 
-    pub(crate) fn statement_affected_rows(&self, id: u64, affected_rows: u64) {
+    /// Go `ProcessInfo`'s affected-row count for the connection's statement.
+    pub fn statement_affected_rows(&self, id: u64, affected_rows: u64) {
         self.with_entry(id, |entry| {
             entry.affected_rows = affected_rows;
         });
@@ -615,6 +618,8 @@ impl ProcessRegistry {
         self.with_entry(id, |entry| entry.redact_statement_info(text));
     }
 
+    /// The connection's statement ended: its process row goes back to
+    /// idle under `db` and `state`.
     pub fn statement_finished(&self, id: u64, db: &str, state: &str) {
         self.with_entry(id, |entry| entry.statement_finished(db, state));
     }
@@ -827,7 +832,7 @@ impl ProcessRegistry {
         .unwrap_or(ProcessPlan::None)
     }
 
-    fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {
+    fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<crate::ProcessPlanInfo>>) {
         self.with_entry(id, |entry| {
             entry.process_plan_info = Some(plan);
         });
@@ -932,7 +937,7 @@ pub struct ProcessGuard {
 #[derive(Clone)]
 pub struct SystemProcess {
     entry: SharedProcessEntry,
-    cancellation: Arc<tidb_executor::StatementCancellation>,
+    cancellation: Arc<crate::StatementCancellation>,
 }
 
 /// Retained physical transaction observation, independent of statement publication.
@@ -1019,7 +1024,7 @@ impl ProcessGuard {
     /// Captures the live entry and the current command's cancellation lifetime.
     pub fn system_process(
         &self,
-        cancellation: tidb_executor::StatementCancellation,
+        cancellation: crate::StatementCancellation,
     ) -> SystemProcess {
         SystemProcess {
             entry: Arc::clone(&self.entry),
@@ -1039,7 +1044,7 @@ impl ProcessGuard {
     }
 
     /// Installs the session's live `BriefBinaryPlan` publication cell.
-    pub fn set_process_plan_info(&self, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {
+    pub fn set_process_plan_info(&self, plan: Arc<Mutex<crate::ProcessPlanInfo>>) {
         self.registry.set_process_plan_info(self.id, plan);
     }
 
@@ -1117,218 +1122,16 @@ impl Drop for ProcessGuard {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(test, feature = "test-util"))]
+thread_local! {
+    /// How many times this thread normalized a statement for its digest.
+    pub static STATEMENT_DIGEST_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
-    #[derive(Default)]
-    struct CountingTarget {
-        queries: AtomicUsize,
-        connections: AtomicUsize,
-    }
-
-    impl ProcessKillTarget for CountingTarget {
-        fn cancel_query(&self) {
-            self.queries.fetch_add(1, Ordering::AcqRel);
-        }
-        fn kill_connection(&self) {
-            self.connections.fetch_add(1, Ordering::AcqRel);
-        }
-    }
-
-    #[test]
-    fn internal_process_batch_shares_entries_without_exposing_idle_pool_sessions() {
-        let registry = ProcessRegistry::default();
-        let mut session = crate::Session::new();
-        let guard = registry.register_internal(71, "test".into());
-        let observer = guard.transaction_observer();
-        observer.activated(123);
-        session.attach_process(71, guard);
-        assert_eq!(registry.internal_session_start_ts(), vec![123]);
-        assert!(registry.snapshot().is_empty());
-        assert!(registry.transaction_snapshot().is_empty());
-        let process = session.system_process().unwrap();
-        registry.track_system_process(901, process.clone()).unwrap();
-        registry.track_system_process(901, process).unwrap();
-        let _statement = session.retain_process_statement("ANALYZE TABLE test.t");
-        assert_eq!(
-            registry.snapshot()[0].info.as_deref(),
-            Some("ANALYZE TABLE test.t")
-        );
-        assert_eq!(registry.snapshot()[0].id, 901);
-        assert_eq!(registry.get_process_info(901).unwrap().id, 901);
-        assert_eq!(registry.show_process_list().len(), 1);
-        assert!(registry.transaction_snapshot().is_empty());
-        tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(901);
-        let excluded = registry.internal_session_start_ts();
-        tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(901);
-        assert!(excluded.is_empty());
-        registry.untrack_system_process(901);
-        assert!(registry.snapshot().is_empty());
-        assert_eq!(registry.internal_session_start_ts(), vec![123]);
-        drop(session);
-        assert!(registry.internal_session_start_ts().is_empty());
-    }
-
-    #[test]
-    fn internal_process_batch_kills_both_modes_without_poisoning_reused_sessions() {
-        let registry = ProcessRegistry::default();
-        let mut session = crate::Session::new();
-        session.attach_process(72, registry.register_internal(72, String::new()));
-        for query in [true, false] {
-            registry
-                .track_system_process(902, session.system_process().unwrap())
-                .unwrap();
-            let memory = session.routed_statement_memory();
-            assert!(memory.sql_killer().handle_signal().is_none());
-            assert!(registry.kill(902, query));
-            assert!(memory.sql_killer().handle_signal().is_some());
-            registry.untrack_system_process(902);
-            assert!(!registry.kill(902, query));
-        }
-        let _fresh_command = session.begin_query_cancellation();
-        let memory = session.routed_statement_memory();
-        assert!(memory.sql_killer().handle_signal().is_none());
-    }
-
-    #[test]
-    fn internal_process_batch_rejects_conflicting_ids_and_retires_dropped_sessions() {
-        let registry = ProcessRegistry::default();
-        let mut first = crate::Session::new();
-        let mut second = crate::Session::new();
-        // Internal membership follows session identity, not a possibly reused connection ID.
-        first.attach_process(1, registry.register_internal(1, String::new()));
-        second.attach_process(1, registry.register_internal(1, String::new()));
-        first.transaction_observer().unwrap().activated(10);
-        second.transaction_observer().unwrap().activated(20);
-        registry
-            .track_system_process(903, first.system_process().unwrap())
-            .unwrap();
-        assert_eq!(
-            registry
-                .track_system_process(903, second.system_process().unwrap())
-                .unwrap_err(),
-            "The ID is in use: 903"
-        );
-        drop(first);
-        assert!(registry.snapshot().is_empty());
-        assert_eq!(registry.internal_session_start_ts(), vec![20]);
-        registry
-            .track_system_process(903, second.system_process().unwrap())
-            .unwrap();
-        drop(second);
-        assert!(registry.snapshot().is_empty());
-        assert!(registry.internal_session_start_ts().is_empty());
-    }
-
-    #[test]
-    fn registered_connection_leaves_the_list_with_its_guard() {
-        let registry = ProcessRegistry::default();
-        let guard = registry.register(
-            7,
-            "alice".to_owned(),
-            "127.0.0.1:1".to_owned(),
-            "test".to_owned(),
-            None,
-        );
-        let rows = registry.snapshot();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, 7);
-        assert_eq!(rows[0].command, "Sleep");
-        assert_eq!(rows[0].info, None);
-        drop(guard);
-        assert!(registry.snapshot().is_empty());
-    }
-
-    #[test]
-    fn running_statement_becomes_info_and_is_cleared_again() {
-        let registry = ProcessRegistry::default();
-        let guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
-        registry.statement_started(1, "select 1", "autocommit");
-        let rows = registry.snapshot();
-        assert_eq!(rows[0].info.as_deref(), Some("select 1"));
-        assert_eq!(rows[0].command, "Query");
-        registry.statement_finished(1, "mysql", "autocommit");
-        let rows = registry.snapshot();
-        assert_eq!(rows[0].info, None);
-        assert_eq!(rows[0].db, "mysql");
-
-        {
-            let _statement = guard.statement_started("select 2", "test", "autocommit");
-            assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
-            // The ordinary session publishes and finishes the same statement
-            // while the server still owns its result set. Go keeps the
-            // command visible until `writeResultSet` returns.
-            registry.statement_started(1, "select 2", "autocommit");
-            registry.statement_finished(1, "test", "autocommit");
-            assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
-        }
-        assert_eq!(registry.snapshot()[0].info, None);
-    }
-
-    #[test]
-    fn prepared_statement_publishes_its_prepare_time_digest() {
-        let registry = ProcessRegistry::default();
-        let guard = registry.register(7, String::new(), String::new(), "test".to_owned(), None);
-        registry.transaction_started(7, 42);
-        // Go's EXECUTE installs the digest fixed at PREPARE
-        // (`InitSQLDigest`); the text is not normalized again, so the
-        // published digest is exactly the caller's.
-        let prepared_digest = tidb_parser::normalize_digest("select c from t where id = ?")
-            .1
-            .to_string();
-        {
-            let _statement = guard.statement_started_with_digest(
-                "select c from t where id = ?",
-                Some(&prepared_digest),
-                "test",
-                "autocommit",
-            );
-            let transactions = registry.transaction_snapshot();
-            assert_eq!(
-                transactions[0].current_sql_digest.as_deref(),
-                Some(prepared_digest.as_str())
-            );
-        }
-        // A statement without a known digest still derives it from the text.
-        {
-            let _statement = guard.statement_started("select 1", "test", "autocommit");
-            let derived = tidb_parser::normalize_digest("select 1").1.to_string();
-            assert_eq!(
-                registry.transaction_snapshot()[0]
-                    .current_sql_digest
-                    .as_deref(),
-                Some(derived.as_str())
-            );
-        }
-    }
-
-    #[test]
-    fn kill_reaches_the_target_and_unknown_ids_report_missing() {
-        let registry = ProcessRegistry::default();
-        let target = Arc::new(CountingTarget::default());
-        let _guard = registry.register(
-            3,
-            String::new(),
-            String::new(),
-            String::new(),
-            Some(target.clone()),
-        );
-        assert!(registry.kill(3, true));
-        assert_eq!(target.queries.load(Ordering::Acquire), 1);
-        assert_eq!(target.connections.load(Ordering::Acquire), 0);
-        assert!(registry.kill(3, false));
-        assert_eq!(target.connections.load(Ordering::Acquire), 1);
-        assert!(!registry.kill(999, false));
-    }
-
-    #[test]
-    fn show_truncates_info_at_a_hundred_runes_and_full_does_not() {
-        let long = "x".repeat(150);
-        assert_eq!(truncate_process_info(&long, false).len(), 100);
-        assert_eq!(truncate_process_info(&long, true).len(), 150);
-        let wide = "é".repeat(150);
-        assert_eq!(truncate_process_info(&wide, false).chars().count(), 100);
-    }
+/// Go `parser.NormalizeDigest`, the statement digest the process list and
+/// the statement summary key on.
+pub fn normalize_statement_digest(sql: &str) -> (String, tidb_parser::Digest) {
+    #[cfg(any(test, feature = "test-util"))]
+    STATEMENT_DIGEST_CALLS.with(|count| count.set(count.get() + 1));
+    tidb_parser::normalize_digest(sql)
 }

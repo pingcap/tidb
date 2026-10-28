@@ -172,6 +172,14 @@ impl tidb_executor::show::exec::ShowExec for Session {
         std::sync::Arc::clone(self.catalog.inner())
     }
 
+    fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
+        Session::load_global_bindings(self)
+    }
+
+    fn session_bindings_mut(&mut self) -> &mut binding::SessionBindings {
+        &mut self.session_bindings
+    }
+
     fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {
         std::sync::Arc::clone(&self.stats_handle)
     }
@@ -252,16 +260,12 @@ impl tidb_executor::show::exec::ShowExec for Session {
         Session::warning_rows(self, count_only, errors_only)
     }
 
-    fn show_bindings_rows(&mut self, global_scope: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::show_bindings_rows(self, global_scope)
+    fn viewer_state(&self) -> tidb_executor::memtable_reader::ViewerState {
+        Session::viewer_state(self)
     }
 
-    fn binding_cache_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::binding_cache_status_rows(self)
-    }
-
-    fn process_list_rows(&self, full: bool) -> Vec<Vec<Datum>> {
-        Session::process_list_rows(self, full)
+    fn process_registry(&self) -> Option<tidb_executor::process::ProcessRegistry> {
+        self.process.as_ref().map(|guard| guard.registry().clone())
     }
 
     fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -276,7 +280,78 @@ impl tidb_executor::show::exec::ShowExec for Session {
     }
 }
 
+impl tidb_executor::bind_exec::SqlBindExec for Session {
+    fn with_global_binding_storage(
+        &mut self,
+        operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
+    ) -> Result<u64, DriverError> {
+        Session::with_global_binding_storage(self, operation)
+    }
+
+    fn validate_binding_statement(&mut self, hinted: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        Session::validate_binding_statement(self, hinted)
+    }
+
+    fn binding_timestamp(&self) -> String {
+        Session::binding_timestamp(self)
+    }
+
+    fn global_binding_timestamp(&self) -> String {
+        Session::global_binding_timestamp(self)
+    }
+
+    fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError> {
+        Session::bind_info_exec(self, sql, params)
+    }
+
+    fn set_value_rows(
+        &mut self,
+        sql: &str,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::set_value_rows(self, sql, ctx)
+    }
+
+    fn escalate_vanished_binding_hints(&self, bind_sql: &str) -> Result<(), DriverError> {
+        Session::escalate_vanished_binding_hints(self, bind_sql)
+    }
+
+    fn binding_charset(&self) -> String {
+        Session::binding_charset(self)
+    }
+
+    fn binding_collation(&self) -> String {
+        Session::binding_collation(self)
+    }
+}
+
+impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
+    fn hypo_indexes(&self) -> std::sync::Arc<tidb_executor::ddl::HypoIndexes> {
+        std::sync::Arc::clone(&self.hypo_indexes)
+    }
+
+    fn set_hypo_indexes(&mut self, indexes: std::sync::Arc<tidb_executor::ddl::HypoIndexes>) {
+        self.hypo_indexes = indexes;
+    }
+
+    fn warnings_snapshot(&self) -> Vec<tidb_util::context::SqlWarn> {
+        self.warnings.clone()
+    }
+
+    fn restore_warnings(&mut self, warnings: Vec<tidb_util::context::SqlWarn>) {
+        self.warnings = warnings;
+    }
+
+    fn run_internal_write(&mut self, sql: &str) -> Result<Option<u64>, DriverError> {
+        Session::run_internal_write(self, sql)
+    }
+}
+
 impl tidb_executor::admin::AdminExec for Session {
+    fn pushdown_blacklists(&self) -> &tidb_executor::blacklist::PushdownBlacklists {
+        &self.pushdown_blacklists
+    }
+
     fn all_ddl_jobs(
         &mut self,
     ) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError> {
@@ -295,21 +370,15 @@ impl tidb_executor::admin::AdminExec for Session {
         &mut self,
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        Session::explain_stmt(self, explain)
+        tidb_executor::compiler::ExplainCompile::explain_stmt(self, explain)
     }
 
-    fn explain_for_stmt(
+    fn execute_statement_owned(
         &mut self,
-        explain_for: &tidb_ast::ExplainForStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        Session::explain_for_stmt(self, explain_for)
-    }
-
-    fn trace_stmt(
-        &mut self,
-        trace: &tidb_ast::TraceStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        Session::trace_stmt(self, trace)
+        stmt: tidb_ast::Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::execute_statement_owned(self, stmt, sql)
     }
 
     fn bdr_role_store(&self) -> Result<std::sync::Arc<dyn BdrRoleStore>, DriverError> {
@@ -323,44 +392,8 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::flush_session_plan_cache(self, scope)
     }
 
-    fn create_binding_stmt(
-        &mut self,
-        create: &tidb_ast::CreateBindingStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        Session::create_binding_stmt(self, create)
-    }
-
-    fn drop_binding_stmt(
-        &mut self,
-        drop: &tidb_ast::DropBindingStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        Session::drop_binding_stmt(self, drop)
-    }
-
-    fn set_binding_stmt(
-        &mut self,
-        set: &tidb_ast::SetBindingStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        Session::set_binding_stmt(self, set)
-    }
-
     fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>> {
         self.workload_repository.clone()
-    }
-
-    fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
-        Session::reload_expr_pushdown_blacklist(self)
-    }
-
-    fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
-        Session::reload_opt_rule_blacklist(self)
-    }
-
-    fn recommend_index_stmt(
-        &mut self,
-        recommend: &tidb_ast::RecommendIndexStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        Session::recommend_index_stmt(self, recommend)
     }
 
     fn flush_privileges(&mut self) -> Result<(), DriverError> {
@@ -375,8 +408,20 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::run_planned_show(self, show)
     }
 
-    fn kill_stmt(&mut self, kill: &tidb_ast::KillStmt) -> Result<Option<StmtOutput>, DriverError> {
-        Session::kill_stmt(self, kill)
+    fn server_id(&self) -> u64 {
+        (self.server_id_getter)()
+    }
+
+    fn cluster_peer(
+        &self,
+    ) -> Option<&std::sync::Arc<tidb_executor::cluster_peer::ClusterPeerClient>> {
+        self.cluster_peer.as_ref()
+    }
+
+    fn server_info_syncer(
+        &self,
+    ) -> Option<&std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>> {
+        self.server_info_syncer.as_ref()
     }
 }
 
@@ -501,47 +546,4 @@ impl Session {
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
-    /// Go `TraceExec`: runs the statement, then reports the spans.
-    pub(crate) fn trace_stmt(
-        &mut self,
-        trace: &tidb_ast::TraceStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        crate::trace::check_options(trace)
-            .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
-        let inner_sql = crate::trace::statement_text(&trace.statement);
-        let inner = (*trace.statement).clone();
-        let recorder = crate::trace::StatementTrace::start();
-        let entered = recorder.enter();
-        // Go `session.ExecuteStmt`; this path drains the record set
-        // inside it.
-        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-        let outcome = self.execute_statement_owned(inner, &inner_sql);
-        drop(execute_stmt);
-        drop(entered);
-        // Go `executeChild` and `drainRecordSet`'s events.
-        let affected = match outcome {
-            Ok(StmtOutput::Rows { rows, .. }) => {
-                recorder.event(&format!(
-                    "execute done, ReturnRow: {}, ModifyRow: 0",
-                    rows.len()
-                ));
-                0
-            }
-            Ok(StmtOutput::Affected(count)) => count,
-            Ok(_) => 0,
-            Err(error) => {
-                let mysql = error.to_mysql_error();
-                recorder.event(&format!(
-                    "execute with error({}): {}",
-                    mysql.code, mysql.message
-                ));
-                0
-            }
-        };
-        recorder.event(&format!("execute done, modify row: {affected}"));
-        let (spans, started) = recorder.finish();
-        let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
-            .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
-        Ok(Some(StmtOutput::Rows { columns, rows }))
-    }
 }

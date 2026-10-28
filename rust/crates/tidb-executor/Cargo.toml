@@ -9,6 +9,10 @@ description = "TiDB executor: the wired execution engine spine (Executor trait +
 
 autotests = false
 
+[features]
+# Test hooks other crates' tests read (the digest-call counter).
+test-util = []
+
 [dependencies]
 tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-privilege = { path = "../tidb-privilege" }
@@ -29,6 +33,16 @@ tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-log = { path = "../tidb-log" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-sysutil = { path = "../tidb-sysutil" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-bindinfo = { path = "../tidb-bindinfo" }
+futures.workspace = true
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { workspace = true }
+tonic.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
 signal-hook = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
@@ -86,6 +100,8 @@ tidb-table = { path = "../tidb-table", features = ["test-util"] }
 # tests answer its DAG with the same coprocessor.
 tidb-unistore = { path = "../tidb-unistore" }
 sha2 = { workspace = true }
+tempfile.workspace = true
+tokio-stream = { workspace = true, features = ["net"] }
 # The bench runs on the server's allocator (crates/tidb-server default feature).
 tikv-jemallocator = "0.7"
 

@@ -24,6 +24,7 @@
 //! bootstraps -- is `CANCEL`, which is the default honoured here.
 #![cfg(test)]
 
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 
 fn ordered_session() -> Session {

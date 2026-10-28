@@ -18,7 +18,7 @@ use prost::Message;
 use std::{sync::Arc, time::Duration};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_domain::serverinfo::ServerInfo;
-use tidb_executor::{remote_scan::PushdownScanColumn, DriverError, MysqlError, StmtContext};
+use crate::{remote_scan::PushdownScanColumn, DriverError, MysqlError, StmtContext};
 use tidb_proto::{coprocessor, tipb};
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::rpc::UnaryCancellation;
@@ -209,7 +209,7 @@ impl ClusterPeerClient {
         let columns_pb = selected
             .iter()
             .map(|(offset, field_type)| {
-                tidb_executor::cop_reader::scan_column(&PushdownScanColumn {
+                crate::cop_reader::scan_column(&PushdownScanColumn {
                     id: (*offset + 1) as i64,
                     field_type: (*field_type).clone(),
                     is_handle: false,
@@ -239,7 +239,7 @@ impl ClusterPeerClient {
                 .enumerate()
                 .find(|(_, (original, _))| columns[*original].0.eq_ignore_ascii_case("DIGEST"))
                 .ok_or_else(|| DriverError::unsupported("digest predicate needs DIGEST column"))?;
-            let column = tidb_executor::cop_reader::scan_column(&PushdownScanColumn {
+            let column = crate::cop_reader::scan_column(&PushdownScanColumn {
                 id: (offset + 1) as i64,
                 field_type: (*field).clone(),
                 is_handle: false,

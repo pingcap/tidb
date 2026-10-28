@@ -29,28 +29,9 @@ use tidb_executor::DriverError;
 
 use crate::Session;
 
-/// Go `RestrictedSQLExecutor.ExecRestrictedSQL` with no options: one
-/// schema-qualified statement on an internal session, answering its rows.
-pub trait RestrictedSqlExecutor: Send + Sync {
-    /// Runs `sql` in an internal session's own transaction.
-    fn exec_restricted_sql(&self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
-}
-
-/// The shared handle a session and its retriever snapshots carry.
-pub(crate) type RestrictedSql = Option<Arc<dyn RestrictedSqlExecutor>>;
-
-/// Go `ExecRestrictedSQL` through the session's executor, which the node
-/// that opened the session installs.
-pub(crate) fn exec_restricted_sql_over(
-    executor: Option<&dyn RestrictedSqlExecutor>,
-    sql: &str,
-) -> Result<Vec<Vec<Datum>>, DriverError> {
-    executor
-        .ok_or_else(|| {
-            DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
-        })?
-        .exec_restricted_sql(sql)
-}
+pub use tidb_executor::memtable_reader::{
+    exec_restricted_sql_over, RestrictedSql, RestrictedSqlExecutor,
+};
 
 impl Session {
     /// Go `GetRestrictedSQLExecutor`'s backing: what the node installs.

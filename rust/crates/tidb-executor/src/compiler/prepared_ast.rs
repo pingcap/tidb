@@ -18,16 +18,18 @@
 //! general SELECT descriptors retain syntax and key metadata; the session
 //! owns cached physical plans and rebuilds execution state for every EXECUTE.
 
+#[allow(unused_imports)]
+use super::*;
+use crate::compiler::PlanCacheableChecker;
 use std::sync::Arc;
 
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
-use tidb_executor::{
+use crate::{
     DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedPointGetExecution,
     PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
 };
 
-use crate::Session;
 
 /// One statement parsed under the SQL mode in force at PREPARE time.
 #[derive(Clone, Debug)]
@@ -44,17 +46,17 @@ pub struct PreparedAst {
     select_plan: Option<Arc<PreparedSelectPlan>>,
 }
 
-pub(crate) struct PreparedPlanCacheEnvironmentCache {
+pub struct PreparedPlanCacheEnvironmentCache {
     vars_generation: u64,
     blacklist_generation: u64,
     in_transaction: bool,
     pessimistic_transaction: bool,
     autocommit: bool,
-    environment: Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>>,
+    environment: Option<Arc<crate::PreparedPlanCacheEnvironment>>,
 }
 
 impl PreparedAst {
-    pub(crate) fn from_parsed(
+    pub fn from_parsed(
         sql: String,
         statement: Stmt,
         parameter_count: usize,
@@ -75,7 +77,7 @@ impl PreparedAst {
     }
 
     /// The privilege requests PREPARE derived (Go `PlanCacheStmt.VisitInfos`).
-    pub(crate) fn privilege_requests(&self) -> &[crate::table_privilege::TablePrivilegeRequest] {
+    pub fn privilege_requests(&self) -> &[crate::table_privilege::TablePrivilegeRequest] {
         &self.privilege_requests
     }
 
@@ -121,39 +123,40 @@ impl PreparedAst {
     /// parameter markers, matching Go's immutable prepared definition plus
     /// per-execution marker state.
     pub fn bind(&self, values: &[Datum]) -> Result<Stmt, DriverError> {
-        tidb_executor::bind_prepared_statement(&self.statement, values)
+        crate::bind_prepared_statement(&self.statement, values)
     }
 }
 
-impl Session {
+/// Go `GetPlanFromPlanCache` over the session's prepared statements.
+pub trait PreparedAstCompile: super::CompilerSession {
     /// Go `TblInfo2UnionScan`'s dirty tables, as the physical plan cache keys
     /// them: what this transaction has staged, none inside a statement
     /// snapshot.
-    pub(crate) fn plan_cache_dirty_tables(&self) -> Vec<i64> {
+    fn plan_cache_dirty_tables(&self) -> Vec<i64> {
         // Nothing is dirty outside a transaction: the tracker keeps what the
         // last autocommit statement staged until the next one opens.
-        if self.statement_snapshot.is_some() || !self.in_transaction() {
+        if self.has_statement_snapshot() || !self.in_transaction() {
             Vec::new()
         } else {
-            self.staged_writes.dirty_table_ids()
+            self.staged_dirty_table_ids()
         }
     }
 
-    pub(crate) fn prepared_plan_cache_environment(
+    fn prepared_plan_cache_environment(
         &self,
-    ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
+    ) -> Option<Arc<crate::PreparedPlanCacheEnvironment>> {
         if self.historical_read_ts().is_some()
-            || self.vars.txn_read_ts() != 0
+            || self.session_vars().txn_read_ts() != 0
             || self.external_timestamp_read_enabled()
         {
             return None;
         }
-        let vars_generation = self.vars.generation();
-        let blacklist_generation = self.pushdown_blacklists.generation();
+        let vars_generation = self.session_vars().generation();
+        let blacklist_generation = self.pushdown_blacklists().generation();
         let in_transaction = self.in_transaction();
         let autocommit = self.is_autocommit();
         let pessimistic_transaction = self.statement_is_pessimistic();
-        if let Some(cached) = self.prepared_plan_cache_environment_cache.borrow().as_ref() {
+        if let Some(cached) = self.prepared_plan_cache_environment_cache().borrow().as_ref() {
             if cached.vars_generation == vars_generation
                 && cached.blacklist_generation == blacklist_generation
                 && cached.in_transaction == in_transaction
@@ -163,42 +166,42 @@ impl Session {
                 return cached.environment.clone();
             }
         }
-        let sql_select_limit = self.vars.get_system("sql_select_limit");
+        let sql_select_limit = self.session_vars().get_system("sql_select_limit");
         let read_staleness = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
         let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
-            && self.vars.snapshot_ts() == 0
+            && self.session_vars().snapshot_ts() == 0
             && !read_staleness
                 .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
         .then(|| {
             Arc::new(
-                tidb_executor::PreparedPlanCacheEnvironment::new(
-                    self.vars.sql_mode(),
-                    self.vars.get_system("time_zone").unwrap_or_default(),
+                crate::PreparedPlanCacheEnvironment::new(
+                    self.session_vars().sql_mode(),
+                    self.session_vars().get_system("time_zone").unwrap_or_default(),
                     blacklist_generation,
                 )
                 .with_stats_handle(self.stats_handle())
-                .with_user_identity(self.vars.current_user.clone().unwrap_or_default())
+                .with_user_identity(self.session_vars().current_user.clone().unwrap_or_default())
                 .with_pessimistic_transaction(pessimistic_transaction)
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_session_state(
-                    self.vars
+                    self.session_vars()
                         .get_system("character_set_connection")
                         .unwrap_or_default(),
-                    self.vars
+                    self.session_vars()
                         .get_system("collation_connection")
                         .unwrap_or_default(),
-                    self.vars
+                    self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
                         .unwrap_or_default(),
-                    self.vars
+                    self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
                         .unwrap_or_default(),
                     sql_select_limit.unwrap_or_default(),
                     in_transaction,
                     autocommit,
-                    self.vars
+                    self.session_vars()
                         .get_system(
                             tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS,
                         )
@@ -206,7 +209,7 @@ impl Session {
                         != Ok("OFF"),
                 )
                 .with_no_backslash_escapes_in_like(
-                    self.vars
+                    self.session_vars()
                         .get_system(
                             tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE,
                         )
@@ -214,27 +217,27 @@ impl Session {
                         != Ok("OFF"),
                 )
                 .with_cache_admission(
-                    self.vars
+                    self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)
                         .ok()
                         .and_then(|value| value.parse::<u64>().ok())
                         .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
-                    self.vars
+                    self.session_vars()
                         .optimizer_fix_control()
                         .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
                 )
                 .with_cache_switches(
-                    self.session_bool(
+                    self.session_vars().system_bool(
                         tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
                         tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
                     ),
-                    self.session_bool(
+                    self.session_vars().system_bool(
                         tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
                         tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
                     ),
                 )
                 .with_opt_objective_determinate(
-                    self.vars
+                    self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_OPT_OBJECTIVE)
                         .is_ok_and(|value| {
                             value.eq_ignore_ascii_case(
@@ -244,7 +247,7 @@ impl Session {
                 ),
             )
         });
-        *self.prepared_plan_cache_environment_cache.borrow_mut() =
+        *self.prepared_plan_cache_environment_cache().borrow_mut() =
             Some(PreparedPlanCacheEnvironmentCache {
                 vars_generation,
                 blacklist_generation,
@@ -256,15 +259,15 @@ impl Session {
         environment
     }
 
-    pub(crate) fn prepared_plan_cache_environment_for_binding(
+    fn prepared_plan_cache_environment_for_binding(
         &self,
         binding_sql: Option<&str>,
-    ) -> Option<tidb_executor::PreparedPlanCacheEnvironment> {
+    ) -> Option<crate::PreparedPlanCacheEnvironment> {
         let environment = self.prepared_plan_cache_environment()?;
         Some(
             environment.as_ref().clone().with_binding_sql(
                 binding_sql,
-                self.vars
+                self.session_vars()
                     .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING)
                     .as_deref()
                     != Ok("OFF"),
@@ -275,24 +278,22 @@ impl Session {
     /// Go `GeneratePlanCacheStmtWithAST`'s refusal note for a protocol-level
     /// prepare: a statement the plan cache will not hold is answered with
     /// `skip prepared plan-cache: <reason>`, as `PREPARE ... FROM` is.
-    pub fn note_prepared_plan_cache_refusal(&mut self, statement: &Stmt) -> Result<(), DriverError> {
+    fn note_prepared_plan_cache_refusal(&mut self, statement: &Stmt) -> Result<(), DriverError> {
         let refusal = {
             let catalog = self.lock_catalog()?;
             let mut candidate = statement.clone();
             self.prepared_statement_cacheable(&mut candidate, &catalog).err()
         };
         if let Some(reason) = refusal {
-            self.append_warning(
-                crate::WarningLevel::Warning,
-                1105,
-                format!("skip prepared plan-cache: {reason}"),
+            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+                format!("skip prepared plan-cache: {reason}")),
             );
         }
         Ok(())
     }
 
     /// Parses and retains the statement under this session's current SQL mode.
-    pub fn prepare_ast(&mut self, sql: &str) -> Result<PreparedAst, DriverError> {
+    fn prepare_ast(&mut self, sql: &str) -> Result<PreparedAst, DriverError> {
         // Go `PrepareExec` resolves names against the domain's latest schema;
         // a node session's catalog is refreshed by its node first.
         self.refresh_node_catalog()?;
@@ -302,7 +303,7 @@ impl Session {
 
     /// [`Self::prepare_ast`] over the statement the front end already parsed
     /// from `sql` (Go `PrepareExec` works on the node `ParseSQL` produced).
-    pub fn prepare_ast_parsed(
+    fn prepare_ast_parsed(
         &self,
         sql: &str,
         mut statement: Stmt,
@@ -311,8 +312,8 @@ impl Session {
         // (`handleTableName` pins every unqualified name to the current
         // database), then collects the `VisitInfos` from it -- so the retained
         // statement, its requests and every EXECUTE name the same tables.
-        crate::binding::pin_current_database(&mut statement, self.current_database())?;
-        let parameter_count = tidb_executor::parsed_parameter_count(&statement);
+        tidb_bindinfo::binding::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
+        let parameter_count = crate::parsed_parameter_count(&statement);
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
         let planner_context = self.statement_context_for_stmt(&statement, false);
         let (point_get_plan, dml_plan, select_plan) = {
@@ -325,21 +326,21 @@ impl Session {
             (
                 cacheable
                     .then(|| {
-                        tidb_executor::build_prepared_point_get_plan(
+                        crate::build_prepared_point_get_plan(
                             &statement,
                             parameter_count,
                             &catalog,
-                            self.current_database(),
+                            self.session_vars().current_db.as_str(),
                             &self.session_time_zone(),
                         )
                     })
                     .flatten(),
                 if cacheable {
-                    tidb_executor::build_prepared_dml_plan(
+                    crate::build_prepared_dml_plan(
                         &statement,
                         parameter_count,
                         &catalog,
-                        self.current_database(),
+                        self.session_vars().current_db.as_str(),
                     )?
                     .map(|plan| plan.with_sql(sql))
                 } else {
@@ -347,11 +348,11 @@ impl Session {
                 },
                 cacheable
                     .then(|| {
-                        tidb_executor::build_prepared_select_plan(
+                        crate::build_prepared_select_plan(
                             &statement,
                             parameter_count,
                             &catalog,
-                            self.current_database(),
+                            self.session_vars().current_db.as_str(),
                             &planner_context,
                         )
                         .map(|plan| plan.with_sql(sql))
@@ -377,13 +378,13 @@ impl Session {
     /// The explicit statement hint and `hint_only` strategy are evaluated for
     /// every EXECUTE because the strategy may change after PREPARE.
     #[must_use]
-    pub fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
-        if !self.vars.prepared_plan_cache_enabled() {
+    fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
+        if !self.session_vars().prepared_plan_cache_enabled() {
             return false;
         }
-        let hints = crate::variables::parse_statement_hints_without_catalog(
+        let hints = self.parse_statement_hints_without_catalog(
             statement,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
         );
         if hints.ignore_plan_cache {
             return false;
@@ -391,7 +392,7 @@ impl Session {
         // Compared, not kept: `get_system` would copy the value into a
         // `String` for every statement that consults the plan cache.
         let hint_only = self
-            .vars
+            .session_vars()
             .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
             .is_ok_and(|strategy| {
                 strategy.eq_ignore_ascii_case(
@@ -406,20 +407,20 @@ impl Session {
     /// (`GetPlanFromPlanCache`), or an `ignore_plan_cache()` hint from the
     /// statement or from its matched binding (`Optimize`).
     #[must_use]
-    pub(crate) fn prepared_plan_cache_refusal(
+    fn prepared_plan_cache_refusal(
         &self,
         original: &Stmt,
         effective: &Stmt,
     ) -> Option<&'static str> {
-        if !self.vars.prepared_plan_cache_enabled() {
+        if !self.session_vars().prepared_plan_cache_enabled() {
             return None;
         }
-        let hints = crate::variables::parse_statement_hints_without_catalog(
+        let hints = self.parse_statement_hints_without_catalog(
             effective,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
         );
         let hint_only = self
-            .vars
+            .session_vars()
             .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
             .is_ok_and(|strategy| {
                 strategy.eq_ignore_ascii_case(
@@ -432,9 +433,9 @@ impl Session {
         if !hints.ignore_plan_cache {
             return None;
         }
-        let own = crate::variables::parse_statement_hints_without_catalog(
+        let own = self.parse_statement_hints_without_catalog(
             original,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
         );
         Some(if own.ignore_plan_cache {
             "ignore_plan_cache hint used in SQL query"
@@ -452,12 +453,12 @@ impl Session {
     /// transaction's timestamp through the session's own storage — the same
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
-    pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.vars.prepared_plan_cache_enabled() {
+    fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
+        if !self.session_vars().prepared_plan_cache_enabled() {
             return false;
         }
         if self
-            .vars
+            .session_vars()
             .optimizer_fix_control()
             .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
             || self.prepared_plan_cache_environment().is_none()
@@ -471,7 +472,7 @@ impl Session {
     /// Binds a retained point-get plan for a binary EXECUTE after applying
     /// the same autocommit, snapshot, session-binding, and schema gates used
     /// by the Go point-get cache.
-    pub fn bind_cached_prepared_point_get(
+    fn bind_cached_prepared_point_get(
         &mut self,
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
@@ -485,7 +486,7 @@ impl Session {
     /// Rebuilds the point plan under the same binding-aware environment key
     /// used by ordinary cached physical plans.
     #[must_use]
-    pub fn bind_cached_prepared_point_get_for_binding(
+    fn bind_cached_prepared_point_get_for_binding(
         &self,
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
@@ -500,7 +501,7 @@ impl Session {
 
     /// Binds fresh values into a retained DML plan after applying the prepared
     /// cache, session-state, binding, fix-control, database, and schema gates.
-    pub fn bind_cached_prepared_dml(
+    fn bind_cached_prepared_dml(
         &self,
         plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
@@ -510,16 +511,16 @@ impl Session {
 
     /// Binds the effective DML statement and keys it by the matching binding.
     #[must_use]
-    pub fn bind_cached_prepared_dml_for_statement(
+    fn bind_cached_prepared_dml_for_statement(
         &self,
         plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
     ) -> Option<PreparedDmlExecution> {
-        if !self.vars.prepared_plan_cache_enabled()
+        if !self.session_vars().prepared_plan_cache_enabled()
             || self
-                .vars
+                .session_vars()
                 .optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
         {
@@ -531,10 +532,10 @@ impl Session {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(cached) = plan.bind_cached_for_statement(
-                &self.physical_plan_cache,
+                self.physical_plan_cache(),
                 values,
                 &catalog,
-                self.current_database(),
+                self.session_vars().current_db.as_str(),
                 &self.plan_cache_dirty_tables(),
                 &environment,
                 statement,
@@ -544,7 +545,7 @@ impl Session {
                 // hits only, for the prepared and non-prepared paths alike.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
                 tidb_planner::metrics::plan_cache_lookup_duration(
-                    self.physical_plan_cache.uses_instance(),
+                    self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(cached);
@@ -570,10 +571,10 @@ impl Session {
         // (plan_cache.go:366).
         tidb_planner::metrics::plan_cache_miss_counter(false).inc();
         plan.bind_for_statement(
-            &self.physical_plan_cache,
+            self.physical_plan_cache(),
             values,
             &catalog,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
             &planner_context,
             &self.plan_cache_dirty_tables(),
             &environment,
@@ -584,7 +585,7 @@ impl Session {
     /// Binds the current values into a retained SELECT after applying the
     /// same session, schema, and stale-read invalidation gates as Go's plan
     /// cache. A refusal returns the statement to ordinary planning.
-    pub fn bind_cached_prepared_select(
+    fn bind_cached_prepared_select(
         &self,
         plan: &Arc<PreparedSelectPlan>,
         values: &[Datum],
@@ -596,16 +597,16 @@ impl Session {
     /// exact matched binding SQL, as Go's `newPlanCacheKeyWithMatchedBinding`
     /// does.
     #[must_use]
-    pub fn bind_cached_prepared_select_for_statement(
+    fn bind_cached_prepared_select_for_statement(
         &self,
         plan: &Arc<PreparedSelectPlan>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
     ) -> Option<PreparedSelectExecution> {
-        if !self.vars.prepared_plan_cache_enabled()
+        if !self.session_vars().prepared_plan_cache_enabled()
             || self
-                .vars
+                .session_vars()
                 .optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
         {
@@ -617,10 +618,10 @@ impl Session {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
-                &self.physical_plan_cache,
+                self.physical_plan_cache(),
                 values,
                 &catalog,
-                self.current_database(),
+                self.session_vars().current_db.as_str(),
                 &self.plan_cache_dirty_tables(),
                 &environment,
                 statement,
@@ -630,7 +631,7 @@ impl Session {
                 // observation is hits-only per `lookupPlanCache`'s defer.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
                 tidb_planner::metrics::plan_cache_lookup_duration(
-                    self.physical_plan_cache.uses_instance(),
+                    self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
@@ -641,10 +642,10 @@ impl Session {
         let ctx = self.statement_context_for_stmt(statement, false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
-            &self.physical_plan_cache,
+            self.physical_plan_cache(),
             values,
             &catalog,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
             &ctx,
             &self.plan_cache_dirty_tables(),
             &environment,
@@ -652,3 +653,5 @@ impl Session {
         )
     }
 }
+
+impl<T: super::CompilerSession> PreparedAstCompile for T {}

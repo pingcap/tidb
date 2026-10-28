@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! Regressions exercise completed SQL, never injected statement records.
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 use tidb_util::topsql_stmtstats::{global_aggregator, Collector, StatementStatsMap};
 

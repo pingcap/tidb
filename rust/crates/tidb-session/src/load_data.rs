@@ -22,84 +22,14 @@
 //! the client's bytes to [`crate::Session::set_local_infile_data`] and runs
 //! the statement, whose dispatch arm takes them.
 
-use crate::privilege::PrivilegeTypeExt;
 use tidb_ast::{LoadDataOnDuplicate, LoadDataStmt, Stmt};
-use tidb_executor::load_data::{LoadDataEnv, PreparedLoadData};
+use tidb_executor::load_data::LoadDataExec;
 
 use crate::{DriverError, StmtOutput};
 
+impl LoadDataExec for crate::Session {}
+
 impl crate::Session {
-    fn load_data_env(&self) -> LoadDataEnv {
-        LoadDataEnv {
-            charset_database: self
-                .vars
-                .get_system("character_set_database")
-                .unwrap_or_else(|_| "utf8mb4".to_owned()),
-            strict_sql_mode: self.vars.sql_mode().has_strict_mode(),
-            allow_write_row_id: self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value)),
-        }
-    }
-
-    /// Go `buildLoadData`'s visit info: INSERT on the table, and DELETE too
-    /// for REPLACE, named by the table as written.
-    fn load_data_privileges(
-        &self,
-        schema: &str,
-        table: &str,
-        on_duplicate: LoadDataOnDuplicate,
-    ) -> Result<(), DriverError> {
-        let Some((_, user, host)) = self.privilege_context() else {
-            return Ok(());
-        };
-        let mut required = vec![tidb_mysql::InsertPriv];
-        if on_duplicate == LoadDataOnDuplicate::Replace {
-            required.push(tidb_mysql::DeletePriv);
-        }
-        for privilege in required {
-            let granted =
-                tidb_privilege::verification::mem_db_verdict_mask(schema, privilege.bit())
-                    .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
-            if !granted {
-                return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
-                        &[
-                            privilege.print_name().into(),
-                            user.to_owned().into(),
-                            host.to_owned().into(),
-                            table.to_owned().into(),
-                        ],
-                    ),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Everything Go checks before `LoadDataExec.Open`: the table, the
-    /// privileges, then the executor builder and `NewLoadDataWorker`.
-    pub(crate) fn prepare_load_data(
-        &mut self,
-        load: &LoadDataStmt,
-    ) -> Result<PreparedLoadData, DriverError> {
-        let current_db = self.vars.current_db.clone();
-        let env = self.load_data_env();
-        let privileges = match load.table.as_slice() {
-            [schema, table] => self.load_data_privileges(schema, table, load.on_duplicate),
-            [table] if !current_db.is_empty() => {
-                self.load_data_privileges(&current_db, table, load.on_duplicate)
-            }
-            _ => Ok(()),
-        };
-        self.with_catalog_mut(|catalog| {
-            tidb_executor::load_data::prepare_load_data(load, catalog, &current_db, &env, |_, _| {
-                privileges
-            })
-        })
-    }
-
     /// Go `clientConn.preprocessLoadDataLocal` accepted the statement (the
     /// client can send files) and the executor was built: on success the
     /// connection may request the file. A failure is the statement's error,

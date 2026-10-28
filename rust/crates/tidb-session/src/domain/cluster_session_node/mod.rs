@@ -166,6 +166,8 @@
 //! [`StatementSnapshot`]: tidb_cluster::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_cluster::cluster_table_storage::SessionTransaction
 
+use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PreparedAstCompile;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -4935,7 +4937,7 @@ struct InternalBindingWriter {
     connection_id: u64,
 }
 
-impl crate::binding::GlobalBindingWriter for InternalBindingWriter {
+impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
     fn execute(
         &self,
         operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,

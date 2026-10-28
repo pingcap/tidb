@@ -874,42 +874,4 @@ pub trait UserTableExec: AccountSession {
 
 impl<S: AccountSession> UserTableExec for S {}
 
-/// The text form a system variable stores for a datum (Go keeps every system
-/// variable as a string).
-pub fn sysvar_datum_text(value: &Datum) -> Option<String> {
-    match value {
-        Datum::Null => None,
-        Datum::Int(v) => Some(v.to_string()),
-        Datum::UInt(v) => Some(v.to_string()),
-        Datum::Real(v) => Some(v.to_string()),
-        Datum::Decimal(d) => Some(d.to_string()),
-        Datum::String(s) => Some(String::from_utf8_lossy(s.bytes()).into_owned()),
-        Datum::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        // `BinaryJSON.String`: the canonical document text a JSON column
-        // sends on the wire.
-        Datum::Json(j) => Some(j.to_string()),
-        // `types.Time.String()`: the text a temporal column prints, fsp
-        // included -- what `mysql.bind_info`'s TIMESTAMP(6) rows read back
-        // as.
-        Datum::Time(t) => Some(t.to_string()),
-        // Go `Datum.ToString` for the two set-valued types prints the NAME,
-        // not the bit value: an ENUM default read back as `''` instead of
-        // `'x'` is what a metadata reader would otherwise report for a
-        // column whose stored default is correct.
-        Datum::Enum(value, _) => {
-            Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned())
-        }
-        Datum::Set(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
-        Datum::Duration(value) => Some(value.to_string()),
-        // Go `BinaryLiteral.ToString` is the raw bytes: `SET autocommit =
-        // 0x30` is `'0'` and `SET sql_mode = 0x414E5349` is `'ANSI'`.
-        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
-            Some(String::from_utf8_lossy(literal.as_bytes()).into_owned())
-        }
-        // Go `strconv.FormatFloat(float64(f), 'f', -1, 32)`.
-        Datum::Float32(value) => Some(tidb_datatype::go_strconv::format_float(
-            *value, b'f', -1, 32,
-        )),
-        _ => None,
-    }
-}
+pub use tidb_datatype::datum_text::sysvar_datum_text;

@@ -23,7 +23,7 @@ use std::time::Duration;
 use tidb_distsql::{CopResponseSink, ResponseRuntimeStats, SelectResultMetadata};
 use tidb_proto::ExecutorExecutionSummary;
 
-use crate::exec_details::{
+use tidb_util::execdetails::exec_details::{
     CopExecDetails, CopTasksDetails, CopTasksSummary, ExecDetails, SyncExecDetails,
 };
 
@@ -82,7 +82,7 @@ impl CopResponseSink for StatementCopStats {
         // the sink has no error path for Go's returned error.
         if metadata.store_type == tidb_txnkv::StoreType::TiFlash {
             if let Some(ru_details) = &self.ru_details {
-                let _ = crate::tiflash_stats::merge_tiflash_ru_consumption(
+                let _ = tidb_util::execdetails::tiflash_stats::merge_tiflash_ru_consumption(
                     execution_summaries,
                     ru_details,
                 );
@@ -108,11 +108,11 @@ impl CopResponseSink for StatementCopStats {
 
 /// Go `selectResult.updateCopRuntimeStats` as a [`CopResponseSink`]: every
 /// consumed response's execution summaries are recorded in the statement's
-/// [`RuntimeStatsColl`](crate::runtime_stats::RuntimeStatsColl) under the
+/// [`RuntimeStatsColl`](tidb_util::execdetails::runtime_stats::RuntimeStatsColl) under the
 /// plan IDs the select result was built with (`copPlanIDs`), after the
 /// statement's own exec-details consumer has seen the response.
 pub struct RuntimeStatsCollSink {
-    coll: std::sync::Arc<crate::runtime_stats::RuntimeStatsColl>,
+    coll: std::sync::Arc<tidb_util::execdetails::runtime_stats::RuntimeStatsColl>,
     inner: Option<std::sync::Arc<dyn CopResponseSink>>,
     /// Go `selectResult.stats`, by select result: registered on its root
     /// plan when the select result closes.
@@ -131,7 +131,7 @@ impl RuntimeStatsCollSink {
     /// A sink recording into `coll` after `inner`.
     #[must_use]
     pub fn new(
-        coll: std::sync::Arc<crate::runtime_stats::RuntimeStatsColl>,
+        coll: std::sync::Arc<tidb_util::execdetails::runtime_stats::RuntimeStatsColl>,
         inner: Option<std::sync::Arc<dyn CopResponseSink>>,
     ) -> Self {
         Self {
@@ -143,15 +143,15 @@ impl RuntimeStatsCollSink {
 }
 
 /// Go `kv.StoreType` of the select result, as the runtime-stats kind.
-fn runtime_store_type(store_type: tidb_txnkv::StoreType) -> crate::runtime_stats::StoreType {
+fn runtime_store_type(store_type: tidb_txnkv::StoreType) -> tidb_util::execdetails::runtime_stats::StoreType {
     if store_type == tidb_txnkv::StoreType::TiFlash {
-        crate::runtime_stats::StoreType::TiFlash
+        tidb_util::execdetails::runtime_stats::StoreType::TiFlash
     } else if store_type == tidb_txnkv::StoreType::TiDb {
-        crate::runtime_stats::StoreType::TiDb
+        tidb_util::execdetails::runtime_stats::StoreType::TiDb
     } else if store_type == tidb_txnkv::StoreType::TiKv {
-        crate::runtime_stats::StoreType::TiKv
+        tidb_util::execdetails::runtime_stats::StoreType::TiKv
     } else {
-        crate::runtime_stats::StoreType::Unspecified
+        tidb_util::execdetails::runtime_stats::StoreType::Unspecified
     }
 }
 
@@ -332,7 +332,7 @@ mod runtime_stats_coll_sink_tests {
     /// details (Go's `EXPLAIN ANALYZE` of `select * from t where b = 3`).
     #[test]
     fn positional_summaries_record_scan_detail_on_the_root_cop_executor() {
-        let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
+        let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         sink.record_cop_response(
             1,
@@ -360,7 +360,7 @@ mod runtime_stats_coll_sink_tests {
     /// records its request-root scan evidence.
     #[test]
     fn malformed_summaries_record_nothing_and_missing_ones_keep_root_evidence() {
-        let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
+        let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         sink.record_cop_response(
             1,
@@ -395,8 +395,8 @@ mod runtime_stats_coll_sink_tests {
     /// time the iterator reports, and render before the cop stats.
     #[test]
     fn close_registers_the_select_result_stats_on_the_root_plan() {
-        use tidb_executor::executor::ExecutorRuntimeStatsSource;
-        let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
+        use crate::executor::ExecutorRuntimeStatsSource;
+        let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         let metadata = metadata(vec![5], 7);
         let mut one = sample();

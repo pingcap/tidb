@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::binding::{cross_db_match, Binding};
 
@@ -271,18 +271,18 @@ impl BindingCache {
         };
         rows.sort_by_key(|row| {
             (
-                row.get(5).and_then(crate::datum_text),
-                row.get(4).and_then(crate::datum_text),
+                row.get(5).and_then(tidb_datatype::datum_text::sysvar_datum_text),
+                row.get(4).and_then(tidb_datatype::datum_text::sysvar_datum_text),
             )
         });
         for row in rows {
-            let updated = row.get(5).and_then(crate::datum_text).unwrap_or_default();
+            let updated = row.get(5).and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
             if boundary.is_some_and(|boundary| {
                 binding_time(&updated).is_some_and(|value| value <= boundary)
             }) {
                 continue;
             }
-            if row.first().and_then(crate::datum_text).as_deref()
+            if row.first().and_then(tidb_datatype::datum_text::sysvar_datum_text).as_deref()
                 == Some(crate::binding_utils::BUILTIN_PSEUDO_SQL_4_BIND_LOCK)
             {
                 continue;

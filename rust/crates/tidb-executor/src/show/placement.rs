@@ -30,6 +30,7 @@ use crate::DriverError;
 pub(crate) const PENDING: &str = "PENDING";
 const SCHEDULED: &str = "SCHEDULED";
 
+/// One `Target | Placement | Scheduling_State` row.
 pub fn row(target: String, placement: &PlacementSettings, state: &str) -> Vec<Datum> {
     vec![
         Datum::Bytes(target.into_bytes()),

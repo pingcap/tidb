@@ -217,7 +217,7 @@ fn a_scan_has_at_most_one_retriever() {
                 "default".to_owned(),
             ),
         ),
-        Box::new(crate::instance_state::InstanceStateRetriever::new(
+        Box::new(tidb_executor::memtable_reader::InstanceStateRetriever::new(
             session.viewer_state(),
         )),
         Box::new(
@@ -232,7 +232,7 @@ fn a_scan_has_at_most_one_retriever() {
         Box::new(crate::account_state::VariablesRetriever::new(
             session.variables_state(),
         )),
-        Box::new(crate::cluster_state::ClusterTablesRetriever::new(
+        Box::new(tidb_executor::cluster_state::ClusterTablesRetriever::new(
             session.viewer_state(),
         )),
     ];

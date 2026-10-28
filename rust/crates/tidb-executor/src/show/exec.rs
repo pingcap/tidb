@@ -37,6 +37,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     ) -> Result<T, DriverError>;
     /// Go `domain.GetDomain(ctx).InfoSchema()`: the domain's latest image.
     fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<crate::Catalog>>;
+    /// Go `GlobalBindingHandle`'s bindings, loaded from the domain's cache
+    /// or the binding storage.
+    fn load_global_bindings(
+        &mut self,
+    ) -> Result<tidb_bindinfo::binding::SessionBindings, DriverError>;
+    /// Go `SessionBindingHandle`: the session's own bindings.
+    fn session_bindings_mut(&mut self) -> &mut tidb_bindinfo::binding::SessionBindings;
     /// Go `domain.GetDomain(ctx).StatsHandle()`.
     fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle>;
     /// Go `SessionVars.Location()`, as the statement pinned it.
@@ -79,12 +86,11 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// Go `fetchShowWarnings`.
     fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>>;
-    /// Go `fetchShowBind` over the binding handles.
-    fn show_bindings_rows(&mut self, global_scope: bool) -> Result<Vec<Vec<Datum>>, DriverError>;
-    /// Go `fetchShowBindingCacheStatus`.
-    fn binding_cache_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError>;
-    /// Go `fetchShowProcessList` over `SessionManager.ShowProcessList`.
-    fn process_list_rows(&self, full: bool) -> Vec<Vec<Datum>>;
+    /// What the instance-wide `information_schema` readers read of this
+    /// session.
+    fn viewer_state(&self) -> crate::memtable_reader::ViewerState;
+    /// Go `SessionManager`: this server's process registry.
+    fn process_registry(&self) -> Option<crate::process::ProcessRegistry>;
     /// Go `fetchShowSessionStates` over `EncodeStates`.
     fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// Go `fetchShowClusterConfigs`.
@@ -1576,6 +1582,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         }
     }
 
+    /// The `(schema, table)` a placement SHOW names, the schema defaulting
+    /// to the current database.
     fn placement_table_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
         match path {
             [table] => Ok((self.require_current_database()?.to_owned(), table.clone())),
@@ -1657,6 +1665,147 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 rows.extend(set.rows);
             }
         }
+        Ok(rows)
+    }
+
+    /// The rows of `SHOW [FULL] PROCESSLIST`.
+    ///
+    /// With a server front end this is the whole live connection list. A
+    /// session with NO front end (in-process tests, the embedded driver) has
+    /// no peers to report, so it lists exactly one row: itself, with the
+    /// values it honestly knows -- its own connection id (0 when the front
+    /// end never assigned one), no client host, its current schema, and the
+    /// statement it is running, which is this SHOW.
+    ///
+    /// Filtered by the `PROCESS` privilege the same way Go's
+    /// `setDataForProcessList` / `fetchShowProcessList` both filter: a
+    /// session without it sees only its own connections.
+    /// Go `ShowExec.fetchShowProcessList`: one row per connection the
+    /// session may see (`FULL` keeps the statement text whole).
+    fn process_list_rows(&self, full: bool) -> Vec<Vec<Datum>> {
+        let rows = self.viewer_state().visible_process_rows(full);
+        let nullable_text = |value: String| {
+            if value.is_empty() {
+                Datum::Null
+            } else {
+                Datum::Bytes(value.into_bytes())
+            }
+        };
+        rows.into_iter()
+            .map(|row| {
+                vec![
+                    Datum::UInt(row.id),
+                    Datum::Bytes(row.user.into_bytes()),
+                    Datum::Bytes(row.host.into_bytes()),
+                    // Go reports an unselected schema as SQL NULL.
+                    nullable_text(row.db),
+                    Datum::Bytes(row.command.into_bytes()),
+                    Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
+                    Datum::Bytes(row.state.into_bytes()),
+                    // Go reports an idle connection's statement as NULL,
+                    // and truncates a running one to 100 runes without
+                    // FULL.
+                    // The text carries a byte that is not UTF-8 as its
+                    // `raw_bytes` escape; Go's string holds the byte.
+                    match row.info {
+                        Some(info) => Datum::Bytes(
+                            tidb_hack::raw_bytes::str_to_bytes(
+                                &crate::process::truncate_process_info(&info, full),
+                            )
+                            .into_owned(),
+                        ),
+                        None => Datum::Null,
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    /// Go `fetchShowBind`, session scope.
+    /// Go `ShowExec.fetchShowBindingCacheStatus`: the cache count is the
+    /// enabled/`using` bindings the handle holds, the table count is
+    /// `count(*)` over the same statuses, and the usage is the sum of
+    /// `Binding.size()` -- each string field's byte length plus two 16-byte
+    /// `types.Time` stamps (the `ID` a fresh binding carries is empty).
+    /// This tier's cache IS the table, so the two counts agree by
+    /// construction; on real TiDB they differ only while the cache lags a
+    /// peer's write. Captured: a fresh store answers
+    /// `0|0|0 Bytes|64 MB`, one binding `1|1|156 Bytes|64 MB`.
+    fn binding_cache_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        use tidb_bindinfo::binding::STATUS_USING;
+        let loaded = self.load_global_bindings()?;
+        let all = loaded.all_sorted();
+        // A DISABLED row counts in NEITHER column but still holds cache
+        // memory (captured: disabling flips `1|1|156 Bytes` to
+        // `0|0|157 Bytes` -- one byte more, `disabled` over `enabled`).
+        let live = all
+            .iter()
+            .filter(|binding| {
+                binding.status == tidb_bindinfo::binding::STATUS_ENABLED
+                    || binding.status == STATUS_USING
+            })
+            .count();
+        let usage: i64 = all
+            .iter()
+            .map(|binding| tidb_bindinfo::binding_cache::binding_size(binding))
+            .sum();
+        let quota = self
+            .session_vars()
+            .get_system("tidb_mem_quota_binding_cache")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(64 << 20);
+        let count = i64::try_from(live).unwrap_or(i64::MAX);
+        Ok(vec![vec![
+            Datum::Int(count),
+            Datum::Int(count),
+            Datum::new_string(tidb_util::memory::format_bytes(usage)),
+            Datum::new_string(tidb_util::memory::format_bytes(quota)),
+        ]])
+    }
+
+    /// Go `ShowExec.fetchShowBind`: the GLOBAL or SESSION bindings, one row
+    /// each, their times as the `TIMESTAMP(6)` values `mysql.bind_info` keeps.
+    fn show_bindings_rows(&mut self, global_scope: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let time = |text: &str| {
+            tidb_datatype::parse_time(
+                text,
+                tidb_datatype::TimeType::DateTime,
+                6,
+                false,
+                true,
+                false,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .map_or(Datum::Null, |parsed| Datum::Time(parsed.time))
+        };
+        let global;
+        let listed = if global_scope {
+            global = self.load_global_bindings()?;
+            global.all_sorted()
+        } else {
+            self.session_bindings_mut().all_sorted()
+        };
+        let rows = listed
+            .into_iter()
+            .map(|binding| {
+                vec![
+                    Datum::Bytes(binding.original_sql.clone().into_bytes()),
+                    Datum::Bytes(binding.bind_sql.clone().into_bytes()),
+                    Datum::Bytes(binding.db.clone().into_bytes()),
+                    Datum::Bytes(binding.status.as_bytes().to_vec()),
+                    time(&binding.create_time),
+                    time(&binding.update_time),
+                    Datum::Bytes(binding.charset.clone().into_bytes()),
+                    Datum::Bytes(binding.collation.clone().into_bytes()),
+                    Datum::Bytes(binding.source.as_bytes().to_vec()),
+                    Datum::Bytes(binding.sql_digest.clone().into_bytes()),
+                    // Go leaves `Plan_digest` empty for a manually created
+                    // binding; only `FROM HISTORY` fills it.
+                    Datum::Bytes(binding.plan_digest.clone().into_bytes()),
+                ]
+            })
+            .collect();
         Ok(rows)
     }
 }

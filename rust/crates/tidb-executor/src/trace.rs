@@ -288,7 +288,7 @@ fn materialize_with_json(fields: &[(String, String)]) -> String {
             return event.clone();
         }
     }
-    crate::go_json_marshal(&serde_json::Value::Object(
+    tidb_util::stringutil::go_json_marshal(&serde_json::Value::Object(
         map.into_iter()
             .map(|(key, value)| (key, serde_json::Value::String(value)))
             .collect(),
@@ -296,7 +296,7 @@ fn materialize_with_json(fields: &[(String, String)]) -> String {
 }
 
 fn json_string(text: &str) -> String {
-    crate::go_json_marshal(&serde_json::Value::String(text.to_owned()))
+    tidb_util::stringutil::go_json_marshal(&serde_json::Value::String(text.to_owned()))
 }
 
 fn varchar() -> FieldType {

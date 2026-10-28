@@ -120,3 +120,48 @@ pub fn sys_var_hidden_for_sem(ctx: &dyn SessionContext, name: &str) -> bool {
             .privilege_manager()
             .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)
 }
+
+/// The statement classes `ROW_COUNT()` distinguishes.
+///
+/// Go spells this as four independent `StmtCtx` bits (`InSelectStmt`,
+/// `InInsertStmt`, `InUpdateStmt`, `InDeleteStmt`) and reads them in one
+/// if/else chain in `ResetContextOfStmt` (`pkg/executor/select.go:1229-1237`);
+/// one enum says the same thing without letting two of them be true at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatementKind {
+    /// A SELECT or set operation, after which `ROW_COUNT()` is `-1`.
+    Select,
+    /// INSERT/REPLACE/UPDATE/DELETE, after which `ROW_COUNT()` is the
+    /// affected-row count.
+    Dml,
+    /// Everything else -- DDL, SHOW, SET, transaction control -- after which
+    /// `ROW_COUNT()` is `0`.
+    Other,
+}
+
+/// Classifies a parsed statement for `ROW_COUNT()` -- a `WITH` prefix belongs
+/// to the mutation, so `WITH x AS (...) DELETE ...` still sets
+/// `InDeleteStmt` -- unwrapping an EXPLAIN,
+/// which `ResetContextOfStmt` replaces by its target before setting the bits
+/// (`EXPLAIN SELECT` leaves `ROW_COUNT()` at -1).
+pub fn statement_kind_of(stmt: &tidb_ast::Stmt) -> StatementKind {
+    fn dml_kind(dml: &tidb_ast::DmlStmt) -> StatementKind {
+        match dml {
+            tidb_ast::DmlStmt::Insert(_)
+            | tidb_ast::DmlStmt::Update(_)
+            | tidb_ast::DmlStmt::Delete(_) => StatementKind::Dml,
+            _ => StatementKind::Other,
+        }
+    }
+    match stmt {
+        tidb_ast::Stmt::Query(_) => StatementKind::Select,
+        tidb_ast::Stmt::Dml(dml) => dml_kind(dml),
+        tidb_ast::Stmt::Admin(admin) => match &**admin {
+            tidb_ast::AdminStmt::Explain(explain) => explain
+                .statement()
+                .map_or(StatementKind::Other, statement_kind_of),
+            _ => StatementKind::Other,
+        },
+        _ => StatementKind::Other,
+    }
+}

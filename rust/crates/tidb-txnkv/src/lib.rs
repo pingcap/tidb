@@ -24,6 +24,7 @@ mod cache_db;
 mod checker;
 mod client;
 pub mod client_go_metrics;
+pub mod cluster_http;
 mod counter;
 pub mod driver;
 mod driver_error;

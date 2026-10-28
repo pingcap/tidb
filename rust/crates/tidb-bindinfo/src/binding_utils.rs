@@ -45,7 +45,7 @@
 //!   returns `(rows, fields, err)` and no caller in this file reads `fields`,
 //!   so the field list is dropped.
 //! * `// boundary:` `pkg/util/chunk.Row` -- a storage row becomes
-//!   `&[tidb_datatype::Datum]`, read through [`crate::datum_text`], which is
+//!   `&[tidb_datatype::Datum]`, read through [`tidb_datatype::datum_text::sysvar_datum_text`], which is
 //!   what [`crate::Session`]'s own `mysql.bind_info` reader already uses.
 //! * `// boundary:` `pkg/util.DestroyableSessionPool` -- `callWithSCtx`
 //!   (line 41) borrows a session, optionally wraps it in a pessimistic
@@ -106,7 +106,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use tidb_ast::{DmlStmt, QueryStmt, Stmt};
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::binding::{Binding, HintsSet, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
 use tidb_util::stringutil::go_to_lower;
@@ -330,7 +330,7 @@ where
         let rows = runner.exec_rows(&sql, args)?;
         let mut bindings = Vec::with_capacity(rows.len());
         for row in &rows {
-            if row.first().and_then(crate::datum_text).as_deref()
+            if row.first().and_then(tidb_datatype::datum_text::sysvar_datum_text).as_deref()
                 == Some(BUILTIN_PSEUDO_SQL_4_BIND_LOCK)
             {
                 continue;
@@ -351,7 +351,7 @@ where
 /// column, an unrepresentable status, or a `bind_sql` that no longer parses.
 #[must_use]
 pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
-    let text = |index: usize| row.get(index).and_then(crate::datum_text);
+    let text = |index: usize| row.get(index).and_then(tidb_datatype::datum_text::sysvar_datum_text);
     // "For compatibility, the 'Using' status binding will be converted to the
     // 'Enabled' status binding."
     let status = match text(3)?.as_str() {
@@ -385,7 +385,7 @@ pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
 /// The `source` column narrowed to this crate's `&'static str` set. Go keeps
 /// the raw column text; an unrecognised value falls back to `manual`, which is
 /// the source every binding this tier creates carries anyway.
-pub(crate) fn binding_source(source: &str) -> &'static str {
+pub fn binding_source(source: &str) -> &'static str {
     match source {
         "capture" => "capture",
         "evolve" => "evolve",
@@ -580,7 +580,7 @@ mod tests {
         fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
             let rendered: Vec<String> = args
                 .iter()
-                .map(|arg| crate::datum_text(arg).unwrap_or_default())
+                .map(|arg| tidb_datatype::datum_text::sysvar_datum_text(arg).unwrap_or_default())
                 .collect();
             self.statements.borrow_mut().push(if rendered.is_empty() {
                 sql.to_owned()

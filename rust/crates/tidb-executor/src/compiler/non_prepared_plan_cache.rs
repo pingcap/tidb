@@ -23,11 +23,13 @@
 //! schema/statistics versions, matched binding SQL, admission, recursive range
 //! rebuild, and executor construction therefore have one implementation.
 
+#[allow(unused_imports)]
+use super::*;
 use tidb_ast::{
     Expr, GroupByItem, IsTarget, JoinNode, OrderItem, QueryStmt, SelectField, SelectStmt, Stmt,
 };
 use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
-use tidb_executor::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
+use crate::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_planner::metrics::non_prep_plan_cache_unsupported_counter;
@@ -43,7 +45,7 @@ const MAX_PARAM_NUM: usize = 200;
 /// `tidb_last_plan_cache_reason`-style surface reports what TiDB reports and
 /// so a divergence in the refusal itself is visible rather than silent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Refusal {
+pub struct Refusal {
     /// Go's own reason string, verbatim.
     pub reason: &'static str,
     /// Whether Go increments `GetNonPrepPlanCacheUnsupportedCounter` for
@@ -56,7 +58,7 @@ pub(crate) struct Refusal {
 
 impl Refusal {
     /// A checker-walk refusal: counted by the unsupported counter.
-    pub(crate) fn walk(reason: &'static str) -> Self {
+    pub fn walk(reason: &'static str) -> Self {
         Self {
             reason,
             counted: true,
@@ -64,7 +66,7 @@ impl Refusal {
     }
 
     /// A clause-level fast-check refusal: not counted.
-    pub(crate) fn fast(reason: &'static str) -> Self {
+    pub fn fast(reason: &'static str) -> Self {
         Self {
             reason,
             counted: false,
@@ -73,32 +75,32 @@ impl Refusal {
 }
 
 /// One parameterized statement and its execute-time literal values.
-pub(crate) struct ParameterizedSelect {
-    pub(crate) key: String,
-    pub(crate) statement: Stmt,
-    pub(crate) values: Vec<Datum>,
+pub struct ParameterizedSelect {
+    pub key: String,
+    pub statement: Stmt,
+    pub values: Vec<Datum>,
 }
 
 /// Go SessionVars.nonPreparedPlanCacheStmts: syntax metadata only, with one
 /// definition LRU shared by SELECT and DML. Physical entries live in the
 /// session owner independently of metadata eviction.
 #[derive(Clone)]
-pub(crate) enum NonPreparedPlan {
+pub enum NonPreparedPlan {
     Select(std::sync::Arc<PreparedSelectPlan>),
     Dml(std::sync::Arc<PreparedDmlPlan>),
 }
 
 #[derive(Default)]
-pub(crate) struct NonPreparedPlanCache {
+pub struct NonPreparedPlanCache {
     plans: Option<SimpleLruCache<String, NonPreparedPlan>>,
 }
 
 impl NonPreparedPlanCache {
-    pub(crate) fn get(&mut self, key: &str) -> Option<NonPreparedPlan> {
+    pub fn get(&mut self, key: &str) -> Option<NonPreparedPlan> {
         self.plans.as_mut()?.get(key).cloned()
     }
 
-    pub(crate) fn put(&mut self, key: String, plan: NonPreparedPlan, capacity: usize) {
+    pub fn put(&mut self, key: String, plan: NonPreparedPlan, capacity: usize) {
         // Go allocates the metadata LRU at the first admitted insertion.
         self.plans
             .get_or_insert_with(|| SimpleLruCache::new(capacity))
@@ -111,7 +113,7 @@ impl NonPreparedPlanCache {
 /// rows, `ON DUPLICATE KEY UPDATE` values, and the WHERE predicate are
 /// parameterized; ORDER BY and LIMIT literals stay verbatim (Go's replacer
 /// skips those node kinds so different limit values plan differently).
-pub(crate) fn parameterize_dml(
+pub fn parameterize_dml(
     stmt: &Stmt,
     catalog: &Catalog,
     current_db: &str,
@@ -352,7 +354,7 @@ impl Walk<'_> {
 /// Go `GetParamSQLFromAST`: clone the admitted statement, replace its filter
 /// literals with ordered markers, and retain the literal datums for physical
 /// planning and later recursive rebuilds.
-pub(crate) fn parameterize_select(
+pub fn parameterize_select(
     stmt: &Stmt,
     catalog: &Catalog,
     current_db: &str,
@@ -958,10 +960,11 @@ fn is_unparameterizable_type(field_type: &tidb_datatype::FieldType) -> bool {
     )
 }
 
-impl crate::Session {
+/// Go `getPlanFromNonPreparedPlanCache` and `NonPreparedPlanCacheableWithCtx` over the session.
+pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
     /// Parameterizes one admitted non-prepared SELECT. Refused statements use
     /// the ordinary planner and publish no cache hit.
-    pub(crate) fn parameterize_non_prepared_select(
+    fn parameterize_non_prepared_select(
         &mut self,
         stmt: &Stmt,
     ) -> Option<ParameterizedSelect> {
@@ -973,7 +976,7 @@ impl crate::Session {
 
     /// [`Self::parameterize_non_prepared_select`] with Go
     /// `NonPreparedPlanCacheableWithCtx`'s refusal reason.
-    pub(crate) fn parameterize_non_prepared_select_or_refusal(
+    fn parameterize_non_prepared_select_or_refusal(
         &mut self,
         stmt: &Stmt,
     ) -> Result<ParameterizedSelect, Refusal> {
@@ -981,15 +984,15 @@ impl crate::Session {
         // (cacheable=false after `Accept`); clause-level fast-check refusals
         // return their reason without touching any counter. The
         // classification rides on `Refusal::counted`.
-        let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let enable_param_limit = self.session_vars().system_bool("tidb_enable_plan_cache_for_param_limit", true);
         let string_collation = self
-            .vars
+            .session_vars()
             .get_system("collation_connection")
             .ok()
             .and_then(|name| Collation::from_name(&name))
             .unwrap_or(Collation::Utf8Mb4Bin);
         let configured_max = self
-            .vars
+            .session_vars()
             .optimizer_fix_control()
             .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
         let max_num_param = match configured_max {
@@ -997,14 +1000,14 @@ impl crate::Session {
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
             _ => MAX_PARAM_NUM,
         };
-        let catalog = self
-            .catalog
+        let domain = self.domain_info_schema();
+        let catalog = domain
             .lock()
             .map_err(|_| Refusal::fast("the catalog is unavailable"))?;
         parameterize_select(
             stmt,
             &catalog,
-            &self.vars.current_db,
+            &self.session_vars().current_db,
             enable_param_limit,
             self.non_prepared_plan_cache_for_dml_enabled(),
             string_collation,
@@ -1022,11 +1025,11 @@ impl crate::Session {
 
     /// Go's DML switch: `EnableNonPreparedPlanCacheForDML`, true by default.
     fn non_prepared_plan_cache_for_dml_enabled(&self) -> bool {
-        self.session_bool("tidb_enable_non_prepared_plan_cache_for_dml", true)
+        self.session_vars().system_bool("tidb_enable_non_prepared_plan_cache_for_dml", true)
     }
 
     /// Parameterizes one non-prepared UPDATE/INSERT/DELETE statement.
-    pub(crate) fn parameterize_non_prepared_dml(
+    fn parameterize_non_prepared_dml(
         &mut self,
         stmt: &Stmt,
     ) -> Option<ParameterizedSelect> {
@@ -1035,15 +1038,15 @@ impl crate::Session {
         {
             return None;
         }
-        let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let enable_param_limit = self.session_vars().system_bool("tidb_enable_plan_cache_for_param_limit", true);
         let string_collation = self
-            .vars
+            .session_vars()
             .get_system("collation_connection")
             .ok()
             .and_then(|name| Collation::from_name(&name))
             .unwrap_or(Collation::Utf8Mb4Bin);
         let configured_max = self
-            .vars
+            .session_vars()
             .optimizer_fix_control()
             .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
         let max_num_param = match configured_max {
@@ -1051,11 +1054,12 @@ impl crate::Session {
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
             _ => MAX_PARAM_NUM,
         };
-        let catalog = self.catalog.lock().ok()?;
+        let domain = self.domain_info_schema();
+        let catalog = domain.lock().ok()?;
         parameterize_dml(
             stmt,
             &catalog,
-            &self.vars.current_db,
+            &self.session_vars().current_db,
             enable_param_limit,
             string_collation,
             max_num_param,
@@ -1066,28 +1070,28 @@ impl crate::Session {
     /// Generates or recursively rebuilds the retained DML root for one
     /// parameterized non-prepared statement, through the same plan object
     /// SQL and binary PREPARE use.
-    pub(crate) fn bind_non_prepared_dml(
+    fn bind_non_prepared_dml(
         &mut self,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<tidb_executor::PreparedDmlExecution> {
+    ) -> Option<crate::PreparedDmlExecution> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
         let lookup_start = std::time::Instant::now();
-        let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
+        let plan = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
             Some(NonPreparedPlan::Dml(plan)) => plan,
             Some(_) => return None,
             None => {
                 let plan = {
                     let catalog = self.lock_catalog().ok()?;
-                    tidb_executor::build_prepared_dml_plan(
+                    crate::build_prepared_dml_plan(
                         &parameterized.statement,
                         parameterized.values.len(),
                         &catalog,
-                        self.current_database(),
+                        self.session_vars().current_db.as_str(),
                     )
                     .ok()??
                 };
@@ -1095,10 +1099,11 @@ impl crate::Session {
                     plan.with_sql(&parameterized.key)
                         .with_non_prepared_stats_tables(),
                 );
-                self.non_prepared_plan_cache.put(
+                let capacity = self.session_plan_cache_capacity();
+                self.non_prepared_plan_cache_mut().put(
                     parameterized.key.clone(),
                     NonPreparedPlan::Dml(std::sync::Arc::clone(&plan)),
-                    self.session_plan_cache_capacity(),
+                    capacity,
                 );
                 plan
             }
@@ -1107,10 +1112,10 @@ impl crate::Session {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
-                &self.physical_plan_cache,
+                self.physical_plan_cache(),
                 &parameterized.values,
                 &catalog,
-                self.current_database(),
+                self.session_vars().current_db.as_str(),
                 &self.plan_cache_dirty_tables(),
                 &environment,
                 effective_statement,
@@ -1119,7 +1124,7 @@ impl crate::Session {
                 // defer observes the lookup duration on hits only.
                 tidb_planner::metrics::plan_cache_hit_counter(true).inc();
                 tidb_planner::metrics::plan_cache_lookup_duration(
-                    self.physical_plan_cache.uses_instance(),
+                    self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
@@ -1130,10 +1135,10 @@ impl crate::Session {
         let ctx = self.statement_context(false).with_non_prepared_plan_cache();
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
-            &self.physical_plan_cache,
+            self.physical_plan_cache(),
             &parameterized.values,
             &catalog,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
             &ctx,
             &self.plan_cache_dirty_tables(),
             &environment,
@@ -1145,41 +1150,41 @@ impl crate::Session {
     /// parameterized non-prepared statement. This is Go's
     /// `GetPlanFromPlanCache(..., isNonPrepared=true)` over the same Rust plan
     /// object SQL and binary PREPARE use.
-    pub(crate) fn bind_non_prepared_select(
+    fn bind_non_prepared_select(
         &mut self,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<tidb_executor::PreparedSelectExecution> {
+    ) -> Option<crate::PreparedSelectExecution> {
         self.bind_non_prepared_select_warning(parameterized, effective_statement, binding_sql, false)
     }
 
     /// [`Self::bind_non_prepared_select`]; `always_warn` is Go's
     /// `SetAlwaysWarnSkipCache`, which EXPLAIN FORMAT = 'plan_cache' sets.
-    pub(crate) fn bind_non_prepared_select_warning(
+    fn bind_non_prepared_select_warning(
         &mut self,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
         always_warn: bool,
-    ) -> Option<tidb_executor::PreparedSelectExecution> {
+    ) -> Option<crate::PreparedSelectExecution> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return None;
         }
         let lookup_start = std::time::Instant::now();
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
-        let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
+        let plan = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
             Some(NonPreparedPlan::Select(plan)) => plan,
             Some(_) => return None,
             None => {
                 let ctx = self.statement_context(false);
                 let plan = {
                     let catalog = self.lock_catalog().ok()?;
-                    tidb_executor::build_prepared_select_plan(
+                    crate::build_prepared_select_plan(
                         &parameterized.statement,
                         parameterized.values.len(),
                         &catalog,
-                        self.current_database(),
+                        self.session_vars().current_db.as_str(),
                         &ctx,
                     )?
                 };
@@ -1187,10 +1192,11 @@ impl crate::Session {
                     plan.with_sql(&parameterized.key)
                         .with_non_prepared_stats_tables(),
                 );
-                self.non_prepared_plan_cache.put(
+                let capacity = self.session_plan_cache_capacity();
+                self.non_prepared_plan_cache_mut().put(
                     parameterized.key.clone(),
                     NonPreparedPlan::Select(std::sync::Arc::clone(&plan)),
-                    self.session_plan_cache_capacity(),
+                    capacity,
                 );
                 plan
             }
@@ -1198,17 +1204,17 @@ impl crate::Session {
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
             tidb_planner::metrics::plan_cache_lookup_duration(
-                self.physical_plan_cache.uses_instance(),
+                self.physical_plan_cache().uses_instance(),
             )
             .observe(start.elapsed().as_secs_f64());
         };
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
-                &self.physical_plan_cache,
+                self.physical_plan_cache(),
                 &parameterized.values,
                 &catalog,
-                self.current_database(),
+                self.session_vars().current_db.as_str(),
                 &self.plan_cache_dirty_tables(),
                 &environment,
                 effective_statement,
@@ -1229,10 +1235,10 @@ impl crate::Session {
         }
         let catalog = self.lock_catalog().ok()?;
         let execution = plan.bind_for_statement(
-            &self.physical_plan_cache,
+            self.physical_plan_cache(),
             &parameterized.values,
             &catalog,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
             &ctx,
             &self.plan_cache_dirty_tables(),
             &environment,
@@ -1243,19 +1249,19 @@ impl crate::Session {
 
     /// Whether `@@last_plan_from_cache` should report a hit, which is the
     /// PRECEDING statement's outcome (Go `PrevFoundInPlanCache`).
-    pub(crate) fn last_plan_from_cache(&self) -> bool {
-        self.vars.prev_found_in_plan_cache
+    fn last_plan_from_cache(&self) -> bool {
+        self.session_vars().prev_found_in_plan_cache
     }
 
-    pub(crate) fn non_prepared_plan_cache_enabled(&self) -> bool {
-        self.session_bool("tidb_enable_non_prepared_plan_cache", false)
+    fn non_prepared_plan_cache_enabled(&self) -> bool {
+        self.session_vars().system_bool("tidb_enable_non_prepared_plan_cache", false)
     }
 
     /// Go `getPlanFromNonPreparedPlanCache`'s strategy gate: `hint_only`
     /// admits only a statement carrying `use_plan_cache()`.
-    pub(crate) fn non_prepared_hint_only_refuses(&self, statement: &Stmt) -> bool {
+    fn non_prepared_hint_only_refuses(&self, statement: &Stmt) -> bool {
         let hint_only = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
             .is_ok_and(|strategy| {
                 strategy.eq_ignore_ascii_case(
@@ -1263,9 +1269,9 @@ impl crate::Session {
                 )
             });
         hint_only
-            && !crate::variables::parse_statement_hints_without_catalog(
+            && !self.parse_statement_hints_without_catalog(
                 statement,
-                self.current_database(),
+                self.session_vars().current_db.as_str(),
             )
             .use_plan_cache
     }
@@ -1273,18 +1279,18 @@ impl crate::Session {
     fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
         // Go `getPlanFromNonPreparedPlanCache`: a statement of a
         // multi-statement query never reaches the cache.
-        if self.vars.in_multi_stmts {
+        if self.session_vars().in_multi_stmts {
             return false;
         }
-        let hints = crate::variables::parse_statement_hints_without_catalog(
+        let hints = self.parse_statement_hints_without_catalog(
             statement,
-            self.current_database(),
+            self.session_vars().current_db.as_str(),
         );
         if hints.ignore_plan_cache {
             return false;
         }
         let hint_only = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
             .is_ok_and(|strategy| {
                 strategy.eq_ignore_ascii_case(
@@ -1293,25 +1299,6 @@ impl crate::Session {
             });
         !hint_only || hints.use_plan_cache
     }
-
-    pub(crate) fn session_plan_cache_capacity(&self) -> usize {
-        // Go's capacity comes from the unified `tidb_session_plan_cache_size`
-        // ONLY (`session.go:2927`, `NewSimpleLRUCache(uint(s.SessionPlanCacheSize))`).
-        // The deprecated `tidb_non_prepared_plan_cache_size` writes an orphan
-        // field plus warning 1287 and has no readers — the Rust funnel reads
-        // nothing it wouldn't. The `unwrap_or(100)` is the defensive default
-        // matching `DefTiDBSessionPlanCacheSize`.
-        self.vars
-            .system_value("tidb_session_plan_cache_size")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(100)
-    }
-
-    /// Reads one session boolean, falling back to `default` when the variable
-    /// is unreadable -- a probe must never turn a variable-table problem into
-    /// a statement error.
-    pub(crate) fn session_bool(&self, name: &str, default: bool) -> bool {
-        self.vars.system_bool(name, default)
-    }
 }
+
+impl<T: super::CompilerSession> NonPreparedPlanCacheCompile for T {}

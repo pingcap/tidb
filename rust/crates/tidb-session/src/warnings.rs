@@ -19,6 +19,7 @@
 //! statements that REPORT it must be handed the previous statement's entries --
 //! see [`reports_warnings`].
 
+use tidb_executor::compiler::PreparedExec;
 use std::borrow::Cow;
 
 use tidb_ast::{AdminStmt, Stmt};

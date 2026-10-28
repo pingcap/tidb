@@ -21,10 +21,13 @@
 //! DDL's implicit commit), then transaction control and `SET`, then the parsed
 //! dispatch over query/DML/DDL.
 
+use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::NonPreparedPlanCacheCompile;
+use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError};
-use tidb_hack::GoCaseCompare;
 
+pub(crate) use tidb_executor::compiler::explain::variant_name;
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::{
     statement_kind_of, statement_priority_of, Session, StatementKind, StmtOutput, WarningLevel,
@@ -281,37 +284,6 @@ impl Drop for CompileDepth {
     }
 }
 
-/// Names the AST variant behind a refused statement, for a "not supported
-/// yet" message that says WHAT it refused instead of just that it did.
-///
-/// Every statement enum here derives `Debug`, and a derived `Debug` for an
-/// enum always starts with the bare variant name (`ShowMasterStatus`, or
-/// `Explain(ExplainStmt { .. })` for one carrying a payload) -- so taking the
-/// leading identifier out of `{:?}` names the variant without a second,
-/// separately-maintained match arm per statement kind.
-pub(crate) fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
-    format!("{value:?}")
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .next()
-        .unwrap_or_default()
-        .to_owned()
-}
-
-/// Names a statement one layer deeper than [`Stmt`]'s own variant: naming the
-/// wrapper alone ("Ddl", "Admin") would repeat what the caller already knows
-/// it saw a DDL or admin statement, so this names the DDL/ADMIN/SESSION kind
-/// it wraps instead -- the same depth `explain_stmt`'s own "EXPLAIN of a WITH
-/// clause" / "EXPLAIN of a set operation" messages already name theirs at.
-pub(crate) fn stmt_kind_name(stmt: &Stmt) -> String {
-    match stmt {
-        Stmt::Query(query) => variant_name(&**query),
-        Stmt::Dml(dml) => variant_name(&**dml),
-        Stmt::Ddl(ddl) => variant_name(&**ddl),
-        Stmt::Admin(admin) => variant_name(&**admin),
-        Stmt::Session(session) => variant_name(&**session),
-    }
-}
-
 fn cached_dml_plan<'a>(
     plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
     operator: &str,
@@ -486,7 +458,7 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
-        let retriever = crate::instance_state::InstanceStateRetriever::new(self.viewer_state());
+        let retriever = tidb_executor::memtable_reader::InstanceStateRetriever::new(self.viewer_state());
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
@@ -505,7 +477,7 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
-        let retriever = crate::cluster_state::ClusterTablesRetriever::new(self.viewer_state());
+        let retriever = tidb_executor::cluster_state::ClusterTablesRetriever::new(self.viewer_state());
         tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read)
             .then(|| std::sync::Arc::new(retriever) as _)
     }
@@ -614,94 +586,6 @@ impl Session {
             &self.active_resource_group,
             needs_column_lengths,
         )
-    }
-
-    /// Pinned Go `memtableRetriever.setDataForClientErrorsSummary`.
-    pub(crate) fn client_errors_summary_rows(
-        table_name: &str,
-        has_process: bool,
-        login_user: Option<&str>,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        use chrono::{DateTime, Local};
-        use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
-        use tidb_error::tidb::infoschema::{self, ErrorStats};
-
-        fn text(value: &str) -> Datum {
-            Datum::new_string(value.as_bytes())
-        }
-
-        fn count(value: isize) -> Datum {
-            Datum::Int(i64::try_from(value).expect("client error count fits i64"))
-        }
-
-        fn timestamp(value: Option<std::time::SystemTime>) -> Datum {
-            let time = match value {
-                Some(value) => {
-                    let local: DateTime<Local> = value.into();
-                    Time::new(core_time_from_datetime(local), TimeType::Timestamp, 0)
-                }
-                None => Time::new(CoreTime::from_raw(0), TimeType::Timestamp, 0),
-            }
-            .expect("fsp 0 is valid for client-error timestamps");
-            Datum::new_time(time)
-        }
-
-        fn message(code: u16) -> &'static str {
-            tidb_error::mysql::message_by_code(code)
-                .or_else(|| tidb_error::tidb::message_by_code(code))
-                .map_or("", |message| message.raw)
-        }
-
-        fn summary_cells(code: u16, summary: &infoschema::ErrorSummary) -> Vec<Datum> {
-            vec![
-                Datum::Int(i64::from(code)),
-                text(message(code)),
-                count(summary.error_count),
-                count(summary.warning_count),
-                timestamp(Some(summary.first_seen)),
-                timestamp(summary.last_seen),
-            ]
-        }
-
-        fn append_scoped(rows: &mut Vec<Vec<Datum>>, scope: &str, stats: ErrorStats) {
-            for (code, summary) in stats {
-                let mut row = Vec::with_capacity(7);
-                row.push(text(scope));
-                row.extend(summary_cells(code, &summary));
-                rows.push(row);
-            }
-        }
-
-        if !has_process
-            && (table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
-                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST"))
-        {
-            return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
-            ));
-        }
-
-        let mut rows = Vec::new();
-        if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL") {
-            for (code, summary) in infoschema::global_stats() {
-                rows.push(summary_cells(code, &summary));
-            }
-        } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST") {
-            for (host, stats) in infoschema::host_stats() {
-                append_scoped(&mut rows, &host, stats);
-            }
-        } else {
-            let login_username = login_user
-                .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
-            for (user, stats) in infoschema::user_stats() {
-                if !has_process && login_username.is_some_and(|login| login != user) {
-                    continue;
-                }
-                append_scoped(&mut rows, &user, stats);
-            }
-        }
-        Ok(rows)
     }
 
     pub fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
@@ -2286,55 +2170,6 @@ impl Session {
 
 }
 
-pub(crate) fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
-    use std::sync::atomic::Ordering;
-
-    use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
-
-    let stats = tidb_util::memory::read_mem_stats();
-    let current_ops = tidb_util::servermemorylimit::IS_KILLING
-        .load(Ordering::SeqCst)
-        .then(|| Datum::new_string("shrink"))
-        .unwrap_or(Datum::Null);
-    let session_kill_last = tidb_util::servermemorylimit::SESSION_KILL_LAST
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .map(|value| {
-            Datum::new_time(
-                Time::new(core_time_from_datetime(value), TimeType::DateTime, 0)
-                    .expect("fsp 0 is valid"),
-            )
-        })
-        .unwrap_or(Datum::Null);
-    let zero_datetime = Datum::new_time(
-        Time::new(CoreTime::default(), TimeType::DateTime, 0).expect("fsp 0 is valid"),
-    );
-    vec![vec![
-        Datum::new_int(
-            tidb_util::memory::mem_total()
-                .ok()
-                .and_then(|value| i64::try_from(value).ok())
-                .unwrap_or(0),
-        ),
-        Datum::new_int(
-            i64::try_from(tidb_util::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst))
-                .unwrap_or(i64::MAX),
-        ),
-        Datum::new_int(stats.heap_inuse),
-        Datum::new_int(
-            i64::try_from(tidb_util::servermemorylimit::MEMORY_MAX_USED.load(Ordering::SeqCst))
-                .unwrap_or(i64::MAX),
-        ),
-        current_ops,
-        session_kill_last,
-        Datum::new_int(tidb_util::servermemorylimit::SESSION_KILL_TOTAL.load(Ordering::SeqCst)),
-        zero_datetime,
-        Datum::new_int(0),
-        Datum::new_int(0),
-        Datum::new_int(0),
-    ]]
-}
-
 impl Session {
     /// Go `validateStatementReadOnlyInStaleness` (`session.go:2822`), which
     /// `ExecuteStmt` runs before `Compile`. It switches on the statement node
@@ -2461,131 +2296,4 @@ impl Session {
         // clamped to now, the current read. Any other statement ignores it.
         Ok(())
     }
-}
-
-/// The rows of a statement-summary table for `user` (`None`: every user,
-/// as Go's restricted SQL reads them), over the v1 map or the persistent v2
-/// owner the instance configuration selects.
-pub(crate) fn statement_summary_rows(
-    table_name: &str,
-    columns: &[(String, tidb_datatype::FieldType)],
-    zone: &tidb_datatype::SessionTimeZone,
-    user: Option<tidb_parser::auth::UserIdentity>,
-    has_process: bool,
-    digests: Option<&std::collections::HashSet<String>>,
-    scan_concurrency: usize,
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-    use tidb_ast::CiString;
-    use tidb_model::ColumnInfo;
-    use tidb_stmtsummary::reader::{StmtSummaryChecker, StmtSummaryReader};
-
-    if table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED") {
-        if !has_process {
-            return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
-            ));
-        }
-        let full: Vec<Vec<tidb_datatype::Datum>> = if tidb_config::config_tree::config::get_global_config()
-            .instance
-            .stmt_summary_enable_persistent
-        {
-            tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
-                .map(|summary| summary.evicted())
-                .filter(|row| !row.is_empty())
-                .into_iter()
-                .collect()
-        } else {
-            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.to_evicted_count_datum()
-        };
-        // The caller asks for `columns` (a pruned scan reads only some of the
-        // table's); the evicted row is produced at full width.
-        let schema = tidb_executor::infoschema_reader::table_schema("STATEMENTS_SUMMARY_EVICTED")
-            .unwrap_or_default();
-        let positions: Vec<usize> = columns
-            .iter()
-            .filter_map(|(name, _)| schema.iter().position(|(have, _)| have.eq_ignore_ascii_case(name)))
-            .collect();
-        if positions.len() != columns.len() || positions.len() == schema.len() {
-            return Ok(full);
-        }
-        return Ok(full
-            .into_iter()
-            .map(|row| positions.iter().map(|position| row[*position].clone()).collect())
-            .collect());
-    }
-
-    let columns: Vec<ColumnInfo> = columns
-        .iter()
-        .enumerate()
-        .map(|(offset, (name, _))| ColumnInfo {
-            id: i64::try_from(offset).expect("information-schema column count fits i64"),
-            name: CiString::new(name),
-            offset: i64::try_from(offset).expect("information-schema column count fits i64"),
-            ..ColumnInfo::default()
-        })
-        .collect();
-    let persistent = tidb_config::config_tree::config::get_global_config()
-        .instance
-        .stmt_summary_enable_persistent;
-    let cumulative = table_name.go_lower_eq("TIDB_STATEMENTS_STATS");
-    let history = table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY");
-    if persistent {
-        // Go refuses cumulative retrieval in v2; never silently substitute
-        // an unrelated v1 map for the selected persistent owner.
-        if cumulative {
-            return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
-                    "cumulative statement summary table with persistent mode (v2)".into(),
-                ]),
-            ));
-        }
-        let mut rows = tidb_stmtsummary::v2::reader::new_mem_reader(
-            tidb_stmtsummary::v2::stmtsummary::global_stmt_summary(),
-            &columns,
-            String::new(),
-            zone.clone(),
-            user.clone(),
-            has_process,
-            digests.cloned(),
-            Vec::new(),
-        )
-        .rows();
-        if history {
-            let mut reader = tidb_stmtsummary::v2::reader::HistoryReader::new(
-                None,
-                &columns,
-                String::new(),
-                zone.clone(),
-                user,
-                has_process,
-                digests.cloned(),
-                Vec::new(),
-                scan_concurrency,
-            )
-            .map_err(|error| DriverError::Unsupported(error.into()))?;
-            let result = (|| {
-                while let Some(batch) = reader
-                    .rows()
-                    .map_err(|error| DriverError::Unsupported(error.into()))?
-                {
-                    rows.extend(batch);
-                }
-                Ok(rows)
-            })();
-            let _ = reader.close();
-            return result;
-        }
-        return Ok(rows);
-    }
-    let mut reader =
-        StmtSummaryReader::new(user, has_process, columns, String::new(), zone.clone());
-    reader.set_checker(digests.cloned().map(StmtSummaryChecker::new));
-    Ok(if cumulative {
-        reader.get_stmt_summary_cumulative_rows()
-    } else if history {
-        reader.get_stmt_summary_history_rows()
-    } else {
-        reader.get_stmt_summary_current_rows()
-    })
 }

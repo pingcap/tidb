@@ -56,6 +56,7 @@
 //!                                   -> b | b\c | 3 | x\y | 3
 //! ```
 
+use tidb_executor::compiler::PreparedAstCompile;
 use super::{Session, StmtResult};
 use crate::tests_support::{row_text, show_create};
 

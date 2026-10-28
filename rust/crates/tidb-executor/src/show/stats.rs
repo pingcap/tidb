@@ -21,6 +21,7 @@ use crate::DriverError;
 
 use tidb_hack::GoCaseCompare;
 
+/// Go `dataForAnalyzeStatusHelper` over the recorded jobs.
 pub fn analyze_status_rows_of(
     provider: Option<&dyn AnalyzeStatusProvider>,
     resource_group: &str,

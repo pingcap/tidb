@@ -26,15 +26,14 @@
 //! Go publishes into two process-wide atomics
 //! (`expression.DefaultExprPushDownBlacklist`,
 //! `plannercore.DefaultDisabledLogicalRulesList`) because its optimizer runs
-//! far from any session. This tier holds them on the [`Session`], which is
+//! far from any session. This tier holds them on the session, which is
 //! the same reach -- one instance -- without a global that parallel tests
 //! would share.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::Session;
-use tidb_executor::{DriverError, ExprPushDownBlacklist};
+use crate::ExprPushDownBlacklist;
 
 /// Go's two process-wide atomics -- `expression.DefaultExprPushDownBlacklist`
 /// and `plannercore.DefaultDisabledLogicalRulesList` -- held at this tier's
@@ -44,7 +43,7 @@ use tidb_executor::{DriverError, ExprPushDownBlacklist};
 /// and the scope that gives them is one SERVER: `ADMIN RELOAD` on one
 /// connection changes what every other connection plans. A per-session copy
 /// would not, so this is a shared handle a front end installs on each session
-/// it opens, the same way it installs [`crate::privilege::PrivilegeRegistry`].
+/// it opens, the same way it installs `tidb_privilege::PrivilegeRegistry`.
 ///
 /// A reload REPLACES the published map rather than mutating one, which is
 /// what Go's atomic `Store` does: a statement that already snapshotted the
@@ -64,76 +63,26 @@ pub struct PushdownBlacklists {
 impl PushdownBlacklists {
     /// The two published maps as they stand now, for one statement to plan
     /// against.
-    pub(crate) fn snapshot(&self) -> (Arc<ExprPushDownBlacklist>, Arc<HashSet<String>>) {
+    pub fn snapshot(&self) -> (Arc<ExprPushDownBlacklist>, Arc<HashSet<String>>) {
         (
             Arc::clone(&self.expressions.lock().expect("blacklist mutex")),
             Arc::clone(&self.rules.lock().expect("blacklist mutex")),
         )
     }
 
-    fn publish_expressions(&self, loaded: ExprPushDownBlacklist) {
+    pub fn publish_expressions(&self, loaded: ExprPushDownBlacklist) {
         *self.expressions.lock().expect("blacklist mutex") = Arc::new(loaded);
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The reload counter [`crate::prepared_plan_cache`] mixes into its key.
-    pub(crate) fn generation(&self) -> u64 {
+    /// The reload counter the prepared plan cache mixes into its key.
+    pub fn generation(&self) -> u64 {
         self.generation.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn publish_rules(&self, loaded: HashSet<String>) {
+    pub fn publish_rules(&self, loaded: HashSet<String>) {
         *self.rules.lock().expect("blacklist mutex") = Arc::new(loaded);
     }
 }
 
-impl Session {
-    /// Go `LoadExprPushdownBlacklist`, and the `ADMIN RELOAD
-    /// EXPR_PUSHDOWN_BLACKLIST` that calls it.
-    pub(crate) fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
-        let rows =
-            self.exec_restricted_sql("SELECT name, store_type FROM mysql.expr_pushdown_blacklist")?;
-        let mut loaded = ExprPushDownBlacklist::new();
-        for row in rows {
-            let Some(name) = row.first().and_then(crate::datum_text) else {
-                continue;
-            };
-            let name = tidb_executor::blacklist_name(&name);
-            let store_types = row.get(1).and_then(crate::datum_text).unwrap_or_default();
-            let value = loaded.get(&name).copied().unwrap_or(0)
-                | tidb_executor::blacklist_store_mask(&store_types);
-            loaded.insert(name, value);
-        }
-        self.pushdown_blacklists.publish_expressions(loaded);
-        Ok(())
-    }
-
-    /// Go `LoadOptRuleBlacklist`, and the `ADMIN RELOAD OPT_RULE_BLACKLIST`
-    /// that calls it. The names are the rules' own `Name()` strings and are
-    /// NOT case-folded, which is Go's behaviour: `row.GetString(0)` goes into
-    /// the set as written.
-    pub(crate) fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
-        let rows = self.exec_restricted_sql("SELECT name FROM mysql.opt_rule_blacklist")?;
-        let mut loaded = HashSet::new();
-        for row in rows {
-            if let Some(name) = row.first().and_then(crate::datum_text) {
-                loaded.insert(name);
-            }
-        }
-        self.pushdown_blacklists.publish_rules(loaded);
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-impl Session {
-    pub(crate) fn debug_blacklists(&self) -> (Vec<(String, u32)>, Vec<String>) {
-        let (expressions, rules) = self.pushdown_blacklists.snapshot();
-        let mut map: Vec<(String, u32)> =
-            expressions.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        map.sort();
-        let mut rules: Vec<String> = rules.iter().cloned().collect();
-        rules.sort();
-        (map, rules)
-    }
-}

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Go `ConstructResultOfShowCreateDatabase`: the SHOW CREATE DATABASE row.
+
 use tidb_datatype::Datum;
 use crate::TableCharset;
 

@@ -31,6 +31,7 @@
 //! and rewrites stored accounts, `INSERT` is `Write`-shaped and changes nothing
 //! stored outside this process.
 
+use tidb_executor::compiler::PreparedExec;
 use tidb_ast::{DmlStmt, QueryStmt, StatementPriority, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
@@ -52,48 +53,7 @@ pub enum StmtKind {
     Write,
 }
 
-/// The statement classes `ROW_COUNT()` distinguishes.
-///
-/// Go spells this as four independent `StmtCtx` bits (`InSelectStmt`,
-/// `InInsertStmt`, `InUpdateStmt`, `InDeleteStmt`) and reads them in one
-/// if/else chain in `ResetContextOfStmt` (`pkg/executor/select.go:1229-1237`);
-/// one enum says the same thing without letting two of them be true at once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StatementKind {
-    /// A SELECT or set operation, after which `ROW_COUNT()` is `-1`.
-    Select,
-    /// INSERT/REPLACE/UPDATE/DELETE, after which `ROW_COUNT()` is the
-    /// affected-row count.
-    Dml,
-    /// Everything else -- DDL, SHOW, SET, transaction control -- after which
-    /// `ROW_COUNT()` is `0`.
-    Other,
-}
-
-/// Classifies a parsed statement for `ROW_COUNT()` -- a `WITH` prefix belongs
-/// to the mutation, so `WITH x AS (...) DELETE ...` still sets
-/// `InDeleteStmt` -- unwrapping an EXPLAIN,
-/// which `ResetContextOfStmt` replaces by its target before setting the bits
-/// (`EXPLAIN SELECT` leaves `ROW_COUNT()` at -1).
-pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
-    fn dml_kind(dml: &DmlStmt) -> StatementKind {
-        match dml {
-            DmlStmt::Insert(_) | DmlStmt::Update(_) | DmlStmt::Delete(_) => StatementKind::Dml,
-            _ => StatementKind::Other,
-        }
-    }
-    match stmt {
-        Stmt::Query(_) => StatementKind::Select,
-        Stmt::Dml(dml) => dml_kind(dml),
-        Stmt::Admin(admin) => match &**admin {
-            tidb_ast::AdminStmt::Explain(explain) => explain
-                .statement()
-                .map_or(StatementKind::Other, statement_kind_of),
-            _ => StatementKind::Other,
-        },
-        _ => StatementKind::Other,
-    }
-}
+pub(crate) use tidb_executor::sessionctx::{statement_kind_of, StatementKind};
 
 /// Go `ResetContextOfStmt`'s `sc.Priority` assignment: the statement's own
 /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier. SELECT reads it from

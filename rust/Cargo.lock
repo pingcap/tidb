@@ -3422,6 +3422,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-bindinfo"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "prometheus 0.14.0",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-driver-error",
+ "tidb-error",
+ "tidb-hack",
+ "tidb-hint",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-planner",
+ "tidb-ristretto",
+ "tidb-util",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-br"
 version = "0.0.0"
 dependencies = [
@@ -3901,9 +3921,12 @@ dependencies = [
  "crossbeam-channel",
  "encoding_rs",
  "flate2",
+ "futures",
  "hashbrown 0.15.5",
+ "hyper-util",
  "prometheus 0.14.0",
  "prost 0.14.4",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3912,8 +3935,10 @@ dependencies = [
  "smallvec",
  "snap",
  "stacker",
+ "tempfile",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-bindinfo",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -3940,6 +3965,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-pd-client",
  "tidb-planner",
  "tidb-privilege",
  "tidb-proto",
@@ -3951,7 +3977,10 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-stats-handle-util",
  "tidb-stmtctx",
+ "tidb-stmtsummary",
+ "tidb-sysutil",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3962,6 +3991,9 @@ dependencies = [
  "tidb-workloadrepo",
  "tikv-client",
  "tikv-jemallocator",
+ "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
  "zstd",
 ]
@@ -4536,6 +4568,7 @@ dependencies = [
  "signal-hook",
  "subtle",
  "tidb-ast",
+ "tidb-bindinfo",
  "tidb-chunk",
  "tidb-cluster",
  "tidb-codec",
@@ -5065,6 +5098,7 @@ dependencies = [
  "hyper 1.10.1",
  "prometheus 0.13.4",
  "prost 0.14.4",
+ "reqwest 0.13.4",
  "serde_json",
  "tidb-codec",
  "tidb-config",

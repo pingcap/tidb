@@ -29,11 +29,11 @@ mod query;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::ddl::HypoIndexes;
-use tidb_executor::DriverError;
+use crate::ddl::HypoIndexes;
+use crate::DriverError;
 use tidb_hack::GoToLower;
 
-use crate::{Session, StmtOutput, WarningLevel};
+use crate::StmtOutput;
 use keyset::{KeySet, Keyed};
 use model::{Column, ImpactedQuery, Index, Query, Recommendation};
 use options::{AdvisorOption, ALL_OPTIONS, OPT_MODULE};
@@ -42,7 +42,7 @@ pub(crate) type Result<T> = std::result::Result<T, DriverError>;
 
 /// A plain Go `error`: 1105 on the wire.
 pub(crate) fn advisor_error(message: impl Into<String>) -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::unknown(message))
+    DriverError::Mysql(crate::MysqlError::unknown(message))
 }
 
 /// Go `Optimizer`: everything the advisor asks of the optimizer.
@@ -78,9 +78,22 @@ fn text(value: impl Into<String>) -> Datum {
     Datum::Bytes(value.into().into_bytes())
 }
 
-impl Session {
+/// Go `RecommendIndexExec` (`executor/recommend_index.go`) and the
+/// advisor's session optimizer.
+pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
+    /// Go `SessionVars.HypoIndexes`.
+    fn hypo_indexes(&self) -> Arc<HypoIndexes>;
+    /// Replaces `SessionVars.HypoIndexes`.
+    fn set_hypo_indexes(&mut self, indexes: Arc<HypoIndexes>);
+    /// The statement's warnings, to restore after a what-if plan.
+    fn warnings_snapshot(&self) -> Vec<tidb_util::context::SqlWarn>;
+    /// Puts back a [`Self::warnings_snapshot`].
+    fn restore_warnings(&mut self, warnings: Vec<tidb_util::context::SqlWarn>);
+    /// An internal write over the system tables.
+    fn run_internal_write(&mut self, sql: &str) -> Result<Option<u64>>;
+
     /// Go `buildRecommendIndex` and `RecommendIndexExec.Next`.
-    pub(crate) fn recommend_index_stmt(
+    fn recommend_index_stmt(
         &mut self,
         statement: &tidb_ast::RecommendIndexStmt,
     ) -> Result<StmtOutput> {
@@ -179,8 +192,8 @@ impl Session {
         let rows = self.user_table_rows(&sql)?;
         let mut values = std::collections::BTreeMap::new();
         for row in rows {
-            let name = row.first().and_then(crate::datum_text).unwrap_or_default();
-            let value = row.get(1).and_then(crate::datum_text).unwrap_or_default();
+            let name = row.first().and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+            let value = row.get(1).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
             values.insert(name, value);
         }
         for name in ALL_OPTIONS {
@@ -194,7 +207,7 @@ impl Session {
     /// Go `SetOption`.
     fn set_advisor_option(&mut self, name: &str, value: &tidb_ast::Expr) -> Result<()> {
         let value = options::option_val(name, value)?;
-        let quote = crate::user_table::sql_str;
+        let quote = crate::simple::account_tables::sql_str;
         let description = options::description(name);
         let sql = format!(
             "INSERT INTO mysql.tidb_kernel_options VALUES ({}, {}, {}, now(), 'valid', {}) \
@@ -218,8 +231,8 @@ impl Session {
         let values = self.get_advisor_options()?;
         let option = options::fill_option(values, user_options, sqls)?;
 
-        let default_db = self.vars.current_db.clone();
-        let mut optimizer = SessionOptimizer { session: self };
+        let default_db = self.session_vars().current_db.clone();
+        let mut optimizer = SessionOptimizer::<Self> { session: self };
         let query_set = prepare_query_set(&mut optimizer, &default_db, &option)?;
 
         // Identify the indexable columns.
@@ -253,14 +266,14 @@ impl Session {
                 all_candidates.size(),
                 candidates
             );
-            self.append_warning(WarningLevel::Warning, 1105, explanation);
+            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105, explanation));
         }
         Ok(results)
     }
 
     /// Go `saveRecommendations`: a failure is logged, never raised.
     fn save_recommendations(&mut self, results: &[Recommendation]) {
-        let quote = crate::user_table::sql_str;
+        let quote = crate::simple::account_tables::sql_str;
         for result in results {
             let queries = impacted_queries_json(&result.top_impacted_queries);
             let workload = format!(
@@ -293,11 +306,49 @@ impl Session {
             let _ = self.run_internal_write(&sql);
         }
     }
+
+    /// Go `loadQuerySetFromStmtSummary`.
+    fn load_query_set_from_stmt_summary(&mut self, option: &AdvisorOption) -> Result<QuerySet> {
+        let sql = format!(
+            "SELECT any_value(ifnull(schema_name, \"\")) as schema_name, \
+                    any_value(query_sample_text) as query_sample_text, \
+                    sum(cast(exec_count as double)) as exec_count \
+             FROM information_schema.statements_summary_history \
+             WHERE stmt_type = \"Select\" AND \
+                   summary_begin_time >= date_sub(now(), interval 1 day) AND \
+                   prepared = 0 AND \
+                   upper(ifnull(schema_name, \"\")) not in (\"MYSQL\", \"INFORMATION_SCHEMA\", \"METRICS_SCHEMA\", \"PERFORMANCE_SCHEMA\") \
+             GROUP BY digest \
+             ORDER BY sum(exec_count) DESC \
+             LIMIT {}",
+            option.max_num_query
+        );
+        let ctx = self.statement_context(false);
+        let rows = self.set_value_rows(&sql, &ctx)?;
+        let mut query_set = QuerySet::new();
+        for row in rows {
+            let schema_name = row.first().and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+            let text = row.get(1).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+            let frequency = match row.get(2) {
+                Some(Datum::Real(count)) => *count as i64,
+                Some(other) => crate::simple::account_tables::sysvar_datum_text(other)
+                    .and_then(|count| count.parse::<f64>().ok())
+                    .map_or(0, |count| count as i64),
+                None => 0,
+            };
+            query_set.add(Query {
+                schema_name,
+                text,
+                frequency,
+            });
+        }
+        Ok(query_set)
+    }
 }
 
 /// Go `prepareQuerySet`.
 fn prepare_query_set(
-    optimizer: &mut SessionOptimizer<'_>,
+    optimizer: &mut SessionOptimizer<'_, impl IndexAdvisorExec>,
     default_db: &str,
     option: &AdvisorOption,
 ) -> Result<QuerySet> {
@@ -333,51 +384,11 @@ fn prepare_query_set(
     Ok(query_set)
 }
 
-impl Session {
-    /// Go `loadQuerySetFromStmtSummary`.
-    fn load_query_set_from_stmt_summary(&mut self, option: &AdvisorOption) -> Result<QuerySet> {
-        let sql = format!(
-            "SELECT any_value(ifnull(schema_name, \"\")) as schema_name, \
-                    any_value(query_sample_text) as query_sample_text, \
-                    sum(cast(exec_count as double)) as exec_count \
-             FROM information_schema.statements_summary_history \
-             WHERE stmt_type = \"Select\" AND \
-                   summary_begin_time >= date_sub(now(), interval 1 day) AND \
-                   prepared = 0 AND \
-                   upper(ifnull(schema_name, \"\")) not in (\"MYSQL\", \"INFORMATION_SCHEMA\", \"METRICS_SCHEMA\", \"PERFORMANCE_SCHEMA\") \
-             GROUP BY digest \
-             ORDER BY sum(exec_count) DESC \
-             LIMIT {}",
-            option.max_num_query
-        );
-        let ctx = self.statement_context(false);
-        let rows = self.set_value_rows(&sql, &ctx)?;
-        let mut query_set = QuerySet::new();
-        for row in rows {
-            let schema_name = row.first().and_then(crate::datum_text).unwrap_or_default();
-            let text = row.get(1).and_then(crate::datum_text).unwrap_or_default();
-            let frequency = match row.get(2) {
-                Some(Datum::Real(count)) => *count as i64,
-                Some(other) => crate::datum_text(other)
-                    .and_then(|count| count.parse::<f64>().ok())
-                    .map_or(0, |count| count as i64),
-                None => 0,
-            };
-            query_set.add(Query {
-                schema_name,
-                text,
-                frequency,
-            });
-        }
-        Ok(query_set)
-    }
-}
-
 /// Go `prepareRecommendation`.
 fn prepare_recommendation(
     indexes: &KeySet<Index>,
     queries: &QuerySet,
-    optimizer: &mut SessionOptimizer<'_>,
+    optimizer: &mut SessionOptimizer<'_, impl IndexAdvisorExec>,
 ) -> Result<Vec<Recommendation>> {
     let mut results = Vec::with_capacity(indexes.size());
     for index in indexes.to_list() {
@@ -468,7 +479,7 @@ fn round(value: f64, places: i32) -> f64 {
 
 /// Go `gracefulIndexName`.
 fn graceful_index_name(
-    optimizer: &mut SessionOptimizer<'_>,
+    optimizer: &mut SessionOptimizer<'_, impl IndexAdvisorExec>,
     schema: &str,
     table: &str,
     columns: &[String],
@@ -562,16 +573,16 @@ fn impacted_queries_json(queries: &[ImpactedQuery]) -> String {
 }
 
 /// The what-if optimizer over a live session (Go `optimizerImpl`).
-struct SessionOptimizer<'a> {
-    session: &'a mut Session,
+struct SessionOptimizer<'a, S: IndexAdvisorExec> {
+    session: &'a mut S,
 }
 
-impl SessionOptimizer<'_> {
+impl<S: IndexAdvisorExec> SessionOptimizer<'_, S> {
     /// `TableByName` and the columns it has.
     fn table_columns_of(&mut self, schema: &str, table: &str) -> Result<Vec<(String, FieldType)>> {
         self.session
             .with_catalog_mut(|catalog| match catalog.table_in(schema, table) {
-                Some(tidb_executor::TableEntry::Kv(stored)) => Ok(stored
+                Some(crate::TableEntry::Kv(stored)) => Ok(stored
                     .columns()
                     .iter()
                     .map(|column| (column.name.go_to_lower(), column.field_type.clone()))
@@ -594,7 +605,7 @@ impl SessionOptimizer<'_> {
                 .map(|column| column.column_name.clone())
                 .collect();
             self.session.with_catalog_mut(|catalog| {
-                tidb_executor::ddl::set_advisor_hypo_index(
+                crate::ddl::set_advisor_hypo_index(
                     catalog,
                     &index.schema_name,
                     &index.table_name,
@@ -604,9 +615,9 @@ impl SessionOptimizer<'_> {
                 )
             })?;
         }
-        self.session.hypo_indexes = Arc::new(hypo);
+        self.session.set_hypo_indexes(Arc::new(hypo));
 
-        let current_db = self.session.vars.current_db.clone();
+        let current_db = self.session.session_vars().current_db.clone();
         // Go sets \`StmtCtx.InExplainStmt\`, the only planning mode that reads
         // the session's hypothetical indexes.
         let ctx = self
@@ -616,7 +627,7 @@ impl SessionOptimizer<'_> {
             .with_skip_cte_consumer_counts(true);
         match statement {
             tidb_ast::Stmt::Query(query) => self.session.with_catalog_mut(|catalog| {
-                tidb_executor::query_plan_cost(query, catalog, &current_db, &ctx)
+                crate::query_plan_cost(query, catalog, &current_db, &ctx)
             }),
             tidb_ast::Stmt::Dml(dml) => match &**dml {
                 tidb_ast::DmlStmt::Insert(_) => Err(advisor_error(
@@ -627,7 +638,7 @@ impl SessionOptimizer<'_> {
                         tidb_ast::DmlStmt::Update(_) => ("UPDATE", first_table_name(statement)),
                         _ => ("DELETE", first_table_name(statement)),
                     };
-                    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                    Err(DriverError::Mysql(crate::MysqlError::from_terror(
                         &tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
                             .generate_with_stack_by_args(&[table.into(), verb.into()]),
                     )))
@@ -675,7 +686,7 @@ fn first_table_name(statement: &tidb_ast::Stmt) -> String {
     name
 }
 
-impl Optimizer for SessionOptimizer<'_> {
+impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
     fn column_type(&mut self, column: &Column) -> Result<FieldType> {
         let wanted = column.column_name.go_to_lower();
         let columns = self.table_columns_of(&column.schema_name, &column.table_name)?;
@@ -693,7 +704,7 @@ impl Optimizer for SessionOptimizer<'_> {
 
     fn prefix_contain_index(&mut self, index: &Index) -> Result<bool> {
         self.session.with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) =
+            let Some(crate::TableEntry::Kv(table)) =
                 catalog.table_in(&index.schema_name, &index.table_name)
             else {
                 return Err(DriverError::from(
@@ -737,7 +748,7 @@ impl Optimizer for SessionOptimizer<'_> {
             };
             let mut found = Vec::new();
             for name in names {
-                if let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(&schema, &name)
+                if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&schema, &name)
                 {
                     for column in table.columns() {
                         if column.name.go_to_lower() == column_name {
@@ -768,7 +779,7 @@ impl Optimizer for SessionOptimizer<'_> {
 
     fn index_name_exist(&mut self, schema: &str, table: &str, index_name: &str) -> Result<bool> {
         self.session.with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_in(schema, table)
+            let Some(crate::TableEntry::Kv(stored)) = catalog.table_in(schema, table)
             else {
                 return Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
@@ -785,7 +796,7 @@ impl Optimizer for SessionOptimizer<'_> {
     fn est_index_size(&mut self, database: &str, table: &str, columns: &[String]) -> Result<f64> {
         let stats_handle = self.session.stats_handle();
         self.session.with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_in(database, table)
+            let Some(crate::TableEntry::Kv(stored)) = catalog.table_in(database, table)
             else {
                 return Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
@@ -825,333 +836,11 @@ impl Optimizer for SessionOptimizer<'_> {
 
     fn query_plan_cost(&mut self, sql: &str, hypo_indexes: &[Index]) -> Result<f64> {
         let statement = query::parse_one_sql(sql)?;
-        let saved_warnings = self.session.warnings.clone();
-        let saved_hypo = Arc::clone(&self.session.hypo_indexes);
+        let saved_warnings = self.session.warnings_snapshot();
+        let saved_hypo = self.session.hypo_indexes();
         let result = self.plan_cost(&statement, hypo_indexes);
-        self.session.warnings = saved_warnings;
-        self.session.hypo_indexes = saved_hypo;
+        self.session.restore_warnings(saved_warnings);
+        self.session.set_hypo_indexes(saved_hypo);
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::tests_support::row_text;
-    use crate::Session;
-
-    fn rows(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
-        row_text(session.run(sql))
-    }
-
-    fn error(session: &mut Session, sql: &str) -> (u16, String) {
-        let error = session
-            .run(sql)
-            .err()
-            .unwrap_or_else(|| panic!("{sql} was accepted"))
-            .to_mysql_error();
-        (error.code, error.message)
-    }
-
-    /// Go `checkResult` of `indexadvisor_sql_test.go`: `db.table.columns` of
-    /// each recommendation, sorted.
-    fn recommended(session: &mut Session, statements: &str) -> String {
-        let sql = format!(
-            "recommend index run for '{}'",
-            statements.replace('\'', "''")
-        );
-        let mut found: Vec<String> = rows(session, &sql)
-            .iter()
-            .map(|row| format!("{}.{}.{}", row[0], row[1], row[3]))
-            .collect();
-        found.sort();
-        found.join("|")
-    }
-
-    /// `TestIndexAdvisorForSQL`, `ForMultipleTables`, `Prefix`, `CoveringIndex`
-    /// and `ExistingIndex`: the algorithm's picks, and the plan costs behind
-    /// them, follow Go's.
-    #[test]
-    fn advisor_picks_the_indexes_go_picks() {
-        let mut session = Session::new();
-        session.run("use test").unwrap();
-        session.run("create table t (a int, b int, c int)").unwrap();
-        assert_eq!(
-            recommended(&mut session, "select a from t where a=1"),
-            "test.t.a"
-        );
-        assert_eq!(
-            recommended(&mut session, "select a from t where a=1 and b=1"),
-            "test.t.a,b"
-        );
-        assert_eq!(
-            recommended(
-                &mut session,
-                "select * from t where a=1;select * from t where a=1 and b=1"
-            ),
-            "test.t.a,b"
-        );
-        assert_eq!(
-            recommended(
-                &mut session,
-                "select * from t where a=1;select * from t where a=1 and b=1; select * from t where a=1 and b=1 and c=1"
-            ),
-            "test.t.a,b,c"
-        );
-        session
-            .run("create table tc (a int, b int, c int, d int)")
-            .unwrap();
-        assert_eq!(
-            recommended(&mut session, "select b from tc where a=1"),
-            "test.tc.a,b"
-        );
-        assert_eq!(
-            recommended(&mut session, "select b from tc where a=1 and d=1"),
-            "test.tc.a,d,b"
-        );
-        session
-            .run("create table te (a int, b int, c int, index ab (a, b))")
-            .unwrap();
-        assert_eq!(recommended(&mut session, "select * from te where a=1"), "");
-        assert_eq!(
-            recommended(
-                &mut session,
-                "select * from te where a=1; select * from te where a=1 and b=1; select * from te where c=1"
-            ),
-            "test.te.c"
-        );
-        // A statement the optimizer plans with the DNF/order-by shape of
-        // `heuristicMergeIndexes`: hypothetical indexes outside the stats
-        // collection, as Go's session-local `IndexInfo`s are.
-        assert_eq!(
-            recommended(
-                &mut session,
-                "select * from t where (a=1 or b=1) and c=2 order by c"
-            ),
-            "test.t.c"
-        );
-        // A CTE is not inlined: the advisor never ran Go's preprocessor.
-        assert_eq!(
-            recommended(
-                &mut session,
-                "with c as (select * from t where a=1) select * from c where b=2"
-            ),
-            ""
-        );
-        // A locking read still sees hypothetical indexes.
-        assert_eq!(
-            recommended(&mut session, "select * from t where a=1 for update"),
-            "test.t.a"
-        );
-    }
-
-    /// The columns `recommend index run` answers, and the statement it prints.
-    #[test]
-    fn advisor_reports_go_s_columns_and_restored_queries() {
-        let mut session = Session::new();
-        session.run("use test").unwrap();
-        session.run("create table t (a int, b int, c int)").unwrap();
-        let answer = rows(
-            &mut session,
-            "recommend index run for 'select a, count(*) from t where a=1 and (b=2 or c=3)'",
-        );
-        assert_eq!(answer.len(), 1, "{answer:?}");
-        assert_eq!(&answer[0][..5], ["test", "t", "idx_a", "a", "0"]);
-        assert_eq!(
-            answer[0][5],
-            "Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` , count ( ? ) from `test` . `t` where `a` = ? and ( `b` = ? or `c` = ? )"
-        );
-        assert!(
-            answer[0][6].contains(
-                "\"Query\":\"SELECT `a`,count(1) FROM `test`.`t` WHERE `a` = 1 AND (`b` = 2 OR `c` = 3)\""
-            ),
-            "{answer:?}"
-        );
-        assert_eq!(answer[0][7], "CREATE INDEX idx_a ON t(a);");
-        // No recommendation leaves Go's explanation as a warning.
-        // An unqualified column names every table of the schema that has it,
-        // so the empty case gets a schema of its own.
-        session.run("create database kdb").unwrap();
-        session.run("use kdb").unwrap();
-        session
-            .run("create table k (a int, b int, c int, key(a, b, c))")
-            .unwrap();
-        assert!(rows(
-            &mut session,
-            "recommend index run for 'select * from k where a=1 and b=1 and c=1'"
-        )
-        .is_empty());
-        let warnings = rows(&mut session, "show warnings");
-        assert_eq!(
-            warnings,
-            vec![vec![
-                "Warning".to_owned(),
-                "1105".to_owned(),
-                " Considered 3 indexable columns(kdb.k.a, kdb.k.b, kdb.k.c), 3 or more index candidates(kdb.k(a), kdb.k(b), kdb.k(c)), no sufficiently beneficial indexes were found.".to_owned()
-            ]]
-        );
-    }
-
-    /// `options.go`: values are validated, stored in
-    /// `mysql.tidb_kernel_options`, and read back by SHOW.
-    #[test]
-    fn advisor_options_follow_go() {
-        let mut session = Session::new();
-        session.run("use test").unwrap();
-        let shown = rows(&mut session, "recommend index show");
-        let names: Vec<&str> = shown.iter().map(|row| row[0].as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                "max_num_index",
-                "max_index_columns",
-                "max_num_query",
-                "timeout"
-            ]
-        );
-        assert_eq!(shown[0][1], "5");
-        session
-            .run("recommend index set max_num_index=3, timeout='10s'")
-            .unwrap();
-        let shown = rows(&mut session, "recommend index show");
-        assert_eq!((shown[0][1].as_str(), shown[3][1].as_str()), ("3", "10s"));
-        assert_eq!(
-            error(&mut session, "recommend index set max_num_index=0"),
-            (1105, "invalid value 0 for max_num_index".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index set timeout='abc'"),
-            (1105, "time: invalid duration \"abc\"".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index set max_num_index='x'"),
-            (1105, "invalid value type string".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index set timeout=10"),
-            (
-                1105,
-                "invalid value type int64 for timeout, expected a duration string".to_owned()
-            )
-        );
-        // A non-literal value makes Go's parser drop the whole list.
-        assert_eq!(
-            error(&mut session, "recommend index set max_num_index=-1"),
-            (1105, "option is empty".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index frobnicate"),
-            (1105, "unsupported action frobnicate".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index apply 1"),
-            (1105, "unsupported action apply".to_owned())
-        );
-    }
-
-    /// The refusals of `FilterInvalidQueries` under fix control 43817 and the
-    /// like, for a statement the user named.
-    #[test]
-    fn advisor_refuses_what_go_refuses() {
-        let mut session = Session::new();
-        session.run("use test").unwrap();
-        session.run("create table t (a int, b int, c int)").unwrap();
-        assert_eq!(
-            error(
-                &mut session,
-                "recommend index run for 'select * from t where a=(select max(b) from t)'"
-            ),
-            (
-                1105,
-                "evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817"
-                    .to_owned()
-            )
-        );
-        assert_eq!(
-            error(
-                &mut session,
-                "recommend index run for 'select * from nosuch where a=1'"
-            ),
-            (1146, "Table 'test.nosuch' doesn't exist".to_owned())
-        );
-        assert_eq!(
-            error(&mut session, "recommend index run for 'show tables'"),
-            (
-                1105,
-                "empty query set after filtering invalid queries".to_owned()
-            )
-        );
-        assert_eq!(
-            error(&mut session, "recommend index run for ';;'"),
-            (1105, "empty SQLs".to_owned())
-        );
-        assert_eq!(
-            error(
-                &mut session,
-                "recommend index run for 'select * from t where a=1' with timeout='1ns'"
-            ),
-            (1105, "index advisor timeout after 1ns".to_owned())
-        );
-    }
-
-    /// `RestoreWithDefaultDB` (binding flags): function names stay as written,
-    /// the lock clause keeps Go's spelling, and redundant parentheses go.
-    #[test]
-    fn binding_restore_keeps_written_names_and_drops_redundant_parentheses() {
-        let restore = |sql: &str| {
-            let statement = tidb_parser::parse(sql).unwrap();
-            tidb_parser::util_parser::restore_with_default_db(&statement, "test", "")
-        };
-        assert_eq!(
-            restore("select Max(a), COUNT(*), group_concat(a separator ',') from t for update"),
-            "SELECT Max(`a`),COUNT(1),group_concat(`a` SEPARATOR ',') FROM `test`.`t` for update"
-        );
-        assert_eq!(
-            restore("select * from t where a=1 for update of t"),
-            "SELECT * FROM `test`.`t` WHERE `a` = 1 for update OF `test`.`t`"
-        );
-        assert_eq!(
-            restore("select * from t where (a=1) and (b=2 and c=3) or a*(b*c)=1"),
-            "SELECT * FROM `test`.`t` WHERE `a` = 1 AND `b` = 2 AND `c` = 3 OR `a` * (`b` * `c`) = 1"
-        );
-        assert_eq!(
-            restore("select * from t where (a-1)-2=4 and a-(1-2)=4 and -(a+1)=1"),
-            "SELECT * FROM `test`.`t` WHERE `a` - 1 - 2 = 4 AND `a` - (1 - 2) = 4 AND -(`a` + 1) = 1"
-        );
-        assert_eq!(
-            restore("select count(distinct (b)) from t"),
-            "SELECT count(DISTINCT `b`) FROM `test`.`t`"
-        );
-    }
-
-    /// Go's resolver visits a window call's columns, so an aggregated query
-    /// must justify them.
-    #[test]
-    fn window_columns_in_an_aggregated_query_need_justifying() {
-        let mut session = Session::new();
-        session.run("use test").unwrap();
-        session.run("create table t (a int, b int, c int)").unwrap();
-        assert_eq!(
-            error(
-                &mut session,
-                "select max(a), row_number() over (order by c) from t"
-            )
-            .0,
-            8123
-        );
-        assert_eq!(
-            error(
-                &mut session,
-                "select a, max(b), row_number() over (order by c) from t group by a"
-            )
-            .0,
-            1055
-        );
-        assert_eq!(
-            rows(
-                &mut session,
-                "select a, max(b), row_number() over (order by a) from t group by a"
-            ),
-            Vec::<Vec<String>>::new()
-        );
     }
 }

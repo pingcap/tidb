@@ -17,7 +17,7 @@
 //! `inspectionSummaryRetriever` (`pkg/executor/inspection_summary.go`).
 
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use crate::DriverError;
 use tidb_planner::logical::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::InspectionSummaryTableExtractor;
 
@@ -42,7 +42,7 @@ fn text(value: &str) -> Datum {
 /// Go `inspectionRuleRetriever.retrieve`: the inspection rules, then the
 /// summary rules by name. The `TYPE` filter (and `SkipRequest`) is the scan's
 /// extractor, applied to these rows as the scan reads them.
-pub(crate) fn inspection_rules_rows() -> Vec<Vec<Datum>> {
+pub fn inspection_rules_rows() -> Vec<Vec<Datum>> {
     let mut summary_rules = INSPECTION_SUMMARY_RULES
         .iter()
         .map(|(rule, _)| *rule)
@@ -64,7 +64,7 @@ pub(crate) fn inspection_rules_rows() -> Vec<Vec<Datum>> {
 /// of each summary rule the extractor admits, summarised by the restricted
 /// SQL `query` runs over `metrics_schema`. Go walks its rule map in random
 /// order; this walks the rules by name.
-pub(crate) fn inspection_summary_rows(
+pub fn inspection_summary_rows(
     extractor: &InspectionSummaryTableExtractor,
     time_range: &QueryTimeRange,
     mut query: impl FnMut(&str) -> Result<Vec<Vec<Datum>>, DriverError>,
@@ -182,7 +182,7 @@ pub(crate) fn inspection_summary_rows(
 
 /// Go `inspectionSummaryRules`: each summary rule's metrics tables, in the
 /// source's order.
-pub(crate) const INSPECTION_SUMMARY_RULES: &[(&str, &[&str])] = &[
+pub const INSPECTION_SUMMARY_RULES: &[(&str, &[&str])] = &[
     (
         "query-summary",
         &[

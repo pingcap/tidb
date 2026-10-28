@@ -16,13 +16,15 @@
 //! `IsASTCacheable`, decided at `PREPARE`.
 //!
 //! The retained physical trees and execute-time recursive rebuild live in
-//! `tidb_executor::PreparedSelectPlan`; this module only decides whether
+//! `crate::PreparedSelectPlan`; this module only decides whether
 //! a statement may enter that cache.
 
+#[allow(unused_imports)]
+use super::*;
 use std::any::Any;
 
 use tidb_ast::{Visitable, Visitor};
-use tidb_executor::{Catalog, TableEntry};
+use crate::{Catalog, TableEntry};
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// Go `getMaxParamLimit`'s default: more than this many values in one IN
@@ -60,7 +62,7 @@ const UNCACHEABLE_FUNCTIONS: &[&str] = &[
 /// `DELETE` and a set operation are cacheable at all. The `EXECUTE` of any
 /// other kind re-plans every time and reports 0 -- which is also what a
 /// DISABLED cache reports, so a refusal here is never observable as an error.
-pub(crate) fn stmt_cacheable(
+pub fn stmt_cacheable(
     stmt: &mut tidb_ast::Stmt,
     context: CacheableContext<'_>,
 ) -> Result<(), String> {
@@ -97,74 +99,15 @@ fn cacheable_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
 
 /// Session and infoschema state read by Go's `IsASTCacheable` visitor.
 #[derive(Clone, Copy)]
-pub(crate) struct CacheableContext<'a> {
-    pub(crate) catalog: &'a Catalog,
-    pub(crate) current_database: &'a str,
-    pub(crate) enable_param_limit: bool,
-    pub(crate) enable_subquery: bool,
-    pub(crate) dynamic_partition_prune: bool,
-    pub(crate) disable_partition_cache: bool,
-    pub(crate) enable_generated_columns: bool,
-    pub(crate) max_num_param: usize,
-}
-
-impl crate::Session {
-    /// Go `IsASTCacheable` with this session's variables and current
-    /// infoschema. This is the single PREPARE-time admission authority for
-    /// SQL and binary-protocol prepared statements.
-    pub(crate) fn prepared_statement_cacheable(
-        &self,
-        stmt: &mut tidb_ast::Stmt,
-        catalog: &Catalog,
-    ) -> Result<(), String> {
-        let configured_max = self
-            .vars
-            .optimizer_fix_control()
-            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_NUM_PARAM as i64);
-        let max_num_param = match configured_max {
-            0 => usize::MAX,
-            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
-            _ => MAX_NUM_PARAM,
-        };
-        let verdict = stmt_cacheable(
-            stmt,
-            CacheableContext {
-                catalog,
-                current_database: self.current_database(),
-                enable_param_limit: self.session_bool(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                ),
-                enable_subquery: self.session_bool(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                ),
-                dynamic_partition_prune: self
-                    .vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                    .is_ok_and(|mode| mode.eq_ignore_ascii_case("dynamic")),
-                disable_partition_cache: self
-                    .vars
-                    .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_33031, false),
-                enable_generated_columns: self
-                    .vars
-                    .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
-                max_num_param,
-            },
-        );
-        if verdict.is_err()
-            && self
-                .vars
-                .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false)
-        {
-            Ok(())
-        } else {
-            verdict
-        }
-    }
+pub struct CacheableContext<'a> {
+    pub catalog: &'a Catalog,
+    pub current_database: &'a str,
+    pub enable_param_limit: bool,
+    pub enable_subquery: bool,
+    pub dynamic_partition_prune: bool,
+    pub disable_partition_cache: bool,
+    pub enable_generated_columns: bool,
+    pub max_num_param: usize,
 }
 
 /// Go's `cacheableChecker` visitor, over this tier's AST.
@@ -389,114 +332,64 @@ impl Visitor for CacheableChecker<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::Session;
-
-    fn verdict(session: &mut Session, sql: &str) -> Result<(), String> {
-        // A node session's catalog catches up with its node first, as
-        // every statement and PREPARE through the node does.
-        session.refresh_node_catalog().expect("refresh catalog");
-        let mut statement = session.parse_statement(sql).expect("parse");
-        let catalog = session.lock_catalog().expect("catalog");
-        session.prepared_statement_cacheable(&mut statement, &catalog)
-    }
-
-    #[test]
-    fn parameterized_window_frames_are_never_cacheable() {
-        let mut session = Session::new();
-        assert_eq!(
-            verdict(
-                &mut session,
-                "SELECT SUM(a) OVER (ORDER BY a ROWS BETWEEN ? PRECEDING AND CURRENT ROW) FROM t"
-            ),
-            Err("query has ? in window function frames is un-cacheable".to_owned())
+/// Go `IsASTCacheable` with the session's variables.
+pub trait PlanCacheableChecker: super::CompilerSession {
+    /// Go `IsASTCacheable` with this session's variables and current
+    /// infoschema. This is the single PREPARE-time admission authority for
+    /// SQL and binary-protocol prepared statements.
+    fn prepared_statement_cacheable(
+        &self,
+        stmt: &mut tidb_ast::Stmt,
+        catalog: &Catalog,
+    ) -> Result<(), String> {
+        let configured_max = self
+            .session_vars()
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_NUM_PARAM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_NUM_PARAM,
+        };
+        let verdict = stmt_cacheable(
+            stmt,
+            CacheableContext {
+                catalog,
+                current_database: self.session_vars().current_db.as_str(),
+                enable_param_limit: self.session_vars().system_bool(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                ),
+                enable_subquery: self.session_vars().system_bool(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                ),
+                dynamic_partition_prune: self
+                    .session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                    .is_ok_and(|mode| mode.eq_ignore_ascii_case("dynamic")),
+                disable_partition_cache: self
+                    .session_vars()
+                    .optimizer_fix_control()
+                    .get_bool_with_default(tidb_planner::fix_control::FIX_33031, false),
+                enable_generated_columns: self
+                    .session_vars()
+                    .optimizer_fix_control()
+                    .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
+                max_num_param,
+            },
         );
-    }
-
-    #[test]
-    fn subquery_admission_reads_the_session_switch() {
-        let mut session = Session::new();
-        session.run("CREATE TABLE t (a int)").unwrap();
-        session
-            .run("SET tidb_enable_plan_cache_for_subquery = OFF")
-            .unwrap();
-        assert_eq!(
-            verdict(
-                &mut session,
-                "SELECT * FROM t WHERE a IN (SELECT a FROM t WHERE a > ?)"
-            ),
-            Err("query has sub-queries is un-cacheable".to_owned())
-        );
-        session
-            .run("SET tidb_enable_plan_cache_for_subquery = ON")
-            .unwrap();
-        assert!(verdict(
-            &mut session,
-            "SELECT * FROM t WHERE a IN (SELECT a FROM t WHERE a > ?)"
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn cte_names_are_not_resolved_as_physical_tables() {
-        let mut session = Session::new();
-        session.run("CREATE TABLE t (a int)").unwrap();
-        assert!(verdict(
-            &mut session,
-            "WITH c AS (SELECT a FROM t) SELECT * FROM c WHERE a > ?"
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn temporary_tables_are_not_cacheable() {
-        let mut session = Session::new();
-        session
-            .run("CREATE GLOBAL TEMPORARY TABLE tmp (a int) ON COMMIT DELETE ROWS")
-            .unwrap();
-        assert_eq!(
-            verdict(&mut session, "SELECT * FROM tmp WHERE a > ?"),
-            Err("query accesses temporary tables is un-cacheable".to_owned())
-        );
-    }
-
-    #[test]
-    fn fix_44823_controls_the_accumulated_in_list_limit() {
-        let mut session = Session::new();
-        session.run("CREATE TABLE t (a int)").unwrap();
-        session.run("SET tidb_opt_fix_control = '44823:2'").unwrap();
-        assert_eq!(
-            verdict(&mut session, "SELECT * FROM t WHERE a IN (?, ?, ?)"),
-            Err("too many values in in-list".to_owned())
-        );
-        session.run("SET tidb_opt_fix_control = '44823:0'").unwrap();
-        assert!(verdict(&mut session, "SELECT * FROM t WHERE a IN (?, ?, ?)").is_ok());
-    }
-
-    #[test]
-    fn fix_49736_forces_ast_cacheability() {
-        let mut session = Session::new();
-        assert_eq!(
-            verdict(&mut session, "SELECT @v + ?"),
-            Err("query has user-defined variables is un-cacheable".to_owned())
-        );
-        session
-            .run("SET tidb_opt_fix_control = '49736:ON'")
-            .unwrap();
-        assert!(verdict(&mut session, "SELECT @v + ?").is_ok());
-    }
-
-    #[test]
-    fn convert_using_is_the_same_uncacheable_go_function() {
-        let mut session = Session::new();
-        session.run("CREATE TABLE t (a varchar(20))").unwrap();
-        assert_eq!(
-            verdict(
-                &mut session,
-                "SELECT * FROM t WHERE CONVERT(a USING utf8mb4) = ?"
-            ),
-            Err("query has 'convert' is un-cacheable".to_owned())
-        );
+        if verdict.is_err()
+            && self
+                .session_vars()
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false)
+        {
+            Ok(())
+        } else {
+            verdict
+        }
     }
 }
+
+impl<T: super::CompilerSession> PlanCacheableChecker for T {}

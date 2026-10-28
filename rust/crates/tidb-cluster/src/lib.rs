@@ -25,7 +25,7 @@ pub mod catalog_watch;
 pub mod cluster_account_write;
 pub mod cluster_auto_id;
 pub mod cluster_catalog;
-pub mod cluster_http;
+pub use tidb_txnkv::cluster_http;
 pub mod cluster_privilege_load;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;

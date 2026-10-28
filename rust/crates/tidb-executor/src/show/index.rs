@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Go `fetchShowIndex`: one row per index column.
+
 use tidb_datatype::{Datum, FieldTypeFlags};
 
 /// One `SHOW INDEX` row per index column, in Go's own order: the clustered

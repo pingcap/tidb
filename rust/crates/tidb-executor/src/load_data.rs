@@ -33,6 +33,7 @@ use crate::{Catalog, DriverError, TableEntry};
 use csv_parser::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
+use tidb_privilege::PrivilegeTypeExt;
 
 /// Go `maxRowsInBatch` for LOAD DATA's `InsertValues`.
 const MAX_ROWS_IN_BATCH: usize = 1000;
@@ -642,4 +643,75 @@ pub fn run_load_data(
     ));
     let _ = prepared.local;
     Ok((totals.affected, first_allocated))
+}
+
+/// Go `buildLoadData`'s privilege check and `LoadDataExec`'s preparation,
+/// over the session.
+pub trait LoadDataExec: crate::show::exec::ShowExec {
+    /// Go `LoadDataController`'s session values.
+    fn load_data_env(&self) -> LoadDataEnv {
+        LoadDataEnv {
+            charset_database: self
+                .session_vars()
+                .get_system("character_set_database")
+                .unwrap_or_else(|_| "utf8mb4".to_owned()),
+            strict_sql_mode: self.session_vars().sql_mode().has_strict_mode(),
+            allow_write_row_id: self
+                .session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value)),
+        }
+    }
+
+    /// Go `buildLoadData`'s visit info: INSERT on the table, and DELETE too
+    /// for REPLACE, named by the table as written.
+    fn load_data_privileges(
+        &self,
+        schema: &str,
+        table: &str,
+        on_duplicate: LoadDataOnDuplicate,
+    ) -> Result<(), DriverError> {
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
+        let mut required = vec![tidb_mysql::InsertPriv];
+        if on_duplicate == LoadDataOnDuplicate::Replace {
+            required.push(tidb_mysql::DeletePriv);
+        }
+        for privilege in required {
+            let granted =
+                tidb_privilege::verification::mem_db_verdict_mask(schema, privilege.bit())
+                    .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
+            if !granted {
+                return Err(DriverError::from(
+                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                        &[
+                            privilege.print_name().into(),
+                            user.to_owned().into(),
+                            host.to_owned().into(),
+                            table.to_owned().into(),
+                        ],
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Everything Go checks before `LoadDataExec.Open`: the table, the
+    /// privileges, then the executor builder and `NewLoadDataWorker`.
+    fn prepare_load_data(&mut self, load: &LoadDataStmt) -> Result<PreparedLoadData, DriverError> {
+        let current_db = self.session_vars().current_db.clone();
+        let env = self.load_data_env();
+        let privileges = match load.table.as_slice() {
+            [schema, table] => self.load_data_privileges(schema, table, load.on_duplicate),
+            [table] if !current_db.is_empty() => {
+                self.load_data_privileges(&current_db, table, load.on_duplicate)
+            }
+            _ => Ok(()),
+        };
+        self.with_catalog_mut(|catalog| {
+            prepare_load_data(load, catalog, &current_db, &env, |_, _| privileges)
+        })
+    }
 }

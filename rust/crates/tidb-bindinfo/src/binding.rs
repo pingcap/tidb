@@ -57,11 +57,11 @@ use std::any::Any;
 use std::collections::BTreeMap;
 
 use tidb_ast::{Stmt, Visitable as _, Visitor};
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_hack::GoCaseCompare;
 use tidb_util::stringutil::go_to_lower;
 
-pub(crate) use tidb_hint::HintsSet;
+pub use tidb_hint::HintsSet;
 
 /// Go `utilparser.RestoreWithDefaultDB`: the statement's canonical text with
 /// every unqualified table name qualified by `default_db`. Delegates to the
@@ -69,19 +69,19 @@ pub(crate) use tidb_hint::HintsSet;
 /// `SimpleCases` can keep the user's own formatting, but this AST does not
 /// retain the statement's raw text, so the full-restore path is always taken
 /// (same output as before this delegation).
-pub(crate) fn restore_with_default_db(stmt: &Stmt, default_db: &str) -> String {
+pub fn restore_with_default_db(stmt: &Stmt, default_db: &str) -> String {
     tidb_parser::util_parser::restore_with_default_db(stmt, default_db, "")
 }
 
 /// Go `utilparser.RestoreWithoutDB`: the same text with every schema
 /// qualifier ERASED, which is what makes a binding portable across databases.
-pub(crate) fn restore_without_db(stmt: &Stmt) -> String {
+pub fn restore_without_db(stmt: &Stmt) -> String {
     tidb_parser::util_parser::restore_without_db(stmt)
 }
 
 /// Go `bindinfo.NormalizeStmtForBinding`, the with-DB half: the normalized
 /// text and its digest.
-pub(crate) fn normalize_with_db(stmt: &Stmt, default_db: &str) -> (String, String) {
+pub fn normalize_with_db(stmt: &Stmt, default_db: &str) -> (String, String) {
     let (normalized, digest) =
         tidb_parser::normalize_digest_for_binding(&restore_with_default_db(stmt, default_db));
     (normalized, digest.as_str().to_owned())
@@ -89,13 +89,13 @@ pub(crate) fn normalize_with_db(stmt: &Stmt, default_db: &str) -> (String, Strin
 
 /// Go `bindinfo.NormalizeStmtForBinding`, the no-DB half: the digest a match
 /// is decided on.
-pub(crate) fn no_db_digest(stmt: &Stmt) -> String {
+pub fn no_db_digest(stmt: &Stmt) -> String {
     let (_, digest) = tidb_parser::normalize_digest_for_binding(&restore_without_db(stmt));
     digest.as_str().to_owned()
 }
 
 /// Go `hint.CollectHint`.
-pub(crate) fn collect_hints(stmt: &Stmt) -> HintsSet {
+pub fn collect_hints(stmt: &Stmt) -> HintsSet {
     tidb_hint::collect_hint(stmt)
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn collect_hints(stmt: &Stmt) -> HintsSet {
 /// for block. A block beyond the set's length has its hints CLEARED, which is
 /// Go's `setTableHints4StmtNode(in, nil)` -- the binding decides every block's
 /// hints, not just the ones it has something to say about.
-pub(crate) fn bind_hints(stmt: &mut Stmt, set: &HintsSet) {
+pub fn bind_hints(stmt: &mut Stmt, set: &HintsSet) {
     tidb_hint::bind_hint(stmt, set);
 }
 
@@ -145,7 +145,7 @@ impl Visitor for TableNameCollector {
 }
 
 /// Go `bindinfo.CollectTableNames`.
-pub(crate) fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
+pub fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
     let mut stmt = stmt.clone();
     let mut collector = TableNameCollector { names: Vec::new() };
     stmt.accept(&mut collector);
@@ -158,22 +158,22 @@ pub(crate) fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
 /// question from that single pass (`preprocess.go`); this is that shape for
 /// the dispatch funnel, which otherwise re-walked (and, because the visitor
 /// API is mutable, re-CLONED) the statement once per question.
-pub(crate) struct StatementTableScan {
+pub struct StatementTableScan {
     /// `(schema, table)` lowercased, [`collect_table_names`]'s exact output.
-    pub(crate) names: Vec<(String, String)>,
+    pub names: Vec<(String, String)>,
     /// Whether any table ref carries `AS OF TIMESTAMP`.
-    pub(crate) has_as_of: bool,
+    pub has_as_of: bool,
     /// Go preprocessor's `ast.ColumnName` check: `_tidb_commit_ts` was named
     /// while the statement type was SELECT, UPDATE or DELETE.
-    pub(crate) names_commit_ts: bool,
+    pub names_commit_ts: bool,
     /// Go preprocessor's `*ast.FuncCallExpr` arm: the last schema-qualified
     /// call, as the `schema.function` its `ErrFunctionNotExists` names. Go
     /// does not support stored procedures, so every such call is refused.
-    pub(crate) qualified_function: Option<String>,
+    pub qualified_function: Option<String>,
 }
 
 /// Collects [`StatementTableScan`] in one in-place walk, no clone.
-pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
+pub fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
     struct Scanner {
         names: Vec<(String, String)>,
         has_as_of: bool,
@@ -261,7 +261,7 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
 /// Physical read sources in traversal order. Qualified names always name a
 /// table, even when a visible CTE has the same name. Binding matching keeps its
 /// separate, deliberately unfiltered syntactic table-name collection.
-pub(crate) fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
+pub fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
     #[derive(Default)]
     struct Collector {
         refs: Vec<Vec<String>>,
@@ -291,7 +291,7 @@ pub(crate) fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
 
 /// Go `preprocessor.handleTableName` over a retained statement; see
 /// [`tidb_planner::preprocess::handle_table_name`].
-pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
+pub fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
     tidb_planner::preprocess::handle_table_name(stmt, current_db).map_err(|_| {
         DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
     })
@@ -307,52 +307,42 @@ pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<
 pub struct Binding {
     /// The NORMALIZED origin statement, DB-qualified. This is the text
     /// `SHOW BINDINGS` prints first, not the SQL the user typed.
-    pub(crate) original_sql: String,
+    pub original_sql: String,
     /// The hinted statement, restored and DB-qualified.
-    pub(crate) bind_sql: String,
+    pub bind_sql: String,
     /// Go `GetDefaultDB`: the schema the origin statement resolves against.
-    pub(crate) db: String,
+    pub db: String,
     /// `enabled` for every binding this tier creates; `SET BINDING DISABLED`
     /// is not modelled, so the column is constant rather than absent.
-    pub(crate) status: &'static str,
-    pub(crate) charset: String,
-    pub(crate) collation: String,
+    pub status: &'static str,
+    pub charset: String,
+    pub collation: String,
     /// Go `bindinfo.SourceManual`.
-    pub(crate) source: &'static str,
+    pub source: &'static str,
     /// Digest of [`Self::original_sql`], and the store's own key.
-    pub(crate) sql_digest: String,
-    pub(crate) plan_digest: String,
-    pub(crate) usage: std::sync::Arc<std::sync::Mutex<BindingUsageTimes>>,
-    pub(crate) create_time: String,
-    pub(crate) update_time: String,
+    pub sql_digest: String,
+    pub plan_digest: String,
+    pub usage: std::sync::Arc<std::sync::Mutex<BindingUsageTimes>>,
+    pub create_time: String,
+    pub update_time: String,
     /// Digest of the HINTED statement restored WITHOUT its schema, which is
     /// Go's `noDBDigestFromBinding` -- it parses `BindSQL`, not the origin.
     /// Equal to the origin's own no-DB digest whenever the pair is legal,
     /// because the only legal difference between them is hints and the
     /// normalizer erases those.
-    pub(crate) no_db_digest: String,
-    pub(crate) table_names: Vec<(String, String)>,
-    pub(crate) hints: HintsSet,
+    pub no_db_digest: String,
+    pub table_names: Vec<(String, String)>,
+    pub hints: HintsSet,
 }
 
 /// Mutable usage belongs to a shared binding, so reloads of the same version
 /// retain activity recorded by planners holding that binding reference.
 #[derive(Debug, Default)]
-pub(crate) struct BindingUsageTimes {
+pub struct BindingUsageTimes {
     last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     last_saved_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Executes one global-binding storage operation in an independent transaction.
-/// Validation and user variables remain on the caller; the supplied session owns
-/// only the internal storage transaction, as Go's binding session pool does.
-pub trait GlobalBindingWriter: Send + Sync {
-    /// Commit the complete operation or discard all its writes on error.
-    fn execute(
-        &self,
-        operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_executor::DriverError>,
-    ) -> Result<u64, tidb_executor::DriverError>;
-}
 
 impl Binding {
     /// Go UpdateLastUsedAt on a successful global match.
@@ -379,7 +369,7 @@ impl Binding {
         row: &[tidb_datatype::Datum],
         mode: tidb_parser::SqlMode,
     ) -> Option<Self> {
-        let text = |index: usize| crate::datum_text(row.get(index)?);
+        let text = |index: usize| tidb_datatype::datum_text::sysvar_datum_text(row.get(index)?);
         let status = match text(3)?.as_str() {
             STATUS_ENABLED => STATUS_ENABLED,
             STATUS_USING => STATUS_USING,
@@ -419,31 +409,31 @@ impl Binding {
 /// millisecond, so the map's own order is the tie-break. Go's is random;
 /// ordering by digest at least makes this tier's answer reproducible.
 #[derive(Debug, Default)]
-pub(crate) struct SessionBindings {
+pub struct SessionBindings {
     bindings: BTreeMap<String, Binding>,
 }
 
 impl SessionBindings {
     /// Go `CreateSessionBinding`: replaces any binding for the same
     /// normalized statement.
-    pub(crate) fn create(&mut self, binding: Binding) {
+    pub fn create(&mut self, binding: Binding) {
         self.bindings.insert(binding.sql_digest.clone(), binding);
     }
 
     /// Go `DropSessionBinding`. Deleting an absent digest is not an error
     /// there and is not one here (measured: a `DROP SESSION BINDING` for a
     /// statement with no binding answers OK on real TiDB).
-    pub(crate) fn drop_digest(&mut self, digest: &str) -> bool {
+    pub fn drop_digest(&mut self, digest: &str) -> bool {
         self.bindings.remove(digest).is_some()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
     }
 
     /// Go `fetchShowBind`'s order: descending update time, then descending
     /// create time.
-    pub(crate) fn all_sorted(&self) -> Vec<&Binding> {
+    pub fn all_sorted(&self) -> Vec<&Binding> {
         let mut all: Vec<&Binding> = self.bindings.values().collect();
         all.sort_by(|left, right| {
             right
@@ -456,7 +446,7 @@ impl SessionBindings {
 
     /// Go `MatchSessionBinding`: every binding sharing the statement's no-DB
     /// digest is a candidate, and `crossDBMatchBindings` picks among them.
-    pub(crate) fn match_statement(
+    pub fn match_statement(
         &self,
         no_db_digest: &str,
         table_names: &[(String, String)],
@@ -477,7 +467,7 @@ impl SessionBindings {
 /// the same wildcard binding answers `@@last_plan_from_binding` 1 with the
 /// switch on and 0 with it off, flipping live with `SET`. Among the
 /// candidates the fewest-wildcards binding wins, Go's own tie-break.
-pub(crate) fn cross_db_match<'a>(
+pub fn cross_db_match<'a>(
     candidates: impl Iterator<Item = &'a Binding>,
     table_names: &[(String, String)],
     current_db: &str,
@@ -539,23 +529,23 @@ fn cross_db_match_table_names(
 }
 
 /// Go `bindinfo.StatusEnabled`.
-pub(crate) const STATUS_ENABLED: &str = "enabled";
+pub const STATUS_ENABLED: &str = "enabled";
 /// Go `bindinfo.StatusDisabled`: listed by `SHOW BINDINGS`, skipped by the
 /// plan-time match.
-pub(crate) const STATUS_DISABLED: &str = "disabled";
-pub(crate) const STATUS_DELETED: &str = "deleted";
+pub const STATUS_DISABLED: &str = "disabled";
+pub const STATUS_DELETED: &str = "deleted";
 /// Go `bindinfo.StatusUsing`, the pre-v6 spelling of `enabled`, still
 /// accepted by `SET BINDING DISABLED`'s status guard and by the match.
-pub(crate) const STATUS_USING: &str = "using";
+pub const STATUS_USING: &str = "using";
 /// Go `bindinfo.SourceManual`.
-pub(crate) const SOURCE_MANUAL: &str = "manual";
+pub const SOURCE_MANUAL: &str = "manual";
 /// Go `bindinfo.SourceHistory`: a binding created `FROM HISTORY`.
-pub(crate) const SOURCE_HISTORY: &str = "history";
+pub const SOURCE_HISTORY: &str = "history";
 
 /// Go `utilparser.GetDefaultDB`: the schema the FIRST table name in the
 /// statement carries, or the session's current database when it carries
 /// none.
-pub(crate) fn default_db_of(stmt: &Stmt, current_db: &str) -> String {
+pub fn default_db_of(stmt: &Stmt, current_db: &str) -> String {
     collect_table_names(stmt)
         .into_iter()
         .find_map(|(schema, _)| (!schema.is_empty()).then_some(schema))
@@ -569,7 +559,7 @@ pub(crate) fn default_db_of(stmt: &Stmt, current_db: &str) -> String {
 /// spelling with no space after the colon (captured from real TiDB:
 /// `Error|1105|hinted sql and origin sql don't match when hinted sql erase
 /// the hint info, after erase hint info, originSQL:..., hintedSQL:...`).
-pub(crate) fn check_origin_matches_hinted(
+pub fn check_origin_matches_hinted(
     origin_normalized: &str,
     hinted_normalized: &str,
 ) -> Result<(), DriverError> {
@@ -578,3 +568,8 @@ pub(crate) fn check_origin_matches_hinted(
     }
     Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:{}, hintedSQL:{}", origin_normalized.to_owned(), hinted_normalized.to_owned()))))
 }
+
+/// Persisted binding projection. Cluster sessions match against a node-owned
+/// committed cache; standalone in-memory sessions read their local catalog.
+pub const BIND_INFO_COLUMNS: &str = "original_sql, bind_sql, default_db, status, create_time, \
+     update_time, charset, collation, source, sql_digest";

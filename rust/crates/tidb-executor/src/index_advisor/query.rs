@@ -43,12 +43,12 @@ pub(crate) fn parse_one_sql(text: &str) -> Result<Stmt> {
     tidb_parser::parse(text).map_err(|error| parse_failure(&error, text))
 }
 
-fn parse_failure(error: &tidb_parser::ParseError, sql: &str) -> tidb_executor::DriverError {
+fn parse_failure(error: &tidb_parser::ParseError, sql: &str) -> crate::DriverError {
     match error.terror {
         Some(proto) => {
-            tidb_executor::DriverError::from((proto).generate_with_stack(error.message.clone()))
+            crate::DriverError::from((proto).generate_with_stack(error.message.clone()))
         }
-        None => tidb_executor::DriverError::from(tidb_util::misc::syntax_error(
+        None => crate::DriverError::from(tidb_util::misc::syntax_error(
             error.compatibility_message(sql),
         )),
     }

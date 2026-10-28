@@ -27,6 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use tidb_executor::compiler::PreparedAstCompile;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -218,39 +219,14 @@ pub enum StmtResult {
 }
 
 pub use tidb_executor::StmtOutput;
+pub use tidb_executor::memtable_reader::{DataLockWait, DataLockWaitsProvider, DdlJobHistoryStore};
 
-/// One pessimistic wait-for edge returned by the active storage backend.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DataLockWait {
-    /// Transaction waiting for the lock.
-    pub txn: u64,
-    /// Transaction currently holding the lock.
-    pub wait_for_txn: u64,
-    /// Encoded locked key.
-    pub key: Vec<u8>,
-    /// Encoded TopSQL resource-group tag.
-    pub resource_group_tag: Vec<u8>,
-}
 
-/// Storage boundary for `information_schema.DATA_LOCK_WAITS`.
-pub trait DataLockWaitsProvider: Send + Sync {
-    /// Reads the current wait-for edges from the backend.
-    fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
-}
 
 pub use tidb_executor::show::stats::ColumnStatsUsageProvider;
 
 pub use tidb_executor::show::stats::AnalyzeStatusProvider;
 
-/// The cluster's DDL jobs, Go's `mysql.tidb_ddl_job` and meta
-/// `DDLJobHistory`, where a front end keeps them in a shared store rather
-/// than in its own catalog.
-pub trait DdlJobHistoryStore: Send + Sync {
-    /// Go `IterAllDDLJobs`' order: the running jobs (`GetAllDDLJobs`, by job
-    /// ID), then the meta history newest first
-    /// (`GetLastHistoryDDLJobsIterator`).
-    fn all_ddl_jobs(&self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), String>;
-}
 
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
@@ -885,7 +861,7 @@ pub struct Session {
     /// Node-owned committed bindings, independent of this session's transaction.
     global_binding_cache: Option<binding_cache::SharedBindingCache>,
     /// Independent transaction owner for cluster global-binding commands.
-    global_binding_writer: Option<Arc<dyn binding::GlobalBindingWriter>>,
+    global_binding_writer: Option<Arc<dyn crate::binding_arm::GlobalBindingWriter>>,
     /// Go's `DefaultExprPushDownBlacklist` and
     /// `DefaultDisabledLogicalRulesList`, published by `ADMIN RELOAD` and
     /// empty until then -- so an `INSERT` into `mysql.expr_pushdown_blacklist`
@@ -926,16 +902,7 @@ pub struct Session {
     pub(crate) node: Option<Box<crate::domain::mock_store::MockStoreConnection>>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static STATEMENT_DIGEST_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn normalize_statement_digest(sql: &str) -> (String, tidb_parser::Digest) {
-    #[cfg(test)]
-    STATEMENT_DIGEST_CALLS.with(|count| count.set(count.get() + 1));
-    tidb_parser::normalize_digest(sql)
-}
+use tidb_executor::process::normalize_statement_digest;
 
 impl Session {
     /// Builds the Go `createSessionWithOpt` state over an already selected
@@ -1214,14 +1181,16 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 mod account;
 pub mod slow_log;
 pub use tidb_variable::slow_log_rules;
-pub mod trace;
-mod index_advisor;
+pub use tidb_executor::trace;
 mod account_password;
-pub mod binding;
+pub use tidb_bindinfo::binding;
 mod binding_arm;
-pub mod binding_cache;
-pub mod binding_utils;
-pub mod blacklist;
+mod compiler_session;
+mod execute_prepared;
+pub use binding_arm::GlobalBindingWriter;
+pub use tidb_bindinfo::binding_cache;
+pub use tidb_bindinfo::binding_utils;
+pub use tidb_executor::blacklist;
 mod bootstrap;
 mod classify;
 pub mod cursor;
@@ -1234,23 +1203,20 @@ pub mod analyze_service;
 mod load_data;
 pub mod stats_statement_service;
 mod dispatch;
-mod explain_arm;
+pub use tidb_executor::compiler::explain as explain_arm;
 mod gcutil;
 pub mod restricted_sql;
 mod identity;
-pub mod inspection;
-mod load_stats_arm;
+pub mod load_stats_arm;
 mod account_state;
-mod cluster_state;
-mod instance_state;
-mod non_prepared_plan_cache;
+pub use tidb_executor::compiler::non_prepared_plan_cache as non_prepared_plan_cache;
 mod nontransactional;
 pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
 mod noop;
 mod observation;
-mod prepared_ast;
-mod prepared_plan_cache;
-mod prepared_statements;
+pub use tidb_executor::compiler::prepared_ast as prepared_ast;
+pub use tidb_executor::compiler::plan_cacheable_checker as prepared_plan_cache;
+pub use tidb_executor::compiler::prepared as prepared_statements;
 pub mod session_states;
 mod record_set;
 mod session_plan_cache;
@@ -1262,7 +1228,7 @@ mod stmt_ctx;
 mod table_lock;
 mod temptable;
 pub use table_lock::ClusterDdlLockEffect;
-mod table_privilege;
+pub use tidb_executor::table_privilege;
 pub mod cluster_transactions;
 pub mod domain;
 pub mod lazy_transaction;
@@ -1287,14 +1253,13 @@ pub(crate) use classify::{
 pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
-pub(crate) use tidb_executor::infoschema_reader::datetime_datum;
 pub use warnings::{SqlWarning, WarningLevel};
 pub mod expensivequery;
 pub use tidb_privilege as privilege;
 mod privilege_tables;
 #[cfg(test)]
 mod tests_privilege_tls;
-pub mod process;
+pub use tidb_executor::process;
 mod process_arm;
 mod show;
 pub use tidb_variable::statusvar;
@@ -3064,6 +3029,7 @@ impl Session {
 
 #[cfg(test)]
 mod session_source_tests {
+    use tidb_executor::compiler::PreparedAstCompile;
     use super::{
         approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap,
         NoAvailableDomain, Session,
@@ -3391,6 +3357,12 @@ mod tests_positional_orderby;
 #[cfg(test)]
 mod tests_prepared_plan_cache;
 #[cfg(test)]
+mod tests_compiler_plan_cacheable_checker;
+#[cfg(test)]
+mod tests_index_advisor;
+#[cfg(test)]
+mod tests_process_registry;
+#[cfg(test)]
 mod tests_prepared_statements;
 #[cfg(test)]
 mod tests_privilege_checks;
@@ -3472,23 +3444,8 @@ mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
 
-/// Go `time.Duration.String()` for a whole number of seconds, which is what
-/// `UPTIME` carries: `time.Since(startTime).String()` with the sub-second
-/// part always zero here because the start timestamp has second granularity.
-fn go_uptime_string(seconds: i64) -> String {
-    let seconds = seconds.max(0);
-    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
-    if hours > 0 {
-        format!("{hours}h{minutes}m{seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m{seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
 
 
-pub(crate) use tidb_util::stringutil::go_json_marshal;
 
 impl tidb_executor::sessionctx::SessionContext for Session {
     fn session_vars(&self) -> &SessionVars {

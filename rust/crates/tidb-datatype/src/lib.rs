@@ -30,6 +30,7 @@ mod charset;
 mod collation;
 mod compare;
 pub mod conversion_context;
+pub mod datum_text;
 mod convert;
 mod core_time;
 mod datum;

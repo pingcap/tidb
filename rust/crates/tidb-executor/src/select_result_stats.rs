@@ -22,7 +22,7 @@ use std::time::Duration as StdDuration;
 
 use tidb_distsql::LimiterWaitStats;
 
-use crate::runtime_stats::{
+use tidb_util::execdetails::runtime_stats::{
     format_duration, CanGetFloat64, Duration, Int64, Percentile, RuntimeStats,
     TP_SELECT_RESULT_RUNTIME_STATS,
 };

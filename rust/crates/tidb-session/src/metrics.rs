@@ -23,10 +23,12 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{
-    Counter, CounterVec, Gauge, HistogramOpts, HistogramVec, Opts,
-};
+use prometheus::{Counter, CounterVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
+
+pub use tidb_bindinfo::metrics::{
+    BINDING_CACHE_MEM_LIMIT, BINDING_CACHE_MEM_USAGE, BINDING_CACHE_NUM_BINDINGS,
+};
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector: prometheus::Result<C>,
@@ -306,25 +308,3 @@ pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
         ),
     ]
 }
-
-/// Go BindingCacheMemUsage, published after each binding refresh.
-pub static BINDING_CACHE_MEM_USAGE: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::new(
-        "tidb_server_binding_cache_mem_usage",
-        "Memory usage of binding cache.",
-    ))
-});
-/// Go BindingCacheMemLimit.
-pub static BINDING_CACHE_MEM_LIMIT: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::new(
-        "tidb_server_binding_cache_mem_limit",
-        "Memory limit of binding cache.",
-    ))
-});
-/// Go BindingCacheNumBindings; evicted side-index entries do not count.
-pub static BINDING_CACHE_NUM_BINDINGS: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::new(
-        "tidb_server_binding_cache_num_bindings",
-        "Number of bindings in binding cache.",
-    ))
-});

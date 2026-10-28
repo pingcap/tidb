@@ -22,6 +22,7 @@
 //! the catalog current -- so that the server driving it hands in only what is
 //! genuinely its own: the catalog source and the commit hooks.
 
+use tidb_executor::compiler::PreparedExec;
 use tidb_ast::Stmt;
 use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;

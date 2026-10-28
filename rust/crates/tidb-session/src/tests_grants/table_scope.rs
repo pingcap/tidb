@@ -10,6 +10,7 @@
 //! pins both the denial and its POSITIVE control -- the same statement run
 //! once the grant exists.
 
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::tests_support::*;
 use crate::*;
 

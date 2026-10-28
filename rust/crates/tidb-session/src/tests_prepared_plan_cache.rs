@@ -16,6 +16,7 @@
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
 //! [`crate::prepared_plan_cache`] for what is and is not modelled.
 
+use tidb_executor::compiler::PreparedAstCompile;
 use tidb_datatype::Datum;
 
 use crate::tests_support::row_text;
@@ -1508,10 +1509,10 @@ fn held_prepared_execution_reuses_published_digest() {
     assert_eq!(registry.snapshot()[0].info.as_deref(), Some(sql));
     drop(hold);
     assert_eq!(registry.snapshot()[0].info, None);
-    crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
+    tidb_executor::process::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
     session.run("SELECT 2").unwrap();
     assert_eq!(
-        crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
+        tidb_executor::process::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
         1,
         "an ordinary statement still derives its process digest exactly once"
     );

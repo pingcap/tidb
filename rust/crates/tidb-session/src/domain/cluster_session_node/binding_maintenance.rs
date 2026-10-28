@@ -21,7 +21,8 @@ use std::sync::{
 };
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
-use crate::binding::{Binding, GlobalBindingWriter};
+use crate::binding::Binding;
+use crate::binding_arm::GlobalBindingWriter;
 use crate::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
 
 pub(super) struct BindingSessions {

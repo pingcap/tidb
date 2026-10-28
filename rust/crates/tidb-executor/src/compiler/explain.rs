@@ -12,32 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `EXPLAIN` / `EXPLAIN ANALYZE`: [`Session::explain_stmt`] is the
-//! `AdminStmt::Explain` arm of `tidb_executor::admin::AdminExec::admin_next`,
+//! `EXPLAIN` / `EXPLAIN ANALYZE`: `ExplainCompile::explain_stmt` is the
+//! `AdminStmt::Explain` arm of `crate::admin::AdminExec::admin_next`,
 //! pulled out on its own because the dispatch fans out over every wrapped
 //! statement kind (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) twice -- once for
 //! the plan-only form and once for `ANALYZE`, which additionally executes.
 //!
-//! See `tidb_executor::explain`'s module doc for every place this tier's plan
+//! See `crate::explain`'s module doc for every place this tier's plan
 //! text diverges from Go's and why.
 
-use crate::*;
+#[allow(unused_imports)]
+use super::*;
+use crate::compiler::NonPreparedPlanCacheCompile;
+use std::sync::Arc;
 
-impl Session {
+use tidb_ast::Stmt;
+
+use crate::{DriverError, StmtOutput};
+
+/// Go `ExplainExec` over the compiled statement, with the plan caches and hints it plans through.
+pub trait ExplainCompile: super::CompilerSession {
     // Go's preprocessor rejects an unrecognized format name with this exact
     // message before the statement is even planned (captured: `explain
     // format = 'bogus' ...` -> `Unknown EXPLAIN format name: 'bogus'`).
     //
     // Go's EXPLAIN plans without executing (an `EXPLAIN INSERT` inserts no
-    // row, captured), and so does this: `tidb_executor::explain_select_stmt`
+    // row, captured), and so does this: `crate::explain_select_stmt`
     // re-runs the driver's own read-path decisions without touching storage.
     // Real `EXPLAIN ANALYZE` EXECUTES the wrapped statement to gather its
     // runtime counters (confirmed by capture), so this tier does too -- see
-    // `tidb_executor::explain_analyze_select_stmt`/
+    // `crate::explain_analyze_select_stmt`/
     // `explain_analyze_insert_stmt`'s own docs for which operators get a real
     // `actRows` and which print the honest `N/A` placeholder this tier uses
     // for every counter (timing, memory, disk) it does not collect at all.
-    pub(crate) fn explain_stmt(
+    fn explain_stmt(
         &mut self,
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
@@ -77,7 +85,7 @@ impl Session {
                 format!("explain format '{}' is not supported now", explain.format)
             }));
         }
-        let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
+        let Some(format) = crate::ExplainFormat::parse(&explain.format) else {
             // go `plannererrors.ErrUnknownExplainFormat` (1791) names the
             // format it could not match (oracle: `EXPLAIN FORMAT='tree'`
             // answers `Unknown EXPLAIN format name: 'tree'`).
@@ -86,7 +94,7 @@ impl Session {
                     .generate_with_stack_by_args(&[explain.format.clone().into()]),
             ));
         };
-        if explain.analyze && matches!(format, tidb_executor::ExplainFormat::PlanTree) {
+        if explain.analyze && matches!(format, crate::ExplainFormat::PlanTree) {
             return Err(DriverError::unsupported(
                 "explain format 'plan_tree' with analyze is not supported now",
             ));
@@ -116,9 +124,9 @@ impl Session {
             self.check_noop_functions(query)?;
         }
         self.activate_statement_resource_group(target);
-        let current_db = self.vars.current_db.clone();
+        let current_db = self.session_vars().current_db.clone();
         // Both forms plan through the driver's own build path (see
-        // `tidb_executor::explain`), using the context of the statement
+        // `crate::explain`), using the context of the statement
         // INSIDE EXPLAIN. Go unwraps `ExplainStmt` before its SELECT/DML
         // switch for the same reason: a query warns on truncation while a
         // strict write rejects it. Plain EXPLAIN still only builds the
@@ -137,8 +145,8 @@ impl Session {
         let ctx = self
             .statement_context_ignoring(
                 matches!(
-                    crate::classify::statement_kind_of(target),
-                    crate::classify::StatementKind::Dml
+                    crate::sessionctx::statement_kind_of(target),
+                    crate::sessionctx::StatementKind::Dml
                 ),
                 ignore_err,
             )
@@ -158,11 +166,11 @@ impl Session {
         // `checkStableResultMode` reads to keep `ResultReorder` off a DML.
         let ctx = match target {
             Stmt::Dml(dml) => ctx.with_statement_class(match &**dml {
-                tidb_ast::DmlStmt::Insert(_) => tidb_executor::StatementClass::Insert,
-                tidb_ast::DmlStmt::Update(_) => tidb_executor::StatementClass::Update,
-                tidb_ast::DmlStmt::Delete(_) => tidb_executor::StatementClass::Delete,
-                tidb_ast::DmlStmt::LoadData(_) => tidb_executor::StatementClass::LoadData,
-                _ => tidb_executor::StatementClass::Other,
+                tidb_ast::DmlStmt::Insert(_) => crate::StatementClass::Insert,
+                tidb_ast::DmlStmt::Update(_) => crate::StatementClass::Update,
+                tidb_ast::DmlStmt::Delete(_) => crate::StatementClass::Delete,
+                tidb_ast::DmlStmt::LoadData(_) => crate::StatementClass::LoadData,
+                _ => crate::StatementClass::Other,
             }),
             _ => ctx,
         };
@@ -170,9 +178,9 @@ impl Session {
         // fresh `RuntimeStatsColl` whatever `tidb_enable_collect_execution_info`
         // says: the rows below are rendered from it.
         let ctx = if explain.analyze && ctx.executor_runtime_stats_source().is_none() {
-            let coll = Arc::new(tidb_exec::runtime_stats::RuntimeStatsColl::new(None));
-            let sink: Arc<dyn tidb_executor::CopResponseSink> = Arc::new(
-                tidb_exec::statement_cop_stats::RuntimeStatsCollSink::new(
+            let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
+            let sink: Arc<dyn crate::CopResponseSink> = Arc::new(
+                crate::statement_cop_stats::RuntimeStatsCollSink::new(
                     Arc::clone(&coll),
                     ctx.cop_response_sink(),
                 ),
@@ -183,7 +191,7 @@ impl Session {
             ctx
         };
         if explain.analyze {
-            if format == tidb_executor::ExplainFormat::PlanCache {
+            if format == crate::ExplainFormat::PlanCache {
                 if let Some(output) =
                     self.explain_through_non_prepared_cache(target, &ctx, format, true)?
                 {
@@ -194,7 +202,7 @@ impl Session {
             let (columns, rows) = match target {
                 Stmt::Query(query) => self.with_catalog_retrieving(&ctx, |catalog| match &**query {
                     tidb_ast::QueryStmt::Select(select) => {
-                        tidb_executor::explain_analyze_select_stmt(
+                        crate::explain_analyze_select_stmt(
                             select,
                             catalog,
                             &current_db,
@@ -203,7 +211,7 @@ impl Session {
                         )
                     }
                     tidb_ast::QueryStmt::SetOpr(set_opr) => {
-                        tidb_executor::explain_analyze_set_opr_stmt(
+                        crate::explain_analyze_set_opr_stmt(
                             set_opr,
                             catalog,
                             &current_db,
@@ -215,7 +223,7 @@ impl Session {
                 Stmt::Dml(dml) => match &**dml {
                     tidb_ast::DmlStmt::Insert(insert) => self.retrieving_memory_tables(&ctx, |session| {
                         session.with_staged_catalog(|catalog| {
-                            tidb_executor::explain_analyze_insert_stmt(
+                            crate::explain_analyze_insert_stmt(
                                 insert,
                                 catalog,
                                 &current_db,
@@ -226,7 +234,7 @@ impl Session {
                     })?,
                     tidb_ast::DmlStmt::Update(update) => self.retrieving_memory_tables(&ctx, |session| {
                         session.with_staged_catalog(|catalog| {
-                            tidb_executor::explain_analyze_update_stmt(
+                            crate::explain_analyze_update_stmt(
                                 update,
                                 catalog,
                                 &current_db,
@@ -237,7 +245,7 @@ impl Session {
                     })?,
                     tidb_ast::DmlStmt::Delete(delete) => self.retrieving_memory_tables(&ctx, |session| {
                         session.with_staged_catalog(|catalog| {
-                            tidb_executor::explain_analyze_delete_stmt(
+                            crate::explain_analyze_delete_stmt(
                                 delete,
                                 catalog,
                                 &current_db,
@@ -249,25 +257,24 @@ impl Session {
                     other => {
                         return Err(DriverError::unsupported(format!(
                             "EXPLAIN ANALYZE of {} is not supported yet",
-                            crate::dispatch::variant_name(other)
+                            variant_name(other)
                         )));
                     }
                 },
                 other => {
                     return Err(DriverError::unsupported(format!(
                         "EXPLAIN ANALYZE of {} is not supported yet",
-                        crate::dispatch::stmt_kind_name(other)
+                        stmt_kind_name(other)
                     )));
                 }
             };
             self.drain_eval_warnings(&ctx);
             // The analyzed write ran its executor's `Close` (Go `setMessage`)
             // and `AddAffectedRows`; the result set's OK packet reports both.
-            self.statement_message = ctx.message();
-            self.statement_affected_rows = ctx.affected_rows();
+            self.set_statement_result(ctx.message(), ctx.affected_rows());
             return Ok(Some(StmtOutput::Rows { columns, rows }));
         }
-        if format == tidb_executor::ExplainFormat::PlanCache {
+        if format == crate::ExplainFormat::PlanCache {
             if let Some(output) =
                 self.explain_through_non_prepared_cache(target, &ctx, format, false)?
             {
@@ -276,12 +283,12 @@ impl Session {
             }
         }
         let explain_query =
-            |query: &tidb_ast::QueryStmt, catalog: &tidb_executor::Catalog| match query {
+            |query: &tidb_ast::QueryStmt, catalog: &crate::Catalog| match query {
                 tidb_ast::QueryStmt::Select(select) => {
-                    tidb_executor::explain_select_stmt(select, catalog, &current_db, &ctx, format)
+                    crate::explain_select_stmt(select, catalog, &current_db, &ctx, format)
                 }
                 tidb_ast::QueryStmt::SetOpr(set_opr) => {
-                    tidb_executor::explain_set_opr_stmt(set_opr, catalog, &current_db, &ctx, format)
+                    crate::explain_set_opr_stmt(set_opr, catalog, &current_db, &ctx, format)
                 }
             };
         let (columns, rows) = match target {
@@ -294,25 +301,25 @@ impl Session {
             // INSERT` inserts no row, captured).
             Stmt::Dml(dml) => match &**dml {
                 tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_retrieving(&ctx, |catalog| {
-                    tidb_executor::explain_insert_stmt(insert, catalog, &current_db, &ctx, format)
+                    crate::explain_insert_stmt(insert, catalog, &current_db, &ctx, format)
                 })?,
                 tidb_ast::DmlStmt::Update(update) => self.with_catalog_retrieving(&ctx, |catalog| {
-                    tidb_executor::explain_update_stmt(update, catalog, &current_db, &ctx, format)
+                    crate::explain_update_stmt(update, catalog, &current_db, &ctx, format)
                 })?,
                 tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_retrieving(&ctx, |catalog| {
-                    tidb_executor::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
+                    crate::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
                 })?,
                 other => {
                     return Err(DriverError::unsupported(format!(
                         "EXPLAIN of {} is not supported yet",
-                        crate::dispatch::variant_name(other)
+                        variant_name(other)
                     )));
                 }
             },
             other => {
                 return Err(DriverError::unsupported(format!(
                     "EXPLAIN of {} is not supported yet",
-                    crate::dispatch::stmt_kind_name(other)
+                    stmt_kind_name(other)
                 )));
             }
         };
@@ -336,8 +343,8 @@ impl Session {
     fn explain_through_non_prepared_cache(
         &mut self,
         target: &Stmt,
-        ctx: &tidb_executor::StmtContext,
-        format: tidb_executor::ExplainFormat,
+        ctx: &crate::StmtContext,
+        format: crate::ExplainFormat,
         analyze: bool,
     ) -> Result<Option<StmtOutput>, DriverError> {
         let Stmt::Query(query) = target else {
@@ -349,23 +356,19 @@ impl Session {
             return Ok(None);
         }
         if self.non_prepared_hint_only_refuses(target) {
-            self.append_warning(
-                crate::WarningLevel::Warning,
-                1105,
+            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
                 "skip non-prepared plan-cache: plan cache strategy is hint_only and \
                  use_plan_cache hint is absent"
                     .to_owned(),
-            );
+            ));
             return Ok(None);
         }
         let parameterized = match self.parameterize_non_prepared_select_or_refusal(target) {
             Ok(parameterized) => parameterized,
             Err(refusal) => {
-                self.append_warning(
-                    crate::WarningLevel::Warning,
-                    1105,
+                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
                     format!("skip non-prepared plan-cache: {}", refusal.reason),
-                );
+                ));
                 return Ok(None);
             }
         };
@@ -385,9 +388,9 @@ impl Session {
         let rendered = execution.with_plan(|_, physical| {
             self.with_catalog_retrieving(&ctx, |catalog| {
                 if analyze {
-                    tidb_executor::explain_analyze_physical_plan(&mut *physical, catalog, &ctx, format)
+                    crate::explain_analyze_physical_plan(&mut *physical, catalog, &ctx, format)
                 } else {
-                    tidb_executor::explain_physical_plan(&mut *physical, catalog, &ctx, format)
+                    crate::explain_physical_plan(&mut *physical, catalog, &ctx, format)
                 }
             })
         });
@@ -395,7 +398,40 @@ impl Session {
             return Ok(None);
         };
         let (columns, rows) = rendered?;
-        self.vars.found_in_plan_cache = execution.cache_hit();
+        self.session_vars_mut().found_in_plan_cache = execution.cache_hit();
         Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+}
+
+impl<T: super::CompilerSession> ExplainCompile for T {}
+
+/// Names the AST variant behind a refused statement, for a "not supported
+/// yet" message that says WHAT it refused instead of just that it did.
+///
+/// Every statement enum here derives `Debug`, and a derived `Debug` for an
+/// enum always starts with the bare variant name (`ShowMasterStatus`, or
+/// `Explain(ExplainStmt { .. })` for one carrying a payload) -- so taking the
+/// leading identifier out of `{:?}` names the variant without a second,
+/// separately-maintained match arm per statement kind.
+pub fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
+    format!("{value:?}")
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Names a statement one layer deeper than [`Stmt`]'s own variant: naming the
+/// wrapper alone ("Ddl", "Admin") would repeat what the caller already knows
+/// it saw a DDL or admin statement, so this names the DDL/ADMIN/SESSION kind
+/// it wraps instead -- the same depth `explain_stmt`'s own "EXPLAIN of a WITH
+/// clause" / "EXPLAIN of a set operation" messages already name theirs at.
+pub fn stmt_kind_name(stmt: &tidb_ast::Stmt) -> String {
+    match stmt {
+        tidb_ast::Stmt::Query(query) => variant_name(&**query),
+        tidb_ast::Stmt::Dml(dml) => variant_name(&**dml),
+        tidb_ast::Stmt::Ddl(ddl) => variant_name(&**ddl),
+        tidb_ast::Stmt::Admin(admin) => variant_name(&**admin),
+        tidb_ast::Stmt::Session(session) => variant_name(&**session),
     }
 }

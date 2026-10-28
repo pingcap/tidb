@@ -54,45 +54,46 @@
 //!   which [`pin_field_names`] cannot reach: the statement carries no marker,
 //!   so it is never restored.
 
+#[allow(unused_imports)]
+use super::*;
+use crate::compiler::PlanCacheableChecker;
 use std::collections::HashMap;
 use tidb_expr::user_vars::UserVarsReader;
 
 use tidb_ast::{Expr, PrepareSource, QueryStmt, SelectField, Stmt};
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use crate::DriverError;
 
-use crate::record_set::PendingExecution;
-use crate::Session;
 
 /// One prepared statement of a session: Go's retained `PlanCacheStmt` input
 /// plus the cache-owned physical SELECT descriptor.
 #[derive(Debug, Clone)]
-pub(crate) struct PreparedStatement {
-    pub(crate) id: u32,
-    pub(crate) original_sql: String,
-    pub(crate) database: String,
+pub struct PreparedStatement {
+    pub id: u32,
+    pub original_sql: String,
+    pub database: String,
     /// The statement text to run, with every unaliased marker-bearing select
     /// field already carrying its Go column name (see [`alias_marker_fields`]).
-    sql: String,
+    pub sql: String,
     /// Go `PlanCacheStmt.PreparedAst`: the one PREPARE-time parse cloned and
     /// bound on every EXECUTE. No execute reparses restored SQL.
-    pub(crate) statement: Stmt,
+    pub statement: Stmt,
     /// Go `PlanCacheStmt.VisitInfos`: derived once at PREPARE against the
     /// database current then, checked by every EXECUTE.
-    privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
+    pub privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
     /// Go `PlanCacheStmt.ParamCount`: the number of `?` markers the statement
     /// carries, which fixes exactly how many values an `EXECUTE` must supply.
-    param_count: usize,
+    pub param_count: usize,
     /// Go `PlanCacheStmt.StmtCacheable` and `UncacheableReason`, decided ONCE
     /// at `PREPARE` by `IsASTCacheable` -- an uncacheable statement never
     /// reports a hit, and never pays the walk again.
-    cacheable: Result<(), String>,
+    pub cacheable: Result<(), String>,
     /// SELECT syntax and cache-key metadata. Physical entries belong to the
     /// session cache; hits rebuild its tree in place before execution.
-    select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
+    pub select_plan: Option<std::sync::Arc<crate::PreparedSelectPlan>>,
     /// INSERT/UPDATE/DELETE syntax and cache-key metadata. The ordinary DML
     /// executor consumes the physical root from the same session cache.
-    dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
+    pub dml_plan: Option<std::sync::Arc<crate::PreparedDmlPlan>>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
     /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with
@@ -100,11 +101,11 @@ pub(crate) struct PreparedStatement {
     /// `EXECUTE l1 USING @ls` for `@ls = '2'` and `USING @neg` for
     /// `@neg = -1` are both `[planner:1210]Incorrect arguments to LIMIT`,
     /// while `@l = 2` runs.
-    limit_markers: Vec<usize>,
+    pub limit_markers: Vec<usize>,
     /// Go `PlanCacheStmt.SchemaVersion`: the schema version the statement was
     /// last preprocessed against. An EXECUTE under another version
     /// re-preprocesses, and a failure there is `ErrSchemaChanged`.
-    schema_version: u64,
+    pub schema_version: u64,
 }
 
 /// SQL names retain their shared connection-wide prepared statement ID.
@@ -112,514 +113,7 @@ pub(crate) struct PreparedStatement {
 /// plain `map[string]uint32`, so lookups are case-SENSITIVE. Captured:
 /// `PREPARE MyStmt FROM 'select 1'` followed by `EXECUTE mystmt` is
 /// `[planner:8111]Prepared statement not found`.
-pub(crate) type PreparedStore = HashMap<String, PreparedStatement>;
-
-impl Session {
-    /// The text a prepared name holds, if this session holds that name.
-    ///
-    /// `EXECUTE` is the one statement whose answer SHAPE is not in its own
-    /// parse -- it is whatever the prepared statement answers -- so
-    /// [`Session::statement_kind_parsed`] resolves the name through here
-    /// rather than guessing from the `EXECUTE` keyword.
-    pub(crate) fn prepared_statement_sql(&self, name: &str) -> Option<&str> {
-        self.prepared_statements
-            .get(name)
-            .map(|prepared| prepared.sql.as_str())
-    }
-
-    /// The statement a prepared name holds, if this session holds that name.
-    pub fn prepared_statement_node(&self, name: &str) -> Option<&Stmt> {
-        self.prepared_statements
-            .get(name)
-            .map(|prepared| &prepared.statement)
-    }
-
-    /// One `EXECUTE ... USING @name` value: Go `SetParameterValuesIntoSCtx`
-    /// evaluates the entry's `getvar` function (`usingParam.Eval`), and a
-    /// string read comes back stamped with the variable's type's collation
-    /// (`getStringVarFunctionClass` copies it from `GetUserVarType`;
-    /// `ScalarFunction.Eval` -> `SetValue`), which the parameter's type then
-    /// follows (`InferParamTypeFromDatum`). A gbk client's `SET @v = '中'`
-    /// therefore binds as gbk text.
-    fn using_param_value(&self, name: &str) -> Datum {
-        let name = tidb_util::stringutil::go_to_lower(name);
-        let value = self
-            .user_vars
-            .get_user_var_val(&name)
-            .unwrap_or(Datum::Null);
-        let Datum::String(string) = &value else {
-            return value;
-        };
-        let Some(field_type) = self.user_vars.get_user_var_type(&name) else {
-            return value;
-        };
-        use tidb_datatype::EvalType;
-        let string_read = !matches!(
-            field_type.eval_type(),
-            EvalType::Int | EvalType::Real | EvalType::Decimal | EvalType::Datetime
-        );
-        if !string_read || field_type.charset_name().is_empty() {
-            return value;
-        }
-        match tidb_datatype::Collation::from_name(field_type.collation_name()) {
-            Some(collation) if collation != string.collation() => {
-                Datum::new_collation_string(string.bytes(), collation)
-            }
-            _ => value,
-        }
-    }
-
-    /// The text of a prepared DDL statement named by a text-protocol
-    /// `EXECUTE name` with no `USING` values, parsed. Go's `ExecuteExec` runs
-    /// the prepared plan as the statement's body, so a node that owns DDL
-    /// routes this body itself instead of letting the session run it.
-    pub fn prepared_ddl_body(&self, stmt: &Stmt) -> Option<(String, Stmt)> {
-        let Stmt::Session(session) = stmt else {
-            return None;
-        };
-        let tidb_ast::SessionStmt::Execute { name, using } = session.as_ref() else {
-            return None;
-        };
-        if !using.is_empty() {
-            return None;
-        }
-        let prepared = self.prepared_statements.get(name)?;
-        if prepared.param_count != 0 || !matches!(prepared.statement, Stmt::Ddl(_)) {
-            return None;
-        }
-        Some((prepared.sql.clone(), prepared.statement.clone()))
-    }
-
-    /// Go `PrepareExec.Next`: parses the statement text and stores it under
-    /// `name`, replacing whatever that name held before.
-    ///
-    /// The text is PARSED here, which is why a syntax error is reported by
-    /// `PREPARE` and not by the `EXECUTE` that would have run it. A text that
-    /// parses into more than one statement is Go's `ErrPrepareMulti`.
-    pub(crate) fn prepare_statement(
-        &mut self,
-        name: &str,
-        source: &PrepareSource,
-    ) -> Result<(), DriverError> {
-        let text = match source {
-            PrepareSource::Sql(sql) => sql.clone(),
-            // Go evaluates the variable and parses its VALUE as SQL, so a
-            // variable holding a non-string is stringified first: captured,
-            // `SET @num = 5; PREPARE pn FROM @num` is the syntax error
-            // `near "5"`, and an unset variable parses the text `NULL`.
-            PrepareSource::Var(name) => self.prepare_source_text(name),
-        };
-        // Go `PrepareExec` for the SQL `PREPARE` (`needReset` false) passes
-        // only `CharsetConnection`/`CollationConnection`: the text is a string
-        // value, already converted, so the client encoding is the scanner's
-        // default.
-        let mut statements = tidb_parser::parse_multi_with_sql_mode_and_config(
-            &text,
-            self.scanner_sql_mode(),
-            tidb_parser::ParserConfig {
-                charset_client: tidb_parser::ParserConfig::default().charset_client,
-                ..self.vars.build_parser_config()
-            },
-        )
-        .map_err(|e| {
-            let raw = e.compatibility_message(&text);
-            // go's PREPARE appends the inner parse failure's RAW error
-            // (the positional text, under the generic 1105) at the parse
-            // site; the classified 1064 lands afterwards from the
-            // statement error return -- SHOW WARNINGS carries both rows.
-            self.append_warning(crate::WarningLevel::Error, 1105, raw.clone());
-            DriverError::from(tidb_util::misc::syntax_error(raw))
-        })?;
-        if statements.len() != 1 {
-            return Err(DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
-            ));
-        }
-        let mut statement = statements.remove(0);
-        // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
-        if is_unpreparable(&statement) {
-            return Err(DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
-            ));
-        }
-        // Go `Preprocess` at PREPARE (`handleTableName`): the retained
-        // statement names its tables by the database current NOW, so its
-        // requests below and every EXECUTE after a `USE` agree.
-        crate::binding::pin_current_database(&mut statement, self.current_database())?;
-        let param_count = tidb_executor::parsed_parameter_count(&statement);
-        let limit_markers = limit_marker_orders(&statement);
-        // Go's PrepareExec builds the plan with each variable read as its value
-        // NOW (`rewriteVariable`); the retained statement keeps the variables,
-        // which EXECUTE binds afresh. Only the marker-free query validated
-        // below needs the bound copy.
-        let validated_query = match &statement {
-            tidb_ast::Stmt::Query(_) => {
-                let mut bound = statement.clone();
-                self.bind_variables(&mut bound)?;
-                // EXECUTE plans the tree the statement dispatch rewrites:
-                // MATCH ... AGAINST's LIKE fallback is applied there, so the
-                // PREPARE-time plan is built over the same tree.
-                self.rewrite_fts_for_planning(&mut bound)?;
-                Some(bound)
-            }
-            _ => None,
-        };
-        // Build statement-local planner state before locking the catalog: the
-        // context's sequence/key-decode snapshots consult that same catalog.
-        let planner_context = self.statement_context(false);
-        // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
-        // PREPARE, and stores the verdict on the `PlanCacheStmt`.
-        // Go's PREPARE preprocesses against the session's infoschema, LOCAL
-        // temporary tables included, and reads under the open transaction.
-        let catalog = self.with_catalog_scope(true, |catalog| Ok(catalog.clone()))?;
-        let (cacheable, select_plan, dml_plan, skip_reason) = {
-            let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
-            // go's PrepareExec builds the plan AT PREPARE, so plan errors
-            // surface here rather than at the first EXECUTE (oracle m21:
-            // `PREPARE st2 FROM 'SELECT no_such_col'` answers 1054 with the
-            // error row). Marker-carrying statements plan against BOUND
-            // parameters at EXECUTE, so only marker-free ones validate here.
-            // The built plan is discarded -- the cache envelope above and
-            // the EXECUTE-time plan remain the execution source.
-            match &validated_query {
-                Some(tidb_ast::Stmt::Query(query)) if param_count == 0 => {
-                    self.retrieving_memory_tables(&planner_context, |session| {
-                        tidb_executor::plan_query_meta_stmt(
-                            query,
-                            &catalog,
-                            session.current_database(),
-                            &planner_context,
-                        )
-                    })?;
-                }
-                // Go builds this plan with each `?` still a ParamMarkerExpr,
-                // so what the markers will hold is not checked, but a name the
-                // query cannot resolve is refused. A marker stands here as a
-                // value, and an error raised under BOTH NULL and 1 does not
-                // depend on that value: it is the query's own.
-                Some(bound @ tidb_ast::Stmt::Query(_)) => {
-                    let stand_in_error = |stand_in: &Datum| -> Option<DriverError> {
-                        let values = vec![stand_in.clone(); param_count];
-                        let tidb_ast::Stmt::Query(query) =
-                            tidb_executor::bind_statement(bound.clone(), &values).ok()?
-                        else {
-                            return None;
-                        };
-                        tidb_executor::plan_query_meta_stmt(
-                            &query,
-                            &catalog,
-                            self.current_database(),
-                            &planner_context.with_isolated_warnings(),
-                        )
-                        .err()
-                        // A scan of a memory table needs the session to
-                        // retrieve its rows, which says nothing of the query.
-                        .filter(|error| !matches!(error, DriverError::MemTableRetrievalNeeded))
-                    };
-                    // A shape this tier cannot plan is no answer Go gives,
-                    // so it never refuses a PREPARE Go would admit.
-                    let rust_only = |error: &DriverError| {
-                        matches!(
-                            error,
-                            DriverError::Unsupported(_)
-                                | DriverError::Exec(tidb_executor::ExecError::Unsupported(_))
-                                | DriverError::Exec(tidb_executor::ExecError::Eval(
-                                    tidb_expr::EvalError::Unsupported(_)
-                                ))
-                        )
-                    };
-                    if let (Some(with_null), Some(with_one)) =
-                        (stand_in_error(&Datum::Null), stand_in_error(&Datum::Int(1)))
-                    {
-                        let (null_reported, one_reported) = (
-                            with_null.clone().to_mysql_error(),
-                            with_one.to_mysql_error(),
-                        );
-                        if null_reported.code == one_reported.code
-                            && null_reported.message == one_reported.message
-                            && !rust_only(&with_null)
-                        {
-                            return Err(with_null);
-                        }
-                    }
-                }
-                _ => {}
-            }
-            // go's plan cache records the refusal as a statement warning at
-            // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
-            // answers (ok) with `skip prepared plan-cache: not a
-            // SELECT/UPDATE/INSERT/DELETE/SET statement`).
-            let skip_reason = cacheable
-                .as_ref()
-                .err()
-                .map(|reason| format!("skip prepared plan-cache: {reason}"));
-            let select_plan = if cacheable.is_ok() {
-                tidb_executor::build_prepared_select_plan(
-                    &statement,
-                    param_count,
-                    &catalog,
-                    self.current_database(),
-                    &planner_context,
-                )
-                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
-            } else {
-                None
-            };
-            let dml_plan = if cacheable.is_ok() {
-                tidb_executor::build_prepared_dml_plan(
-                    &statement,
-                    param_count,
-                    &catalog,
-                    self.current_database(),
-                )?
-                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
-            } else {
-                None
-            };
-            (cacheable, select_plan, dml_plan, skip_reason)
-        };
-        // go's plan cache records the refusal as a statement warning at
-        // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
-        // answers (ok) with `skip prepared plan-cache: not a
-        // SELECT/UPDATE/INSERT/DELETE/SET statement`).
-        if let Some(reason) = skip_reason {
-            self.append_warning(crate::WarningLevel::Warning, 1105, reason);
-        }
-        // Only a statement that CARRIES markers is ever restored (that is what
-        // binding does), so only that statement needs its column names pinned
-        // against the restore. A marker-free statement keeps the text the user
-        // wrote and runs through the ordinary path, names and all.
-        let original_sql = text.clone();
-        let sql = if param_count > 0 && pin_field_names(&mut statement) {
-            statement.restore()
-        } else {
-            text
-        };
-        let privilege_requests = self.collect_table_privileges(&statement, true)?;
-        // Go `GeneratePlanCacheStmtWithAST` ends with `checkPreparedPriv`:
-        // PREPARE itself is refused without the statement's privileges.
-        self.check_table_privilege_requests(&privilege_requests)?;
-        let id = self.allocate_prepared_statement_id();
-        let schema_version = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
-        self.prepared_statements.insert(
-            name.to_owned(),
-            PreparedStatement {
-                id,
-                original_sql,
-                database: self.current_database().to_owned(),
-                sql,
-                statement,
-                privilege_requests,
-                param_count,
-                limit_markers,
-                cacheable,
-                select_plan,
-                dml_plan,
-                schema_version,
-            },
-        );
-        Ok(())
-    }
-
-    /// The SQL text a `PREPARE ... FROM @var` parses: the variable's value as
-    /// its string form, with an unset variable reading as `NULL` exactly as
-    /// Go's `GetVar` -> `Datum.ToString` does.
-    fn prepare_source_text(&self, name: &str) -> String {
-        let value = self
-            .user_vars
-            .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
-            .unwrap_or(Datum::Null);
-        // A value with no text form reads as `NULL`, the same text an unset
-        // variable parses -- which is a syntax error unless the whole prepared
-        // text is literally `NULL`, so nothing is silently accepted here.
-        crate::datum_text(&value).unwrap_or_else(|| "NULL".to_owned())
-    }
-
-    /// Go `ExecuteExec`: looks the statement up, binds the `USING` variables'
-    /// current values to its markers, and runs the result.
-    pub(crate) fn execute_prepared_statement(
-        &mut self,
-        name: &str,
-        using: &[Expr],
-    ) -> Result<PendingExecution, DriverError> {
-        // Go `planCachePreprocess` step 4: under a new schema version the
-        // statement is preprocessed again, and if that fails "the real reason
-        // for the error is schema changed" -- `ErrSchemaChanged` over the inner
-        // error's `Error()` text, class prefix included. The table-resolution
-        // failure is the preprocess failure this tier can see.
-        let current = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
-        let stale = self
-            .prepared_statements
-            .get(name)
-            .is_some_and(|prepared| prepared.schema_version != current);
-        let result = self.execute_prepared_statement_inner(name, using);
-        if !stale {
-            return result;
-        }
-        match result {
-            Ok(pending) => {
-                if let Some(prepared) = self.prepared_statements.get_mut(name) {
-                    prepared.schema_version = current;
-                }
-                Ok(pending)
-            }
-            Err(error) => {
-                let inner = error.clone().to_mysql_error();
-                let table_gone = inner.identity
-                    == Some(tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.identity());
-                if table_gone {
-                    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_SCHEMA_CHANGED.generate_with_stack(
-                            format!("Schema change caused error: {}", inner.error_string()),
-                        ),
-                    )))
-                } else {
-                    Err(error)
-                }
-            }
-        }
-    }
-
-    fn execute_prepared_statement_inner(
-        &mut self,
-        name: &str,
-        using: &[Expr],
-    ) -> Result<PendingExecution, DriverError> {
-        let prepared = self
-            .prepared_statements
-            .get(name)
-            .cloned()
-            .ok_or(DriverError::from(
-                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
-            ))?;
-        // Go `planCachePreprocess` step 1, before any value is evaluated.
-        if using.len() != prepared.param_count {
-            return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
-            ));
-        }
-        // Go `SetParameterValuesIntoSCtx`: each `USING` entry is evaluated to
-        // a Datum, and the parameter's TYPE then follows from that value
-        // (`InferParamTypeFromDatum`) rather than from anything the PREPARE
-        // knew. The parser admits only user variables here, so evaluating one
-        // is a lookup in this session's own map.
-        let values: Vec<Datum> = using
-            .iter()
-            .map(|expr| match expr {
-                Expr::UserVar(name) => self.using_param_value(name),
-                _ => unreachable!("the parser admits only @variables in USING"),
-            })
-            .collect();
-        // Go checks a `LIMIT` parameter's KIND, not just its value, so a
-        // string that happens to read as a number is refused as firmly as a
-        // negative integer is.
-        for &order in &prepared.limit_markers {
-            match values.get(order) {
-                Some(Datum::Int(value)) if *value >= 0 => {}
-                Some(Datum::UInt(_)) => {}
-                _ => {
-                    return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
-                            .generate_with_stack_by_args(&["LIMIT".into()]),
-                    ))
-                }
-            }
-        }
-        // Go summarizes an EXECUTE under the digest of the statement text as
-        // PREPAREd, not under the marker-aliased text the port runs.
-        self.retarget_prepared_statement_observation(&prepared.original_sql);
-        let (effective_statement, binding_sql) =
-            self.prepared_statement_with_binding(&prepared.statement);
-        let mut effective_statement = effective_statement.into_owned();
-        // EXECUTE and its bound body share one result lifecycle. Keep the
-        // binding match while the body applies its own hints and metadata.
-        let binding_matched = binding_sql.is_some();
-        self.rewrite_fts_for_planning(&mut effective_statement)?;
-        // go's plan cache re-checks the stored verdict on every EXECUTE and
-        // records the refusal as a statement warning (oracle m21: EXECUTE
-        // st3 carries the same skip row as its PREPARE). A cacheable plan
-        // whose root is a TableDual is refused with its own reason (oracle
-        // m21: EXECUTE st USING @p over `SELECT ? + 1` carries `skip
-        // prepared plan-cache: get a TableDual plan`).
-        // Reported once the uncached statement's boundary has reset the
-        // warnings (`prepare_bound_execution`).
-        self.pending_plan_cache_refusal = prepared
-            .cacheable
-            .is_ok()
-            .then(|| self.prepared_plan_cache_refusal(&prepared.statement, &effective_statement))
-            .flatten();
-        if prepared.cacheable.is_ok()
-            && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
-        {
-            if let Some(cached) = prepared.select_plan.as_ref().and_then(|plan| {
-                self.bind_cached_prepared_select_for_statement(
-                    plan,
-                    &values,
-                    &effective_statement,
-                    binding_sql.as_deref(),
-                )
-            }) {
-                let result = self.prepare_cached_select_execution(
-                    &cached,
-                    &prepared.sql,
-                    &prepared.privilege_requests,
-                );
-                if binding_matched {
-                    self.vars.found_in_binding = true;
-                }
-                return result;
-            }
-            if let Some(cached) = prepared.dml_plan.as_ref().and_then(|plan| {
-                self.bind_cached_prepared_dml_for_statement(
-                    plan,
-                    &values,
-                    &effective_statement,
-                    binding_sql.as_deref(),
-                )
-            }) {
-                let result = self.execute_cached_prepared_dml(
-                    &cached,
-                    &prepared.sql,
-                    &prepared.privilege_requests,
-                );
-                if binding_matched {
-                    self.vars.found_in_binding = true;
-                }
-                return result.map(PendingExecution::Complete);
-            }
-        }
-        let bound = tidb_executor::bind_statement(effective_statement, &values)?;
-        // Go builds the prepared statement's own plan and runs it as this
-        // statement's body, so the inner statement goes through the same
-        // dispatch every other statement does -- including DDL's implicit
-        // commit, which is why `EXECUTE` of a prepared `CREATE TABLE` works
-        // (captured).
-        let result =
-            self.prepare_bound_execution(&prepared.sql, bound, &prepared.privilege_requests);
-        if binding_matched {
-            self.vars.found_in_binding = true;
-        }
-        result
-    }
-
-    /// Go `DeallocateExec.Next`: drops the name, or reports
-    /// `ErrStmtNotFound` when the session does not hold it. `DROP PREPARE`
-    /// parses to the same statement and behaves identically.
-    pub(crate) fn deallocate_prepared_statement(&mut self, name: &str) -> Result<(), DriverError> {
-        match self.prepared_statements.remove(name) {
-            Some(prepared) => {
-                self.release_prepared_plans(
-                    prepared.select_plan.as_deref(),
-                    prepared.dml_plan.as_deref(),
-                );
-                Ok(())
-            }
-            None => Err(DriverError::from(
-                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
-            )),
-        }
-    }
-}
+pub type PreparedStore = HashMap<String, PreparedStatement>;
 
 /// Whether this statement kind may not be prepared at all.
 ///
@@ -654,7 +148,7 @@ fn is_unpreparable(stmt: &Stmt) -> bool {
 /// go's plan for a FROM-less `SELECT` roots at a `TableDual`, which the
 /// prepared plan cache refuses (oracle m21: `EXECUTE st USING @p` over
 /// `SELECT ? + 1` carries `skip prepared plan-cache: get a TableDual plan`).
-pub(crate) fn plans_over_table_dual(stmt: &Stmt) -> bool {
+pub fn plans_over_table_dual(stmt: &Stmt) -> bool {
     let Stmt::Query(query) = stmt else {
         return false;
     };
@@ -761,3 +255,347 @@ fn pin_field_names(stmt: &mut Stmt) -> bool {
     }
     pinned
 }
+
+/// Go `PrepareExec`, `ExecuteExec` and `DeallocateExec` (`executor/prepared.go`).
+pub trait PreparedExec: super::CompilerSession {
+    /// The text a prepared name holds, if this session holds that name.
+    ///
+    /// `EXECUTE` is the one statement whose answer SHAPE is not in its own
+    /// parse -- it is whatever the prepared statement answers -- so
+    /// [`Session::statement_kind_parsed`] resolves the name through here
+    /// rather than guessing from the `EXECUTE` keyword.
+    fn prepared_statement_sql(&self, name: &str) -> Option<&str> {
+        self.prepared_statements_ref()
+            .get(name)
+            .map(|prepared| prepared.sql.as_str())
+    }
+
+    /// The statement a prepared name holds, if this session holds that name.
+    fn prepared_statement_node(&self, name: &str) -> Option<&Stmt> {
+        self.prepared_statements_ref()
+            .get(name)
+            .map(|prepared| &prepared.statement)
+    }
+
+    /// One `EXECUTE ... USING @name` value: Go `SetParameterValuesIntoSCtx`
+    /// evaluates the entry's `getvar` function (`usingParam.Eval`), and a
+    /// string read comes back stamped with the variable's type's collation
+    /// (`getStringVarFunctionClass` copies it from `GetUserVarType`;
+    /// `ScalarFunction.Eval` -> `SetValue`), which the parameter's type then
+    /// follows (`InferParamTypeFromDatum`). A gbk client's `SET @v = '中'`
+    /// therefore binds as gbk text.
+    fn using_param_value(&self, name: &str) -> Datum {
+        let name = tidb_util::stringutil::go_to_lower(name);
+        let value = self
+            .user_vars()
+            .get_user_var_val(&name)
+            .unwrap_or(Datum::Null);
+        let Datum::String(string) = &value else {
+            return value;
+        };
+        let Some(field_type) = self.user_vars().get_user_var_type(&name) else {
+            return value;
+        };
+        use tidb_datatype::EvalType;
+        let string_read = !matches!(
+            field_type.eval_type(),
+            EvalType::Int | EvalType::Real | EvalType::Decimal | EvalType::Datetime
+        );
+        if !string_read || field_type.charset_name().is_empty() {
+            return value;
+        }
+        match tidb_datatype::Collation::from_name(field_type.collation_name()) {
+            Some(collation) if collation != string.collation() => {
+                Datum::new_collation_string(string.bytes(), collation)
+            }
+            _ => value,
+        }
+    }
+
+    /// The text of a prepared DDL statement named by a text-protocol
+    /// `EXECUTE name` with no `USING` values, parsed. Go's `ExecuteExec` runs
+    /// the prepared plan as the statement's body, so a node that owns DDL
+    /// routes this body itself instead of letting the session run it.
+    fn prepared_ddl_body(&self, stmt: &Stmt) -> Option<(String, Stmt)> {
+        let Stmt::Session(session) = stmt else {
+            return None;
+        };
+        let tidb_ast::SessionStmt::Execute { name, using } = session.as_ref() else {
+            return None;
+        };
+        if !using.is_empty() {
+            return None;
+        }
+        let prepared = self.prepared_statements_ref().get(name)?;
+        if prepared.param_count != 0 || !matches!(prepared.statement, Stmt::Ddl(_)) {
+            return None;
+        }
+        Some((prepared.sql.clone(), prepared.statement.clone()))
+    }
+
+    /// Go `PrepareExec.Next`: parses the statement text and stores it under
+    /// `name`, replacing whatever that name held before.
+    ///
+    /// The text is PARSED here, which is why a syntax error is reported by
+    /// `PREPARE` and not by the `EXECUTE` that would have run it. A text that
+    /// parses into more than one statement is Go's `ErrPrepareMulti`.
+    fn prepare_statement(
+        &mut self,
+        name: &str,
+        source: &PrepareSource,
+    ) -> Result<(), DriverError> {
+        let text = match source {
+            PrepareSource::Sql(sql) => sql.clone(),
+            // Go evaluates the variable and parses its VALUE as SQL, so a
+            // variable holding a non-string is stringified first: captured,
+            // `SET @num = 5; PREPARE pn FROM @num` is the syntax error
+            // `near "5"`, and an unset variable parses the text `NULL`.
+            PrepareSource::Var(name) => self.prepare_source_text(name),
+        };
+        // Go `PrepareExec` for the SQL `PREPARE` (`needReset` false) passes
+        // only `CharsetConnection`/`CollationConnection`: the text is a string
+        // value, already converted, so the client encoding is the scanner's
+        // default.
+        let mut statements = tidb_parser::parse_multi_with_sql_mode_and_config(
+            &text,
+            self.scanner_sql_mode(),
+            tidb_parser::ParserConfig {
+                charset_client: tidb_parser::ParserConfig::default().charset_client,
+                ..self.session_vars().build_parser_config()
+            },
+        )
+        .map_err(|e| {
+            let raw = e.compatibility_message(&text);
+            // go's PREPARE appends the inner parse failure's RAW error
+            // (the positional text, under the generic 1105) at the parse
+            // site; the classified 1064 lands afterwards from the
+            // statement error return -- SHOW WARNINGS carries both rows.
+            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Error, 1105, raw.clone()));
+            DriverError::from(tidb_util::misc::syntax_error(raw))
+        })?;
+        if statements.len() != 1 {
+            return Err(DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
+            ));
+        }
+        let mut statement = statements.remove(0);
+        // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
+        if is_unpreparable(&statement) {
+            return Err(DriverError::from(
+                tidb_util::dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
+            ));
+        }
+        // Go `Preprocess` at PREPARE (`handleTableName`): the retained
+        // statement names its tables by the database current NOW, so its
+        // requests below and every EXECUTE after a `USE` agree.
+        tidb_bindinfo::binding::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
+        let param_count = crate::parsed_parameter_count(&statement);
+        let limit_markers = limit_marker_orders(&statement);
+        // Go's PrepareExec builds the plan with each variable read as its value
+        // NOW (`rewriteVariable`); the retained statement keeps the variables,
+        // which EXECUTE binds afresh. Only the marker-free query validated
+        // below needs the bound copy.
+        let validated_query = match &statement {
+            tidb_ast::Stmt::Query(_) => {
+                let mut bound = statement.clone();
+                self.bind_variables(&mut bound)?;
+                // EXECUTE plans the tree the statement dispatch rewrites:
+                // MATCH ... AGAINST's LIKE fallback is applied there, so the
+                // PREPARE-time plan is built over the same tree.
+                self.rewrite_fts_for_planning(&mut bound)?;
+                Some(bound)
+            }
+            _ => None,
+        };
+        // Build statement-local planner state before locking the catalog: the
+        // context's sequence/key-decode snapshots consult that same catalog.
+        let planner_context = self.statement_context(false);
+        // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
+        // PREPARE, and stores the verdict on the `PlanCacheStmt`.
+        // Go's PREPARE preprocesses against the session's infoschema, LOCAL
+        // temporary tables included, and reads under the open transaction.
+        let catalog = self.with_catalog_scope(true, |catalog| Ok(catalog.clone()))?;
+        let (cacheable, select_plan, dml_plan, skip_reason) = {
+            let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
+            // go's PrepareExec builds the plan AT PREPARE, so plan errors
+            // surface here rather than at the first EXECUTE (oracle m21:
+            // `PREPARE st2 FROM 'SELECT no_such_col'` answers 1054 with the
+            // error row). Marker-carrying statements plan against BOUND
+            // parameters at EXECUTE, so only marker-free ones validate here.
+            // The built plan is discarded -- the cache envelope above and
+            // the EXECUTE-time plan remain the execution source.
+            match &validated_query {
+                Some(tidb_ast::Stmt::Query(query)) if param_count == 0 => {
+                    self.retrieving_memory_tables(&planner_context, |session| {
+                        crate::plan_query_meta_stmt(
+                            query,
+                            &catalog,
+                            session.session_vars().current_db.as_str(),
+                            &planner_context,
+                        )
+                    })?;
+                }
+                // Go builds this plan with each `?` still a ParamMarkerExpr,
+                // so what the markers will hold is not checked, but a name the
+                // query cannot resolve is refused. A marker stands here as a
+                // value, and an error raised under BOTH NULL and 1 does not
+                // depend on that value: it is the query's own.
+                Some(bound @ tidb_ast::Stmt::Query(_)) => {
+                    let stand_in_error = |stand_in: &Datum| -> Option<DriverError> {
+                        let values = vec![stand_in.clone(); param_count];
+                        let tidb_ast::Stmt::Query(query) =
+                            crate::bind_statement(bound.clone(), &values).ok()?
+                        else {
+                            return None;
+                        };
+                        crate::plan_query_meta_stmt(
+                            &query,
+                            &catalog,
+                            self.session_vars().current_db.as_str(),
+                            &planner_context.with_isolated_warnings(),
+                        )
+                        .err()
+                        // A scan of a memory table needs the session to
+                        // retrieve its rows, which says nothing of the query.
+                        .filter(|error| !matches!(error, DriverError::MemTableRetrievalNeeded))
+                    };
+                    // A shape this tier cannot plan is no answer Go gives,
+                    // so it never refuses a PREPARE Go would admit.
+                    let rust_only = |error: &DriverError| {
+                        matches!(
+                            error,
+                            DriverError::Unsupported(_)
+                                | DriverError::Exec(crate::ExecError::Unsupported(_))
+                                | DriverError::Exec(crate::ExecError::Eval(
+                                    tidb_expr::EvalError::Unsupported(_)
+                                ))
+                        )
+                    };
+                    if let (Some(with_null), Some(with_one)) =
+                        (stand_in_error(&Datum::Null), stand_in_error(&Datum::Int(1)))
+                    {
+                        let (null_reported, one_reported) = (
+                            with_null.clone().to_mysql_error(),
+                            with_one.to_mysql_error(),
+                        );
+                        if null_reported.code == one_reported.code
+                            && null_reported.message == one_reported.message
+                            && !rust_only(&with_null)
+                        {
+                            return Err(with_null);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            // go's plan cache records the refusal as a statement warning at
+            // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
+            // answers (ok) with `skip prepared plan-cache: not a
+            // SELECT/UPDATE/INSERT/DELETE/SET statement`).
+            let skip_reason = cacheable
+                .as_ref()
+                .err()
+                .map(|reason| format!("skip prepared plan-cache: {reason}"));
+            let select_plan = if cacheable.is_ok() {
+                crate::build_prepared_select_plan(
+                    &statement,
+                    param_count,
+                    &catalog,
+                    self.session_vars().current_db.as_str(),
+                    &planner_context,
+                )
+                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
+            } else {
+                None
+            };
+            let dml_plan = if cacheable.is_ok() {
+                crate::build_prepared_dml_plan(
+                    &statement,
+                    param_count,
+                    &catalog,
+                    self.session_vars().current_db.as_str(),
+                )?
+                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
+            } else {
+                None
+            };
+            (cacheable, select_plan, dml_plan, skip_reason)
+        };
+        // go's plan cache records the refusal as a statement warning at
+        // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
+        // answers (ok) with `skip prepared plan-cache: not a
+        // SELECT/UPDATE/INSERT/DELETE/SET statement`).
+        if let Some(reason) = skip_reason {
+            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105, reason));
+        }
+        // Only a statement that CARRIES markers is ever restored (that is what
+        // binding does), so only that statement needs its column names pinned
+        // against the restore. A marker-free statement keeps the text the user
+        // wrote and runs through the ordinary path, names and all.
+        let original_sql = text.clone();
+        let sql = if param_count > 0 && pin_field_names(&mut statement) {
+            statement.restore()
+        } else {
+            text
+        };
+        let privilege_requests = self.collect_table_privileges(&statement, true)?;
+        // Go `GeneratePlanCacheStmtWithAST` ends with `checkPreparedPriv`:
+        // PREPARE itself is refused without the statement's privileges.
+        self.check_table_privilege_requests(&privilege_requests)?;
+        let id = self.allocate_prepared_statement_id();
+        let schema_version = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
+        let database = self.session_vars().current_db.clone();
+        self.prepared_statements_mut().insert(
+            name.to_owned(),
+            PreparedStatement {
+                id,
+                original_sql,
+                database,
+                sql,
+                statement,
+                privilege_requests,
+                param_count,
+                limit_markers,
+                cacheable,
+                select_plan,
+                dml_plan,
+                schema_version,
+            },
+        );
+        Ok(())
+    }
+
+    /// The SQL text a `PREPARE ... FROM @var` parses: the variable's value as
+    /// its string form, with an unset variable reading as `NULL` exactly as
+    /// Go's `GetVar` -> `Datum.ToString` does.
+    fn prepare_source_text(&self, name: &str) -> String {
+        let value = self
+            .user_vars()
+            .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
+            .unwrap_or(Datum::Null);
+        // A value with no text form reads as `NULL`, the same text an unset
+        // variable parses -- which is a syntax error unless the whole prepared
+        // text is literally `NULL`, so nothing is silently accepted here.
+        crate::simple::account_tables::sysvar_datum_text(&value).unwrap_or_else(|| "NULL".to_owned())
+    }
+
+    /// Go `DeallocateExec.Next`: drops the name, or reports
+    /// `ErrStmtNotFound` when the session does not hold it. `DROP PREPARE`
+    /// parses to the same statement and behaves identically.
+    fn deallocate_prepared_statement(&mut self, name: &str) -> Result<(), DriverError> {
+        match self.prepared_statements_mut().remove(name) {
+            Some(prepared) => {
+                self.release_prepared_plans(
+                    prepared.select_plan.as_deref(),
+                    prepared.dml_plan.as_deref(),
+                );
+                Ok(())
+            }
+            None => Err(DriverError::from(
+                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
+            )),
+        }
+    }
+}
+
+impl<T: super::CompilerSession> PreparedExec for T {}

@@ -23,19 +23,20 @@
 //! drains into its own warnings.
 
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{Catalog, DriverError};
+use crate::{Catalog, DriverError};
 
-use crate::instance_state::ViewerState;
+use crate::memtable_reader::ViewerState;
 use std::sync::Arc;
-use crate::{datetime_datum, go_uptime_string};
-use crate::process_arm::peer_cluster_table_rows;
+use crate::infoschema_reader::datetime_datum;
+use crate::memtable_reader::go_uptime_string;
+use crate::memtable_reader::peer_cluster_table_rows;
 
 impl ViewerState {
     /// Go `SQLDigestTextRetriever` over this node and, with `global`, its
     /// peers.
     fn sql_digest_texts(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         digests: impl IntoIterator<Item = String>,
         global: bool,
     ) -> Result<std::collections::HashMap<String, String>, DriverError> {
@@ -44,9 +45,9 @@ impl ViewerState {
 
     /// Go fetchClusterConfig checks CONFIG before discovery and reports per-node
     /// failures as warnings while retaining successful nodes.
-    pub(crate) fn cluster_config_rows(
+    pub fn cluster_config_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         if filters.iter().all(|filter| filter.skip_request()) {
@@ -93,11 +94,11 @@ impl ViewerState {
     #[allow(clippy::type_complexity)]
     fn cluster_diagnostics_servers(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         matches: impl Fn(&str, &str) -> bool,
     ) -> Result<
         Option<(
-            Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+            Arc<crate::cluster_diagnostics::ClusterDiagnosticsClient>,
             Vec<tidb_domain::cluster_topology::ClusterServer>,
         )>,
         DriverError,
@@ -125,9 +126,9 @@ impl ViewerState {
     /// Go `clusterServerInfoRetriever.retrieve` after its privilege check:
     /// ask every matching server's diagnostics service; a server that fails
     /// is a warning.
-    pub(crate) fn cluster_server_info_rows(
+    pub fn cluster_server_info_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         tp: tidb_proto::diagnosticspb::ServerInfoType,
         extractors: &[tidb_planner::memtable_predicate_extractor::ClusterTableExtractor],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
@@ -161,9 +162,9 @@ impl ViewerState {
     /// start time, an end time, and at least one pattern, level, instance or
     /// node type. Each matching server's diagnostics `SearchLog` stream is
     /// merged by time; a failing server is a warning.
-    pub(crate) fn cluster_log_rows(
+    pub fn cluster_log_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let Some(extractor) = extractors.iter().find(|extractor| !extractor.skip_request) else {
@@ -189,8 +190,8 @@ impl ViewerState {
             None
         };
         if let Some(refusal) = refusal {
-            return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-                tidb_executor::EvalError::Unsupported(refusal),
+            return Err(DriverError::Exec(crate::ExecError::Eval(
+                crate::EvalError::Unsupported(refusal),
             )));
         }
         let extractor = extractor.clone();
@@ -222,9 +223,9 @@ impl ViewerState {
 
 
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.
-    pub(crate) fn cluster_info_rows(
+    pub fn cluster_info_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
         let Some(topology) = self.cluster_topology.as_ref() else {
@@ -281,7 +282,7 @@ impl ViewerState {
 
     /// Go infoschema.GetInstanceAddr uses local status identity. This does not
     /// discover peers: loss of etcd cannot relabel or hide local process rows.
-    pub(crate) fn cluster_instance_address(&self) -> String {
+    pub fn cluster_instance_address(&self) -> String {
         let Some(syncer) = self.server_info_syncer.as_ref() else {
             return String::new();
         };
@@ -307,7 +308,7 @@ impl ViewerState {
     ///
     /// The rows are ordered by id so the table reads deterministically;
     /// Go's map iteration leaves the order unspecified.
-    pub(crate) fn tidb_servers_info_rows(
+    pub fn tidb_servers_info_rows(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
@@ -346,9 +347,9 @@ impl ViewerState {
 
     /// Receiving scan requirements use original column names, including predicates.
     /// None retains full-row callers; a present empty set needs no expensive fields.
-    pub(crate) fn local_cluster_table_rows_for(
+    pub fn local_cluster_table_rows_for(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         table_name: &str,
         registry: Option<&crate::process::ProcessRegistry>,
@@ -356,17 +357,17 @@ impl ViewerState {
         required: Option<&std::collections::HashSet<String>>,
         digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let source = tidb_executor::driver::infoschema_meta::cluster_table_source(table_name)
+        let source = crate::driver::infoschema_meta::cluster_table_source(table_name)
             .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
         let mut rows = match source {
             "PROCESSLIST" => {
                 if let Some(registry) = registry {
-                    crate::process_arm::format_process_rows(
+                    crate::memtable_reader::format_process_rows(
                         self.filter_process_rows(registry.snapshot()),
                         zone,
                     )
                 } else {
-                    crate::process_arm::format_process_rows(self.visible_process_rows(true), zone)
+                    crate::memtable_reader::format_process_rows(self.visible_process_rows(true), zone)
                 }
             }
             "TRX_SUMMARY" => self.transaction_summary_rows(registry),
@@ -374,7 +375,7 @@ impl ViewerState {
             | "STATEMENTS_SUMMARY_HISTORY"
             | "STATEMENTS_SUMMARY_EVICTED"
             | "TIDB_STATEMENTS_STATS" => {
-                let columns = tidb_executor::infoschema_reader::table_schema(source).expect("registered summary source");
+                let columns = crate::infoschema_reader::table_schema(source).expect("registered summary source");
                 let offsets: Vec<_> = columns
                     .iter()
                     .enumerate()
@@ -409,7 +410,7 @@ impl ViewerState {
     /// Local and received diagnostics borrow the same data and admission owners.
     fn diagnostic_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         source: &str,
         registry: Option<&crate::process::ProcessRegistry>,
@@ -430,11 +431,11 @@ impl ViewerState {
                     needs("KEY_INFO"),
                 )?
             }
-            "MEMORY_USAGE" => crate::dispatch::memory_usage_table_rows(),
+            "MEMORY_USAGE" => crate::memtable_reader::memory_usage_table_rows(),
             "MEMORY_USAGE_OPS_HISTORY" => {
                 tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             }
-            "TIDB_INDEX_USAGE" => tidb_executor::infoschema_reader::tidb_index_usage_rows(
+            "TIDB_INDEX_USAGE" => crate::infoschema_reader::tidb_index_usage_rows(
                 catalog,
                 &self.visibility,
                 self.index_usage.as_ref(),
@@ -464,7 +465,7 @@ impl ViewerState {
     /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
     fn tidb_trx_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         registry: Option<&crate::process::ProcessRegistry>,
         needs_text: bool,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
@@ -605,7 +606,7 @@ impl ViewerState {
     /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
     fn data_lock_waits_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
@@ -647,7 +648,7 @@ impl ViewerState {
             waits
                 .iter()
                 .map(|wait| {
-                    tidb_executor::keydecoder::decode_key(&wait.key, catalog)
+                    crate::keydecoder::decode_key(&wait.key, catalog)
                         .ok()
                         .and_then(|decoded| serde_json::to_vec(&decoded).ok())
                         .map(Datum::Bytes)
@@ -690,9 +691,9 @@ impl ViewerState {
 
     /// Each discovered peer consumes the same projected local table owner.
     /// The ordinary SQL executor retains residual predicates after fanout.
-    pub(crate) fn cluster_table_rows(
+    pub fn cluster_table_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         table_name: &str,
         columns: &[(String, FieldType)],
@@ -742,9 +743,9 @@ impl ViewerState {
 
 
     /// Shared discovery, cancellation and warnings for ordinary and restricted readers.
-    pub(crate) fn cluster_table_rows_with_rows(
+    pub fn cluster_table_rows_with_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         table_name: &str,
         columns: &[(String, FieldType)],
         offsets: &[usize],
@@ -782,13 +783,13 @@ impl ViewerState {
     /// Executor-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
     fn deadlock_history_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         needs_text: bool,
         needs_key_info: bool,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_datatype::{Collation, StringDatum};
-        use tidb_executor::deadlock_history::{
+        use crate::deadlock_history::{
             COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
             COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
         };
@@ -819,7 +820,7 @@ impl ViewerState {
                             let key_info = if item.key.is_empty() || !needs_key_info {
                                 Datum::Null
                             } else {
-                                tidb_executor::keydecoder::decode_key(
+                                crate::keydecoder::decode_key(
                                     &item.key,
                                     catalog.expect("requested key metadata"),
                                 )
@@ -857,7 +858,7 @@ impl ViewerState {
     /// the scan's extractor, after the PROCESS check.
     fn hot_regions_history_rows(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         catalog: &Catalog,
         extractor: Option<&tidb_planner::memtable_predicate_extractor::HotRegionsHistoryTableExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -888,7 +889,7 @@ impl ViewerState {
             .into_iter()
             .map(|server| server.status_address)
             .collect::<Vec<_>>();
-        tidb_executor::memtable_retrievers::tidb_hot_regions_history_rows(
+        crate::memtable_retrievers::tidb_hot_regions_history_rows(
             extractor,
             &pd_servers,
             catalog,
@@ -901,7 +902,7 @@ impl ViewerState {
     /// and system info PROCESS, checked before the extractor's SkipRequest.
     fn cluster_server_info_dispatch(
         &self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
         table_name: &str,
         extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -931,7 +932,7 @@ impl ViewerState {
 /// The columns a scan reads, upper-cased, which retrievers use to skip
 /// expensive fields; a cluster table's scan names them by id (`offset + 1`).
 fn required_columns(
-    read: &tidb_executor::mem_table_retrieval::MemTableRead,
+    read: &crate::mem_table_retrieval::MemTableRead,
     columns: &[(String, FieldType)],
 ) -> std::collections::HashSet<String> {
     let mut required: std::collections::HashSet<String> = read
@@ -949,26 +950,26 @@ fn required_columns(
 }
 
 /// The retriever for the diagnostic and cluster tables.
-pub(crate) struct ClusterTablesRetriever {
+pub struct ClusterTablesRetriever {
     viewer: ViewerState,
 }
 
 impl ClusterTablesRetriever {
-    pub(crate) fn new(viewer: ViewerState) -> Self {
+    pub fn new(viewer: ViewerState) -> Self {
         Self { viewer }
     }
 }
 
-impl tidb_executor::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
-    fn serves(&self, read: &tidb_executor::mem_table_retrieval::MemTableRead) -> bool {
+impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
+    fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
         use tidb_hack::GoCaseCompare;
         if !read
             .db_name
-            .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
         {
             return false;
         }
-        tidb_executor::driver::infoschema_meta::cluster_table_source(&read.table_name).is_some()
+        crate::driver::infoschema_meta::cluster_table_source(&read.table_name).is_some()
             || (!read.is_cluster_scan
                 && [
                     "TIDB_TRX",
@@ -989,20 +990,20 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for ClusterTablesRetr
 
     fn retrieve(
         &self,
-        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+        read: &crate::mem_table_retrieval::MemTableRead,
         catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_hack::GoCaseCompare;
         use tidb_planner::memtable_predicate_extractor::{
             ClusterTableFilter, MemTablePredicateExtractor as Extractor,
         };
         let table = read.table_name.as_str();
-        let columns = tidb_executor::infoschema_reader::table_schema(table);
+        let columns = crate::infoschema_reader::table_schema(table);
         let required = columns
             .as_deref()
             .map(|columns| required_columns(read, columns));
-        if tidb_executor::driver::infoschema_meta::cluster_table_source(table).is_some() {
+        if crate::driver::infoschema_meta::cluster_table_source(table).is_some() {
             let columns = columns.ok_or_else(|| {
                 DriverError::unsupported("a cluster table has no declared schema")
             })?;

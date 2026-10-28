@@ -19,14 +19,14 @@
 //! SQL spelling alone cannot identify the owner of an unqualified column.
 //! Other statement collectors still use the AST and remain a parity boundary.
 
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use tidb_ast::{DmlStmt, Stmt};
 
-use crate::privilege::PrivilegeType;
+use tidb_privilege::PrivilegeType;
 
 /// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TemporaryPrivilege {
+pub enum TemporaryPrivilege {
     SkipLocal,
     Check,
     CreateLocal,
@@ -35,50 +35,50 @@ pub(crate) enum TemporaryPrivilege {
 
 /// One `visitInfo` entry: a privilege demanded on one table.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TablePrivilegeRequest {
+pub struct TablePrivilegeRequest {
     /// Schema name, already resolved against the session's current database.
-    pub(crate) database: String,
+    pub database: String,
     /// Table name as written.
-    pub(crate) table: String,
+    pub table: String,
     /// The privilege Go's `appendVisitInfo` recorded.
-    pub(crate) privilege: PrivilegeType,
+    pub privilege: PrivilegeType,
     /// Whether Go attached a statement-specific `authErr` naming the table
     /// (`ErrTableaccessDenied`, 1142). Where it did not, `CheckPrivilege`
     /// falls to `ErrPrivilegeCheckFail` (8121) -- which is what a denied
     /// `UPDATE`'s `SET` target reports, since
     /// `logical_plan_builder.go`'s `buildNewAssignments` passes `nil`.
-    pub(crate) table_named_in_error: bool,
+    pub table_named_in_error: bool,
     /// Whether Go reports a database-scoped denial (1044) instead of the
     /// table-scoped 1142 form. `CREATE/DROP DATABASE` carry a schema name but
     /// no table, and their planner visitInfo attaches exactly that error.
-    pub(crate) database_named_in_error: bool,
+    pub database_named_in_error: bool,
     /// The database Go's `ErrDBaccessDenied` names, when it differs from the
     /// checked scope (a `LOCK TABLES` visit names its schema).
-    pub(crate) database_in_error: Option<String>,
+    pub database_in_error: Option<String>,
     /// Adapt admission without discarding original observation table names.
-    pub(crate) temporary_privilege: TemporaryPrivilege,
+    pub temporary_privilege: TemporaryPrivilege,
     /// Go authErr can name a different command/table than the checked visit.
-    pub(crate) table_error_override: Option<(&'static str, String)>,
+    pub table_error_override: Option<(&'static str, String)>,
     /// Go `appendDynamicVisitInfo`: dynamic privileges any one of which
     /// grants the visit (SUPER standing in for each); empty for an ordinary
     /// static-privilege visit.
-    pub(crate) dynamic_privileges: Vec<String>,
+    pub dynamic_privileges: Vec<String>,
     /// Go `dynamicWithGrant`: the dynamic privilege is needed WITH GRANT
     /// OPTION.
-    pub(crate) dynamic_with_grant: bool,
+    pub dynamic_with_grant: bool,
     /// Go's `ErrSpecificAccessDenied` authErr (1227), naming what the
     /// statement needs.
-    pub(crate) specific_denial: Option<&'static str>,
+    pub specific_denial: Option<&'static str>,
     /// Further static privileges that grant the visit as well: Go checks a
     /// combined mask (`RequestVerification` asks `priv & mask > 0`).
-    pub(crate) also_granted_by: Vec<PrivilegeType>,
+    pub also_granted_by: Vec<PrivilegeType>,
     /// Go's `ErrViewNoExplain` authErr (1345): the SHOW VIEW visit
     /// `BuildDataSourceFromView` appends under EXPLAIN.
-    pub(crate) view_no_explain: bool,
+    pub view_no_explain: bool,
 }
 
 impl TablePrivilegeRequest {
-    pub(crate) fn new(database: &str, table: &str, privilege: PrivilegeType) -> Self {
+    pub fn new(database: &str, table: &str, privilege: PrivilegeType) -> Self {
         Self {
             database: database.to_owned(),
             table: table.to_owned(),
@@ -127,8 +127,8 @@ fn split_path<'a>(path: &'a [String], current_db: &'a str) -> Option<(String, St
 /// Every `TableRef` reachable from `node`, in traversal order -- the row
 /// sources Go's `buildDataSource` visits, and therefore the tables it
 /// demands `SELECT` on.
-pub(crate) fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
-    crate::binding::collect_physical_table_refs(stmt)
+pub fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
+    tidb_bindinfo::binding::collect_physical_table_refs(stmt)
         .iter()
         .filter_map(|path| split_path(path, current_db))
         .collect()
@@ -140,28 +140,28 @@ pub(crate) fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)
 /// either it genuinely needs none (`SELECT 1`, `SET`, `BEGIN`), or its
 /// privileges are demanded by its own executor arm instead (every account
 /// statement, `ANALYZE`, `KILL`).
-pub(crate) fn required_table_privileges(
+pub fn required_table_privileges(
     stmt: &Stmt,
     current_db: &str,
     resolve_write: impl FnOnce(
         &tidb_ast::DmlStmt,
     ) -> Result<
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-        tidb_executor::DriverError,
+        crate::DriverError,
     >,
     resolve_read: impl FnOnce(
         &tidb_ast::QueryStmt,
     ) -> Result<
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-        tidb_executor::DriverError,
+        crate::DriverError,
     >,
     resolve_statement: impl FnOnce(
         &Stmt,
     ) -> Result<
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-        tidb_executor::DriverError,
+        crate::DriverError,
     >,
-) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
+) -> Result<Vec<TablePrivilegeRequest>, crate::DriverError> {
     let mut requests = Vec::new();
     match stmt {
         // A query's visit info is what Go's plan builder appends while it
@@ -279,7 +279,7 @@ pub(crate) fn required_table_privileges(
 
 /// The static privileges a `mysql.PrivilegeType` mask names; any one of them
 /// grants the visit, as `RequestVerification` asks `priv & mask > 0`.
-pub(crate) fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<PrivilegeType> {
+pub fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<PrivilegeType> {
     tidb_mysql::ALL_GLOBAL_PRIVS
         .iter()
         .copied()
@@ -290,7 +290,7 @@ pub(crate) fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<
 
 /// One plan-time [`tidb_planner::plan_builder::visit_info::VisitInfo`] as the
 /// request the session checks.
-pub(crate) fn request_of_visit(
+pub fn request_of_visit(
     visit: &tidb_planner::plan_builder::visit_info::VisitInfo,
 ) -> TablePrivilegeRequest {
     use tidb_planner::plan_builder::visit_info::VisitAuthError;

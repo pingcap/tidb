@@ -22,6 +22,7 @@
 //! session where it was, and the 61-table `SHOW TABLES` -- because two of
 //! them are the opposite of what the obvious guess would be.
 
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::tests_support::*;
 use crate::*;
 

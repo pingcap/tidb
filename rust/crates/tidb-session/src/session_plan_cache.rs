@@ -14,6 +14,7 @@
 
 //! Session physical cache lifetime and Go's ADMIN FLUSH PLAN_CACHE policy.
 
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::{DriverError, Session};
 use tidb_ast::AdminPlanCacheScope;
 
@@ -132,5 +133,26 @@ impl Session {
             self.plan_cache_invalidation.expire();
         }
         Ok(())
+    }
+
+    pub(crate) fn session_plan_cache_capacity(&self) -> usize {
+        // Go's capacity comes from the unified `tidb_session_plan_cache_size`
+        // ONLY (`session.go:2927`, `NewSimpleLRUCache(uint(s.SessionPlanCacheSize))`).
+        // The deprecated `tidb_non_prepared_plan_cache_size` writes an orphan
+        // field plus warning 1287 and has no readers — the Rust funnel reads
+        // nothing it wouldn't. The `unwrap_or(100)` is the defensive default
+        // matching `DefTiDBSessionPlanCacheSize`.
+        self.vars
+            .system_value("tidb_session_plan_cache_size")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(100)
+    }
+
+    /// Reads one session boolean, falling back to `default` when the variable
+    /// is unreadable -- a probe must never turn a variable-table problem into
+    /// a statement error.
+    pub(crate) fn session_bool(&self, name: &str, default: bool) -> bool {
+        self.vars.system_bool(name, default)
     }
 }

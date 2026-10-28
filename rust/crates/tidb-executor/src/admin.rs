@@ -116,7 +116,7 @@ pub fn show_imports_output() -> StmtOutput {
 /// Go's ADMIN executors (`ShowDDLJobsExec`, `ShowDDLJobQueriesExec`,
 /// `ShowSlowExec`, `ChecksumTableExec`, `SplitTableRegionExec`,
 /// `CancelDDLJobsExec` and its siblings) over the session primitives.
-pub trait AdminExec: crate::show::exec::ShowExec {
+pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
     /// history newest first, read on a fresh system-session transaction.
     fn all_ddl_jobs(&mut self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError>;
@@ -667,16 +667,12 @@ pub trait AdminExec: crate::show::exec::ShowExec {
         &mut self,
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError>;
-    /// Go `SimpleExec.executeExplainFor`, over the session manager.
-    fn explain_for_stmt(
+    /// Go `session.ExecuteStmt` for the statement `TraceExec` runs.
+    fn execute_statement_owned(
         &mut self,
-        explain_for: &tidb_ast::ExplainForStmt,
-    ) -> Result<Option<StmtOutput>, DriverError>;
-    /// Go `TraceExec`, which runs the statement through the session.
-    fn trace_stmt(
-        &mut self,
-        trace: &tidb_ast::TraceStmt,
-    ) -> Result<Option<StmtOutput>, DriverError>;
+        stmt: tidb_ast::Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError>;
     /// Go `meta.Mutator`'s BDR role, read and written in a new transaction.
     fn bdr_role_store(&self) -> Result<std::sync::Arc<dyn BdrRoleStore>, DriverError>;
     /// Go `SimpleExec.executeAdminFlushPlanCache`.
@@ -684,32 +680,10 @@ pub trait AdminExec: crate::show::exec::ShowExec {
         &mut self,
         scope: tidb_ast::AdminPlanCacheScope,
     ) -> Result<(), DriverError>;
-    /// Go `SQLBindExec` for CREATE BINDING.
-    fn create_binding_stmt(
-        &mut self,
-        create: &tidb_ast::CreateBindingStmt,
-    ) -> Result<StmtOutput, DriverError>;
-    /// Go `SQLBindExec` for DROP BINDING.
-    fn drop_binding_stmt(
-        &mut self,
-        drop: &tidb_ast::DropBindingStmt,
-    ) -> Result<StmtOutput, DriverError>;
-    /// Go `SQLBindExec` for SET BINDING.
-    fn set_binding_stmt(
-        &mut self,
-        set: &tidb_ast::SetBindingStmt,
-    ) -> Result<StmtOutput, DriverError>;
     /// Go `domain.GetDomain(ctx).GetWorkloadRepository()`.
     fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>>;
-    /// Go `ReloadExprPushdownBlacklistExec`.
-    fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError>;
-    /// Go `ReloadOptRuleBlacklistExec`.
-    fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError>;
-    /// Go `RecommendIndexExec`.
-    fn recommend_index_stmt(
-        &mut self,
-        recommend: &tidb_ast::RecommendIndexStmt,
-    ) -> Result<StmtOutput, DriverError>;
+    /// The server's published pushdown and optimizer-rule blacklists.
+    fn pushdown_blacklists(&self) -> &crate::blacklist::PushdownBlacklists;
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;
@@ -718,8 +692,13 @@ pub trait AdminExec: crate::show::exec::ShowExec {
     fn show_ddl_rows(&self) -> Vec<Vec<Datum>>;
     /// Go `Compile` + `runStmt` over `buildShow`'s plan.
     fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError>;
-    /// Go `SimpleExec.executeKillStmt`.
-    fn kill_stmt(&mut self, kill: &tidb_ast::KillStmt) -> Result<Option<StmtOutput>, DriverError>;
+    /// Go `globalconn`'s server id of this node.
+    fn server_id(&self) -> u64;
+    /// Go's TiDB peer RPC client (`KILL` of another node's connection).
+    fn cluster_peer(&self) -> Option<&std::sync::Arc<crate::cluster_peer::ClusterPeerClient>>;
+    /// Go `infosync`'s server discovery.
+    fn server_info_syncer(&self)
+        -> Option<&std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>;
 
     /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
     /// `EXPLAIN`, `GRANT`/`REVOKE`/`SHOW GRANTS`, and `KILL` delegated to
@@ -977,6 +956,284 @@ pub trait AdminExec: crate::show::exec::ShowExec {
             },
             _ => Ok(None),
         }
+    }
+
+    fn kill_stmt(&mut self, kill: &tidb_ast::KillStmt) -> Result<Option<StmtOutput>, DriverError> {
+        const INVALID_OPERATION: &str = "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead";
+        let registry = self.process_registry();
+        let target = match &kill.target {
+            tidb_ast::KillTarget::ConnectionId(id) => *id,
+            tidb_ast::KillTarget::Expr(tidb_ast::Expr::Func { name, args, .. })
+                if name.eq_ignore_ascii_case("connection_id") && args.is_empty() =>
+            {
+                // Go executes this local expression before numeric ID/config gates.
+                if let Some(registry) = registry {
+                    registry.kill(self.session_vars().connection_id.unwrap_or(0), kill.query);
+                }
+                return Ok(Some(StmtOutput::Affected(0)));
+            }
+            tidb_ast::KillTarget::Expr(_) => {
+                return Err(DriverError::unsupported(INVALID_OPERATION));
+            }
+        };
+
+        let config = tidb_config::config_tree::config::get_global_config();
+        if !config.enable_global_kill {
+            if kill.tidb_extension || config.compatible_kill_query {
+                if let Some(registry) = registry {
+                    registry.kill(target, kill.query);
+                }
+            } else {
+                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
+                    tidb_util::context::WarningLevel::Warning,
+                    1105,
+                    INVALID_OPERATION.to_owned(),
+                ));
+            }
+            return Ok(Some(StmtOutput::Affected(0)));
+        }
+        let Some(registry) = registry else {
+            return Ok(Some(StmtOutput::Affected(0)));
+        };
+        match tidb_util::globalconn::parse_conn_id(target) {
+            Err(error) => {
+                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
+                    tidb_util::context::WarningLevel::Warning,
+                    1105,
+                    format!("Parse ConnectionID failed: {error}"),
+                ));
+            }
+            Ok((_, true)) => {
+                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned()));
+            }
+            Ok((id, false)) => {
+                if id.server_id == self.server_id() {
+                    registry.kill(target, kill.query);
+                } else if let Err(error) = self.kill_remote_connection(id, kill.query) {
+                    self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
+                        tidb_util::context::WarningLevel::Warning,
+                        1105,
+                        format!("KILL remote connection failed: {error}"),
+                    ));
+                }
+            }
+        }
+        Ok(Some(StmtOutput::Affected(0)))
+    }
+
+    fn kill_remote_connection(
+        &self,
+        id: tidb_util::globalconn::Gcid,
+        query: bool,
+    ) -> Result<(), String> {
+        if id.server_id == 0 {
+            return Err("Unexpected ZERO ServerID. Please file a bug to the TiDB Team".into());
+        }
+        let client = self
+            .cluster_peer()
+            .ok_or("TiDB peer RPC client is not installed")?;
+        let syncer = self
+            .server_info_syncer()
+            .ok_or("TiDB peer discovery is not installed")?;
+        let servers: Vec<_> = syncer.all_server_info()?.into_values().collect();
+        client.kill(
+            &servers,
+            id,
+            query,
+            &self.statement_context(false),
+            &self.session_time_zone(),
+        )
+    }
+
+    /// go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`):
+    /// the target connection must exist on this server
+    /// (`ErrNoSuchThread` 1094, `Unknown thread id: %d`); its running
+    /// statement then explains through the ordinary machinery.
+    fn explain_for_stmt(
+        &mut self,
+        explain_for: &tidb_ast::ExplainForStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        let target = explain_for.connection_id;
+        let Some(registry) = self.process_registry() else {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                    .generate_with_stack_by_args(&[target.into()]),
+            ));
+        };
+        let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target) else {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                    .generate_with_stack_by_args(&[target.into()]),
+            ));
+        };
+        let plan = registry.plan_of(target);
+        // Go `buildExplainFor`: another user's connection needs SUPER,
+        // refused with `ErrAccessDenied` over the two names alone.
+        if let Some((_, user, host)) = self.privilege_context() {
+            if user != target_row.user && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
+            {
+                return Err(DriverError::Mysql(crate::MysqlError::from_terror(
+                    &tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(
+                        format!(
+                        "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
+                    ),
+                    ),
+                )));
+            }
+        }
+        let format = explain_for.format.to_lowercase();
+        let text = |name: &str| {
+            (
+                name.to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            )
+        };
+        // Go `buildExplainFor`: no plan at all is the statement's own
+        // empty result; any other plan needs one of the three formats.
+        if matches!(plan, crate::process::ProcessPlan::None) {
+            return Ok(Some(StmtOutput::Affected(0)));
+        }
+        let explain_format = match format.as_str() {
+            "" | "row" => crate::ExplainFormat::Row,
+            "brief" => crate::ExplainFormat::Brief,
+            "verbose" => crate::ExplainFormat::Verbose,
+            other => {
+                return Err(DriverError::Mysql(crate::MysqlError::unknown(format!(
+                    "explain format '{other}' for connection is not supported now"
+                ))));
+            }
+        };
+        let plan = match plan {
+            crate::process::ProcessPlan::Plan(plan) => plan,
+            // An `Explain` plan renders nothing, under the analyze
+            // header of the format.
+            _ => {
+                let names: &[&str] = if explain_format == crate::ExplainFormat::Verbose {
+                    &[
+                        "id",
+                        "estRows",
+                        "estCost",
+                        "actRows",
+                        "task",
+                        "access object",
+                        "execution info",
+                        "operator info",
+                        "memory",
+                        "disk",
+                    ]
+                } else {
+                    &[
+                        "id",
+                        "estRows",
+                        "actRows",
+                        "task",
+                        "access object",
+                        "execution info",
+                        "operator info",
+                        "memory",
+                        "disk",
+                    ]
+                };
+                return Ok(Some(StmtOutput::Rows {
+                    columns: names.iter().map(|name| text(name)).collect(),
+                    rows: Vec::new(),
+                }));
+            }
+        };
+        let ctx = self.statement_context(false);
+        let (columns, rows) = self.with_catalog_mut(|catalog| {
+            crate::explain_connection_plan(&plan.0, catalog, &ctx, explain_format)
+        })?;
+        Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Go `TraceExec`: runs the statement, then reports the spans.
+    fn trace_stmt(
+        &mut self,
+        trace: &tidb_ast::TraceStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        crate::trace::check_options(trace)
+            .map_err(|message| DriverError::Mysql(crate::MysqlError::unknown(message)))?;
+        let inner_sql = crate::trace::statement_text(&trace.statement);
+        let inner = (*trace.statement).clone();
+        let recorder = crate::trace::StatementTrace::start();
+        let entered = recorder.enter();
+        // Go `session.ExecuteStmt`; this path drains the record set
+        // inside it.
+        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        let outcome = self.execute_statement_owned(inner, &inner_sql);
+        drop(execute_stmt);
+        drop(entered);
+        // Go `executeChild` and `drainRecordSet`'s events.
+        let affected = match outcome {
+            Ok(StmtOutput::Rows { rows, .. }) => {
+                recorder.event(&format!(
+                    "execute done, ReturnRow: {}, ModifyRow: 0",
+                    rows.len()
+                ));
+                0
+            }
+            Ok(StmtOutput::Affected(count)) => count,
+            Ok(_) => 0,
+            Err(error) => {
+                let mysql = error.to_mysql_error();
+                recorder.event(&format!(
+                    "execute with error({}): {}",
+                    mysql.code, mysql.message
+                ));
+                0
+            }
+        };
+        recorder.event(&format!("execute done, modify row: {affected}"));
+        let (spans, started) = recorder.finish();
+        let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
+            .map_err(|message| DriverError::Mysql(crate::MysqlError::unknown(message)))?;
+        Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Go `LoadExprPushdownBlacklist`, and the `ADMIN RELOAD
+    /// EXPR_PUSHDOWN_BLACKLIST` that calls it.
+    fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
+        let rows =
+            self.exec_restricted_sql("SELECT name, store_type FROM mysql.expr_pushdown_blacklist")?;
+        let mut loaded = crate::ExprPushDownBlacklist::new();
+        for row in rows {
+            let Some(name) = row
+                .first()
+                .and_then(crate::simple::account_tables::sysvar_datum_text)
+            else {
+                continue;
+            };
+            let name = crate::blacklist_name(&name);
+            let store_types = row
+                .get(1)
+                .and_then(crate::simple::account_tables::sysvar_datum_text)
+                .unwrap_or_default();
+            let value =
+                loaded.get(&name).copied().unwrap_or(0) | crate::blacklist_store_mask(&store_types);
+            loaded.insert(name, value);
+        }
+        self.pushdown_blacklists().publish_expressions(loaded);
+        Ok(())
+    }
+
+    /// Go `LoadOptRuleBlacklist`, and the `ADMIN RELOAD OPT_RULE_BLACKLIST`
+    /// that calls it. The names are the rules' own `Name()` strings and are
+    /// NOT case-folded, which is Go's behaviour: `row.GetString(0)` goes into
+    /// the set as written.
+    fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
+        let rows = self.exec_restricted_sql("SELECT name FROM mysql.opt_rule_blacklist")?;
+        let mut loaded = std::collections::HashSet::new();
+        for row in rows {
+            if let Some(name) = row
+                .first()
+                .and_then(crate::simple::account_tables::sysvar_datum_text)
+            {
+                loaded.insert(name);
+            }
+        }
+        self.pushdown_blacklists().publish_rules(loaded);
+        Ok(())
     }
 }
 

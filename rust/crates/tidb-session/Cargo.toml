@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-privilege = { path = "../tidb-privilege" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
@@ -116,6 +117,7 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
+tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
 tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }

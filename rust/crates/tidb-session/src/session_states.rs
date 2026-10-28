@@ -17,6 +17,7 @@
 //! `EncodeSessionStates` / `DecodeSessionStates` hold, and the session token
 //! `SHOW SESSION_STATES` signs (`tidb_sessionstates::create_session_token`).
 
+use tidb_executor::compiler::PreparedExec;
 use crate::Session;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;

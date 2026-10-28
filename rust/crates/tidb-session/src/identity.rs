@@ -1428,3 +1428,16 @@ impl CompiledExecutor {
         }
     }
 }
+
+#[cfg(test)]
+impl Session {
+    pub(crate) fn debug_blacklists(&self) -> (Vec<(String, u32)>, Vec<String>) {
+        let (expressions, rules) = self.pushdown_blacklists.snapshot();
+        let mut map: Vec<(String, u32)> =
+            expressions.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        map.sort();
+        let mut rules: Vec<String> = rules.iter().cloned().collect();
+        rules.sort();
+        (map, rules)
+    }
+}

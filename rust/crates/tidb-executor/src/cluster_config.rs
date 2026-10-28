@@ -29,7 +29,7 @@ impl ClusterConfigClient {
     /// Uses the same CA, client identity and timeout as other internal HTTP consumers.
     pub fn new(security: &ClusterSecurity) -> Result<Self, String> {
         Ok(Self {
-            http: crate::cluster_http::internal_http_client(security)?,
+            http: tidb_txnkv::cluster_http::internal_http_client(security)?,
             scheme: if security.is_tls_enabled() {
                 "https"
             } else {

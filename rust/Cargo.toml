@@ -35,6 +35,7 @@ members = [
     "crates/tidb-infoschema",
     "crates/tidb-stats-handle",
     "crates/tidb-stmtctx",
+    "crates/tidb-bindinfo",
     "crates/tidb-ast",
     "crates/tidb-model",
     "crates/tidb-parser",

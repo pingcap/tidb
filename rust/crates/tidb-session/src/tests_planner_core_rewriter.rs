@@ -14,6 +14,7 @@
 
 #![cfg(test)]
 
+use tidb_executor::compiler::PreparedAstCompile;
 use crate::Session;
 
 #[test]
