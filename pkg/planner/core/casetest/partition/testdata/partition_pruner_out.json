@@ -1156,13 +1156,13 @@
         ],
         "IndexPlan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#9",
-          "└─HashJoin 0.10 root  inner join, equal:[eq(test_partition_1.t1.b, test_partition_1.t2.b)]",
-          "  ├─IndexReader(Build) 0.40 root partition:all index:Selection",
-          "  │ └─Selection 0.40 cop[tikv]  not(isnull(test_partition_1.t2.b))",
-          "  │   └─IndexRangeScan 0.40 cop[tikv] table:t2, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [6 1,6 1], [6 6,6 6], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) 0.40 root partition:p0 index:Selection",
-          "    └─Selection 0.40 cop[tikv]  not(isnull(test_partition_1.t1.b))",
-          "      └─IndexRangeScan 0.40 cop[tikv] table:t1, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo"
+          "└─IndexJoin 0.10 root  inner join, inner:IndexReader, outer key:test_partition_1.t1.b, inner key:test_partition_1.t2.b, equal cond:eq(test_partition_1.t1.b, test_partition_1.t2.b)",
+          "  ├─IndexReader(Build) 0.40 root partition:p0 index:Selection",
+          "  │ └─Selection 0.40 cop[tikv]  not(isnull(test_partition_1.t1.b))",
+          "  │   └─IndexRangeScan 0.40 cop[tikv] table:t1, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) 0.13 root partition:all index:Selection",
+          "    └─Selection 0.13 cop[tikv]  in(test_partition_1.t2.b, 1, 6), not(isnull(test_partition_1.t2.b))",
+          "      └─IndexRangeScan 63.94 cop[tikv] table:t2, index:a(a, b, id) range: decided by [eq(test_partition_1.t2.b, test_partition_1.t1.b) in(test_partition_1.t2.a, 1, 6)], keep order:false, stats:pseudo"
         ]
       },
       {
