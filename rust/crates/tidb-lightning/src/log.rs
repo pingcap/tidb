@@ -158,9 +158,7 @@ impl Logger {
             "tidb-br" => format!("github.com/pingcap/tidb/br/{source}"),
             "tidb-ingestor" => format!("github.com/pingcap/tidb/pkg/ingestor/{source}"),
             "tidb-pd-client" => format!("github.com/tikv/pd/client/{source}"),
-            "tidb-util" if source.starts_with("lightning/") => {
-                format!("github.com/pingcap/tidb/pkg/{source}")
-            }
+            "tidb-lightning" => format!("github.com/pingcap/tidb/pkg/lightning/{source}"),
             _ if source.ends_with("main") => "main.main".to_owned(),
             _ if crate_name.starts_with("tidb-lightning-") => format!(
                 "github.com/pingcap/tidb/pkg/lightning/{}/{}",
@@ -323,14 +321,14 @@ pub fn init_logger(config: &Config, _level: &str) -> Result<(), String> {
         ]
     };
 
-    let tidb_config = crate::logutil::LogConfig {
+    let tidb_config = tidb_util::logutil::LogConfig {
         config: tidb_log::Config {
             level: "fatal".to_owned(),
             ..Default::default()
         },
         ..Default::default()
     };
-    crate::logutil::init_logger(&tidb_config)?;
+    tidb_util::logutil::init_logger(&tidb_config)?;
 
     if !config.file.is_empty() && config.file != "-" && Path::new(&config.file).is_dir() {
         return Err("can't use directory as log file name".to_owned());

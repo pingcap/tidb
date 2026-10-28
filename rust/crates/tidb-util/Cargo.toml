@@ -38,7 +38,6 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-config = { path = "../tidb-config" }
-tidb-codec = { path = "../tidb-codec" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
@@ -70,7 +69,6 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-allocator-stats = { path = "../tidb-allocator-stats" }
 tracing = "0.1"
 log = { version = "0.4", features = ["kv_serde"] }
-tonic.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "=0.14.11"
@@ -115,10 +113,6 @@ harness = false
 name = "memoryusagealarm"
 harness = false
 required-features = ["testexport"]
-
-[[bench]]
-name = "membuf"
-harness = false
 
 [[bench]]
 name = "set"

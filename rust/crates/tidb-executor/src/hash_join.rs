@@ -65,11 +65,10 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Arc, Mutex};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
-use tidb_chunk::column::Column;
+use tidb_chunk::column::{Column, RawCells};
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
-use tidb_codec::{JoinKeyBytes, JoinKeyColumn};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_util::memory::Tracker;
@@ -1046,7 +1045,8 @@ pub(crate) fn row_hash_chunk_batched(
         // access reacquired that guard for every cell, which made the Rust
         // column-major loop pay synchronization and bounds work that Go
         // avoids.
-        column.with_raw(|raw| {
+        {
+            let raw = column.raw_cells();
             if let Some(selection) = selection {
                 for (row_idx, &physical_row) in selection.iter().enumerate() {
                     if !active[row_idx] {
@@ -1081,7 +1081,7 @@ pub(crate) fn row_hash_chunk_batched(
                 }
             }
             Ok::<(), KeyError>(())
-        })?;
+        }?;
     }
     Ok(Some(
         hashers
@@ -1101,7 +1101,7 @@ fn hash_chunk_key_row(
     key: &EquiKey,
     field_type: &FieldType,
     column: &Column,
-    raw: &JoinKeyBytes<'_>,
+    raw: &RawCells<'_>,
     row_idx: usize,
     physical_row: usize,
     hashers: &mut [FastBytesHasher],
@@ -1119,7 +1119,7 @@ fn hash_chunk_key_row(
     match key.class {
         KeyClass::Int => {
             hasher.write(&16u64.to_be_bytes());
-            let raw = raw.row(physical_row);
+            let raw = raw.get(physical_row);
             let value = if field_type.is_unsigned() {
                 i128::from(u64::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?))
             } else {
@@ -1128,7 +1128,7 @@ fn hash_chunk_key_row(
             hasher.write(&value.to_be_bytes());
         }
         KeyClass::Real => {
-            let raw = raw.row(physical_row);
+            let raw = raw.get(physical_row);
             let value = if field_type.code() == tidb_datatype::FieldTypeCode::Float {
                 f64::from(f32::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?))
             } else {
@@ -1143,7 +1143,7 @@ fn hash_chunk_key_row(
         }
         KeyClass::Decimal => {
             let value = tidb_datatype::MyDecimal::from_raw_bytes(
-                raw.row(physical_row).try_into().map_err(|_| KeyError)?,
+                raw.get(physical_row).try_into().map_err(|_| KeyError)?,
             )
             .map_err(|_| KeyError)?;
             let part = value.to_hash_key().map_err(|_| KeyError)?;
@@ -1151,7 +1151,7 @@ fn hash_chunk_key_row(
             hasher.write(&part);
         }
         KeyClass::Str(collation) => {
-            let part = collation.immutable_key(raw.row(physical_row));
+            let part = collation.immutable_key(raw.get(physical_row));
             hasher.write(&(part.len() as u64).to_be_bytes());
             hasher.write(part.as_ref());
         }
@@ -1214,20 +1214,21 @@ pub(crate) fn exact_int_keys_chunk(
         );
         return keys;
     }
-    column.with_raw(|raw| {
+    {
+        let raw = column.raw_cells();
         if let Some(selection) = chunk.sel() {
             keys.extend(selection.iter().map(|&physical| {
                 if column.is_null(physical) {
                     None
                 } else if field_type.is_unsigned() {
                     Some(i128::from(u64::from_ne_bytes(
-                        raw.row(physical)
+                        raw.get(physical)
                             .try_into()
                             .expect("non-hybrid integer key cells are eight bytes wide"),
                     )))
                 } else {
                     Some(i128::from(i64::from_ne_bytes(
-                        raw.row(physical)
+                        raw.get(physical)
                             .try_into()
                             .expect("non-hybrid integer key cells are eight bytes wide"),
                     )))
@@ -1239,20 +1240,20 @@ pub(crate) fn exact_int_keys_chunk(
                     None
                 } else if field_type.is_unsigned() {
                     Some(i128::from(u64::from_ne_bytes(
-                        raw.row(row)
+                        raw.get(row)
                             .try_into()
                             .expect("non-hybrid integer key cells are eight bytes wide"),
                     )))
                 } else {
                     Some(i128::from(i64::from_ne_bytes(
-                        raw.row(row)
+                        raw.get(row)
                             .try_into()
                             .expect("non-hybrid integer key cells are eight bytes wide"),
                     )))
                 }
             }));
         }
-    });
+    };
     keys
 }
 

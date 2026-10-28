@@ -104,7 +104,6 @@ use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tidb_codec::JoinKeyColumn;
 use tidb_vardef::tidb_vars::{
     TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
 };
@@ -2534,14 +2533,15 @@ impl PipelineKeyBuffer {
             self.partial_results.clear();
             if let Some([index]) = inputs.integer_columns {
                 let column = chunk.column(*index);
-                column.with_raw(|raw| {
+                {
+                    let raw = column.raw_cells();
                     if let Some(selection) = chunk.sel() {
                         debug_assert_eq!(selection.len(), rows);
                         self.integers
                             .extend(selection.iter().take(rows).map(|&physical| {
                                 let value = (!column.is_null(physical)).then(|| {
                                     i64::from_ne_bytes(
-                                        raw.row(physical)
+                                        raw.get(physical)
                                             .try_into()
                                             .expect("integer group key cell is 8 bytes"),
                                     )
@@ -2555,7 +2555,7 @@ impl PipelineKeyBuffer {
                         self.integers.extend((0..rows).map(|physical| {
                             let value = (!column.is_null(physical)).then(|| {
                                 i64::from_ne_bytes(
-                                    raw.row(physical)
+                                    raw.get(physical)
                                         .try_into()
                                         .expect("integer group key cell is 8 bytes"),
                                 )
@@ -2566,7 +2566,7 @@ impl PipelineKeyBuffer {
                             )
                         }));
                     }
-                });
+                };
                 return Ok(());
             }
             self.group_keys

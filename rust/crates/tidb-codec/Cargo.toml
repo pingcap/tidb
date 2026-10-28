@@ -8,10 +8,14 @@ repository.workspace = true
 description = "TiDB mem-comparable scalar and datum-key codec."
 autotests = false
 
+[dev-dependencies]
+bytes.workspace = true
+
 [lints]
 workspace = true
 
 [dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
 chrono.workspace = true
 chrono-tz.workspace = true
 crc32fast.workspace = true

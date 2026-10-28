@@ -3448,6 +3448,8 @@ version = "0.0.0"
 dependencies = [
  "tidb-ast",
  "tidb-codec",
+ "tidb-datatype",
+ "tidb-log",
  "tidb-model",
  "tidb-proto",
  "tidb-util",
@@ -3458,7 +3460,6 @@ name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "tidb-codec",
  "tidb-datatype",
  "tidb-util",
  "tracing",
@@ -3508,9 +3509,11 @@ dependencies = [
 name = "tidb-codec"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "tidb-chunk",
  "tidb-datatype",
 ]
 
@@ -4248,6 +4251,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-lightning"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "fastrand",
+ "getrandom 0.3.4",
+ "prometheus 0.14.0",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-log",
+ "tidb-model",
+ "tidb-util",
+ "tikv-client",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-log"
 version = "0.0.0"
 dependencies = [
@@ -4818,7 +4844,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-error",
  "tidb-model",
- "tidb-stats-handle-util",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -5260,7 +5285,6 @@ dependencies = [
  "tempfile",
  "tidb-allocator-stats",
  "tidb-ast",
- "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
@@ -5277,7 +5301,6 @@ dependencies = [
  "tidb-tikvutil",
  "tidb-vardef",
  "tikv-client",
- "tonic",
  "tracing",
  "windows-sys 0.61.2",
 ]

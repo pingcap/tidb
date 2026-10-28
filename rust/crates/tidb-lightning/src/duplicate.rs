@@ -24,8 +24,8 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use tidb_log::{Field, Level, Value};
 
-use crate::extsort::{ExternalSorter, Writer as ExternalWriter};
-use crate::lightning_log::Logger;
+use tidb_util::extsort::{ExternalSorter, Writer as ExternalWriter};
+use crate::log::Logger;
 
 /// Error returned by duplicate detection.
 #[derive(Debug)]
@@ -65,8 +65,8 @@ impl StdError for Error {
     }
 }
 
-impl From<crate::extsort::Error> for Error {
-    fn from(error: crate::extsort::Error) -> Self {
+impl From<tidb_util::extsort::Error> for Error {
+    fn from(error: tidb_util::extsort::Error) -> Self {
         Self {
             message: error.to_string(),
             source: Some(Box::new(error)),
@@ -614,7 +614,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::extsort::{open_disk_sorter, DiskSorterOptions};
+    use tidb_util::extsort::{open_disk_sorter, DiskSorterOptions};
 
     #[test]
     fn internal_key() {
@@ -760,7 +760,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let detector = Detector::new(sorter.clone(), crate::lightning_log::l());
+        let detector = Detector::new(sorter.clone(), crate::log::l());
         let canceled = Arc::new(AtomicBool::new(false));
         let mut state = 0x9e37_79b9_7f4a_7c15_u64;
         let keys: Arc<Vec<Vec<u8>>> = Arc::new(
@@ -853,7 +853,7 @@ mod tests {
     fn detector_fail() {
         let directory = tempfile::tempdir().unwrap();
         let sorter = Arc::new(open_disk_sorter(directory.path(), None).unwrap());
-        let detector = Detector::new(sorter, crate::lightning_log::l());
+        let detector = Detector::new(sorter, crate::log::l());
         let canceled = Arc::new(AtomicBool::new(false));
         let mut adder = detector.key_adder(&canceled).unwrap();
         adder.add(b"key", b"keyID").unwrap();

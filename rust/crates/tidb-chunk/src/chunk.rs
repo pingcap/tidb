@@ -42,43 +42,12 @@ pub const INITIAL_CAPACITY: usize = 32;
 /// first batch that grows from zero capacity.
 pub const ZERO_CAPACITY: usize = 0;
 
-impl tidb_codec::JoinKeySource for Chunk {
-    type Column = Column;
-
-    fn num_columns(&self) -> usize {
-        self.num_cols()
-    }
-    fn physical_rows(&self) -> usize {
-        self.physical_num_rows()
-    }
-    fn with_column<R>(&self, column: usize, f: impl FnOnce(&Column) -> R) -> R {
-        f(&self.column(column))
-    }
-}
-
-impl tidb_codec::JoinKeyColumn for Column {
-    fn is_null(&self, row: usize) -> bool {
-        self.is_null(row)
-    }
-    fn with_raw<R>(&self, f: impl FnOnce(tidb_codec::JoinKeyBytes<'_>) -> R) -> R {
-        let data = self.data.read();
-        let raw = match &self.elem_buf {
-            Some(elem) => tidb_codec::JoinKeyBytes::Fixed {
-                data: &data,
-                width: elem.len(),
-            },
-            None => tidb_codec::JoinKeyBytes::Variable {
-                data: &data,
-                offsets: &self.offsets,
-            },
-        };
-        f(raw)
-    }
-    fn datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, tidb_codec::CodecError> {
+impl Column {
+    /// The cell at physical `row` as a datum of `field_type`, checked: Go's
+    /// typed cell getters (`GetDecimal`, `GetTime`, ...) as one read.
+    pub fn try_datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, crate::row::RowDatumError> {
         let mut datum = Datum::Null;
-        crate::row::DatumCell { column: self, row }
-            .try_datum_with_buffer(0, field_type, &mut datum)
-            .map_err(|_| tidb_codec::CodecError::InvalidEncoding("invalid native join key cell"))?;
+        crate::row::DatumCell { column: self, row }.try_datum_with_buffer(0, field_type, &mut datum)?;
         Ok(datum)
     }
 }
@@ -1004,7 +973,8 @@ impl Chunk {
         self.append_range_from(&snapshot, begin, end);
     }
 
-    fn physical_num_rows(&self) -> usize {
+    /// The row count before the selection applies.
+    pub fn physical_num_rows(&self) -> usize {
         self.columns
             .first()
             .map_or(self.num_virtual_rows, |column| column.read().rows())

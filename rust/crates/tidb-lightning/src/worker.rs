@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
-use crate::lightning_metric::{from_context, Metrics};
+use crate::metric::{from_context, Metrics};
 
 /// A worker managed by a [`Pool`].
 pub struct Worker {

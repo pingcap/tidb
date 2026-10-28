@@ -19,7 +19,6 @@
 use super::*;
 use std::sync::Arc;
 use tidb_chunk::ColumnRead;
-use tidb_codec::JoinKeyColumn;
 use tidb_datatype::MYDECIMAL_STRUCT_SIZE;
 
 type DecimalBatch = Arc<[Option<(i128, u32)>]>;
@@ -684,19 +683,20 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
             let column = chunk.column(index);
             let rows = column.rows();
             let mut values = Vec::with_capacity(rows);
-            column.with_raw(|raw| {
+            {
+                let raw = column.raw_cells();
                 for row in 0..rows {
                     if column.is_null(row) {
                         values.push(None);
                     } else {
                         values.push(Some(i64::from_ne_bytes(
-                            raw.row(row)
+                            raw.get(row)
                                 .try_into()
                                 .expect("integer aggregate cell is 8 bytes"),
                         )));
                     }
                 }
-            });
+            };
             let batch: IntegerBatch = values.into();
             batches.push((index, Arc::clone(&batch)));
             Some(batch)
@@ -724,12 +724,13 @@ pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealC
             let column = chunk.column(index);
             let rows = column.rows();
             let mut values = Vec::with_capacity(rows);
-            column.with_raw(|raw| {
+            {
+                let raw = column.raw_cells();
                 for row in 0..rows {
                     if column.is_null(row) {
                         values.push(None);
                     } else {
-                        let cell = raw.row(row);
+                        let cell = raw.get(row);
                         let value = match cell.len() {
                             4 => f64::from(f32::from_ne_bytes(
                                 cell.try_into().expect("Float cell is 4 bytes"),
@@ -742,7 +743,7 @@ pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealC
                         values.push(Some(value));
                     }
                 }
-            });
+            };
             let batch: RealBatch = values.into();
             batches.push((index, Arc::clone(&batch)));
             Some(batch)

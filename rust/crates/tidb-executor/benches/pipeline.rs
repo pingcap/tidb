@@ -911,7 +911,7 @@ fn main() {
 fn bench_read_task_setup() {
     use tidb_distsql::{
         CancelHandle, CopPagingState, KvRequestMetadata, ReadEngineGeneration, RegionTaskTopology,
-        RequestKeyRange, RequestKeyRanges, TransportRequest,
+        RegionTaskRequest, RequestKeyRange, RequestKeyRanges, TransportRequest,
     };
     use tidb_txnkv::RequestType;
 

@@ -156,4 +156,3 @@ pub use table::{
     PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION, RATIO_OF_PSEUDO_ESTIMATE,
 };
-pub use tidb_stats_handle_util::*;

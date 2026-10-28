@@ -15,4 +15,5 @@
 mod bytes;
 mod datum;
 mod go_codec_port;
+mod join_keys_chunk;
 mod number;

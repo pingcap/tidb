@@ -19,7 +19,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tidb_util::membuf::{
+use tidb_lightning::membuf::{
     with_block_size, with_pool_memory_limiter, Buffer, Bytes, Limiter, Pool, SliceLocation,
 };
 

@@ -24,7 +24,6 @@ tidb-model = { path = "../tidb-model" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
-tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -16,53 +16,26 @@
 
 use crate::{encode_hash_datum, CodecError, SerializeMode, INT_FLAG, UINT_FLAG};
 use std::ops::{Index, Range};
+use tidb_chunk::chunk::Chunk;
+use tidb_chunk::column::{Column, RawCells};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
-/// Read-only physical column access. Implemented by chunks, without making
-/// the low-level codec depend on its higher-level consumers.
-pub trait JoinKeySource {
-    /// The physical column held for an entire sizing or encoding pass.
-    type Column: JoinKeyColumn;
-    /// Number of addressable physical columns.
-    fn num_columns(&self) -> usize;
-    /// Row count before applying selection.
-    fn physical_rows(&self) -> usize;
-    /// Borrow one column owner across the batch, without retaining a guard
-    /// across columns (which may alias the same owner).
-    fn with_column<R>(&self, column: usize, f: impl FnOnce(&Self::Column) -> R) -> R;
+/// One physical column of `source`, borrowed for a whole column pass.
+fn with_column<R>(source: &Chunk, column: usize, f: impl FnOnce(&Column) -> R) -> R {
+    f(&source.column(column))
 }
 
-/// A borrowed physical column, shared by sizing, encoding and spill restore.
-pub trait JoinKeyColumn {
-    /// NULL marker at a physical cell.
-    fn is_null(&self, row: usize) -> bool;
-    /// Borrow packed data once for a column-wide pass. The implementation
-    /// retains any backing guard until the callback returns.
-    fn with_raw<R>(&self, f: impl FnOnce(JoinKeyBytes<'_>) -> R) -> R;
-    /// Typed access for decimal, temporal, enum/set, bit and JSON encoding.
-    /// Integer, real and string columns use raw storage directly.
-    fn datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, CodecError>;
+/// `column`'s packed cells, borrowed once for a column-wide pass.
+fn with_raw<R>(column: &Column, f: impl FnOnce(RawCells<'_>) -> R) -> R {
+    f(column.raw_cells())
 }
 
-/// Go column data and offsets, borrowed for a complete raw-key pass.
-pub enum JoinKeyBytes<'a> {
-    /// Fixed-width native cells, including NULL slots.
-    Fixed { data: &'a [u8], width: usize },
-    /// Variable-width cells with Go's physical-row offsets.
-    Variable { data: &'a [u8], offsets: &'a [i64] },
-}
-
-impl JoinKeyBytes<'_> {
-    /// Native bytes of one physical cell. Source row bounds are checked by
-    /// the serializer before borrowing a column.
-    pub fn row(&self, row: usize) -> &[u8] {
-        match self {
-            Self::Fixed { data, width } => &data[row * width..(row + 1) * width],
-            Self::Variable { data, offsets } => {
-                &data[offsets[row] as usize..offsets[row + 1] as usize]
-            }
-        }
-    }
+/// Typed access for decimal, temporal, enum/set, bit and JSON encoding.
+/// Integer, real and string columns use raw storage directly.
+fn datum(column: &Column, row: usize, field_type: &FieldType) -> Result<Datum, CodecError> {
+    column
+        .try_datum(row, field_type)
+        .map_err(|_| CodecError::InvalidEncoding("invalid native join key cell"))
 }
 
 /// One retained allocation for all keys, with disjoint per-row capacity.
@@ -87,24 +60,24 @@ pub struct SerializedJoinKeys {
 impl SerializedJoinKeys {
     /// Restore saved key bytes without rerunning SQL key evaluation. Only
     /// keys retained in this hash-table round need space in the arena.
-    pub fn restore<S: JoinKeySource>(
+    pub fn restore(
         &mut self,
-        source: &S,
+        source: &Chunk,
         key_column: usize,
         retained: &[bool],
     ) -> Result<(), CodecError> {
-        source.with_column(key_column, |column| {
-            column.with_raw(|raw| {
+        with_column(source, key_column, |column| {
+            with_raw(column, |raw| {
                 self.reset(retained.len(), false);
                 for (row, &keep) in retained.iter().enumerate() {
                     if keep {
-                        self.limits[row] = raw.row(row).len();
+                        self.limits[row] = raw.get(row).len();
                     }
                 }
                 self.allocate()?;
                 for (row, &keep) in retained.iter().enumerate() {
                     if keep {
-                        let bytes = raw.row(row);
+                        let bytes = raw.get(row);
                         let start = self.rows[row].start;
                         let end = start + bytes.len();
                         self.bytes[start..end].copy_from_slice(&bytes);
@@ -265,29 +238,29 @@ pub struct JoinKeyColumns {
 impl JoinKeyColumns {
     /// Go codec.SerializeKeys: size columns, allocate once, then encode columns.
     /// Keys use logical order; selection/filter/null vectors use physical rows.
-    pub fn serialize<S: JoinKeySource>(
+    pub fn serialize(
         &self,
-        source: &S,
+        source: &Chunk,
         used_rows: &[usize],
         filter: Option<&[bool]>,
         nulls: &mut Vec<bool>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, true, false>(source, used_rows, filter, Some(nulls), keys)
+        self.serialize_impl::<true, false>(source, used_rows, filter, Some(nulls), keys)
     }
 
     /// Go `SerializeKeys` with FNV-1/64 accumulated during encoding.
     /// Join build/probe callers consume the hash immediately after
     /// serialization, so no second pass over each key is needed.
-    pub fn serialize_with_hashes<S: JoinKeySource>(
+    pub fn serialize_with_hashes(
         &self,
-        source: &S,
+        source: &Chunk,
         used_rows: &[usize],
         filter: Option<&[bool]>,
         nulls: &mut Vec<bool>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, true, true>(source, used_rows, filter, Some(nulls), keys)
+        self.serialize_impl::<true, true>(source, used_rows, filter, Some(nulls), keys)
     }
 
     /// Go `SerializeKeys` when `hasNullableKey` is false.
@@ -295,31 +268,31 @@ impl JoinKeyColumns {
     /// The source leaves `nullKeyVector` nil for a non-nullable join. Keep
     /// that branch allocation-free instead of materialising and clearing a
     /// physical-row boolean vector that can never contain a true value.
-    pub fn serialize_without_nulls<S: JoinKeySource>(
+    pub fn serialize_without_nulls(
         &self,
-        source: &S,
+        source: &Chunk,
         used_rows: &[usize],
         filter: Option<&[bool]>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, false, false>(source, used_rows, filter, None, keys)
+        self.serialize_impl::<false, false>(source, used_rows, filter, None, keys)
     }
 
     /// `serialize_without_nulls` with FNV-1/64 accumulated during encoding.
     /// The null-free build/probe path uses this to avoid a second key scan.
-    pub fn serialize_without_nulls_with_hashes<S: JoinKeySource>(
+    pub fn serialize_without_nulls_with_hashes(
         &self,
-        source: &S,
+        source: &Chunk,
         used_rows: &[usize],
         filter: Option<&[bool]>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, false, true>(source, used_rows, filter, None, keys)
+        self.serialize_impl::<false, true>(source, used_rows, filter, None, keys)
     }
 
-    fn serialize_impl<S: JoinKeySource, const TRACK_NULLS: bool, const COLLECT_HASHES: bool>(
+    fn serialize_impl<const TRACK_NULLS: bool, const COLLECT_HASHES: bool>(
         &self,
-        source: &S,
+        source: &Chunk,
         used_rows: &[usize],
         filter: Option<&[bool]>,
         mut nulls: Option<&mut Vec<bool>>,
@@ -330,11 +303,11 @@ impl JoinKeyColumns {
                 "serialize column count mismatch",
             ));
         }
-        let physical_rows = source.physical_rows();
+        let physical_rows = source.physical_num_rows();
         if self
             .indices
             .iter()
-            .any(|&column| column >= source.num_columns())
+            .any(|&column| column >= source.num_cols())
             || used_rows.iter().any(|&row| row >= physical_rows)
             || filter.is_some_and(|filter| filter.len() != physical_rows)
         {
@@ -351,7 +324,7 @@ impl JoinKeyColumns {
         // their own read view, including for shallow-shared storage.
         for ((&column, field_type), &mode) in self.indices.iter().zip(&self.types).zip(&self.modes)
         {
-            source.with_column(column, |column| {
+            with_column(source, column, |column| {
                 let fixed = match field_type.code() {
                     FieldTypeCode::Tiny
                     | FieldTypeCode::Short
@@ -370,7 +343,7 @@ impl JoinKeyColumns {
                     _ => None,
                 };
                 if let Some(size) = fixed {
-                    return reserve_column_keys::<TRACK_NULLS, _>(
+                    return reserve_column_keys::<TRACK_NULLS>(
                         column,
                         used_rows,
                         filter,
@@ -386,30 +359,30 @@ impl JoinKeyColumns {
                     | FieldTypeCode::Blob
                     | FieldTypeCode::TinyBlob
                     | FieldTypeCode::MediumBlob
-                    | FieldTypeCode::LongBlob => column.with_raw(|raw| {
+                    | FieldTypeCode::LongBlob => with_raw(column, |raw| {
                         let collator = field_type.runtime_collator();
                         let prefix = usize::from(mode == SerializeMode::KeepVarColumnLength) * 4;
-                        reserve_column_keys::<TRACK_NULLS, _>(
+                        reserve_column_keys::<TRACK_NULLS>(
                             column,
                             used_rows,
                             filter,
                             nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
                             keys,
-                            |row| Ok(collator.max_key_len(raw.row(row)) + prefix),
+                            |row| Ok(collator.max_key_len(raw.get(row)) + prefix),
                         )
                     }),
                     FieldTypeCode::NewDecimal
                     | FieldTypeCode::Enum
                     | FieldTypeCode::Set
                     | FieldTypeCode::Bit
-                    | FieldTypeCode::Json => reserve_column_keys::<TRACK_NULLS, _>(
+                    | FieldTypeCode::Json => reserve_column_keys::<TRACK_NULLS>(
                         column,
                         used_rows,
                         filter,
                         nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
                         keys,
                         |row| {
-                            let value = column.datum(row, field_type)?;
+                            let value = datum(column, row, field_type)?;
                             let (_, bytes) = encode_hash_datum(&value, field_type)?;
                             Ok(bytes.len() + prefix_size(field_type, mode))
                         },
@@ -456,7 +429,7 @@ impl JoinKeyColumns {
         keys.allocate()?;
         for ((&column, field_type), &mode) in self.indices.iter().zip(&self.types).zip(&self.modes)
         {
-            source.with_column(column, |column| {
+            with_column(source, column, |column| {
                 let code = field_type.code();
                 // Dispatch once per column, not once per row.
                 match code {
@@ -466,10 +439,10 @@ impl JoinKeyColumns {
                     | FieldTypeCode::Long
                     | FieldTypeCode::LongLong
                     | FieldTypeCode::Year
-                    | FieldTypeCode::Duration => column.with_raw(|raws| {
+                    | FieldTypeCode::Duration => with_raw(column, |raws| {
                         for active in 0..keys.active_rows.len() {
                             let (logical, physical) = keys.active_rows[active];
-                            let raw = raws.row(physical);
+                            let raw = raws.get(physical);
                             let word: [u8; 8] = raw.try_into().map_err(|_| {
                                 CodecError::InvalidEncoding("invalid integer key width")
                             })?;
@@ -488,10 +461,10 @@ impl JoinKeyColumns {
                         }
                         Ok::<(), CodecError>(())
                     })?,
-                    FieldTypeCode::Float | FieldTypeCode::Double => column.with_raw(|raws| {
+                    FieldTypeCode::Float | FieldTypeCode::Double => with_raw(column, |raws| {
                         for active in 0..keys.active_rows.len() {
                             let (logical, physical) = keys.active_rows[active];
-                            let raw = raws.row(physical);
+                            let raw = raws.get(physical);
                             let value = if code == FieldTypeCode::Float {
                                 f64::from(f32::from_le_bytes(raw.try_into().map_err(|_| {
                                     CodecError::InvalidEncoding("invalid float key width")
@@ -512,11 +485,11 @@ impl JoinKeyColumns {
                     | FieldTypeCode::Blob
                     | FieldTypeCode::TinyBlob
                     | FieldTypeCode::MediumBlob
-                    | FieldTypeCode::LongBlob => column.with_raw(|raws| {
+                    | FieldTypeCode::LongBlob => with_raw(column, |raws| {
                         let collator = field_type.runtime_collator();
                         for active in 0..keys.active_rows.len() {
                             let (logical, physical) = keys.active_rows[active];
-                            let raw = raws.row(physical);
+                            let raw = raws.get(physical);
                             let bytes = collator.immutable_key(raw);
                             if mode == SerializeMode::KeepVarColumnLength {
                                 let size = u32::try_from(bytes.len()).map_err(|_| {
@@ -537,7 +510,7 @@ impl JoinKeyColumns {
                     _ => {
                         for active in 0..keys.active_rows.len() {
                             let (logical, physical) = keys.active_rows[active];
-                            let value = column.datum(physical, field_type)?;
+                            let value = datum(column, physical, field_type)?;
                             let (_, bytes) = encode_hash_datum(&value, field_type)?;
                             match prefix_size(field_type, mode) {
                                 1 if code == FieldTypeCode::NewDecimal => {
@@ -582,8 +555,8 @@ impl JoinKeyColumns {
     }
 }
 
-fn reserve_column_keys<const TRACK_NULLS: bool, C: JoinKeyColumn>(
-    column: &C,
+fn reserve_column_keys<const TRACK_NULLS: bool>(
+    column: &Column,
     used_rows: &[usize],
     filter: Option<&[bool]>,
     mut nulls: Option<&mut [bool]>,

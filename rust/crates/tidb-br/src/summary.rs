@@ -30,7 +30,7 @@
 //! # Narrowings and boundaries
 //!
 //! - **`go.uber.org/zap.Field`** → [`tidb_log::Field`] / [`tidb_log::Value`],
-//!   the same mapping `crate::lightning_verification` uses. `zap.Duration`
+//!   the same mapping `tidb_lightning::verification` uses. `zap.Duration`
 //!   becomes `Value::Duration` (nanoseconds), `zap.Int` `Value::I64`,
 //!   `zap.Uint64` `Value::U64`, `zap.String` `Value::Str`, and `zap.Error`
 //!   `Value::Error`.
@@ -498,6 +498,15 @@ pub fn log(msg: &str, fields: &[Field]) {
 
 #[cfg(test)]
 mod tests {
+    /// Serializes this module's tests, which point the process-wide logger
+    /// at their own sink.
+    fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GLOBAL_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GLOBAL_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
     use super::*;
 
     /// A `logFunc` that records what it was handed, standing in for Go's
@@ -669,7 +678,7 @@ mod tests {
     #[test]
     fn test_summary_nothing_to_backup() {
         // The failed-summary branch logs through the global logger.
-        let _guard = crate::global_logger_test_guard();
+        let _guard = global_logger_test_guard();
         let recorder = Arc::new(Recorder::default());
         let col = LogCollectorImpl::new(recorder.sink());
         col.collect_success_unit(BACKUP_DATA_SIZE, 0, SuccessArg::Data(0));
@@ -702,7 +711,7 @@ mod tests {
     #[test]
     fn test_summary_failure_fields() {
         // The failed-summary branch logs through the global logger.
-        let _guard = crate::global_logger_test_guard();
+        let _guard = global_logger_test_guard();
         let recorder = Arc::new(Recorder::default());
         let col = LogCollectorImpl::new(recorder.sink());
         col.collect_failure_unit("r1", FailureReason::Error("boom".to_owned()));
@@ -801,7 +810,7 @@ mod tests {
     #[test]
     fn test_package_level_facade() {
         // The failed-summary branch logs through the global logger.
-        let _guard = crate::global_logger_test_guard();
+        let _guard = global_logger_test_guard();
         let recorder = Arc::new(Recorder::default());
         set_log_collector(Arc::new(LogCollectorImpl::new(recorder.sink())));
 

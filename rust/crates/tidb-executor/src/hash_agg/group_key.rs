@@ -15,7 +15,6 @@
 //! Go aggregate.GetGroupKey: evaluate and encode a whole column at a time.
 
 use super::*;
-use tidb_codec::JoinKeyColumn;
 
 /// Walk logical rows in the same order as Go's `Chunk.GetRow`, resolving the
 /// selection vector once for the whole column batch.  HashGroupKey receives a
@@ -88,7 +87,8 @@ impl GroupKeyBuffer {
                         let column = chunk.column(index);
                         match field_type.eval_type() {
                             EvalType::Int if column.type_size() == 8 => {
-                                column.with_raw(|raw| {
+                                {
+                                    let raw = column.raw_cells();
                                     for_each_logical_row(chunk, rows, |logical, physical| {
                                         let key = &mut self.encoded[logical];
                                         if column.is_null(physical) {
@@ -97,7 +97,7 @@ impl GroupKeyBuffer {
                                             // Go ETInt hashes signed storage bits,
                                             // including unsigned SQL columns.
                                             let value = i64::from_ne_bytes(
-                                                raw.row(physical)
+                                                raw.get(physical)
                                                     .try_into()
                                                     .expect("ETInt group key cell is 8 bytes"),
                                             );
@@ -105,17 +105,18 @@ impl GroupKeyBuffer {
                                             encode_varint(key, value);
                                         }
                                     });
-                                });
+                                };
                                 continue;
                             }
                             EvalType::Real if matches!(column.type_size(), 4 | 8) => {
-                                column.with_raw(|raw| {
+                                {
+                                    let raw = column.raw_cells();
                                     for_each_logical_row(chunk, rows, |logical, physical| {
                                         let key = &mut self.encoded[logical];
                                         if column.is_null(physical) {
                                             key.push(NIL_FLAG);
                                         } else {
-                                            let cell = raw.row(physical);
+                                            let cell = raw.get(physical);
                                             let value = match cell.len() {
                                                 4 => f64::from(f32::from_ne_bytes(
                                                     cell.try_into().expect("Float cell is 4 bytes"),
@@ -130,26 +131,27 @@ impl GroupKeyBuffer {
                                             tidb_codec::encode_float(key, value);
                                         }
                                     });
-                                });
+                                };
                                 continue;
                             }
                             EvalType::String if !field_type.is_hybrid() => {
                                 let collator = field_type.runtime_collator();
-                                column.with_raw(|raw| {
+                                {
+                                    let raw = column.raw_cells();
                                     for_each_logical_row(chunk, rows, |logical, physical| {
                                         let key = &mut self.encoded[logical];
                                         if column.is_null(physical) {
                                             key.push(NIL_FLAG);
                                         } else {
                                             key.push(tidb_codec::COMPACT_BYTES_FLAG);
-                                            let bytes = raw.row(physical);
+                                            let bytes = raw.get(physical);
                                             encode_compact_bytes(
                                                 key,
                                                 &collator.immutable_key(bytes),
                                             );
                                         }
                                     });
-                                });
+                                };
                                 continue;
                             }
                             _ => {}
