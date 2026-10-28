@@ -508,8 +508,12 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 	}
 
 	txn.SetOption(kv.CommitHook, func(info string, _ error) { sessVars.LastTxnInfo = info })
-	txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
-	txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
+	// Without MDL, DDL can advance a related table's schema before async
+	// commit or 1PC prewrites. Fall back to 2PC so the DDL safe window can
+	// preserve commit ordering for transactions using the old schema.
+	enableFastCommit := sessVars.TxnCtx.EnableMDL
+	txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit && enableFastCommit)
+	txn.SetOption(kv.Enable1PC, sessVars.Enable1PC && enableFastCommit)
 	if sessVars.DiskFullOpt != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
 		txn.SetDiskFullOpt(sessVars.DiskFullOpt)
 	}
