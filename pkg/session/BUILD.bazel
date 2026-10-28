@@ -222,6 +222,7 @@ go_test(
         "//pkg/util/diagclient",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
