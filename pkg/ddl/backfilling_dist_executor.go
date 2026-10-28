@@ -256,7 +256,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	if isIndexInfoNotFoundErr(err) {
+	if isIndexInfoNotFoundErr(err) || errdef.ErrSetTSBeforeImport.Equal(errors.Cause(err)) {
 		return false
 	}
 	// Retry in DXF so NextGen can continue after storage capacity is expanded.
