@@ -82,6 +82,34 @@ func TestDropPrepare(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestUnixTimestampParameterScale(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone='+00:00'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("create table t_unix (id int, dt datetime(6))")
+	tk.MustExec("insert into t_unix values (1, '2020-01-01 00:00:00.123456')")
+	for _, expr := range []string{"unix_timestamp(?)", "unix_timestamp(concat(?))"} {
+		tk.MustExec("prepare s from 'select " + expr + " from t_unix'")
+		for _, fraction := range []string{".1", ".123456", "", ".01", ".123456", ".1"} {
+			tk.MustExec("set @v='2020-01-01 00:00:00" + fraction + "'")
+			tk.MustQuery("execute s using @v").Check(testkit.Rows("1577836800" + fraction))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+		tk.MustExec("deallocate prepare s")
+	}
+	// Fixed literals and column arguments do not derive their type from parameters.
+	for _, expr := range []string{"unix_timestamp('2020-01-01 00:00:00.123456')", "unix_timestamp(dt)"} {
+		tk.MustExec("prepare s from \"select " + expr + " from t_unix where id > ?\"")
+		tk.MustExec("set @v=0")
+		tk.MustQuery("execute s using @v").Check(testkit.Rows("1577836800.123456"))
+		tk.MustQuery("execute s using @v").Check(testkit.Rows("1577836800.123456"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare s")
+	}
+}
+
 func BenchmarkNewPlanCacheKey(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
