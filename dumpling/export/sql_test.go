@@ -866,6 +866,36 @@ func TestBuildPartitionClauses(t *testing.T) {
 	}
 }
 
+func TestSelectTiDBTableSampleFailsWhenColumnTypesCannotBeRead(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+	tctx := tcontext.Background().WithLogger(appLogger)
+
+	meta := &mockTableIR{
+		dbName:   "test",
+		tblName:  "t",
+		colTypes: []string{"CHAR"},
+		colNames: []string{"e"},
+	}
+	mock.ExpectQuery("SHOW INDEX FROM `test`.`t`").
+		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
+			AddRow("t", 0, "PRIMARY", 1, "e", "A", 0, nil, nil, "", "BTREE", "", ""))
+	expectedErr := errors.New("show columns denied")
+	mock.ExpectQuery("SHOW COLUMNS FROM `test`.`t`").WillReturnError(expectedErr)
+
+	pkFields, pkVals, err := selectTiDBTableSample(tctx, baseConn, meta)
+	require.ErrorIs(t, errors.Cause(err), expectedErr)
+	require.Nil(t, pkFields)
+	require.Nil(t, pkVals)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBuildTiDBTableSampleQuery(t *testing.T) {
 	require.Equal(t,
 		"SELECT `a`,`b` FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `a`,`b`",
