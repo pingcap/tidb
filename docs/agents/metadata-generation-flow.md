@@ -14,7 +14,7 @@ Inspect the entire intended PR against its actual merge base, plus pending edits
 2. Complete applicable local checks, then publish with an explicit status such as `Local Ready checks passed; Bazel metadata generation pending for <head SHA>`. Publication is not completed CI.
 3. Locate a successful generation run for the exact repository, PR, and head. Check the PR head again before applying output. Missing, expired, failed, approval-blocked, or stale runs do not prove consistency. Obtain an applicable run or use canonical local preparation; do not silently waive the gate.
 4. Download into a fresh temporary directory. Review the patch against the allowlist and rejection rules in `.github/workflows/update-bazel-files.yml`: generated Bazel files only, no unrelated source, unsafe paths, mode changes, or symlinks. Inspect both sides of renames/deletions. Preserve unrelated user work.
-5. An empty patch means no generated changes for that head. For a nonempty patch, check applicability, apply, review, and commit/push generated files in the authorized PR workflow. Do not hand-recreate them. Fork PRs currently require this step; the updater does not push to forks automatically.
+5. An empty patch means no generated changes for that head. For a nonempty patch, check applicability, apply with `git apply --index`, review the staged diff, and commit/push generated files in the authorized PR workflow. This stages newly added generated files as well as updates to tracked files. Do not hand-recreate them. Fork PRs currently require this step; the updater does not push to forks automatically.
 6. Recheck generation and applicable Bazel checks on the resulting head. Report metadata status separately from overall CI: generation does not establish build/test correctness.
 
 Read-only identification examples (replace placeholders with verified values):
@@ -29,9 +29,11 @@ After verifying provenance and reviewing the downloaded patch:
 
 ```bash
 git apply --stat <absolute-patch-path>
-git apply --check <absolute-patch-path>
+git apply --check --index <absolute-patch-path>
 # Only after path/content review and checking for overlapping user changes:
-git apply <absolute-patch-path>
+git apply --index <absolute-patch-path>
+git diff --cached --check
+git diff --cached
 git diff --check
 ```
 

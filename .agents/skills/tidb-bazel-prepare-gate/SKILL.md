@@ -27,7 +27,7 @@ Use the complete input list in root policy, not just Go diffs. Read affected dec
 
 ## Select a route
 
-- No relevant input change: skip local preparation and run scoped Go validation.
+- No relevant input change: skip local preparation and follow `AGENTS.md` -> `Task -> Validation Matrix` and the applicable verification profile. Documentation and agent-instruction-only changes do not require Go builds/tests.
 - Metadata-affecting changes with applicable CI generation: run Go validation first, publish with metadata pending, then incorporate verified current-head generated changes using the runbook.
 - No applicable CI generation: use target-branch canonical local preparation before delivery.
 - Dependency, rule, toolchain, or generator changes: arrange applicable Bazel validation in addition to generation.
