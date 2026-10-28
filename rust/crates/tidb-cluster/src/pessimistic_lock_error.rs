@@ -38,11 +38,14 @@ use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, T
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 
 /// Go `errno.ErrLockWaitTimeout`.
-pub const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
+#[cfg(test)]
+const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
 /// Go `errno.ErrLockDeadlock`.
-pub const ERR_LOCK_DEADLOCK: u16 = 1213;
+#[cfg(test)]
+const ERR_LOCK_DEADLOCK: u16 = 1213;
 /// Go `errno.ErrLockAcquireFailAndNoWaitSet`.
-pub const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
+#[cfg(test)]
+const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
 /// Go `errno.ErrWriteConflict`, the statement-scoped conflict a pessimistic
 /// retry resolves.
 pub const ERR_WRITE_CONFLICT: u16 = 9007;
@@ -54,9 +57,6 @@ pub const ERR_REGION_UNAVAILABLE: u16 = 9005;
 
 /// Go `mysql.DefaultMySQLState`, used by every code absent from `state.go`.
 const DEFAULT_SQL_STATE: [u8; 5] = *b"HY000";
-/// Go `mysql.MySQLState[ErrLockDeadlock]`, the only one of these four with an
-/// entry of its own.
-const DEADLOCK_SQL_STATE: [u8; 5] = *b"40001";
 
 /// One client-visible SQL error: the wire triple, with nothing else attached.
 #[derive(Clone, Debug, Eq, PartialEq)]

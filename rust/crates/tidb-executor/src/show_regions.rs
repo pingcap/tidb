@@ -28,7 +28,6 @@ use crate::region_map::{RegionMeta, RegionStore};
 use crate::{Catalog, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::Datum;
-use tidb_error::tidb::errcode;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 use tidb_model::PlacementSettings;

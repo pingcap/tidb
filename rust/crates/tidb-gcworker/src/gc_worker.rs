@@ -1931,7 +1931,7 @@ fn ddl_job_not_found(job_id: i64) -> GcError {
     // Go `dbterror.ErrDDLJobNotFound`: 8223, "DDL Job:%v not found".
     GcError::new(
         tidb_util::dbterror::ERR_DDL_JOB_NOT_FOUND
-            .generate(format!("DDL Job:{job_id} not found"))
+            .fast_generate_by_args(&[job_id.into()])
             .to_string(),
     )
 }

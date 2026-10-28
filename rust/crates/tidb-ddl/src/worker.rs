@@ -1846,7 +1846,7 @@ mod schema_sync_tests {
             ) -> Result<(), DdlPlanError> {
                 (self.0)(buffer);
                 Err(tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-                    .generate("Check constraint 'c' is violated.")
+                    .fast_generate_by_args(&["c".into()])
                     .into())
             }
         }

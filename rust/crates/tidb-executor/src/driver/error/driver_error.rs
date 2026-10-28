@@ -16,7 +16,6 @@ use std::borrow::Cow;
 
 use tidb_error::terror::TerrorError;
 
-use super::VarError;
 use crate::ExecError;
 
 /// A failure while running a SQL string through the driver.

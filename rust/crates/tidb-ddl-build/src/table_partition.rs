@@ -200,10 +200,13 @@ fn build_table_partitioning_inner(
             ));
         }
         ctx.append_warning(tidb_util::context::WarnErr::Terror(
-            tidb_util::dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.generate(format!(
-                "Unsupported subpartitioning, only using {} partitioning",
-                method.kind.sql()
-            )),
+            tidb_util::dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_generate_by_args(&[
+                format!(
+                    "subpartitioning, only using {} partitioning",
+                    method.kind.sql()
+                )
+                .into(),
+            ]),
         ));
     }
 

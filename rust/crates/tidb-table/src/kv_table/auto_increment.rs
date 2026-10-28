@@ -205,7 +205,7 @@ impl KvTable {
         // 1105 message.
         let message = if unsigned {
             tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
-                .generate("Failed to read auto-increment value from storage engine")
+                .fast_generate_by_args(&[])
                 .to_string()
         } else {
             "auto increment action failed".to_owned()

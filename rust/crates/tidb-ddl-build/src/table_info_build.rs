@@ -1021,10 +1021,8 @@ fn validate_global_index_with_generated_columns(
         let is_prefix_col = col.length != tidb_datatype::UNSPECIFIED_LENGTH;
         if is_virtual_generated || is_prefix_col {
             append_warning(WarnErr::Terror(
-                tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE.generate(format!(
-                    "Auto analyze is not effective for index '{}', need analyze manually",
-                    index_info.name.original()
-                )),
+                tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
+                    .fast_generate_by_args(&[index_info.name.original().into()]),
             ));
             return;
         }

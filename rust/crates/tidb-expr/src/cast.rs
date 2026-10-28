@@ -1941,8 +1941,10 @@ fn cast_to_time_value(
     if dst_adjusted {
         // handleInvalidTimeError does not downgrade the DST error. Unlike
         // Time.Convert's warning, ParseTime's returned error fails this cast.
-        return Err(EvalError::Conversion(tidb_datatype::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
-            "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{}'", s, ctx.time_zone().dag_zone().0))));
+        return Err(EvalError::Conversion(
+            tidb_datatype::ERR_TIMESTAMP_IN_DST_TRANSITION
+                .fast_generate_by_args(&[s.into(), ctx.time_zone().dag_zone().0.into()]),
+        ));
     }
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).

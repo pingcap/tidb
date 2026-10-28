@@ -765,8 +765,8 @@ impl Datum {
                 finish(fallback, Some(ScalarConversionEvent::Truncated))
             };
         let dst = |text: &str| {
-            crate::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
-            "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{}'", text, zone.dag_zone().0))
+            crate::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
+                .fast_generate_by_args(&[text.into(), zone.dag_zone().0.into()])
         };
         if let Self::Time(value) = self {
             let (converted, adjusted) =

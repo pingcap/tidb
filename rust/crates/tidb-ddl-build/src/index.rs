@@ -1139,9 +1139,8 @@ pub fn warn_global_index_needs_manual_analyze(
 ) {
     if part_is_prefix_or_virtual.any(|flag| flag) {
         ctx.append_warning(tidb_util::context::WarnErr::Terror(
-            tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE.generate(format!(
-                "Auto analyze is not effective for index '{index_name}', need analyze manually"
-            )),
+            tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
+                .fast_generate_by_args(&[index_name.into()]),
         ));
     }
 }

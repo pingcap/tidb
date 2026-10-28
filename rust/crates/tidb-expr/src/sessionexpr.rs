@@ -1527,7 +1527,7 @@ mod tests {
         ) -> Result<Arc<dyn SequenceTable>, ExprOptError> {
             Err(ExprOptError::new(
                 tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                    .generate(format!("Table '{db}.{name}' doesn't exist"))
+                    .fast_generate_by_args(&[db.into(), name.into()])
                     .to_string(),
             ))
         }
