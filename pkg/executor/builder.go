@@ -1295,6 +1295,14 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		children   []exec.Executor
 	)
 	if v.SelectPlan != nil {
+		if b.sctx.GetSessionVars().InMViewMaintenance {
+			// MV builds persist the read timestamp as the refresh watermark, even
+			// when the SELECT becomes a TableDual and never opens a data reader.
+			if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+				b.err = err
+				return nil
+			}
+		}
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
@@ -2835,6 +2843,9 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBMViews),
+			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),

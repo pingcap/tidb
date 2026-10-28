@@ -96,10 +96,13 @@ func TestPacketIOWriteCompressed(t *testing.T) {
 
 func inflate(t *testing.T, packet []byte) []byte {
 	compressedLength := int(packet[0]) | int(packet[1])<<8 | int(packet[2])<<16
-	r, err := zlib.NewReader(bytes.NewReader(packet[7 : 7+compressedLength]))
+	compressed := bytes.NewReader(packet[7 : 7+compressedLength])
+	r, err := zlib.NewReader(compressed)
 	require.NoError(t, err)
 	decoded, err := io.ReadAll(r)
 	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	require.Zero(t, compressed.Len())
 	return decoded
 }
 
