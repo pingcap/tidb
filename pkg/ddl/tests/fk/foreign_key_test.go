@@ -506,6 +506,25 @@ func TestRenameReferredTableToAnotherDatabaseWithSameName(t *testing.T) {
 	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
 }
 
+func TestRenameReferredTableInSameDatabase(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int, constraint fk0 foreign key (id) references parent(id))")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("rename table parent to parent2")
+
+	childInfo := getTableInfo(t, dom, "test", "child")
+	require.Equal(t, "test", childInfo.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "parent2", childInfo.ForeignKeys[0].RefTable.L)
+	require.Equal(t, 1, len(getTableInfoReferredForeignKeys(t, dom, "test", "parent2")))
+	tk.MustExec("insert into child values (1)")
+	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
+}
+
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
