@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
 
@@ -723,7 +722,6 @@ func lateMaterializeAllowedMergeJoins(logic base.LogicalPlan, plan base.Physical
 type LateMaterializationAlternative struct {
 	Enabled    bool
 	recorded   bool
-	signature  string
 	tasks      []lateMaterializationTask
 	mergeJoins map[string]struct{}
 	warnings   map[string]struct{}
@@ -743,51 +741,6 @@ func WithLateMaterializationAlternative(ctx context.Context, alternative *LateMa
 
 // HasProposal reports whether the baseline plan justified an alternative.
 func (a *LateMaterializationAlternative) HasProposal() bool { return len(a.tasks) > 0 }
-
-// lateMaterializationSignature maps column identities through DataSource
-// occurrences, not allocator IDs. The tree path distinguishes self joins and
-// repeated aliases in different query blocks. Requiring identical topology and
-// schemas makes positional region/target and merge-join mapping conservative:
-// a changed rebuild is rejected instead of applying a proposal to another table.
-func lateMaterializationSignature(root base.LogicalPlan) string {
-	columns := make(map[int64]string)
-	var sources func(base.LogicalPlan, string)
-	sources = func(p base.LogicalPlan, path string) {
-		if ds, ok := p.(*logicalop.DataSource); ok {
-			for _, col := range ds.Schema().Columns {
-				columns[col.UniqueID] = fmt.Sprintf("%s/%d", path, col.ID)
-			}
-		}
-		for i, child := range p.Children() {
-			sources(child, fmt.Sprintf("%s/%d", path, i))
-		}
-	}
-	sources(root, "r")
-	var result strings.Builder
-	var walk func(base.LogicalPlan)
-	walk = func(p base.LogicalPlan) {
-		fmt.Fprintf(&result, "(%T:%d", p, p.QueryBlockOffset())
-		if ds, ok := p.(*logicalop.DataSource); ok {
-			fmt.Fprintf(&result, ":%d:%v", ds.TableInfo.ID, ds.TableAsName)
-		}
-		if join, ok := p.(*logicalop.LogicalJoin); ok {
-			fmt.Fprintf(&result, ":%v", join.JoinType)
-		}
-		for _, col := range p.Schema().Columns {
-			if identity, ok := columns[col.UniqueID]; ok {
-				fmt.Fprintf(&result, ":%s", identity)
-			} else {
-				fmt.Fprintf(&result, ":derived:%d:%s:%s", col.ID, col.OrigName, col.RetType)
-			}
-		}
-		for _, child := range p.Children() {
-			walk(child)
-		}
-		result.WriteByte(')')
-	}
-	walk(root)
-	return result.String()
-}
 
 func walkLateMaterializationJoins(p base.LogicalPlan, path string, visit func(string, *logicalop.LogicalJoin)) {
 	if join, ok := p.(*logicalop.LogicalJoin); ok {
@@ -821,7 +774,6 @@ func (a *LateMaterializationAlternative) record(logic base.LogicalPlan, plan bas
 	if !a.HasProposal() {
 		return
 	}
-	a.signature = lateMaterializationSignature(logic)
 	allowed := lateMaterializeAllowedMergeJoins(logic, plan)
 	a.mergeJoins = make(map[string]struct{})
 	walkLateMaterializationJoins(logic, "r", func(path string, join *logicalop.LogicalJoin) {
@@ -835,9 +787,12 @@ func (a *LateMaterializationAlternative) record(logic base.LogicalPlan, plan bas
 	}
 }
 
+// apply runs after rebuilding and logically optimizing with the baseline
+// round's flags and session setup. This replay preserves region/target order
+// and join occurrence paths; no plan or column allocator IDs cross builds.
 func (a *LateMaterializationAlternative) apply(logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if !a.HasProposal() || a.signature != lateMaterializationSignature(logic) {
-		return nil, errors.New("late materialization proposal does not match rebuilt logical plan")
+	if !a.HasProposal() {
+		return nil, errors.New("late materialization proposal has no targets")
 	}
 	// Resolve the baseline's allowed joins before adding the fetch joins.
 	allowed := make(map[int]struct{})
