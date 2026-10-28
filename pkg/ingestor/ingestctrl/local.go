@@ -1364,43 +1364,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
-// NewExternalEngine creates an external engine that reads the globally sorted
-// KV files described by cfg, to be ingested by IngestExternalEngine. The caller
-// owns the returned engine and must close it. If ts is 0, a new TS is allocated.
-func (local *Backend) NewExternalEngine(
-	ctx context.Context,
-	cfg *globalsort.EngineConfig,
-	ts uint64,
-) (*globalsort.Engine, error) {
-	if ts == 0 {
-		physical, logical, err := local.engineMgr.GetTS(ctx)
-		if err != nil {
-			return nil, err
-		}
-		ts = oracle.ComposeTS(physical, logical)
-	}
-	return globalsort.NewExternalEngine(
-		ctx,
-		cfg.ExtStore,
-		cfg.DataFiles,
-		cfg.StatFiles,
-		cfg.StartKey,
-		cfg.EndKey,
-		cfg.JobKeys,
-		cfg.SplitKeys,
-		// engineMgr keeps the worker concurrency from when the Backend was
-		// created, SetWorkerConcurrency doesn't change it.
-		int(local.engineMgr.WorkerConcurrency.Load()),
-		ts,
-		cfg.TotalFileSize,
-		cfg.TotalKVCount,
-		cfg.CheckHotspot,
-		cfg.MemCapacity,
-		cfg.OnDup,
-		cfg.FilePrefix,
-	), nil
-}
-
 // verifyImportedStatistics verifies the imported statistics for external engines.
 // It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
 // and verifies that the imported KV count matches the expected one.
@@ -1442,8 +1405,8 @@ func (local *Backend) ImportEngine(
 	return local.ingestEngine(ctx, localEngine, regionSplitSize, regionSplitKeys)
 }
 
-// IngestExternalEngine ingests an external engine created by NewExternalEngine
-// to TiKV.
+// IngestExternalEngine ingests an external engine created by
+// globalsort.NewExternalEngine to TiKV.
 func (local *Backend) IngestExternalEngine(
 	ctx context.Context,
 	e *globalsort.Engine,

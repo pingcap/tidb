@@ -57,7 +57,7 @@ type StoreHelper interface {
 }
 
 // engineManager manages local engines. External engines are owned by their
-// callers, see Backend.NewExternalEngine.
+// callers, see Backend.IngestExternalEngine.
 type engineManager struct {
 	BackendConfig
 	StoreHelper

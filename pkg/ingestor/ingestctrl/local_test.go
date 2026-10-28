@@ -1794,21 +1794,22 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 
 	extEngine := globalsort.NewExternalEngine(
 		ctx,
-		memStore,
-		dataFiles,
-		statFiles,
-		[]byte{1},
-		[]byte{10},
-		keys,
-		[][]byte{{1}, {11}},
+		&globalsort.EngineConfig{
+			ExtStore:      memStore,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{10},
+			JobKeys:       keys,
+			SplitKeys:     [][]byte{{1}, {11}},
+			TotalFileSize: 456,
+			TotalKVCount:  789,
+			CheckHotspot:  true,
+			MemCapacity:   16 * units.GiB,
+			OnDup:         engineapi.OnDuplicateKeyIgnore,
+		},
 		10,
 		123,
-		456,
-		789,
-		true,
-		16*units.GiB,
-		engineapi.OnDuplicateKeyIgnore,
-		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2656,9 +2657,8 @@ func TestExternalEngine(t *testing.T) {
 		}
 	}()
 	go func() {
-		eng, err2 := local.NewExternalEngine(ctx, externalCfg, 0)
-		require.NoError(t, err2)
-		err2 = local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		eng := globalsort.NewExternalEngine(ctx, externalCfg, local.GetWorkerConcurrency(), 123)
+		err2 := local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
 		require.NoError(t, eng.Close())
 		close(done)
