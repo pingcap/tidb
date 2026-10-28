@@ -636,6 +636,23 @@ func TestPrepareGCBlocksConcurrentGCDisable(t *testing.T) {
 	require.Equal(t, *safePoint, *res.safePoint)
 }
 
+func TestPrepareGCWithCancelledContextDoesNotRunGC(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(220*time.Minute))
+	close(s.gcWorker.done)
+	s.oracle.AddOffset(time.Minute * 40)
+
+	safePointBefore, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(gcContext())
+	cancel()
+	ok, _, err := s.gcWorker.prepare(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, ok)
+	safePointAfter, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.Equal(t, safePointBefore, safePointAfter)
+}
+
 func TestStatusVars(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
