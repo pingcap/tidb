@@ -2712,3 +2712,23 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestInSubqueryMatchesEachOuterRowOnceWhenKeysAreConverted(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_outer (id int)")
+	tk.MustExec("insert into t_outer values (1), (2), (3), (4)")
+	tk.MustExec("create table t_inner (a blob, b int)")
+	tk.MustExec("insert into t_inner values ('x', 1), ('y', 1), ('z', 1)")
+
+	tk.MustQuery("select count(*) from t_outer where 0 in (select a from t_inner)").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t_outer where (0, 1) in (select a, b from t_inner)").Check(testkit.Rows("4"))
+	tk.MustQuery("select id from t_outer where (id, 0) in (select b, a from t_inner)").Check(testkit.Rows("1"))
+
+	tk.MustExec("delete from t_inner")
+	tk.MustExec("insert into t_inner values ('2', 2), ('02', 2)")
+	tk.MustQuery("select id from t_outer where (id, id) in (select a, b from t_inner)").Check(testkit.Rows("2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Implicit type or collation conversion on join keys (test.t_outer.id = test.t_inner.a) may make indexes unusable"))
+}
