@@ -106,7 +106,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.25.12",
+    version = "1.25.14",
 )
 
 # Also fetches rules_license 1.0.0; restricted builders must preseed its
