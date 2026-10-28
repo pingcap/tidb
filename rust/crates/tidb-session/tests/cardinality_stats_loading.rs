@@ -81,8 +81,8 @@ fn subset_index_cardinality_after_async_statistics_load() {
     assert!(queued(), "planning must enqueue evicted statistics");
     {
         let catalog = shared.lock().unwrap();
-        catalog.load_needed_histograms("default").unwrap();
-        let loaded = catalog.table_statistics(table_id).unwrap();
+        catalog.load_needed_histograms(&shared.stats_handle(), "default").unwrap();
+        let loaded = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
         for id in column_ids {
             assert!(loaded.column_load_status[&id].is_full_load());
         }
@@ -266,7 +266,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     }
     let loader = tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();
     let cache = Arc::new(tidb_exec::stats_watch::SharedStats::new(Default::default()).unwrap());
-    shared_catalog.lock().unwrap().set_statistics_view(Arc::new(
+    shared_catalog.stats_handle().set_statistics_view(Arc::new(
         tidb_executor::driver::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
     ));
     // Update after the delta, clear/init-lite, clear/init-full, then Update
@@ -282,7 +282,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
             assert!(shared_catalog
                 .lock()
                 .unwrap()
-                .table_statistics(table_id)
+                .table_statistics_in(&shared_catalog.stats_handle(), table_id)
                 .is_none());
             load_initial_stats_snapshot_with_memory_limits(
                 &mut storage,
@@ -326,7 +326,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         let stats = shared_catalog
             .lock()
             .unwrap()
-            .table_statistics(table_id)
+            .table_statistics_in(&shared_catalog.stats_handle(), table_id)
             .unwrap();
         assert!(stats.pseudo, "{mode:?}");
         assert!(!stats.cache_pseudo, "{mode:?}");
@@ -386,9 +386,9 @@ fn datetime_range_overflow_survives_async_statistics_load() {
     assert!(queued(), "the first query must request evicted statistics");
     {
         let catalog = shared.lock().unwrap();
-        catalog.load_needed_histograms("default").unwrap();
+        catalog.load_needed_histograms(&shared.stats_handle(), "default").unwrap();
         assert!(catalog
-            .table_statistics(table_id)
+            .table_statistics_in(&shared.stats_handle(), table_id)
             .unwrap()
             .column_load_status[&column_id]
             .is_full_load());

@@ -115,22 +115,26 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
         .unwrap();
     session.run("select * from local_t").unwrap();
 
+        let stats_handle = session.stats_handle();
     let local_id = session
         .with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "local_t")
             else {
                 panic!("local_t exists")
             };
-            assert!(catalog.table_statistics(table.table_id).is_none());
+            assert!(catalog
+                .table_statistics_in(&stats_handle, table.table_id)
+                .is_none());
             Ok(table.table_id)
         })
         .unwrap();
     session.run("analyze table local_t").unwrap();
+    let stats_handle = session.stats_handle();
     session
         .with_catalog_mut(|catalog| {
             assert_eq!(
                 catalog
-                    .table_statistics(local_id)
+                    .table_statistics_in(&stats_handle, local_id)
                     .expect("explicit ANALYZE publishes local statistics")
                     .row_count,
                 3
@@ -149,23 +153,27 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
         row_text(session.run("select * from global_t")).is_empty(),
         "an autocommit GLOBAL temporary-table write ends before the next statement"
     );
+        let stats_handle = session.stats_handle();
     let global_id = session
         .with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "global_t")
             else {
                 panic!("global_t exists")
             };
-            assert!(catalog.table_statistics(table.table_id).is_none());
+            assert!(catalog
+                .table_statistics_in(&stats_handle, table.table_id)
+                .is_none());
             Ok(table.table_id)
         })
         .unwrap();
     assert_ne!(local_id, global_id);
     session.run("analyze table global_t").unwrap();
+    let stats_handle = session.stats_handle();
     session
         .with_catalog_mut(|catalog| {
             assert_eq!(
                 catalog
-                    .table_statistics(global_id)
+                    .table_statistics_in(&stats_handle, global_id)
                     .expect("explicit ANALYZE publishes global statistics")
                     .row_count,
                 0

@@ -1841,8 +1841,7 @@ fn dynamic_prune_fallback<'a>(
     ctx: &'a crate::StmtContext,
 ) -> impl Fn(i64, &str) -> bool + 'a {
     move |table_id, table_name| {
-        let global_stats_ready = catalog
-            .table_statistics(table_id)
+        let global_stats_ready = crate::access_cost::table_statistics(ctx, catalog, table_id)
             .is_some_and(|statistics| statistics.last_analyze_version > 0);
         let allow_dynamic_without_stats = ctx.optimizer_fix_control().get_bool_with_default(
             tidb_planner::fix_control::FIX_44262,
@@ -2896,12 +2895,12 @@ fn optimize_built_logical(
                 .update_col_stats_usage(usage.predicate_columns.keys().copied());
             self.context.record_table_runtime_statistics(
                 usage.visited_logical_table_ids.iter().copied(),
-                |table_id| self.catalog.table_statistics(table_id),
+                |table_id| crate::access_cost::table_statistics(self.context, self.catalog, table_id),
             );
             self.demanded
                 .borrow_mut()
                 .get_or_insert_with(Default::default)
-                .extend(self.catalog.statistics_demand(usage));
+                .extend(self.catalog.statistics_demand(self.context.stats_handle(), usage));
             self.catalog.request_statistics_load(usage, self.context)
         }
 
@@ -3448,7 +3447,8 @@ mod statistics_initialization_tests {
         );
         let mut catalog = Catalog::mock();
         catalog.register_kv("t", table);
-        catalog.set_table_statistics(
+        let context = crate::StmtContext::default();
+        context.stats_handle().set_table_statistics(
             7,
             std::sync::Arc::new(crate::access_cost::TableStatistics::new(
                 1000,
@@ -3494,7 +3494,7 @@ mod statistics_initialization_tests {
             min_selectivity: 0.01,
             index_merge_max_count: None,
         });
-        let context = crate::StmtContext::default();
+
         let mut initializer = InitStats {
             error: None,
             catalog: &catalog,
@@ -3640,8 +3640,10 @@ mod statistics_initialization_tests {
         for ndv in [2, 0] {
             statistics.columns.get_mut(&1).unwrap().histogram.ndv = ndv;
             let cache_usable = statistics.column_for_estimation(1).is_some();
-            catalog.set_table_statistics(7, std::sync::Arc::new(statistics.clone()));
             let context = crate::StmtContext::default();
+            context
+                .stats_handle()
+                .set_table_statistics(7, std::sync::Arc::new(statistics.clone()));
             let mut initializer = InitStats {
                 error: None,
                 catalog: &catalog,

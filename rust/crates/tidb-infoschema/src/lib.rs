@@ -62,8 +62,6 @@ impl CatalogTableKey {
     }
 }
 
-pub mod sync_load;
-pub use sync_load::StatisticsLoadWorkers;
 pub mod key_info;
 pub mod infoschema_meta;
 pub mod metricsschema;
@@ -74,12 +72,10 @@ pub mod planner_view;
 pub mod sequence;
 pub use sequence::SequenceSnapshot;
 pub use planner_view::{PlannerCatalog, PlannerSchemaView, MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
-pub mod statistics;
 pub mod statistics_access;
 pub mod temporary;
-pub use statistics::{PseudoStatsTable, StatisticsSource, StatisticsView};
-pub use statistics_access::{enqueue_sync_load_failures, StatisticsItemLoader};
-use statistics_access::StatisticsCache;
+pub use tidb_stats_handle::{PseudoStatsTable, StatisticsLoadWorkers, StatisticsSchema, StatisticsSource, StatisticsView};
+pub use tidb_stats_handle::{enqueue_sync_load_failures, StatisticsItemLoader, StatsHandle};
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -218,17 +214,10 @@ pub struct Catalog {
     /// `SchemaMetaVersion`, so a temporary table never moves a plan-cache key
     /// (see [`Catalog::schema_version`]).
     overlay_versions: Option<(u64, u64)>,
-    /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
-    /// the planner sees it.
-    ///
-    /// A missing entry is Go's `statistics.PseudoTable`, and that is what
-    /// makes an unanalyzed table's `EXPLAIN` print `stats:pseudo`. The map
-    /// lives on the catalog rather than on a table because it is loaded from
-    /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
-    /// so the two are published independently.
-    statistics: Arc<StatisticsCache>,
-    statistics_view: Option<Arc<StatisticsView>>,
-    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
+    /// The schema facts the statistics view converts a table under, by
+    /// table / partition id; the statistics themselves live in the domain's
+    /// `StatsHandle`, not in this image.
+    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<StatisticsSchema>>>>,
     /// Memoized answer of walking EVERY database's table map for GLOBAL
     /// temporary tables, valid as of one `metadata_version`. Without the memo
     /// the walk runs twice per statement (`txn`'s overlay guard swaps global
@@ -377,8 +366,6 @@ impl Catalog {
             table_id_names: Arc::default(),
             local_temporary: Vec::new(),
             overlay_versions: None,
-            statistics: Arc::default(),
-            statistics_view: None,
             statistics_schemas: Arc::default(),
             temporary_sweep: None,
             foreign_keys_present: false,

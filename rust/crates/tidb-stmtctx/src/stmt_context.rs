@@ -1011,6 +1011,10 @@ pub struct StmtContextData {
     /// consults it short-circuits on empty, so the ordinary path pays
     /// nothing.
     expr_pushdown_blacklist: std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+    /// Go `StmtCtx`'s `GetStatsHandle()`: the domain's statistics handle this
+    /// statement plans from. A context with no domain behind it gets an empty
+    /// handle, so every table is Go's `PseudoTable`.
+    stats_handle: Arc<tidb_stats_handle::StatsHandle>,
     /// Go `plannercore.DefaultDisabledLogicalRulesList`, published by `ADMIN
     /// RELOAD OPT_RULE_BLACKLIST` and read by `isLogicalRuleDisabled`.
     disabled_logical_rules: std::sync::Arc<std::collections::HashSet<String>>,
@@ -1951,6 +1955,13 @@ context_configuration! {
         self
     }
 
+    /// Installs the domain's statistics handle (Go `GetStatsHandle()`).
+    #[must_use]
+    pub fn with_stats_handle(mut self, handle: Arc<tidb_stats_handle::StatsHandle>) -> Self {
+        self.stats_handle = handle;
+        self
+    }
+
     /// Installs the two published blacklists. See
     /// [`crate::pushdown_blacklist`].
     #[must_use]
@@ -2581,6 +2592,7 @@ impl StmtContext {
             cop_response_sink: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
+            stats_handle: Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
@@ -3493,7 +3505,7 @@ impl StmtContext {
 
     pub fn install_pending_statistics_load(
         &self,
-        receivers: Vec<std::sync::mpsc::Receiver<tidb_infoschema::sync_load::SyncLoadOutcome>>,
+        receivers: Vec<std::sync::mpsc::Receiver<tidb_stats_handle::sync_load::SyncLoadOutcome>>,
         items: Vec<tidb_model::StatsLoadItem>,
         timeout: std::time::Duration,
     ) {
@@ -4135,6 +4147,12 @@ impl StmtContext {
         plan.is_sync_stats_failed = self.sync_stats_failed();
         plan.is_tiflash = self.is_tiflash.load(Ordering::Relaxed);
         self.publish_process_plan_info(plan);
+    }
+
+    /// The statistics handle this statement plans from.
+    #[must_use]
+    pub fn stats_handle(&self) -> &Arc<tidb_stats_handle::StatsHandle> {
+        &self.stats_handle
     }
 
     /// The published `mysql.expr_pushdown_blacklist`.
@@ -5387,7 +5405,7 @@ impl StmtContext {
 }
 
 pub struct PendingStatisticsLoad {
-    pub receivers: Vec<std::sync::mpsc::Receiver<tidb_infoschema::sync_load::SyncLoadOutcome>>,
+    pub receivers: Vec<std::sync::mpsc::Receiver<tidb_stats_handle::sync_load::SyncLoadOutcome>>,
     pub items: Vec<tidb_model::StatsLoadItem>,
     pub timeout: std::time::Duration,
     pub started: std::time::Instant,

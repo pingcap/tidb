@@ -105,7 +105,6 @@ impl CatalogFollower {
             &self.storage,
             None,
         );
-        self.statistics_loading.attach(&mut built.catalog);
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;

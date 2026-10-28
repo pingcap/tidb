@@ -3581,7 +3581,7 @@ fn ddl_after_loaded_statistics_matches_go() {
         assert!(!peer_catalog
             .lock()
             .unwrap()
-            .table_statistics(table_id)
+            .table_statistics_in(&peer_catalog.stats_handle(), table_id)
             .unwrap()
             .column_is_load_needed(1, true));
         let mut snapshot = (*stack.factory.stats().load()).clone();
@@ -3601,7 +3601,7 @@ fn ddl_after_loaded_statistics_matches_go() {
         assert!(peer_catalog
             .lock()
             .unwrap()
-            .table_statistics(table_id)
+            .table_statistics_in(&peer_catalog.stats_handle(), table_id)
             .unwrap()
             .column_is_load_needed(1, true));
         let read_count = tidb_stats_handle_metrics::READ_STATS_HISTOGRAM.get_sample_count();
@@ -3643,7 +3643,7 @@ fn ddl_after_loaded_statistics_matches_go() {
             !peer_catalog
                 .lock()
                 .unwrap()
-                .table_statistics(table_id)
+                .table_statistics_in(&peer_catalog.stats_handle(), table_id)
                 .unwrap()
                 .column_is_load_needed(1, true),
             "the peer still sees an evicted column after the domain load completes"
@@ -3653,14 +3653,14 @@ fn ddl_after_loaded_statistics_matches_go() {
                 &peer_catalog
                     .lock()
                     .unwrap()
-                    .table_statistics(table_id)
+                    .table_statistics_in(&peer_catalog.stats_handle(), table_id)
                     .unwrap(),
                 &session
                     .store.session
                     .shared_catalog()
                     .lock()
                     .unwrap()
-                    .table_statistics(table_id)
+                    .table_statistics_in(&session.store.session.stats_handle(), table_id)
                     .unwrap(),
             ),
             "sessions must share the same converted statistics"

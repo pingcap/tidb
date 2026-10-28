@@ -3941,6 +3941,7 @@ dependencies = [
  "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle",
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
@@ -4084,6 +4085,7 @@ dependencies = [
  "tidb-parser",
  "tidb-planner",
  "tidb-stats",
+ "tidb-stats-handle",
  "tidb-stats-handle-metrics",
  "tidb-table",
  "tidb-tablecodec",
@@ -4574,6 +4576,7 @@ dependencies = [
  "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle",
  "tidb-stats-handle-autoanalyze-exec",
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-autoanalyze-refresher",
@@ -4667,6 +4670,21 @@ dependencies = [
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-stats-handle"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "serde_json",
+ "tidb-config",
+ "tidb-model",
+ "tidb-planner",
+ "tidb-stats",
+ "tidb-stats-handle-metrics",
+ "tidb-table",
+ "tracing",
 ]
 
 [[package]]
@@ -4878,6 +4896,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-stats-handle",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-table",

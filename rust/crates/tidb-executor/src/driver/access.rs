@@ -467,12 +467,33 @@ impl PlanCacheStmtInfo {
     }
 }
 
+/// The statistics handle a plan-cache environment reads versions from. It is
+/// the source of a key component, not part of the key, so every handle
+/// compares equal and hashes to nothing.
+#[derive(Clone, Debug, Default)]
+struct StatsHandleRef(std::sync::Arc<tidb_stats_handle::StatsHandle>);
+
+impl PartialEq for StatsHandleRef {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for StatsHandleRef {}
+
+impl std::hash::Hash for StatsHandleRef {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
 /// Session facts in Go's prepared-plan cache key that can change physical
 /// planning without changing the statement, schema, or parameter types.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PreparedPlanCacheEnvironment {
     sql_mode: tidb_mysql::SqlMode,
     user_identity: String,
+    /// The statement's statistics handle, which the plan-cache key's
+    /// `statsVerHash` reads table versions from.
+    stats_handle: StatsHandleRef,
     /// Go's `EnableNoBackslashEscapesInLike` plan-cache key bit. The
     /// statement's implicit LIKE escape changes both the rewritten expression
     /// and any index range derived from it, so plans built under different
@@ -542,6 +563,13 @@ impl PreparedPlanCacheEnvironment {
             + self.binding_sql.capacity()
     }
 
+    /// The statement's statistics handle (Go `sctx.GetStatsHandle()`).
+    #[must_use]
+    pub fn with_stats_handle(mut self, handle: std::sync::Arc<tidb_stats_handle::StatsHandle>) -> Self {
+        self.stats_handle = StatsHandleRef(handle);
+        self
+    }
+
     /// Go plan-cache key's authenticated user/host identity.
     pub fn with_user_identity(mut self, identity: String) -> Self {
         self.user_identity = identity;
@@ -558,6 +586,7 @@ impl PreparedPlanCacheEnvironment {
         Self {
             sql_mode,
             user_identity: String::new(),
+            stats_handle: StatsHandleRef::default(),
             enable_no_backslash_escapes_in_like: true,
             foreign_key_checks: true,
             time_zone,
@@ -710,6 +739,7 @@ impl PreparedPlanCacheEnvironment {
             let version = match catalog.get_by_key(key) {
                 Some(TableEntry::Kv(table)) => {
                     crate::access_cost::get_latest_version_from_stats_table(
+                        &self.stats_handle.0,
                         catalog,
                         table.table_id,
                         self.stats_hash_objective.determinate,

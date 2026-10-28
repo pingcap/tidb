@@ -5372,13 +5372,13 @@ fn batch_point_usage_stats(
     table: &crate::kv_table::KvTable,
 ) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
     // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
-    if catalog.table_statistics(table.table_id).is_some() {
+    if crate::access_cost::table_statistics(ctx, catalog, table.table_id).is_some() {
         return crate::access_cost::get_stats_table(ctx, catalog, table.table_id);
     }
     let partition = table.partition()?;
     let mut row_count = 0_i64;
     for definition in &partition.definitions {
-        let stats = catalog.table_statistics(definition.id)?;
+        let stats = crate::access_cost::table_statistics(ctx, catalog, definition.id)?;
         if stats.pseudo {
             return None;
         }

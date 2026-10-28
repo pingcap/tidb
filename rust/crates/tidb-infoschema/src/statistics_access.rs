@@ -19,6 +19,7 @@
 //! statistics tests publish.
 
 use crate::*;
+use tidb_stats_handle::StatsHandle;
 
 /// Go `PseudoTable`'s schema inputs from a catalog table, whose columns and
 /// indexes are all public; a column past the visible ones is hidden.
@@ -63,116 +64,16 @@ pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo 
     }
 }
 
-/// Storage half of Go's statistics sync/async load worker.
-pub trait StatisticsItemLoader: Send + Sync {
-    /// Loads the requested items and returns refreshed planner tables for
-    /// publication into the in-process cache. Cluster loaders publish directly
-    /// to the domain source read by `StatisticsView` and return no copies.
-    fn load_items(
-        &self,
-        items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String>;
-}
-
-#[derive(Default)]
-pub struct StatisticsCache {
-    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_planner::table_statistics::TableStatistics>>>,
-    pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
-    pub sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
-}
-
-impl std::fmt::Debug for StatisticsCache {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StatisticsCache")
-            .field(
-                "tables",
-                &self
-                    .values
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .len(),
-            )
-            .field(
-                "has_loader",
-                &self
-                    .loader
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_some(),
-            )
-            .finish()
-    }
-}
-
-pub fn enqueue_sync_load_failures(
-    requested_items: &[tidb_model::StatsLoadItem],
-    remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
-) {
-    for requested in requested_items {
-        if !remaining_items.contains(&requested.table_item_id) {
-            continue;
-        }
-        let mut item = requested.table_item_id;
-        item.is_sync_load_failed = true;
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
-    }
-}
-
-
 impl Catalog {
-    /// Publishes one table's loaded statistics, which the access-path choice
-    /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
-    ///
-    /// Two publishers reach here, and they must agree: the cluster session
-    /// loads `mysql.stats_*` rows a Go `ANALYZE` wrote
-    /// (`tidb_server::cluster_session`), and an in-process `ANALYZE TABLE`
-    /// computes them here ([`crate::analyze::kv::analyze_kv_table`]). Both
-    /// build the histograms through [`crate::analyze`], so a table's estimates
-    /// do not depend on which storage it sits on.
-    pub fn set_table_statistics(
-        &mut self,
-        table_id: i64,
-        statistics: Arc<tidb_planner::table_statistics::TableStatistics>,
-    ) {
-        self.statistics
-            .values
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(table_id, statistics);
-    }
-
-    /// Installs the domain statistics worker used by logical optimization.
-    pub fn set_statistics_item_loader(
-        &mut self,
-        loader: Arc<dyn StatisticsItemLoader>,
-        workers: Arc<StatisticsLoadWorkers>,
-    ) {
-        let service_loader = Arc::clone(&loader);
-        *self
-            .statistics
-            .loader
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
-        self.statistics.sync_load.get_or_init(|| {
-            sync_load::SyncLoadService::with_pool(
-                service_loader,
-                Arc::downgrade(&self.statistics),
-                workers,
-            )
-        });
-    }
-
     /// Go `storage.CleanFakeItemsForShowHistInFlights`: remove queue entries
     /// whose cache state no longer requires a load and return the number that
     /// remain genuinely needed.
-    pub fn clean_needed_statistics_items(&self) -> i64 {
+    pub fn clean_needed_statistics_items(&self, handle: &StatsHandle) -> i64 {
         let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         let mut really_needed = 0_i64;
         for requested in needed.all_items() {
             let item = requested.table_item_id;
-            let Some(statistics) = self.table_statistics(item.table_id) else {
+            let Some(statistics) = handle.table_statistics(item.table_id, || self.statistics_schema(item.table_id)) else {
                 needed.delete(item);
                 continue;
             };
@@ -194,9 +95,8 @@ impl Catalog {
     /// demand on the domain tick. Each item is attempted at most once and is
     /// removed even when storage returns an error; a later item remains queued
     /// when an earlier load fails.
-    pub fn load_needed_histograms(&self, resource_group: &str) -> Result<(), String> {
-        let loader = self
-            .statistics
+    pub fn load_needed_histograms(&self, handle: &StatsHandle, resource_group: &str) -> Result<(), String> {
+        let loader = handle
             .loader
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -216,8 +116,8 @@ impl Catalog {
                         table.columns.iter().any(|column| column.id == item.id)
                     })
             };
-            let load_needed = self
-                .table_statistics(item.table_id)
+            let load_needed = handle
+                .table_statistics(item.table_id, || self.statistics_schema(item.table_id))
                 .is_some_and(|statistics| {
                     if item.is_index {
                         statistics.index_is_load_needed(item.id)
@@ -236,8 +136,7 @@ impl Catalog {
             let loaded = loader.load_items(std::slice::from_ref(&requested), resource_group);
             needed.delete(item);
             let tables = loaded?;
-            let mut values = self
-                .statistics
+            let mut values = handle
                 .values
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -254,6 +153,7 @@ impl Catalog {
     /// or not the shared cache already holds it.
     pub fn statistics_demand(
         &self,
+        handle: &StatsHandle,
         usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
     ) -> HashMap<tidb_model::TableItemID, bool> {
         let mut columns = usage.predicate_columns.clone();
@@ -263,7 +163,7 @@ impl Catalog {
         // unless some column or non-MV index is already full.
         {
             for table_id in &usage.visited_logical_table_ids {
-                let Some(statistics) = self.table_statistics(*table_id) else {
+                let Some(statistics) = handle.table_statistics(*table_id, || self.statistics_schema(*table_id)) else {
                     continue;
                 };
                 if columns.iter().any(|(item, full)| {
@@ -366,7 +266,7 @@ impl Catalog {
             else {
                 continue;
             };
-            let Some(statistics) = self.table_statistics(column.table_id) else {
+            let Some(statistics) = handle.table_statistics(column.table_id, || self.statistics_schema(column.table_id)) else {
                 continue;
             };
             // Go `collectSyncIndices`: the handle's cached `tblStats.Pseudo`.
@@ -422,14 +322,15 @@ impl Catalog {
 
     pub fn statistics_load_items(
         &self,
+        handle: &StatsHandle,
         usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
         _determinate: bool,
     ) -> Vec<tidb_model::StatsLoadItem> {
-        let mut items = self.statistics_demand(usage);
+        let mut items = self.statistics_demand(handle, usage);
         // Go's stats handle drops requests already satisfied by the shared
         // cache before queueing workers.
         items.retain(|item, full_load| {
-            let Some(statistics) = self.table_statistics(item.table_id) else {
+            let Some(statistics) = handle.table_statistics(item.table_id, || self.statistics_schema(item.table_id)) else {
                 return false;
             };
             if item.is_index {
@@ -455,25 +356,27 @@ impl Catalog {
         result
     }
 
-    /// The synchronous-load worker service, once the domain started it.
-    #[must_use]
-    pub fn sync_load_service(&self) -> Option<&Arc<sync_load::SyncLoadService>> {
-        self.statistics.sync_load.get()
-    }
 
-    /// Uses the domain cache for cluster planning, independent of schema refresh.
-    pub fn set_statistics_view(&mut self, view: Arc<StatisticsView>) {
-        self.statistics_view = Some(view);
-    }
 
-    /// One table's loaded statistics; `None` is Go's `PseudoTable`.
+
+
+    /// One table's loaded statistics as `handle` holds them; `None` is Go's
+    /// `PseudoTable`.
     #[must_use]
-    pub fn table_statistics(
+    pub fn table_statistics_in(
         &self,
+        handle: &StatsHandle,
         table_id: i64,
     ) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>> {
-        if let Some(view) = &self.statistics_view {
-            let schemas = self.statistics_schemas.get_or_init(|| {
+        handle.table_statistics(table_id, || self.statistics_schema(table_id))
+    }
+
+    /// The schema facts the statistics view converts a table's canonical
+    /// statistics under (Go `Handle.getStatsByPhysicalID` reads the same
+    /// `TableInfo`), for a table or partition id of this image.
+    #[must_use]
+    pub fn statistics_schema(&self, table_id: i64) -> Option<Arc<StatisticsSchema>> {
+        let schemas = self.statistics_schemas.get_or_init(|| {
                 let mut schemas = HashMap::new();
                 // The shared schema's tables and the session's LOCAL
                 // temporary ones, which Go's `TableByID` finds too.
@@ -499,7 +402,7 @@ impl Catalog {
                         let TableEntry::Kv(table) = entry.as_ref() else {
                             continue;
                         };
-                        let schema = Arc::new(statistics::StatisticsSchema {
+                        let schema = Arc::new(StatisticsSchema {
                             columns: table
                                 .columns()
                                 .iter()
@@ -510,7 +413,7 @@ impl Catalog {
                                 .iter()
                                 .map(|index| (index.id, index.column_offsets.len(), index.unique))
                                 .collect(),
-                            pseudo: statistics::PseudoStatsTable {
+                            pseudo: PseudoStatsTable {
                                 info: pseudo_table_info(table),
                                 partitioned: table.partition().is_some(),
                                 cacheable: table.temp_table_type()
@@ -528,15 +431,9 @@ impl Catalog {
                 }
                 schemas
             });
-            return view.table(table_id, schemas.get(&table_id)?);
-        }
-        self.statistics
-            .values
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&table_id)
-            .cloned()
+        schemas.get(&table_id).cloned()
     }
+
 
     /// Replaces the statement-time `information_schema` storage estimates
     /// without moving either catalog epoch. Go keeps these values in the

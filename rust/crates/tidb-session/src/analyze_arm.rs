@@ -817,6 +817,7 @@ impl Session {
         std::collections::HashMap<i64, Arc<tidb_executor::access_cost::TableStatistics>>,
         DriverError,
     > {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
@@ -964,7 +965,7 @@ impl Session {
                 // analyzed, which here is whatever its last analysis
                 // published.
                 catalog
-                    .table_statistics(physical_id)
+                    .table_statistics_in(&stats_handle, physical_id)
                     .map(|statistics| statistics.row_count)
                     // Go GetPhysicalTableStats supplies a PseudoTable on a
                     // cache miss; it is not the unavailable-stats branch.
@@ -1048,7 +1049,7 @@ impl Session {
                         )
                         .map_err(DriverError::from)?;
                         let statistics = merge_partial_statistics(
-                            catalog.table_statistics(table_id),
+                            catalog.table_statistics_in(&stats_handle, table_id),
                             statistics,
                             selected.is_some(),
                         );
@@ -1077,7 +1078,7 @@ impl Session {
                             )
                             .map_err(DriverError::from)?;
                             let statistics = merge_partial_statistics(
-                                catalog.table_statistics(physical_id),
+                                catalog.table_statistics_in(&stats_handle, physical_id),
                                 statistics,
                                 selected.is_some(),
                             );
@@ -1104,19 +1105,19 @@ impl Session {
                                         .map(|(_, stats)| (definition.id, Arc::clone(stats)))
                                         .or_else(|| {
                                             catalog
-                                                .table_statistics(definition.id)
+                                                .table_statistics_in(&stats_handle, definition.id)
                                                 .map(|stats| (definition.id, stats))
                                         })
                                 })
                                 .collect::<Vec<_>>();
                             if all_partition_statistics.len() != definitions.len() {
-                                catalog.table_statistics(table_id)
+                                catalog.table_statistics_in(&stats_handle, table_id)
                             } else {
                                 let options = &resolution.physical[0].effective;
                                 Some(Arc::new(merge_partitioned_global_statistics(
                                     &table,
                                     &all_partition_statistics,
-                                    catalog.table_statistics(table_id),
+                                    catalog.table_statistics_in(&stats_handle, table_id),
                                     options,
                                     &session_time_zone,
                                 )?))
@@ -1146,7 +1147,7 @@ impl Session {
                         analyzed
                             .get(&table_id)
                             .cloned()
-                            .or_else(|| catalog.table_statistics(table_id)),
+                            .or_else(|| catalog.table_statistics_in(&stats_handle, table_id)),
                         statistics,
                     );
                     analyzed.insert(table_id, Arc::new(statistics));

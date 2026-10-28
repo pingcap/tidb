@@ -145,7 +145,7 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
             .unwrap(),
         )
     };
-    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));
     let ctx = ctx.with_fresh_staged_writes();
 
     let Stmt::Query(query) =

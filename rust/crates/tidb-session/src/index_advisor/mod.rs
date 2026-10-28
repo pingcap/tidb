@@ -783,6 +783,7 @@ impl Optimizer for SessionOptimizer<'_> {
     }
 
     fn est_index_size(&mut self, database: &str, table: &str, columns: &[String]) -> Result<f64> {
+        let stats_handle = self.session.stats_handle();
         self.session.with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_in(database, table)
             else {
@@ -791,7 +792,7 @@ impl Optimizer for SessionOptimizer<'_> {
                         .generate_with_stack_by_args(&[(&database).into(), (&table).into()]),
                 ));
             };
-            let statistics = catalog.table_statistics(stored.table_id);
+            let statistics = catalog.table_statistics_in(&stats_handle, stored.table_id);
             let row_count = statistics
                 .as_ref()
                 .map_or(0.0, |stats| stats.row_count as f64);

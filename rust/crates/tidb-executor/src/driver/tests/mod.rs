@@ -193,5 +193,5 @@ fn scale_analyzed_tpcc_table(
         scale_histogram(&mut index.histogram, row_count, index_ndv);
     }
     statistics.row_count = row_count;
-    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));
 }

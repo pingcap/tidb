@@ -18,6 +18,19 @@ use crate::{DriverError, Session};
 use tidb_ast::AdminPlanCacheScope;
 
 impl Session {
+    /// Installs the hosting domain's statistics handle (Go
+    /// `domain.GetDomain(sctx).StatsHandle()`).
+    pub fn set_stats_handle(&mut self, handle: std::sync::Arc<tidb_stats_handle::StatsHandle>) {
+        self.catalog.set_stats_handle(std::sync::Arc::clone(&handle));
+        self.stats_handle = handle;
+    }
+
+    /// The statistics handle this session plans from.
+    #[must_use]
+    pub fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {
+        std::sync::Arc::clone(&self.stats_handle)
+    }
+
     /// Installs the hosting domain's plan-cache invalidation owner. It must
     /// outlive individual catalog images and be shared by all its sessions.
     pub fn set_plan_cache_invalidation(

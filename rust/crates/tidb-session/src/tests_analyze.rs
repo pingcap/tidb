@@ -110,12 +110,15 @@ fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
     session
         .run("ANALYZE TABLE fresh_stats ALL COLUMNS")
         .unwrap();
+    let stats_handle = session.stats_handle();
     session
         .with_catalog_mut(|catalog| {
             let Some(TableEntry::Kv(table)) = catalog.table_in("test", "fresh_stats") else {
                 panic!("fresh_stats is not a stored table");
             };
-            let stats = catalog.table_statistics(table.table_id).unwrap();
+            let stats = catalog
+                .table_statistics_in(&stats_handle, table.table_id)
+                .unwrap();
             let column = stats.columns.values().next().unwrap();
             assert_eq!(column.total_row_count(), 3.0);
             assert_eq!(column.histogram.ndv, 2);
@@ -1536,7 +1539,7 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
     let TableEntry::Kv(table) = catalog.table_in("test", "partial_metadata").unwrap() else {
         panic!("KV table")
     };
-    let stats = catalog.table_statistics(table.table_id).unwrap();
+    let stats = catalog.table_statistics_in(&shared.stats_handle(), table.table_id).unwrap();
     assert_eq!(stats.stats_ver, 2);
     assert!(!stats.cache_pseudo);
     assert!(!stats.pseudo);

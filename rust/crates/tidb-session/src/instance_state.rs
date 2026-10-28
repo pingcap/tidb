@@ -347,6 +347,7 @@ impl MemTableRetriever for InstanceStateRetriever {
                 &self.viewer.resource_group,
                 &self.viewer.visibility,
                 &ctx.session_zone(),
+                ctx.stats_handle(),
                 catalog,
             );
         }

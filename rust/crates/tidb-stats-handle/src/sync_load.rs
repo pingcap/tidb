@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, LazyLock, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{StatisticsCache, StatisticsItemLoader};
+use crate::{StatisticsItemLoader, StatsHandle};
 
 const RETRY_COUNT: usize = 1;
 
@@ -57,7 +57,7 @@ struct NeededItemTask {
     to_timeout: Instant,
     result: mpsc::SyncSender<SyncLoadOutcome>,
     loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatisticsCache>,
+    cache: Weak<StatsHandle>,
 }
 
 type Listener = mpsc::SyncSender<SyncLoadOutcome>;
@@ -139,14 +139,14 @@ impl Drop for StatisticsLoadWorkers {
 pub struct SyncLoadService {
     pool: Arc<StatisticsLoadWorkers>,
     loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatisticsCache>,
+    cache: Weak<StatsHandle>,
 }
 
 impl SyncLoadService {
     #[cfg(test)]
     fn with_settings(
         loader: Arc<dyn StatisticsItemLoader>,
-        cache: Weak<StatisticsCache>,
+        cache: Weak<StatsHandle>,
         concurrency: usize,
         queue_size: usize,
         retry_backoff: Duration,
@@ -160,7 +160,7 @@ impl SyncLoadService {
 
     pub fn with_pool(
         loader: Arc<dyn StatisticsItemLoader>,
-        cache: Weak<StatisticsCache>,
+        cache: Weak<StatsHandle>,
         pool: Arc<StatisticsLoadWorkers>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -468,8 +468,8 @@ mod tests {
         }
     }
 
-    fn service(loader: Arc<TestLoader>) -> (Arc<StatisticsCache>, Arc<SyncLoadService>) {
-        let cache = Arc::new(StatisticsCache::default());
+    fn service(loader: Arc<TestLoader>) -> (Arc<StatsHandle>, Arc<SyncLoadService>) {
+        let cache = Arc::new(StatsHandle::default());
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
         (cache, service)
@@ -482,13 +482,13 @@ mod tests {
         let loader: Arc<dyn StatisticsItemLoader> = Arc::new(TestLoader::default());
         let workers = StatisticsLoadWorkers::new();
         let weak_workers = Arc::downgrade(&workers);
-        let mut first = super::super::Catalog::mock();
-        let mut second = super::super::Catalog::mock();
-        first.set_statistics_item_loader(Arc::clone(&loader), Arc::clone(&workers));
-        second.set_statistics_item_loader(loader, workers);
+        let first = Arc::new(StatsHandle::default());
+        let second = Arc::new(StatsHandle::default());
+        first.set_item_loader(Arc::clone(&loader), Arc::clone(&workers));
+        second.set_item_loader(loader, workers);
         assert!(Arc::ptr_eq(
-            &first.statistics.sync_load.get().unwrap().pool,
-            &second.statistics.sync_load.get().unwrap().pool,
+            &first.sync_load.get().unwrap().pool,
+            &second.sync_load.get().unwrap().pool,
         ));
         // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
         // closed session must not retain its workers after its last view.
@@ -496,7 +496,7 @@ mod tests {
         drop(second);
         assert!(
             weak_workers.upgrade().is_none(),
-            "closed catalog retains workers"
+            "closed handle retains workers"
         );
     }
 
@@ -551,7 +551,7 @@ mod tests {
             release: Mutex::new(release_rx),
             finished: Arc::new(AtomicBool::new(false)),
         });
-        let cache = Arc::new(StatisticsCache::default());
+        let cache = Arc::new(StatsHandle::default());
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
         let first = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn full_needed_queue_times_out_admission() {
         let loader = Arc::new(TestLoader::default());
-        let cache = Arc::new(StatisticsCache::default());
+        let cache = Arc::new(StatsHandle::default());
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 0, 1, Duration::ZERO);
         service

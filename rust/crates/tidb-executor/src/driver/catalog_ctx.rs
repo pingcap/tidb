@@ -51,16 +51,16 @@ impl CatalogStatisticsLoad for Catalog {
             // Go `CollectPredicateColumnsPoint` without sync load queues every
             // needed item as it is; only `SendLoadRequests` (the sync path)
             // drops the ones the cache already holds.
-            for (item, full_load) in self.statistics_demand(usage) {
+            for (item, full_load) in self.statistics_demand(context.stats_handle(), usage) {
                 tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
             }
             return Ok(());
         }
-        let items = self.statistics_load_items(usage, true);
+        let items = self.statistics_load_items(context.stats_handle(), usage, true);
         if items.is_empty() {
             return Ok(());
         }
-        let Some(service) = self.sync_load_service() else {
+        let Some(service) = context.stats_handle().sync_load_service() else {
             return Ok(());
         };
         let receivers = service.request(&items, context.resource_group_name(), wait);
@@ -111,10 +111,10 @@ impl CatalogStatisticsLoad for Catalog {
             let result = receiver.recv_timeout(remaining);
             SYNC_LOAD_TOTAL.inc();
             match result {
-                Ok(tidb_infoschema::sync_load::SyncLoadOutcome::TransportError(error)) => {
+                Ok(tidb_stats_handle::sync_load::SyncLoadOutcome::TransportError(error)) => {
                     tracing::warn!(error = %error, "synchronous statistics load request failed");
                 }
-                Ok(tidb_infoschema::sync_load::SyncLoadOutcome::Item { item, error }) => {
+                Ok(tidb_stats_handle::sync_load::SyncLoadOutcome::Item { item, error }) => {
                     if let Some(error) = error {
                         tracing::warn!(error = %error, "synchronous statistics item load failed");
                     }

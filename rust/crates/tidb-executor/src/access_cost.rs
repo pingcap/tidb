@@ -23,6 +23,19 @@
 use crate::plan_trace::PSEUDO_ROW_COUNT;
 pub use tidb_planner::table_statistics::TableStatistics;
 
+/// One table's loaded statistics as the statement's statistics handle holds
+/// them (Go `sctx.GetStatsHandle().GetPhysicalTableStats`); `None` is Go's
+/// `PseudoTable`.
+#[must_use]
+pub fn table_statistics(
+    ctx: &crate::StmtContext,
+    catalog: &crate::driver::Catalog,
+    table_id: i64,
+) -> Option<std::sync::Arc<TableStatistics>> {
+    ctx.stats_handle()
+        .table_statistics(table_id, || catalog.statistics_schema(table_id))
+}
+
 /// Go `pkg/planner/core/stats.GetStatsTable`: the statistics one statement
 /// plans `physical_table_id` from. `None` is a fresh `statistics.PseudoTable`
 /// (`RealtimeCount` 10000, `ModifyCount` 0, uninitialized pseudo items).
@@ -49,7 +62,7 @@ pub fn get_stats_table(
         .estimator_options
         .allow_use_modify_count;
     stats_table_for_session(
-        catalog.table_statistics(physical_table_id)?,
+        table_statistics(ctx, catalog, physical_table_id)?,
         opt_objective_determinate,
         ctx.enable_pseudo_for_outdated_stats(),
     )
@@ -100,11 +113,13 @@ fn stats_table_for_session(
 /// keeps the cached plan across it.
 #[must_use]
 pub fn get_latest_version_from_stats_table(
+    handle: &tidb_stats_handle::StatsHandle,
     catalog: &crate::driver::Catalog,
     table_id: i64,
     opt_objective_determinate: bool,
 ) -> u64 {
-    let Some(statistics) = catalog.table_statistics(table_id) else {
+    let Some(statistics) = handle.table_statistics(table_id, || catalog.statistics_schema(table_id))
+    else {
         return 0;
     };
     let realtime_row_count = if opt_objective_determinate {

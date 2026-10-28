@@ -53,7 +53,7 @@ mod catalog_planner_view_tests;
 mod catalog_statistics_tests;
 mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
-pub(crate) use tidb_infoschema::sync_load;
+pub(crate) use tidb_stats_handle::sync_load;
 mod dml;
 mod from;
 mod index_usage_reporter;

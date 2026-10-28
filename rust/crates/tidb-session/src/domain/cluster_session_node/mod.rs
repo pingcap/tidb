@@ -408,9 +408,13 @@ struct ClusterStatisticsLoading {
 }
 
 impl ClusterStatisticsLoading {
-    fn attach(&self, catalog: &mut tidb_executor::Catalog) {
-        catalog.set_statistics_view(Arc::clone(&self.view));
-        catalog.set_statistics_item_loader(self.loader.clone(), Arc::clone(&self.workers));
+    /// The statistics handle one session plans from: the domain's view, and
+    /// the storage loader behind the synchronous-load workers.
+    fn handle(&self) -> Arc<tidb_stats_handle::StatsHandle> {
+        let handle = Arc::new(tidb_stats_handle::StatsHandle::default());
+        handle.set_statistics_view(Arc::clone(&self.view));
+        handle.set_item_loader(self.loader.clone(), Arc::clone(&self.workers));
+        handle
     }
 }
 
@@ -3653,8 +3657,8 @@ impl ClusterSessionFactory {
                     .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
             ),
         };
-        statistics_loading.attach(&mut built.catalog);
         let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog));
+        session.set_stats_handle(statistics_loading.handle());
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
             transactions: Arc::clone(&self.transactions),
             global_vars: self.global_vars.clone(),

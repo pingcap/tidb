@@ -811,6 +811,7 @@ impl Session {
         &mut self,
         leaf: &tidb_planner::physical::PhysicalShow,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         use tidb_ast::ShowStmtType as T;
         let contents = &leaf.contents;
         let extractor = base_extractor(leaf);
@@ -894,7 +895,7 @@ impl Session {
             T::ColumnStatsUsage => self.column_stats_usage_rows()?,
             T::HistogramsInFlight => {
                 let count =
-                    self.with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
+                    self.with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items(&stats_handle)))?;
                 vec![tidb_executor::show_stats::histograms_in_flight_row(count)]
             }
             T::AnalyzeStatus => self.analyze_status_rows()?,
@@ -1002,7 +1003,7 @@ impl Session {
                         }
                     };
                     // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
-                    let statistics = catalog.table_statistics(table.table_id);
+                    let statistics = catalog.table_statistics_in(&stats_handle, table.table_id);
                     Ok(show_index_rows(&table_name, table, |column_id| {
                         statistics
                             .as_ref()

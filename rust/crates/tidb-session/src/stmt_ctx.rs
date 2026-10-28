@@ -1561,6 +1561,7 @@ impl Session {
                     .with_index_merge(index_merge)
                     .with_no_index_merge_hint(self.stmt_hints.no_index_merge_hint)
                     .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
+                    .with_stats_handle(Arc::clone(&self.stats_handle))
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                     .with_statement_phase_observer(self.statement_phase_observer())
                     .with_phase_durations(self.phase_durations.clone())
@@ -1699,6 +1700,7 @@ impl Session {
             let _ = ctx
                 .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
                 .with_string_type_flags(string_type_flags)
+                .with_stats_handle(Arc::clone(&self.stats_handle))
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations.clone())

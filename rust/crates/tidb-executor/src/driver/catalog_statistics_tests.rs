@@ -17,6 +17,7 @@
     use std::collections::HashMap;
     use std::sync::Arc;
     use tidb_infoschema::*;
+    use tidb_stats_handle::{StatisticsLoadWorkers, StatsHandle};
     use crate::driver::CatalogStatisticsLoad;
     use tidb_infoschema::statistics_access::*;
     use tidb_infoschema::planner_view::*;
@@ -50,7 +51,8 @@
         }
     }
 
-    fn analyzed_lite_catalog() -> (Catalog, i64, i64) {
+    fn analyzed_lite_catalog() -> (Catalog, Arc<StatsHandle>, i64, i64) {
+        let handle = Arc::new(StatsHandle::default());
         let mut catalog = Catalog::mock();
         crate::run_create_table_on("CREATE TABLE t(a INT, b INT, KEY ia(a))", &mut catalog)
             .expect("fixture DDL");
@@ -68,11 +70,14 @@
             column_stats_existence: [(column_id, true)].into_iter().collect(),
             ..tidb_planner::table_statistics::TableStatistics::default()
         };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
-        (catalog, table_id, column_id)
+        handle.set_table_statistics(table_id, Arc::new(statistics));
+        (catalog, handle, table_id, column_id)
     }
 
-    fn index_pruning_catalog(partitioned: bool) -> (Catalog, i64, Vec<i64>, Vec<(String, i64)>) {
+    fn index_pruning_catalog(
+        partitioned: bool,
+    ) -> (Catalog, Arc<StatsHandle>, i64, Vec<i64>, Vec<(String, i64)>) {
+        let handle = Arc::new(StatsHandle::default());
         let mut catalog = Catalog::mock();
         let partition_clause = if partitioned {
             " PARTITION BY HASH(a) PARTITIONS 4"
@@ -137,9 +142,9 @@
             ..tidb_planner::table_statistics::TableStatistics::default()
         };
         for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
-            catalog.set_table_statistics(physical_id, Arc::new(statistics.clone()));
+            handle.set_table_statistics(physical_id, Arc::new(statistics.clone()));
         }
-        (catalog, table_id, partition_ids, indexes)
+        (catalog, handle, table_id, partition_ids, indexes)
     }
 
     fn clear_async_statistics_items() {
@@ -184,15 +189,15 @@
     #[test]
     fn determinate_load_requests_one_analyzed_column_per_visited_table() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
         };
 
-        let context = crate::StmtContext::for_query().with_stats_load_policy(100, true, 0);
+        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, true, 0);
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start synchronous load");
@@ -214,6 +219,7 @@
 
     #[test]
     fn a_singleflight_transport_timeout_activates_statement_failure_before_wait_timer() {
+        let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         // Go master TestSyncWaitStatsLoadWithFailedResultBeforeTimer: prepare
         // the result before waiting instead of relying on two racing timers.
@@ -230,11 +236,11 @@
             };
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             sender
-                .send(sync_load::SyncLoadOutcome::TransportError(
+                .send(tidb_stats_handle::sync_load::SyncLoadOutcome::TransportError(
                     "sync load took too long to return".to_owned(),
                 ))
                 .unwrap();
-            let context = crate::StmtContext::for_query().with_stats_load_policy(100, pseudo, 1000);
+            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, pseudo, 1000);
             context.install_pending_statistics_load(
                 vec![receiver],
                 vec![requested],
@@ -273,6 +279,7 @@
 
     #[test]
     fn delivered_worker_errors_complete_the_wait_and_record_latency() {
+        let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TOTAL};
         let catalog = Catalog::mock();
@@ -285,10 +292,10 @@
             },
             full_load: true,
         };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(100, false, 1000);
+        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1000);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender
-            .send(sync_load::SyncLoadOutcome::Item {
+            .send(tidb_stats_handle::sync_load::SyncLoadOutcome::Item {
                 item: requested.table_item_id,
                 error: Some("storage read failed after retry".to_owned()),
             })
@@ -322,6 +329,7 @@
 
     #[test]
     fn statistics_wait_timeout_and_closed_channel_record_consumption() {
+        let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL};
         for closed in [false, true] {
@@ -335,7 +343,7 @@
                 },
                 full_load: true,
             };
-            let context = crate::StmtContext::for_query().with_stats_load_policy(100, false, 1);
+            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1);
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             let sender = if closed {
                 drop(sender);
@@ -371,8 +379,8 @@
     #[test]
     fn histograms_in_flight_cleans_completed_statistics_items() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        catalog.set_statistics_item_loader(
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
+        handle.set_item_loader(
             Arc::new(RecordingLoader {
                 delay: std::time::Duration::from_millis(40),
                 ..RecordingLoader::default()
@@ -393,25 +401,25 @@
             .collect(),
             ..Default::default()
         };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(0, true, 0);
+        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
-        assert_eq!(catalog.clean_needed_statistics_items(), 1);
+        assert_eq!(catalog.clean_needed_statistics_items(&handle), 1);
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("domain tick drains asynchronous demand");
-        assert_eq!(catalog.clean_needed_statistics_items(), 0);
+        assert_eq!(catalog.clean_needed_statistics_items(&handle), 0);
     }
 
     #[test]
     fn asynchronous_column_metadata_request_uses_full_load_eligibility() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -421,7 +429,7 @@
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("metadata-only asynchronous load");
         assert_eq!(
             loader
@@ -440,14 +448,14 @@
     fn asynchronous_index_request_is_always_full_load() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
             .expect("fixture index ia")
             .id;
         let mut statistics = catalog
-            .table_statistics(table_id)
+            .table_statistics_in(&handle, table_id)
             .expect("fixture statistics")
             .as_ref()
             .clone();
@@ -455,9 +463,9 @@
             .index_load_status
             .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
         statistics.index_stats_existence.insert(index_id, true);
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        handle.set_table_statistics(table_id, Arc::new(statistics));
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -467,7 +475,7 @@
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("asynchronous index load");
         assert_eq!(
             loader
@@ -485,12 +493,12 @@
     #[test]
     fn failed_async_load_removes_the_item_and_returns_the_storage_error() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader {
             failure: Some("corrupted histogram bound".to_owned()),
             ..RecordingLoader::default()
         });
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -501,12 +509,12 @@
             predicate_columns: [(requested, true)].into_iter().collect(),
             ..Default::default()
         };
-        let context = crate::StmtContext::for_query().with_stats_load_policy(0, true, 0);
+        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
-        assert!(catalog.load_needed_histograms("").is_err());
+        assert!(catalog.load_needed_histograms(&handle, "").is_err());
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
@@ -526,9 +534,10 @@
 
     #[test]
     fn load_column_statistics_after_table_drop() {
+        let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (_, table_id, column_id) = analyzed_lite_catalog();
+        let (_, handle, table_id, column_id) = analyzed_lite_catalog();
         let dropped = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -540,10 +549,10 @@
         // image no longer has it.
         let mut catalog = Catalog::mock();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("a dropped table is a successful skip");
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -557,14 +566,14 @@
     fn load_statistics_for_a_column_the_table_does_not_have() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let column_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.columns.iter().map(|column| column.id).max())
             .expect("fixture columns")
             + 1;
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -573,7 +582,7 @@
         };
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("a dropped column is a successful skip");
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -585,7 +594,7 @@
     fn load_index_statistics_after_table_drop() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (catalog, table_id, _) = analyzed_lite_catalog();
+        let (catalog, handle, table_id, _) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
@@ -602,10 +611,10 @@
         // image no longer has it.
         let mut catalog = Catalog::mock();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("a dropped table is a successful skip");
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -619,14 +628,14 @@
     fn load_statistics_for_an_index_the_table_does_not_have() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
-        let (mut catalog, table_id, _) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().iter().map(|index| index.id).max())
             .expect("fixture index ia")
             + 1;
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -635,7 +644,7 @@
         };
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
-            .load_needed_histograms("")
+            .load_needed_histograms(&handle, "")
             .expect("a dropped index is a successful skip");
         assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -650,7 +659,7 @@
     #[test]
     fn a_zero_count_analyzed_table_still_requests_statistics_loads() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
@@ -673,7 +682,7 @@
             index_stats_existence: [(index_id, true)].into_iter().collect(),
             ..tidb_planner::table_statistics::TableStatistics::default()
         };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -691,7 +700,7 @@
             predicate_columns: [(column, true)].into_iter().collect(),
             ..Default::default()
         };
-        let items = catalog.statistics_load_items(&predicate, true);
+        let items = catalog.statistics_load_items(&handle, &predicate, true);
         assert!(
             items
                 .iter()
@@ -703,7 +712,7 @@
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
         };
-        let items = catalog.statistics_load_items(&visited, true);
+        let items = catalog.statistics_load_items(&handle, &visited, true);
         assert!(
             items
                 .iter()
@@ -721,6 +730,7 @@
     /// Rust server re-planned).
     #[test]
     fn plan_cache_stats_hash_follows_histogram_versions_not_stats_meta() {
+        let handle = Arc::new(StatsHandle::default());
         let mut catalog = Catalog::mock();
         crate::run_create_table_on("CREATE TABLE t(a INT, KEY ia(a))", &mut catalog)
             .expect("fixture DDL");
@@ -765,20 +775,20 @@
                     .with_stat_versions(meta_version, 7),
             )
         };
-        let environment = crate::PreparedPlanCacheEnvironment::default();
+        let environment = crate::PreparedPlanCacheEnvironment::default().with_stats_handle(Arc::clone(&handle));
         let keys = [CatalogTableKey::new("test", "t")];
 
-        catalog.set_table_statistics(table_id, statistics(100, 10, 9));
+        handle.set_table_statistics(table_id, statistics(100, 10, 9));
         assert_eq!(environment.stats_version_hash(&catalog, &keys), 9);
-        catalog.set_table_statistics(table_id, statistics(200, 11, 9));
+        handle.set_table_statistics(table_id, statistics(200, 11, 9));
         assert_eq!(
             environment.stats_version_hash(&catalog, &keys),
             9,
             "a stats-delta flush keeps the key"
         );
-        catalog.set_table_statistics(table_id, statistics(300, 11, 12));
+        handle.set_table_statistics(table_id, statistics(300, 11, 12));
         assert_eq!(environment.stats_version_hash(&catalog, &keys), 12);
-        catalog.set_table_statistics(table_id, statistics(400, 0, 12));
+        handle.set_table_statistics(table_id, statistics(400, 0, 12));
         assert_eq!(
             environment.stats_version_hash(&catalog, &keys),
             0,
@@ -789,7 +799,7 @@
     #[test]
     fn pruned_indexes_are_not_requested_for_statistics() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
@@ -808,7 +818,7 @@
             index_stats_existence: [(index_id, true)].into_iter().collect(),
             ..tidb_planner::table_statistics::TableStatistics::default()
         };
-        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -823,7 +833,7 @@
             ..Default::default()
         };
 
-        let items = catalog.statistics_load_items(&usage, true);
+        let items = catalog.statistics_load_items(&handle, &usage, true);
         assert!(items.iter().any(|item| item.table_item_id == column));
         assert!(!items.iter().any(|item| item.table_item_id.is_index));
     }
@@ -839,8 +849,8 @@
         clear_async_statistics_items();
 
         for (partitioned, static_prune) in [(false, false), (true, false), (true, true)] {
-            let (catalog, table_id, partition_ids, indexes) = index_pruning_catalog(partitioned);
-            let context = crate::StmtContext::for_query()
+            let (catalog, handle, table_id, partition_ids, indexes) = index_pruning_catalog(partitioned);
+            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle))
                 .with_stats_load_policy(0, true, 0)
                 .with_opt_index_prune_threshold(1)
                 .with_static_partition_prune(static_prune);
@@ -870,6 +880,7 @@
 
     #[test]
     fn direct_virtual_column_dependencies_request_expression_index_stats_only() {
+        let handle = Arc::new(StatsHandle::default());
         let mut catalog = Catalog::mock();
         crate::run_create_table_on(
             "CREATE TABLE t(a INT, v INT AS (a + 1), KEY iv(v))",
@@ -893,7 +904,7 @@
             .unwrap()
             .id;
         let index_id = table.indexes().first().expect("expression index").id;
-        catalog.set_table_statistics(
+        handle.set_table_statistics(
             table_id,
             Arc::new(tidb_planner::table_statistics::TableStatistics {
                 pseudo: false,
@@ -923,7 +934,7 @@
             ..Default::default()
         };
 
-        let items = catalog.statistics_load_items(&usage, true);
+        let items = catalog.statistics_load_items(&handle, &usage, true);
         assert!(items.iter().any(|item| item.table_item_id == requested));
         assert!(items.iter().any(|item| {
             item.table_item_id.table_id == table_id
@@ -939,12 +950,12 @@
     #[test]
     fn ordinary_planning_runs_both_statistics_rule_points() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
-        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let usage_list = tidb_stats_handle_usage::SessionStatsList::new();
         let usage = usage_list.new_session_stats_item();
-        let context = crate::StmtContext::for_query()
+        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle))
             .with_stats_load_policy(100, true, 0)
             .with_plan_replayer_capture(true)
             .with_column_stats_usage(Some(Arc::clone(&usage)));
@@ -1032,6 +1043,7 @@
 
     #[test]
     fn original_collect_predicate_columns_cases_match_before_and_after_optimization() {
+        let handle = Arc::new(StatsHandle::default());
         let catalog = stats_usage_fixture();
         let cases: &[(&str, &[(&str, &str)])] = &[
             ("SELECT * FROM t WHERE a > 2", &[("t", "a")]),
@@ -1151,7 +1163,7 @@
             else {
                 panic!("original case is not a query")
             };
-            let context = crate::StmtContext::for_query();
+            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
             let (before, after) =
                 super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                     &query, &catalog, "test", &context,
@@ -1184,6 +1196,7 @@
 
     #[test]
     fn original_collect_histogram_needed_columns_cases_match() {
+        let handle = Arc::new(StatsHandle::default());
         let catalog = stats_usage_fixture();
         let cases: &[(&str, &[(&str, &str, bool)])] = &[
             ("SELECT * FROM t WHERE a > 2", &[("t", "a", true)]),
@@ -1228,7 +1241,7 @@
             else {
                 panic!("original case is not a query")
             };
-            let context = crate::StmtContext::for_query();
+            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
             let (_, usage) =
                 super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                     &query, &catalog, "test", &context,
@@ -1250,7 +1263,7 @@
             .map(|(table, column)| (column_item(&catalog, table, column), true))
             .collect::<std::collections::HashMap<_, _>>();
 
-        let dynamic = crate::StmtContext::for_query();
+        let dynamic = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
         let (_, dynamic_usage) =
             super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                 &query, &catalog, "test", &dynamic,
@@ -1259,7 +1272,7 @@
         assert_eq!(dynamic_usage.predicate_columns, expected);
         assert!(dynamic_usage.table_partition_ids.is_empty());
 
-        let static_prune = crate::StmtContext::for_query().with_static_partition_prune(true);
+        let static_prune = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_static_partition_prune(true);
         let (_, static_usage) =
             super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                 &query,

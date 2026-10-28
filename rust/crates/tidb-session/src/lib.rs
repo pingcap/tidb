@@ -419,6 +419,9 @@ pub struct SharedCatalog {
     /// session opened over this catalog; cluster servers install their own
     /// on each session instead.
     plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
+    /// Go `domain.Domain`'s statistics handle, shared by every session over
+    /// this catalog.
+    stats_handle: Arc<Mutex<Arc<tidb_stats_handle::StatsHandle>>>,
 }
 
 impl SharedCatalog {
@@ -428,7 +431,28 @@ impl SharedCatalog {
         Self {
             catalog: Arc::new(Mutex::new(catalog)),
             plan_cache_invalidation: Arc::default(),
+            stats_handle: Arc::default(),
         }
+    }
+
+    /// The domain's statistics handle.
+    #[must_use]
+    pub fn stats_handle(&self) -> Arc<tidb_stats_handle::StatsHandle> {
+        Arc::clone(
+            &self
+                .stats_handle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Installs the hosting domain's statistics handle for every session
+    /// over this catalog.
+    pub fn set_stats_handle(&self, handle: Arc<tidb_stats_handle::StatsHandle>) {
+        *self
+            .stats_handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = handle;
     }
 
     /// Locks the catalog image.
@@ -855,6 +879,8 @@ pub struct Session {
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
     physical_plan_cache: tidb_executor::SessionPlanCache,
     plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
+    /// Go `sessionctx.Context.GetStatsHandle()`.
+    stats_handle: Arc<tidb_stats_handle::StatsHandle>,
     /// The parser warnings of the statement now running, with where they
     /// start in [`Self::warnings`]; see
     /// [`Self::move_parse_warnings_behind_execution`].
@@ -988,6 +1014,7 @@ impl Session {
     /// session opened on it.
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
         let plan_cache_invalidation = catalog.plan_cache_invalidation();
+        let stats_handle = catalog.stats_handle();
         Session {
             catalog,
             account_sql: None,
@@ -1106,6 +1133,7 @@ impl Session {
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             physical_plan_cache: tidb_executor::SessionPlanCache::default(),
             plan_cache_invalidation,
+            stats_handle,
             parse_warnings: None,
             last_result_output_names: Vec::new(),
             last_result_current_db: String::new(),

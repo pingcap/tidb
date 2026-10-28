@@ -78,6 +78,9 @@ pub struct ClusterSessionCatalog {
     pub catalog: Catalog,
     /// Tables the cluster has that this tier cannot serve.
     pub skipped: Vec<SkippedTable>,
+    /// The domain statistics the sessions over this catalog plan from (Go's
+    /// `GetStatsHandle()`), when the caller supplied a view.
+    pub statistics: Option<Arc<tidb_executor::driver::StatisticsView>>,
 }
 
 /// Builds a driver catalog whose every table reads and writes through
@@ -184,9 +187,6 @@ pub fn cluster_session_catalog_with_templates(
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::new();
-    if let Some(view) = statistics {
-        catalog.set_statistics_view(view);
-    }
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
@@ -290,7 +290,7 @@ pub fn cluster_session_catalog_with_templates(
             }
         }
     }
-    ClusterSessionCatalog { catalog, skipped }
+    ClusterSessionCatalog { catalog, skipped, statistics }
 }
 
 /// A stored table this node cannot build is a gap in the port, not a state
@@ -372,10 +372,17 @@ pub fn session_with_cluster_storage(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> (Session, Vec<SkippedTable>) {
-    let ClusterSessionCatalog { catalog, skipped } =
-        cluster_session_catalog(loaded, storage, stats, auto_ids);
+    let ClusterSessionCatalog {
+        catalog,
+        skipped,
+        statistics,
+    } = cluster_session_catalog(loaded, storage, stats, auto_ids);
     let shared = SharedCatalog::new(catalog);
-    (Session::over_catalog(shared), skipped)
+    let mut session = Session::over_catalog(shared);
+    if let Some(view) = statistics {
+        session.stats_handle().set_statistics_view(view);
+    }
+    (session, skipped)
 }
 
 /// Go `mysql.MaxUnsignedFlag` (`UnsignedFlag`), which the out-of-range
@@ -729,10 +736,10 @@ use super::*;
         }));
         assert!(skipped.is_empty(), "{skipped:?}");
         {
-            let catalog = session.shared_catalog();
-            let catalog = catalog.lock().unwrap();
+            let shared = session.shared_catalog();
+            let catalog = shared.lock().unwrap();
             let statistics = catalog
-                .table_statistics(130)
+                .table_statistics_in(&shared.stats_handle(), 130)
                 .expect("loaded statistics survive session construction");
             assert!(!statistics.pseudo);
             assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);

@@ -95,12 +95,14 @@ impl Session {
         let resource_group = self.active_resource_group.clone();
         let visibility = self.schema_visibility();
         let zone = self.session_time_zone();
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         self.with_catalog_mut(|catalog| {
             analyze_status_rows_of(
                 provider.as_deref(),
                 &resource_group,
                 &visibility,
                 &zone,
+                &stats_handle,
                 catalog,
             )
         })
@@ -123,6 +125,7 @@ impl Session {
         &mut self,
         extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         // Go renders through `oracle.GetTimeFromTS`, which builds the
         // `time.Time` in the process's LOCAL zone -- not the session zone --
         // so both servers on one host render identical strings.
@@ -169,7 +172,7 @@ impl Session {
                         &partitions,
                         dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                        let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
                         if let Some(row) = tidb_executor::show_stats::table_statistics_meta_row(
@@ -258,6 +261,7 @@ impl Session {
         &mut self,
         extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -298,7 +302,7 @@ impl Session {
                         &partitions,
                         dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                        let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
                         if let Some(row) = tidb_executor::show_stats::healthy_row(
@@ -324,6 +328,7 @@ impl Session {
     /// resident column and index statistics object through the ordinary
     /// statistics cache traversal.
     pub(super) fn stats_histograms_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -365,7 +370,7 @@ impl Session {
                         &partitions,
                         dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                        let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
                         if statistics.is_synthetic_pseudo() {
@@ -444,6 +449,7 @@ impl Session {
     /// Go `ShowExec.fetchShowStatsTopN`: render every resident TopN value
     /// through the session-aware statistics value decoder.
     pub(super) fn stats_topn_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -485,7 +491,7 @@ impl Session {
                         &partitions,
                         dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                        let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
                         if statistics.is_synthetic_pseudo() {
@@ -574,6 +580,7 @@ impl Session {
     /// Go `ShowExec.fetchShowStatsBuckets`: expose the resident cumulative
     /// histogram buckets in stable column/index ID order.
     pub(super) fn stats_buckets_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -615,7 +622,7 @@ impl Session {
                         &partitions,
                         dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                        let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
                         if statistics.is_synthetic_pseudo() {
@@ -704,6 +711,7 @@ pub(crate) fn analyze_status_rows_of(
     resource_group: &str,
     visibility: &crate::infoschema::SchemaVisibility,
     session_zone: &tidb_datatype::SessionTimeZone,
+    stats_handle: &tidb_stats_handle::StatsHandle,
     catalog: &tidb_executor::Catalog,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let jobs = match provider {
@@ -771,7 +779,7 @@ pub(crate) fn analyze_status_rows_of(
                 Ok(Some((
                     physical_id,
                     catalog
-                        .table_statistics(physical_id)
+                        .table_statistics_in(stats_handle, physical_id)
                         .map_or(0, |statistics| statistics.row_count),
                 )))
             })()?;

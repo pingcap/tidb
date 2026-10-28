@@ -981,6 +981,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
     };
     let planned_select = (**select).clone();
     let planned_catalog = catalog.clone();
+    let planned_ctx = ctx.clone();
     let (_, plan) = std::thread::Builder::new()
         .name("correlated-sum-plan".to_owned())
         .stack_size(8 * 1024 * 1024)
@@ -989,7 +990,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
                 &planned_select,
                 &planned_catalog,
                 "test",
-                &crate::StmtContext::for_query(),
+                &planned_ctx,
                 ExplainFormat::Brief,
             )
         })
@@ -1049,6 +1050,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
     };
     let nested_select = (**select).clone();
     let nested_catalog = catalog.clone();
+    let planned_ctx = ctx.clone();
     let (_, nested_plan) = std::thread::Builder::new()
         .name("nested-correlated-sum-plan".to_owned())
         .stack_size(8 * 1024 * 1024)
@@ -1057,7 +1059,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
                 &nested_select,
                 &nested_catalog,
                 "test",
-                &crate::StmtContext::for_query(),
+                &planned_ctx,
                 ExplainFormat::Brief,
             )
         })

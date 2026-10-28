@@ -334,7 +334,7 @@ fn clustered_common_handle() {
 /// `deriveCommonHandleTablePathStats` derives the path over those key parts.
 /// It nevertheless lowers to `PhysicalTableScan`, whose `TP()` reports a
 /// `TableFullScan` for a full range.
-fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
+fn explain_plan(sql: &str, catalog: &Catalog, ctx: &crate::StmtContext) -> Vec<String> {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let stmt = tidb_parser::parse(sql).unwrap();
@@ -348,7 +348,7 @@ fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
         select,
         catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        ctx,
         ExplainFormat::Row,
     )
     .unwrap();
@@ -375,7 +375,7 @@ fn pseudo_composite_index_applies_master_selectivity_floor() {
         &mut catalog,
     )
     .unwrap();
-    let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog);
+    let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &crate::StmtContext::for_query());
     let scan = rows
         .iter()
         .find(|row| row.split('\t').next().unwrap().contains("IndexRangeScan"))
@@ -427,8 +427,8 @@ fn analyzed_composite_index_dominates_single_equality_index() {
             // Eviction removes payloads, not persisted HasAnalyzed metadata.
             current.indexes.retain(|_, index| index.num_columns == 1);
         }
-        catalog.set_table_statistics(table_id, Arc::new(current));
-        let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog);
+        ctx.stats_handle().set_table_statistics(table_id, Arc::new(current));
+        let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &ctx);
         let scan = rows
             .iter()
             .find(|row| row.split('\t').next().unwrap().contains("IndexRangeScan"))
@@ -442,7 +442,7 @@ fn explain_uses_the_lowercase_field_name_identity() {
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)
         .unwrap();
-    let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog);
+    let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog, &crate::StmtContext::for_query());
     assert!(
         plan.iter()
             .any(|line| line.contains("sum(test.lc.upper_col)")),
@@ -466,7 +466,7 @@ fn a_common_handle_table_path_is_a_table_scan() {
         &mut catalog,
     )
     .unwrap();
-    let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog);
+    let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog, &crate::StmtContext::for_query());
     assert!(
         plan.iter()
             .any(|line| line.contains("TableFullScan") && line.contains("table:ch")),
@@ -517,8 +517,8 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
             .unwrap(),
         )
     };
-    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
-    let plan = explain_plan("SELECT * FROM np WHERE part > 199999", &catalog);
+    ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    let plan = explain_plan("SELECT * FROM np WHERE part > 199999", &catalog, &ctx);
     assert!(
         plan.iter().any(|line| {
             line.contains("IndexFullScan") && line.contains("index:PRIMARY(id, part, created)")

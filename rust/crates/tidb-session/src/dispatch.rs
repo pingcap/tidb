@@ -707,6 +707,7 @@ impl Session {
         let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
         crate::memtable_retrievers::table_storage_statistics_catalog_of(
             scratch,
+            &self.stats_handle,
             self.table_storage_stats.as_deref(),
             &self.active_resource_group,
             needs_column_lengths,

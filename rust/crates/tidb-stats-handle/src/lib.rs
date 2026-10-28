@@ -1,0 +1,164 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/statistics/handle`: the domain's statistics handle as the planner
+//! reads it -- the loaded-table cache, the storage loader and the
+//! synchronous-load workers. It is NOT part of the schema image
+//! (`tidb-infoschema`); a statement reads it through its context.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub mod source;
+pub mod sync_load;
+
+pub use source::{PseudoStatsTable, StatisticsSchema, StatisticsSource, StatisticsView};
+pub use sync_load::StatisticsLoadWorkers;
+
+/// Storage half of Go's statistics sync/async load worker.
+pub trait StatisticsItemLoader: Send + Sync {
+    /// Loads the requested items and returns refreshed planner tables for
+    /// publication into the in-process cache. Cluster loaders publish directly
+    /// to the domain source read by `StatisticsView` and return no copies.
+    fn load_items(
+        &self,
+        items: &[tidb_model::StatsLoadItem],
+        resource_group: &str,
+    ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String>;
+}
+
+#[derive(Default)]
+pub struct StatsHandle {
+    /// Go `Handle`'s statistics view over the domain's canonical cache, when
+    /// a cluster node installed one; it answers instead of `values`.
+    pub view: std::sync::RwLock<Option<Arc<StatisticsView>>>,
+    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_planner::table_statistics::TableStatistics>>>,
+    pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
+    pub sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
+}
+
+impl std::fmt::Debug for StatsHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StatsHandle")
+            .field(
+                "tables",
+                &self
+                    .values
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .field(
+                "has_loader",
+                &self
+                    .loader
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some(),
+            )
+            .finish()
+    }
+}
+
+pub fn enqueue_sync_load_failures(
+    requested_items: &[tidb_model::StatsLoadItem],
+    remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
+) {
+    for requested in requested_items {
+        if !remaining_items.contains(&requested.table_item_id) {
+            continue;
+        }
+        let mut item = requested.table_item_id;
+        item.is_sync_load_failed = true;
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
+    }
+}
+
+
+
+impl StatsHandle {
+    /// Publishes one table's loaded statistics, which the access-path choice
+    /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
+    ///
+    /// Two publishers reach here, and they must agree: the cluster session
+    /// loads `mysql.stats_*` rows a Go `ANALYZE` wrote, and an in-process
+    /// `ANALYZE TABLE` computes them. Both build the histograms through the
+    /// same code, so a table's estimates do not depend on which storage it
+    /// sits on.
+    pub fn set_table_statistics(
+        &self,
+        table_id: i64,
+        statistics: Arc<tidb_planner::table_statistics::TableStatistics>,
+    ) {
+        self.values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(table_id, statistics);
+    }
+
+    /// Installs the domain statistics worker used by logical optimization.
+    pub fn set_item_loader(
+        self: &Arc<Self>,
+        loader: Arc<dyn StatisticsItemLoader>,
+        workers: Arc<StatisticsLoadWorkers>,
+    ) {
+        let service_loader = Arc::clone(&loader);
+        *self
+            .loader
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
+        self.sync_load.get_or_init(|| {
+            sync_load::SyncLoadService::with_pool(service_loader, Arc::downgrade(self), workers)
+        });
+    }
+
+    /// The synchronous-load worker service, once the domain started it.
+    #[must_use]
+    pub fn sync_load_service(&self) -> Option<&Arc<sync_load::SyncLoadService>> {
+        self.sync_load.get()
+    }
+
+    /// Uses the domain cache for cluster planning, independent of schema refresh.
+    pub fn set_statistics_view(&self, view: Arc<StatisticsView>) {
+        *self
+            .view
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(view);
+    }
+
+    /// One table's loaded statistics; `None` is Go's `PseudoTable`. `schema`
+    /// supplies the table's metadata when a domain view converts canonical
+    /// statistics, and is not called otherwise.
+    #[must_use]
+    pub fn table_statistics(
+        &self,
+        table_id: i64,
+        schema: impl FnOnce() -> Option<Arc<StatisticsSchema>>,
+    ) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>> {
+        let view = self
+            .view
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(view) = view {
+            return view.table(table_id, &schema()?);
+        }
+        self.values
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&table_id)
+            .cloned()
+    }
+}

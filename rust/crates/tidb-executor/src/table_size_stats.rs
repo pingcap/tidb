@@ -45,8 +45,11 @@ pub struct TableStorageEstimate {
 /// The estimates of every stored table in `catalog`, from the catalog's own
 /// table statistics (the in-process store's statistics handle).
 #[must_use]
-pub fn table_storage_estimates(catalog: &Catalog) -> Vec<TableStorageEstimate> {
-    estimates_from(catalog, &CatalogTableStatistics(catalog))
+pub fn table_storage_estimates(
+    catalog: &Catalog,
+    handle: &tidb_stats_handle::StatsHandle,
+) -> Vec<TableStorageEstimate> {
+    estimates_from(catalog, &CatalogTableStatistics(catalog, handle))
 }
 
 /// The estimates of every stored table in `catalog` -- the statement's own
@@ -142,18 +145,18 @@ trait TableSizeSource {
 }
 
 /// The in-process catalog's table statistics.
-struct CatalogTableStatistics<'a>(&'a Catalog);
+struct CatalogTableStatistics<'a>(&'a Catalog, &'a tidb_stats_handle::StatsHandle);
 
 impl TableSizeSource for CatalogTableStatistics<'_> {
     fn table_rows(&self, physical_id: i64) -> u64 {
-        self.0
-            .table_statistics(physical_id)
+        self.1
+            .table_statistics(physical_id, || self.0.statistics_schema(physical_id))
             .map_or(0, |statistics| statistics.row_count.max(0) as u64)
     }
 
     fn column_length(&self, physical_id: i64, column_id: i64) -> u64 {
-        self.0
-            .table_statistics(physical_id)
+        self.1
+            .table_statistics(physical_id, || self.0.statistics_schema(physical_id))
             .and_then(|statistics| {
                 statistics
                     .columns

@@ -1236,6 +1236,7 @@ mod tests {
 
 pub(crate) fn table_storage_statistics_catalog_of(
     mut scratch: tidb_executor::Catalog,
+    stats_handle: &tidb_stats_handle::StatsHandle,
     table_storage_stats: Option<&dyn crate::TableStorageStatsProvider>,
     resource_group: &str,
     needs_column_lengths: bool,
@@ -1269,7 +1270,7 @@ pub(crate) fn table_storage_statistics_catalog_of(
         // The in-process store is its own statistics handle: Go's
         // `TableRowStatsCache` reads `stats_meta` and the column
         // histograms, which here are the catalog's table statistics.
-        None => tidb_executor::table_size_stats::table_storage_estimates(&scratch),
+        None => tidb_executor::table_size_stats::table_storage_estimates(&scratch, stats_handle),
     };
     for estimate in estimates {
         scratch.set_table_storage_statistics(
@@ -1324,6 +1325,7 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchema
         let catalog = if read.needs_table_storage_statistics() {
             sized = table_storage_statistics_catalog_of(
                 catalog.clone(),
+                ctx.stats_handle(),
                 self.table_storage_stats.as_deref(),
                 &self.resource_group,
                 read.needs_table_storage_column_lengths(),

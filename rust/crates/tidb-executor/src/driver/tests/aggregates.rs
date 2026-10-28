@@ -1512,7 +1512,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         [(index_id, index_stats)].into_iter().collect(),
     );
     let ctx = ctx.with_fresh_staged_writes();
-    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));
     let (_, analyzed) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
     let analyzed_cell = |row: usize, column: usize| match &analyzed[row][column] {

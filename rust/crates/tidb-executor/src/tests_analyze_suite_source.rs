@@ -256,6 +256,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
 /// tier's analyze covers every column by construction.
 #[test]
 fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() {
+    let handle = tidb_stats_handle::StatsHandle::default();
     let mut catalog = Catalog::mock();
     create(
         &mut catalog,
@@ -319,11 +320,11 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
                 "index histogram has content"
             );
         }
-        catalog.set_table_statistics(*physical_id, Arc::new(statistics));
+        handle.set_table_statistics(*physical_id, Arc::new(statistics));
     }
     let global = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("global analyze failed: {error:?}"));
-    catalog.set_table_statistics(table_id, Arc::new(global));
+    handle.set_table_statistics(table_id, Arc::new(global));
 
     // Second act: only p0 is analyzed. p0 keeps full coverage; the other
     // partitions have no statistics, which is Go's pseudo table.
@@ -354,10 +355,10 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
     assert!(!p0_stats.pseudo);
     assert_eq!(p0_stats.columns.len(), 3);
     assert_eq!(p0_stats.indexes.len(), 1);
-    catalog.set_table_statistics(partition_ids[0], Arc::new(p0_stats));
+    handle.set_table_statistics(partition_ids[0], Arc::new(p0_stats));
     for physical_id in &partition_ids[1..] {
         assert!(
-            catalog.table_statistics(*physical_id).is_none(),
+            catalog.table_statistics_in(&handle, *physical_id).is_none(),
             "un-analyzed partition {} is Go's pseudo table",
             physical_id
         );
@@ -722,6 +723,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
 /// row count (4 + 4×10) and per-row distinct counts.
 #[test]
 fn analyze_partition_verify_per_partition_and_global_ndv() {
+    let handle = tidb_stats_handle::StatsHandle::default();
     let mut catalog = Catalog::mock();
     let mut sql = String::from(
         "create table t(a int, b varchar(100), c int, INDEX idx_c(c)) PARTITION BY RANGE (a) (",
@@ -773,7 +775,7 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
                 .ndv,
             100
         );
-        catalog.set_table_statistics(*physical_id, Arc::new(statistics));
+        handle.set_table_statistics(*physical_id, Arc::new(statistics));
     }
 
     let global = analyze_kv_table(&mut table, &options, None, &ctx())

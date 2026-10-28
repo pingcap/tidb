@@ -33,6 +33,7 @@ members = [
     "crates/tidb-driver-error",
     "crates/tidb-executor",
     "crates/tidb-infoschema",
+    "crates/tidb-stats-handle",
     "crates/tidb-stmtctx",
     "crates/tidb-ast",
     "crates/tidb-model",
