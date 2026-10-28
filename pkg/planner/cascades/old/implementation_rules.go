@@ -300,7 +300,8 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // generate a PhysicalSort.
 func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	if newProp, canUseNominal := physicalop.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+	// A pair of ISNULL(col), col items maps to one sort item, which this planner does not support.
+	if newProp, canUseNominal := physicalop.GetPropByOrderByItems(ls.ByItems); canUseNominal && len(newProp.SortItems) == len(ls.ByItems) {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := physicalop.NominalSort{}.Init(
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
@@ -408,8 +409,9 @@ type ImplTopNAsLimit struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
-	_, canUseLimit := physicalop.GetPropByOrderByItems(topN.ByItems)
-	return canUseLimit && physicalop.MatchItems(prop, topN.ByItems)
+	// A pair of ISNULL(col), col items maps to one sort item, which this planner does not support.
+	p, canUseLimit := physicalop.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && len(p.SortItems) == len(topN.ByItems) && physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

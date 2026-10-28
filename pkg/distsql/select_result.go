@@ -206,6 +206,10 @@ func (ssr *sortedSelectResults) lessRow(rowI, rowJ chunk.Row) bool {
 	for i, colIdx := range ssr.keyColumns {
 		cmpFunc := ssr.compareFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if ssr.byItems[i].NullsHigh && rowI.IsNull(colIdx) != rowJ.IsNull(colIdx) {
+			// The compare function sorts NULL as the smallest value.
+			cmp = -cmp
+		}
 		if ssr.byItems[i].Desc {
 			cmp = -cmp
 		}
