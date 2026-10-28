@@ -279,6 +279,34 @@ func TestFileChunkProcess(t *testing.T) {
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())
 	})
+
+	t.Run("SQL file names an unknown column", func(t *testing.T) {
+		fileName := path.Join(tempDir, "test.sql")
+		sourceData := []byte("INSERT INTO t (a, x) VALUES (1, 2);\n")
+		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
+		file, err := os.Open(fileName)
+		require.NoError(t, err)
+		sqlParser := mydump.NewChunkParser(ctx, mode, file, importer.LoadDataReadBlockSize, nil)
+		defer func() {
+			require.NoError(t, sqlParser.Close())
+		}()
+
+		dataWriter := mock.NewMockEngineWriter(ctrl)
+		indexWriter := mock.NewMockEngineWriter(ctrl)
+
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
+		}
+		processor := importer.NewFileChunkProcessor(
+			sqlParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
+		)
+		err = processor.Process(ctx)
+		require.ErrorIs(t, err, common.ErrEncodeKV)
+		require.ErrorContains(t, err, "Unknown column 'x'")
+		require.True(t, ctrl.Satisfied())
+	})
 }
 
 func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
