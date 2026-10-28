@@ -53,6 +53,11 @@ func TestTiDBOptOn(t *testing.T) {
 
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
+	require.Equal(t, int64(vardef.DefAdaptiveClosestReadThreshold), vars.ReplicaClosestReadThreshold)
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAdaptiveClosestReadThreshold, "8192"))
+	require.Equal(t, int64(8192), vars.ReplicaClosestReadThreshold)
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAdaptiveClosestReadThreshold, "0"))
+	require.Zero(t, vars.ReplicaClosestReadThreshold)
 
 	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
