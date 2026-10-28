@@ -146,6 +146,7 @@ fn set_global_persists_each_assignment_through_the_domain() {
 }
 
 mod analyze {
+    use tidb_executor::analyze::exec::AnalyzeExec as _;
     use std::cell::RefCell;
     use std::sync::Arc;
 

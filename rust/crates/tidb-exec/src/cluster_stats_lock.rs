@@ -31,25 +31,8 @@ use tidb_hack::GoToLower;
 const LOCK_TABLE: &str = "stats_table_locked";
 const META_TABLE: &str = "stats_meta";
 
-/// One table target retained from a parsed lock statement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StatsLockTarget {
-    /// Schema name after default-schema resolution.
-    pub schema: String,
-    /// Table name as written.
-    pub table: String,
-    /// Named partitions, if this is a partition-only operation.
-    pub partitions: Vec<String>,
-}
 
-/// One parsed `LOCK STATS` or `UNLOCK STATS` statement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClusterStatsLockStatement {
-    /// `true` for LOCK and `false` for UNLOCK.
-    pub lock: bool,
-    /// Targets in source order.
-    pub targets: Vec<StatsLockTarget>,
-}
+pub use tidb_executor::lock_stats::{ClusterStatsLockStatement, StatsLockTarget};
 
 /// Parses a cluster-routed statistics lock statement.
 pub fn prepare_cluster_stats_lock(

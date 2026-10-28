@@ -28,6 +28,7 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl = { path = "../tidb-ddl" }
+tidb-cluster = { path = "../tidb-cluster" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }

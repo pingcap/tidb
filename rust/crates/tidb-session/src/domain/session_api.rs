@@ -457,15 +457,7 @@ pub enum GeneralExecuteOutcome<'a> {
     Write(WriteOutcome),
 }
 
-/// What one prepared write reported after a determinate commit.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct WriteOutcome {
-    /// Rows to report in the MySQL OK packet.
-    pub affected_rows: u64,
-    /// The auto-increment id this statement generated, which the OK packet
-    /// carries as `last_insert_id`. Zero when the statement generated none.
-    pub last_insert_id: u64,
-}
+pub use tidb_executor::ddl_exec::WriteOutcome;
 
 impl<'a> QueryResult<'a> {
     /// Transfers one session-owned result source to the connection writer.

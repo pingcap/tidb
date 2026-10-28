@@ -3940,6 +3940,7 @@ dependencies = [
  "tidb-autoid",
  "tidb-bindinfo",
  "tidb-chunk",
+ "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",

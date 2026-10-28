@@ -10,6 +10,8 @@
 //! `variable.SetMemQuotaAnalyze` (`pkg/executor/select.go:141`, the quota
 //! below).
 
+use tidb_executor::stats_exec::StatsExec as _;
+use tidb_executor::analyze::exec::AnalyzeExec as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::Arc;
 use tidb_exec::cluster_analyze::AnalyzeStatement;

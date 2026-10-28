@@ -1585,3 +1585,69 @@ pub fn sample_rate_reason(
     }
     format!("use min(1, 110000/{realtime}) as the sample-rate={rate}")
 }
+
+/// What one committed `ANALYZE TABLE` did.
+#[derive(Clone, Debug)]
+pub struct ClusterAnalyzeReport {
+    /// The physical table the statistics belong to.
+    pub table_id: i64,
+    /// The TSO every stored row is stamped with, and the transaction's
+    /// `start_ts`.
+    pub version: u64,
+    /// Rows read from the table.
+    pub scanned_rows: i64,
+    /// Rows the sampler kept.
+    pub sampled_rows: i64,
+    /// The Bernoulli sample rate in force.
+    pub sample_rate: f64,
+    /// Histograms stored, across columns and indexes.
+    pub histogram_count: usize,
+    /// Buckets stored.
+    pub bucket_count: usize,
+    /// TopN entries stored.
+    pub topn_count: usize,
+    /// Whether predicate-column selection found no collected column.
+    pub predicate_columns_empty: bool,
+    /// Nonfatal pinned-Go `saveAnalyzeOptions` failure, if any.
+    pub option_save_warning: Option<String>,
+    /// Nonfatal pinned-Go global-statistics merge warnings.
+    pub global_stats_warnings: Vec<(u16, String)>,
+    /// Whether Go ignores explicit partition options in dynamic mode.
+    pub ignored_partition_overrides: bool,
+    /// Whether stats v2 expanded an index-targeted statement to the normal
+    /// full statistics collection path.
+    pub collected_all_for_index_target: bool,
+    /// Go `getModifiedIndexesInfoForAnalyze`'s skipped columnar indexes,
+    /// one entry per analyzed physical table (lowercase names), each the
+    /// warning `analyzing columnar index is not supported, skip <name>`.
+    pub skipped_columnar_indexes: Vec<String>,
+    /// The column IDs the analysis covered.
+    pub analyzed_column_ids: Vec<i64>,
+    /// The index IDs the analysis covered.
+    pub analyzed_index_ids: Vec<i64>,
+    /// See [`Self::historical_stats_table_ids`].
+    pub historical_stats_table_ids: Vec<i64>,
+    /// See [`Self::cache_update_physical_ids`].
+    pub cache_update_physical_ids: Vec<i64>,
+    /// Go's build-time diagnostics as `(is_note, code, message)`: the
+    /// planner's missing-explicit-columns WARNING and `builder.go:3185`/
+    /// `3194`'s sample-rate NOTEs.
+    pub build_diagnostics: Vec<(bool, u16, String)>,
+}
+
+impl ClusterAnalyzeReport {
+    /// Physical IDs pinned Go queues for historical-statistics generation
+    /// after all successful result saves and global-stat merges finish.
+    #[must_use]
+    pub fn historical_stats_table_ids(&self) -> &[i64] {
+        &self.historical_stats_table_ids
+    }
+
+    /// Physical IDs pinned Go passes to the targeted post-ANALYZE cache
+    /// update. This is task-derived and deliberately distinct from the IDs
+    /// queued for historical-statistics generation.
+    #[must_use]
+    pub fn cache_update_physical_ids(&self) -> &[i64] {
+        &self.cache_update_physical_ids
+    }
+}
