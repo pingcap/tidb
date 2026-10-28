@@ -2720,7 +2720,7 @@ func ParseTimeFromFloat64(ctx Context, f float64) (Time, error) {
 func ParseTimeFromDecimal(ctx Context, dec *MyDecimal) (t Time, err error) {
 	intPart, err := dec.ToInt()
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
-		return ZeroTime, err
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
 	}
 	fsp := min(MaxFsp, int(dec.GetDigitsFrac()))
 	t, err = parseDateTimeFromNum(ctx, intPart)

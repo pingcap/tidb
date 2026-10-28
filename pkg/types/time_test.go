@@ -1861,6 +1861,7 @@ func TestParseTimeFromDecimal(t *testing.T) {
 		{types.NewDecFromStringForTest("20000102030405.0078125"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
 		{types.NewDecFromStringForTest("2000"), mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
 		{types.NewDecFromStringForTest("20000000000000"), mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("9223372036854775808"), types.ZeroTime.Type(), 0, 0, 0, 0, 0, 0, 0, types.ErrIncorrectDatetimeValue},
 	}
 
 	for _, c := range cases {

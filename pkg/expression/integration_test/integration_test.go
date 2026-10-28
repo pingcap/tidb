@@ -4354,6 +4354,29 @@ func TestIssue66661(t *testing.T) {
 	}
 }
 
+func TestIssue72395(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (d decimal(30,0), i int)")
+	tk.MustExec("insert into t values (9223372036854775808, 1)")
+	tk.MustExec("set @@session.sql_mode=''")
+	// Evaluate SUBDATE in TiDB instead of the coprocessor.
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values ('date_sub', 'tikv,tiflash,tidb', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+	defer func() {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_sub'")
+		tk.MustExec("admin reload expr_pushdown_blacklist")
+	}()
+
+	// A DECIMAL date beyond int64 is an incorrect datetime value, not an overflow error.
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select subdate(d, interval i day) from t").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value")
+	}
+}
+
 func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
