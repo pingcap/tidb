@@ -99,7 +99,7 @@ pub fn is_builtin_function_keyword(word: &str) -> bool {
 }
 
 use reader::Reader;
-use tidb_datatype::Encoding;
+use tidb_charset::Encoding;
 use tidb_hack::raw_bytes;
 
 /// SQL mode flags that change tokenization. Mirrors the subset of
@@ -229,7 +229,7 @@ impl<'a> Lexer<'a> {
             in_bang_comment: false,
             kw_hist: [None, None, None],
             warnings: Vec::new(),
-            client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
+            client: tidb_charset::find_encoding(tidb_mysql::DefaultCharset),
         }
     }
 

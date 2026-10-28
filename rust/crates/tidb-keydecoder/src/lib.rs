@@ -19,6 +19,8 @@
 //! kept in its own crate below both consumers while [`KeyInfoCatalog`] supplies the small
 //! metadata view the decoder needs.
 
+mod infoschema;
+
 use std::fmt::Write as _;
 
 use serde::Serialize;

@@ -817,7 +817,7 @@ pub struct StmtContextData {
     replica_read: ReplicaReadType,
     read_replica_scope: Option<String>,
     is_staleness: bool,
-    coprocessor_read_policy: tidb_kv::remote_scan::CoprocessorReadPolicy,
+    coprocessor_read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
     /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
     /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
     /// `ResetContextOfStmt` copies off the AST and
@@ -2447,7 +2447,7 @@ context_configuration! {
 
     /// Retain the session's coprocessor read policy for this statement.
     #[must_use]
-    pub fn with_coprocessor_read_policy(mut self, policy: tidb_kv::remote_scan::CoprocessorReadPolicy) -> Self {
+    pub fn with_coprocessor_read_policy(mut self, policy: tidb_distsql::remote_scan::CoprocessorReadPolicy) -> Self {
         self.coprocessor_read_policy = policy;
         self
     }
@@ -4736,7 +4736,7 @@ impl StmtContext {
 
     /// Settings shared by all coprocessor scans in this statement.
     #[must_use]
-    pub fn coprocessor_read_policy(&self) -> &tidb_kv::remote_scan::CoprocessorReadPolicy {
+    pub fn coprocessor_read_policy(&self) -> &tidb_distsql::remote_scan::CoprocessorReadPolicy {
         &self.coprocessor_read_policy
     }
 
@@ -5337,7 +5337,7 @@ impl StmtContext {
     }
 
     /// The shared handle behind [`Self::staged_writes`], for a coprocessor
-    /// context ([`tidb_kv::remote_scan::PushdownStatementContext`]) built once
+    /// context ([`tidb_distsql::remote_scan::PushdownStatementContext`]) built once
     /// per statement and carried by executors that outlive this borrow.
     #[must_use]
     pub fn staged_writes_handle(&self) -> Arc<tidb_table::kv_table::StagedWrites> {

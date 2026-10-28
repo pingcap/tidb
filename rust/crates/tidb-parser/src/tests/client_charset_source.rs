@@ -137,8 +137,8 @@ fn charset_client_api_covers_the_complete_go_encoding_map() {
 
 fn config(client: &str, connection: &str) -> ParserConfig {
     ParserConfig {
-        charset_client: tidb_datatype::find_encoding(client),
-        charset_connection: tidb_datatype::find_encoding(connection),
+        charset_client: tidb_charset::find_encoding(client),
+        charset_connection: tidb_charset::find_encoding(connection),
         ..ParserConfig::default()
     }
 }
@@ -303,7 +303,7 @@ fn parse_client(
     client: &str,
     connection: &str,
 ) -> PResult<ParseOutput> {
-    let text = carry_client_sql(sql, tidb_datatype::find_encoding(client));
+    let text = carry_client_sql(sql, tidb_charset::find_encoding(client));
     parse_with_sql_mode_config_and_warnings(&text, sql_mode, config(client, connection))
 }
 
@@ -462,7 +462,7 @@ fn statement_text_carries_the_client_encoding() {
     let statements = parse_multi_with_sql_mode_and_config(
         &carry_client_sql(
             b"SELECT '\xe9'; SELECT 'a\tb'",
-            tidb_datatype::Encoding::Latin1,
+            tidb_charset::Encoding::Latin1,
         ),
         SqlMode::default(),
         config("latin1", "latin1"),

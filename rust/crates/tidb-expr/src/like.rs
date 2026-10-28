@@ -15,6 +15,7 @@
 //! default), with both binary and source-registered collation matching.
 //! Called directly from `crate::eval_in`'s `Expr::Like` arm.
 
+use tidb_datatype::CollationCollator;
 use tidb_datatype::Collation;
 use tidb_util::stringutil::{lower_one_string, lower_one_string_excluding_escape_char};
 

@@ -16,6 +16,7 @@
 //! implementations. Bind column addresses once per chunk, then update in
 //! row/function order as `HashAggPartialWorker.updatePartialResult` does.
 
+use tidb_datatype::CollationCollator;
 use super::*;
 use std::sync::Arc;
 use tidb_chunk::ColumnRead;

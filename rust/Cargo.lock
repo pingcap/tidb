@@ -3456,6 +3456,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-charset"
+version = "0.0.0"
+dependencies = [
+ "encoding_rs",
+ "tidb-error",
+ "tidb-mysql",
+]
+
+[[package]]
 name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [
@@ -3545,6 +3554,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
+ "tidb-charset",
  "tidb-error",
  "tidb-hack",
  "tidb-kvcache",
@@ -3756,11 +3766,14 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
+ "tidb-expr",
+ "tidb-kv",
  "tidb-mysql",
  "tidb-proto",
  "tidb-ristretto",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-vardef",
  "tikv-client",
  "tokio",
 ]
@@ -4116,7 +4129,6 @@ version = "0.0.0"
 dependencies = [
  "tidb-ast",
  "tidb-datatype",
- "tidb-expr",
  "tidb-util",
 ]
 
@@ -4193,7 +4205,6 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-hack",
- "tidb-keydecoder",
  "tidb-kv",
  "tidb-metadef",
  "tidb-model",
@@ -4215,6 +4226,8 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "tidb-codec",
+ "tidb-infoschema",
+ "tidb-table",
 ]
 
 [[package]]
@@ -4226,9 +4239,7 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
- "tidb-distsql",
  "tidb-error",
- "tidb-expr",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -4245,7 +4256,7 @@ version = "0.0.0"
 name = "tidb-lexer"
 version = "0.0.0"
 dependencies = [
- "tidb-datatype",
+ "tidb-charset",
  "tidb-hack",
  "tidb-mysql",
 ]
@@ -4364,7 +4375,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tidb-ast",
- "tidb-datatype",
+ "tidb-charset",
  "tidb-error",
  "tidb-hack",
  "tidb-lexer",

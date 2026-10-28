@@ -36,6 +36,7 @@
 //! expression-to-range extraction, and the MV-index paths. Each is called
 //! out at its use site.
 
+use tidb_datatype::CollationCollator;
 #[cfg(test)]
 use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};

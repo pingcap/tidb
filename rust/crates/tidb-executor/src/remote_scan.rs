@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The executor's side of the coprocessor seam: the request types are
-//! `tidb_kv::remote_scan`'s; a request's statement context is built here from
+//! `tidb_distsql::remote_scan`'s; a request's statement context is built here from
 //! the executor's statement context, and a pushed partial aggregation is bound
 //! and inspected here.
 
@@ -21,7 +21,7 @@
 use crate::RowDecodeContextExt;
 use std::sync::Arc;
 
-pub use tidb_kv::remote_scan::*;
+pub use tidb_distsql::remote_scan::*;
 
 /// The coprocessor seam of one statement, taken from its context.
 #[must_use]

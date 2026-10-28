@@ -27,6 +27,7 @@
 //! compared with scalar `<=>`, then the results are AND-composed. It therefore
 //! never returns NULL and treats two NULLs in the same position as equal.
 
+use tidb_datatype::CollationCollator;
 use std::cmp::Ordering;
 
 use tidb_ast::BinaryOp;

@@ -20,7 +20,7 @@
 //!
 //! # What this is for
 //!
-//! [`crate::storage::TableStorage`] speaks keys and bytes, so a scan through
+//! [`tidb_kv::storage::TableStorage`] speaks keys and bytes, so a scan through
 //! it always moves the range's packed bytes to the client and decodes them
 //! there. A cluster backend can do better: TiKV evaluates the predicate, the
 //! row cap and the column projection at the region, and only the surviving
@@ -78,7 +78,7 @@ pub enum PushdownReadEngine {
     /// Go `kv.TiFlash`: the columnar replica, served through MPP dispatch.
     TiFlash,
 }
-use crate::storage::StorageError;
+use tidb_kv::storage::StorageError;
 
 /// One column a remote scan must return, in the order the caller wants it.
 #[derive(Clone, Debug, PartialEq)]
@@ -387,9 +387,9 @@ pub struct PushdownStatementContext {
     /// `StmtCtx.GetResourceGroupTagger`.
     pub kv_context: Option<tidb_txnkv::StatementKvContextCell>,
     /// Shared statement quota and SQL killer for remote response ownership.
-    pub memory: crate::mem_quota::StatementMemory,
+    pub memory: tidb_kv::mem_quota::StatementMemory,
     /// One query identity and allocation state for every MPP gather in this statement.
-    pub mpp_query_info: Arc<crate::mpp_query::MppQueryInfo>,
+    pub mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     /// Domain/server-info ID, never the operating system process ID.
     pub mpp_server_id: u64,
     /// Validated session compute placement policy.
@@ -441,7 +441,7 @@ pub struct PushdownStatementContext {
     /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
-    pub replica_read: crate::ReplicaReadType,
+    pub replica_read: tidb_kv::ReplicaReadType,
     /// Scope and stale mode selected by the transaction provider.
     pub read_replica_scope: String,
     /// Go StmtCtx.IsStaleness; not inferred from the request timestamp.
@@ -456,7 +456,7 @@ pub struct PushdownStatementContext {
     pub max_execution_time_ms: u64,
     /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`: the statement's
     /// own priority modifier projected onto KV's three values.
-    pub priority: tidb_distsql::Priority,
+    pub priority: crate::Priority,
     /// Go `StmtCtx.NotFillCache`, set by a SELECT's `SQL_NO_CACHE`.
     pub not_fill_cache: bool,
     /// Go `SessionVars.DistSQLScanConcurrency()`, the request concurrency
@@ -474,21 +474,21 @@ pub struct PushdownStatementContext {
     /// `DivPrecisionIncrement` when it differs from the default.
     pub div_precision_increment: u32,
     /// The current transaction's (or, in autocommit, current statement's)
-    /// staged-write tracker. See [`crate::staged_writes::StagedWrites`].
-    pub staged_writes: std::sync::Arc<crate::staged_writes::StagedWrites>,
+    /// staged-write tracker. See [`tidb_kv::staged_writes::StagedWrites`].
+    pub staged_writes: std::sync::Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Go `DistSQLContext.MaxKeysRead`/`MaxKeysReadCounter`: the statement's
     /// `tidb_max_keys_read` budget and the counter `tidb_keys_examined` sums.
-    pub keys_read: crate::keys_read::KeysReadBudget,
+    pub keys_read: tidb_kv::keys_read::KeysReadBudget,
     /// Go `selectResult`'s `ctx.ExecDetails`/`RuntimeStatsColl`: where each
     /// response's `CopRuntimeStats` goes; `None` when the statement does not
     /// collect execution info.
-    pub cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
+    pub cop_response_sink: Option<Arc<dyn crate::CopResponseSink>>,
 }
 
 impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
-            memory: crate::mem_quota::StatementMemory::default(),
+            memory: tidb_kv::mem_quota::StatementMemory::default(),
             kv_exec_counter: Default::default(),
             kv_context: None,
             mpp_query_info: Arc::default(),
@@ -505,14 +505,14 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             eval_context: None,
             resource_group_name: "default".to_owned(),
-            replica_read: crate::ReplicaReadType::Leader,
+            replica_read: tidb_kv::ReplicaReadType::Leader,
             read_replica_scope: "global".into(),
             is_staleness: false,
             read_policy: CoprocessorReadPolicy::default(),
             estimated_net_bytes: 0.0,
             lookup_avg_row_bytes: None,
             max_execution_time_ms: 0,
-            priority: tidb_distsql::Priority::None,
+            priority: crate::Priority::None,
             not_fill_cache: false,
             dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
@@ -522,7 +522,7 @@ impl Default for PushdownStatementContext {
             // behind it has no session value to send.
             div_precision_increment: 4,
             staged_writes: Arc::default(),
-            keys_read: crate::keys_read::KeysReadBudget::default(),
+            keys_read: tidb_kv::keys_read::KeysReadBudget::default(),
             cop_response_sink: None,
         }
     }

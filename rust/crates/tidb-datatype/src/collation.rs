@@ -20,18 +20,14 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::charset::{
     get_collation_by_id as charset_collation_by_id,
     get_collation_by_name as charset_collation_by_name,
-    get_supported_collations as charset_supported_collations, set_new_collation_defaults,
+    get_supported_collations as charset_supported_collations,
 };
+pub use tidb_charset::charset::{new_collation_enabled, set_new_collation_enabled};
 use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
-
-// Go initializes this to enabled in `pkg/util/collate.init`; bootstrap later
-// replaces it with the cluster's persisted compatibility setting.
-static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Source `DefaultLen`, used when a string datum has no known length.
 pub const DEFAULT_LEN: usize = 0;
@@ -150,25 +146,6 @@ impl Collator {
                 | Self::New(Collation::Utf8Mb40900Bin)
         )
     }
-}
-
-/// Returns whether new collations are enabled.
-pub fn new_collation_enabled() -> bool {
-    NEW_COLLATION_ENABLED.load(AtomicOrdering::SeqCst)
-}
-
-/// The flag behind [`Self::new_collation_enabled`], for the charset
-/// registry's own construction: Go's `collate` package init applies
-/// `switchDefaultCollation(NewCollationEnabled())` to the static charset
-/// tables before any consumer reads a default collation.
-pub(crate) fn new_collation_enabled_flag() -> bool {
-    NEW_COLLATION_ENABLED.load(AtomicOrdering::SeqCst)
-}
-
-/// Source test/configuration switch. Callers must serialize changes.
-pub fn set_new_collation_enabled(enabled: bool) {
-    set_new_collation_defaults(enabled);
-    NEW_COLLATION_ENABLED.store(enabled, AtomicOrdering::SeqCst);
 }
 
 /// Checks source-compatible collation-name equivalence.
@@ -577,9 +554,32 @@ const GBK_CHINESE_CI: &[u8; 65_536 * 2] =
 const GB18030_CHINESE_CI: &[u8; 0x11_0000 * 4] =
     include_bytes!("collation_data/gb18030_chinese_ci_u32_le.bin");
 
-impl Collation {
+/// Go's per-collation collators (`binCollator`, `generalCICollator`, ...):
+/// what each `parser/charset` collation does with bytes -- compare them, key
+/// them and match wildcard patterns -- as `util/collate` supplies it.
+pub trait CollationCollator {
     /// Compiles this collation's wildcard matcher.
-    pub fn pattern(self, pattern: impl AsRef<[u8]>, escape: u8) -> WildcardPattern {
+    fn pattern(self, pattern: impl AsRef<[u8]>, escape: u8) -> WildcardPattern;
+
+    /// Compares arbitrary Go-string bytes using TiDB's source semantics.
+    fn compare(self, left: &[u8], right: &[u8]) -> Ordering;
+
+    /// Returns TiDB's sort key for arbitrary Go-string bytes.
+    fn key(self, value: &[u8]) -> Vec<u8>;
+
+    /// Go's allocation-aware `ImmutableKey`; binary collators borrow input.
+    fn immutable_key<'a>(self, value: &'a [u8]) -> Cow<'a, [u8]>;
+
+    /// Returns the source key without the collation's PAD SPACE preprocessing.
+    fn key_without_trim_right_space(self, value: &[u8]) -> Vec<u8>;
+
+    /// Returns the exact upper bound exposed by the corresponding Go collator.
+    fn max_key_len(self, value: &[u8]) -> usize;
+}
+
+impl CollationCollator for Collation {
+    /// Compiles this collation's wildcard matcher.
+    fn pattern(self, pattern: impl AsRef<[u8]>, escape: u8) -> WildcardPattern {
         let pattern = pattern.as_ref();
         match self {
             Self::Binary | Self::Gb18030Bin => WildcardPattern::binary(pattern, escape),
@@ -613,7 +613,7 @@ impl Collation {
     }
 
     /// Compares arbitrary Go-string bytes using TiDB's source semantics.
-    pub fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
+    fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
         match self {
             Self::Binary | Self::Utf8Mb40900Bin => left.cmp(right),
             Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
@@ -633,7 +633,7 @@ impl Collation {
     }
 
     /// Returns TiDB's sort key for arbitrary Go-string bytes.
-    pub fn key(self, value: &[u8]) -> Vec<u8> {
+    fn key(self, value: &[u8]) -> Vec<u8> {
         match self {
             Self::Binary | Self::Utf8Mb40900Bin => value.to_vec(),
             Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
@@ -653,7 +653,7 @@ impl Collation {
     }
 
     /// Go's allocation-aware `ImmutableKey`; binary collators borrow input.
-    pub fn immutable_key<'a>(self, value: &'a [u8]) -> Cow<'a, [u8]> {
+    fn immutable_key<'a>(self, value: &'a [u8]) -> Cow<'a, [u8]> {
         match self {
             Self::Binary | Self::Utf8Mb40900Bin => Cow::Borrowed(value),
             Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
@@ -664,7 +664,7 @@ impl Collation {
     }
 
     /// Returns the source key without the collation's PAD SPACE preprocessing.
-    pub fn key_without_trim_right_space(self, value: &[u8]) -> Vec<u8> {
+    fn key_without_trim_right_space(self, value: &[u8]) -> Vec<u8> {
         match self {
             Self::Binary
             | Self::AsciiBin
@@ -686,7 +686,7 @@ impl Collation {
     }
 
     /// Returns the exact upper bound exposed by the corresponding Go collator.
-    pub fn max_key_len(self, value: &[u8]) -> usize {
+    fn max_key_len(self, value: &[u8]) -> usize {
         match self {
             Self::Binary
             | Self::AsciiBin
@@ -1146,6 +1146,7 @@ fn weighted_key(value: &[u8], weight: fn(u32) -> (u64, u64)) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use super::CollationCollator;
     use std::{collections::HashSet, path::Path, process::Command};
 
     use sha2::{Digest, Sha256};

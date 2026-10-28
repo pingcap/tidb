@@ -16,6 +16,7 @@
 //! shared by the root aggregation and the partial stage a scan computes over
 //! its staged rows.
 
+use tidb_datatype::CollationCollator;
 use tidb_datatype::{Collation, Datum};
 use tidb_expr::expression::Expression;
 

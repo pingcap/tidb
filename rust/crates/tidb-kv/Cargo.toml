@@ -11,9 +11,7 @@ description = "Go pkg/kv for the TiDB Rust rewrite."
 tracing = "0.1"
 smallvec = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-expr = { path = "../tidb-expr" }
 tidb-chunk = { path = "../tidb-chunk" }
-tidb-distsql = { path = "../tidb-distsql" }
 tidb-error = { path = "../tidb-error" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }

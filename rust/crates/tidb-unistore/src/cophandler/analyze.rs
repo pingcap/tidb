@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! Go cophandler/analyze.go FullSampling request execution.
+use tidb_datatype::CollationCollator;
 use super::*;
 use tidb_datatype::Datum;
 use tidb_stats::row_sample_collector::{RowSampleCollector, SamplePolicy, ScannedRow, SlotValue};

@@ -121,5 +121,6 @@ pub use transport::{
 pub use tidb_util::context::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub mod metrics;
+pub mod remote_scan;
 #[cfg(test)]
 mod tests;

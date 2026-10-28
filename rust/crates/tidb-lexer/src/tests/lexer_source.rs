@@ -1454,7 +1454,7 @@ fn test_parser_err_msg() {
 /// byte at or above `0x80` as one `raw_bytes` escape.
 #[test]
 fn gbk_client_skips_multibyte_characters_in_quotes() {
-    let gbk = tidb_datatype::Encoding::Gbk;
+    let gbk = tidb_charset::Encoding::Gbk;
     let carry = |bytes: &[u8]| raw_bytes::bytes_to_escaped_str(bytes).into_owned();
     let lexed = |sql: &str, client| {
         Lexer::new(sql)
@@ -1478,7 +1478,7 @@ fn gbk_client_skips_multibyte_characters_in_quotes() {
             (TokenKind::Eof, Vec::new())
         ]
     );
-    let utf8 = tidb_datatype::find_encoding("utf8mb4");
+    let utf8 = tidb_charset::find_encoding("utf8mb4");
     assert_eq!(lexed(&trail_backslash, utf8)[0].0, TokenKind::Invalid);
 
     let trail_backtick = carry(b"`\xab\x60`");
@@ -1506,7 +1506,7 @@ fn gbk_client_skips_multibyte_characters_in_quotes() {
     assert_eq!(skip_rune_len(gbk, "a"), 0);
     // Go's GB18030 `MbLen` panics on this unterminated tail; here it is no
     // character, and the string stays unterminated.
-    let gb18030 = tidb_datatype::Encoding::Gb18030;
+    let gb18030 = tidb_charset::Encoding::Gb18030;
     assert_eq!(skip_rune_len(gb18030, &carry(b"\x81\x30")), 0);
     assert_eq!(
         lexed(&carry(b"'\x81\x30"), gb18030)[0].0,

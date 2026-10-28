@@ -53,6 +53,7 @@ pub mod exec;
 pub mod kv;
 pub mod panic_recovery;
 
+use tidb_datatype::CollationCollator;
 #[cfg(test)]
 use tidb_codec::encode_value;
 use tidb_codec::encode_value_in_timezone;

@@ -87,7 +87,7 @@ pub enum ParseParam {
     /// Go `parser.CharsetClient`.
     CharsetClient(String),
 }
-use tidb_datatype::{Encoding, TransformOp};
+use tidb_charset::{Encoding, TransformOp};
 use tidb_hack::raw_bytes;
 pub use tidb_lexer::SqlMode;
 use tidb_lexer::{
@@ -193,7 +193,7 @@ type PResult<T> = Result<T, ParseError>;
 /// the client encoding.
 struct LiteralConversionError {
     /// The decode's first invalid group (`ErrInvalidCharacterString`).
-    error: tidb_datatype::EncodingError,
+    error: tidb_charset::EncodingError,
     /// Whether the scanner refuses the literal (strict `sql_mode`, client
     /// and connection encodings the same) instead of warning.
     refused: bool,
@@ -316,8 +316,8 @@ impl Default for ParserConfig {
         Self {
             enable_window_function: true,
             enable_strict_double_type_check: true,
-            charset_client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
-            charset_connection: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
+            charset_client: tidb_charset::find_encoding(tidb_mysql::DefaultCharset),
+            charset_connection: tidb_charset::find_encoding(tidb_mysql::DefaultCharset),
         }
     }
 }
@@ -659,7 +659,7 @@ pub fn parse_bytes(sql: &[u8], client_charset: &str) -> PResult<Stmt> {
 /// unknown name is the binary encoding.
 fn client_charset_config(client_charset: &str) -> ParserConfig {
     ParserConfig {
-        charset_client: tidb_datatype::find_encoding(client_charset),
+        charset_client: tidb_charset::find_encoding(client_charset),
         ..ParserConfig::default()
     }
 }
@@ -670,7 +670,7 @@ fn decode_client_sql<'a>(
 ) -> PResult<std::borrow::Cow<'a, str>> {
     Ok(carry_client_sql(
         sql,
-        tidb_datatype::find_encoding(client_charset),
+        tidb_charset::find_encoding(client_charset),
     ))
 }
 
@@ -1311,8 +1311,8 @@ impl Parser {
             ignore_space: false,
             pipes_as_concat: false,
             strict_double_type_check: true,
-            charset_client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
-            charset_connection: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
+            charset_client: tidb_charset::find_encoding(tidb_mysql::DefaultCharset),
+            charset_connection: tidb_charset::find_encoding(tidb_mysql::DefaultCharset),
             strict_mode: false,
             warnings: Vec::new(),
             paren_depth_error,

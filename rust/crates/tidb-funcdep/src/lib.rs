@@ -21,12 +21,11 @@
 //! This package uses TiDB's definition of a lax dependency: a lax dependency
 //! becomes strict when every determinant column is known NOT NULL; dependent
 //! columns do not also need to be NOT NULL. Outer joins retain predicate facts
-//! that depend on rejecting NULL-extended rows as conditional dependencies.
-//! [`null_reject`] provides the `pkg/planner/util.IsNullRejected` proof that
-//! supplies those NOT NULL facts.
+//! that depend on rejecting NULL-extended rows as conditional dependencies;
+//! the planner's `null_misc` (`pkg/planner/util.IsNullRejected`) supplies
+//! those NOT NULL facts.
 
 pub mod fd_graph;
-pub mod null_reject;
 
 pub use fd_graph::{find_common_equiv_classes, FdSet, OuterJoinOptions};
 

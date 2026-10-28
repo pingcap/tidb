@@ -92,6 +92,7 @@ pub mod core_usage;
 pub mod cost_factors;
 pub mod cost_usage;
 pub mod domain_misc;
+pub mod null_misc;
 pub mod enforce;
 pub mod explain;
 pub mod expression_rewriter;

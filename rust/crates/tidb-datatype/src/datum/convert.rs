@@ -19,6 +19,7 @@
 //! aggregate-side opaque-JSON rule of `getRealJSONValue`
 //! (`pkg/executor/aggfuncs/func_json_objectagg.go`).
 
+use crate::CollationCollator;
 use crate::convert::decimal_conversion_error;
 use std::cmp::Ordering;
 

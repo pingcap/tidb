@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_datatype::CollationCollator;
 use crate::bytes::{encode_bytes, peek_bytes_len};
 use crate::decimal::{decode_decimal, encode_decimal, peek_decimal_len};
 use crate::float::{decode_float, encode_float};

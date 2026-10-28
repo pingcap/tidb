@@ -59,6 +59,7 @@
 //! key at all, so it is never inserted into the table and never probes it.
 //! A NaN `DOUBLE` is treated the same way, because `NaN = NaN` is false.
 
+use tidb_datatype::CollationCollator;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};

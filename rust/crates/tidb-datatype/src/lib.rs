@@ -21,12 +21,10 @@
 //! [`Decimal`] arithmetic. It has no dependency on the AST, expression
 //! evaluator, or executor.
 
-pub mod ascii_encoding;
 mod binary_json;
 mod binary_json_ops;
 mod binary_literal;
 pub mod char_length;
-mod charset;
 mod collation;
 mod compare;
 pub mod conversion_context;
@@ -38,8 +36,6 @@ mod datum_convert;
 mod datum_eval;
 mod decimal;
 mod duration;
-pub(crate) mod encoding_base;
-mod encoding_table;
 mod enum_set;
 mod etc;
 mod eval_type;
@@ -53,7 +49,6 @@ pub mod go_strconv;
 mod go_string;
 mod json_path;
 pub mod json_scanner;
-mod multibyte_encoding;
 mod mydecimal;
 mod mysql_time;
 mod numeric_helper;
@@ -65,7 +60,6 @@ mod source_string;
 mod str_to_date;
 mod time_parse;
 mod truncate;
-pub mod utf8_encoding;
 mod vector;
 
 #[cfg(test)]
@@ -108,8 +102,9 @@ pub use binary_literal::{
     parse_bit_str, parse_hex_str, BinaryLiteral, BinaryLiteralIntOutcome, BinaryLiteralParseError,
     BinaryLiteralWidth, BitLiteral, HexLiteral, InvalidBinaryLiteralWidth,
 };
-pub use char_length::{produce_char_value, DataTooLongError};
-pub use charset::{
+pub(crate) use tidb_charset::{charset, encoding_base};
+pub use tidb_charset::{ascii_encoding, utf8_encoding};
+pub use tidb_charset::{
     add_charset, add_collation, add_supported_collation, charset_known, get_charset_info,
     get_charset_info_by_id, get_collation_by_id, get_collation_by_name,
     get_default_charset_and_collate, get_default_collation, get_default_collation_legacy,
@@ -117,7 +112,19 @@ pub use charset::{
     valid_charset_and_collation, Charset, CharsetError, CharsetInfo, CharsetName, Collation,
     CollationInfo, PAD_NONE, PAD_SPACE, TIFLASH_SUPPORTED_CHARSETS,
 };
+pub use tidb_charset::{TransformOp, TransformResult};
+pub use tidb_charset::{lookup_encoding, HtmlEncoding, HtmlEncodingError};
+pub use tidb_charset::{
+    count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
+    is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
+};
+pub use tidb_charset::{
+    Utf8Encoding, Utf8Mb3StrictEncoding, Utf8Op, Utf8TransformError, Utf8TransformResult,
+    UTF8_ENCODING, UTF8_MB3_STRICT_ENCODING,
+};
+pub use char_length::{produce_char_value, DataTooLongError};
 pub use collation::{
+    CollationCollator,
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
     collation_to_proto, compatible_collate, get_binary_collator, get_binary_collator_slice,
     get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
@@ -172,8 +179,6 @@ pub use duration::{
     RoundedDuration, MAX_TIME_NANOS, MIN_TIME_NANOS, TIME_MAX_HOUR, TIME_MAX_MINUTE,
     TIME_MAX_SECOND,
 };
-pub use encoding_base::{TransformOp, TransformResult};
-pub use encoding_table::{lookup_encoding, HtmlEncoding, HtmlEncodingError};
 pub use enum_set::{
     parse_enum, parse_enum_name, parse_enum_value, parse_set, parse_set_name, parse_set_value,
     EnumParseError, MysqlEnum, MysqlSet, SetParseError,
@@ -208,10 +213,6 @@ pub use fsp::{
 pub use go_string::{decode_go_utf8_lossy, go_chars, GoChars, GoString, GoStringSource};
 pub use json_path::{
     parse_json_path_expr, JSONPathArraySelection, JSONPathError, JSONPathExpression, JSONPathLeg,
-};
-pub use multibyte_encoding::{
-    count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
-    is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
 };
 pub use mydecimal::{
     format_float_g_shortest, DecimalError, MyDecimal, RoundMode, MYDECIMAL_STRUCT_SIZE,
@@ -256,10 +257,6 @@ pub use time_parse::{
     timestamp_diff, ParsedInterval, ParsedTime,
 };
 pub use truncate::{is_truncation_error_code, TruncationPolicy};
-pub use utf8_encoding::{
-    Utf8Encoding, Utf8Mb3StrictEncoding, Utf8Op, Utf8TransformError, Utf8TransformResult,
-    UTF8_ENCODING, UTF8_MB3_STRICT_ENCODING,
-};
 pub use vector::{
     check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorError,
     VectorFloat32, MAX_VECTOR_DIMENSION,

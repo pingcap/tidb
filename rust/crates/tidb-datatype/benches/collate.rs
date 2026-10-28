@@ -15,6 +15,7 @@
 //! Stable custom harness for every benchmark in
 //! `pkg/util/collate/collate_bench_test.go`.
 
+use tidb_datatype::CollationCollator;
 use std::hint::black_box;
 use std::time::Instant;
 

@@ -37,6 +37,7 @@ mod eval_context;
 #[path = "cophandler/region_group_tests.rs"]
 mod region_group_tests;
 
+use tidb_datatype::CollationCollator;
 use eval_context::{RequestEvalContext, SharedExpression};
 use std::sync::Arc;
 

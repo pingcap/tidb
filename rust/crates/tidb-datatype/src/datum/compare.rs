@@ -21,6 +21,7 @@
 //! `compareMysqlSet`, `compareMysqlJSON`, `compareMysqlTime`,
 //! `compareVectorFloat32`) and the NULL/range-sentinel rank they share.
 
+use crate::CollationCollator;
 use std::cmp::Ordering;
 
 use super::{decimal_from_bytes, Datum, DatumValueError};

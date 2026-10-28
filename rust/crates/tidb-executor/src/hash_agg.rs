@@ -67,6 +67,7 @@
 //! string/binary, temporal, duration, JSON, and vector datum paths; unknown
 //! sentinels are the only values rejected by this layer.
 
+use tidb_datatype::CollationCollator;
 use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 
 mod builder;

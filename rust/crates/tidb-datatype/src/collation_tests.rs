@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use crate::{
+    CollationCollator,
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
     collation_to_proto, compatible_collate, get_binary_collator_slice, get_charset_info,
     get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
@@ -25,6 +26,10 @@ use crate::{
     substitute_missing_collation_to_default, supported_collations, Collation, Collator,
 };
 
+/// Serializes this crate's tests that flip the process-wide new-collation
+/// switch and the charset defaults it moves.
+static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct NewCollationModeGuard {
     original: bool,
     _registry_guard: std::sync::MutexGuard<'static, ()>,
@@ -32,7 +37,7 @@ struct NewCollationModeGuard {
 
 impl NewCollationModeGuard {
     fn set(enabled: bool) -> Self {
-        let registry_guard = crate::charset::REGISTRY_TEST_LOCK
+        let registry_guard = REGISTRY_TEST_LOCK
             .lock()
             .expect("charset test lock poisoned");
         let original = new_collation_enabled();

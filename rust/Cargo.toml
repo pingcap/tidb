@@ -30,6 +30,7 @@ members = [
     "crates/tidb-sessionstates",
     "crates/tidb-meta",
     "crates/tidb-vardef",
+    "crates/tidb-charset",
     "crates/tidb-chunk",
     "crates/tidb-driver-error",
     "crates/tidb-executor",

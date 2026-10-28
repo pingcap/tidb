@@ -14,7 +14,7 @@
 
 //! Complete original-test translation for `pkg/parser/charset`.
 
-use tidb_datatype::{
+use tidb_charset::{
     add_charset, add_collation, count_valid_bytes, find_encoding, get_charset_info,
     get_collation_by_id, get_collation_by_name, get_default_collation,
     get_default_collation_legacy, get_supported_charsets, get_supported_collations, remove_charset,
@@ -87,7 +87,7 @@ fn test_get_default_collation() {
         }
     }
     assert_eq!(default_count, supported.len());
-    assert!(tidb_datatype::new_collation_enabled());
+    assert!(tidb_charset::charset::new_collation_enabled());
     assert_eq!(get_default_collation("gbk").unwrap(), "gbk_chinese_ci");
     assert_eq!(
         get_default_collation("gb18030").unwrap(),

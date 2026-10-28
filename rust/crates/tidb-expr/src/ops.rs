@@ -15,6 +15,7 @@
 //! bitwise, comparison, and logical (three-valued) semantics, for both the
 //! `Int` and `Decimal` domains.
 
+use tidb_datatype::CollationCollator;
 use tidb_ast::{BinaryOp, UnaryOp};
 
 use crate::coerce::{

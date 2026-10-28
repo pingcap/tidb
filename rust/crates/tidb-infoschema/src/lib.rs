@@ -62,7 +62,6 @@ impl CatalogTableKey {
     }
 }
 
-pub mod key_info;
 pub mod infoschema_meta;
 pub mod metricsschema;
 pub mod perfschema;

@@ -16,12 +16,13 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{OnceLock, RwLock};
 
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 #[cfg(test)]
-pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Trailing spaces are insignificant.
 pub const PAD_SPACE: &str = "PAD SPACE";
@@ -198,9 +199,9 @@ impl Charset {
             Self::Latin1 => Collation::Latin1Bin,
             Self::Utf8 => Collation::Utf8Bin,
             Self::Utf8Mb4 => Collation::Utf8Mb4Bin,
-            Self::Gbk if crate::collation::new_collation_enabled() => Collation::GbkChineseCi,
+            Self::Gbk if new_collation_enabled() => Collation::GbkChineseCi,
             Self::Gbk => Collation::GbkBin,
-            Self::Gb18030 if crate::collation::new_collation_enabled() => {
+            Self::Gb18030 if new_collation_enabled() => {
                 Collation::Gb18030ChineseCi
             }
             Self::Gb18030 => Collation::Gb18030Bin,
@@ -523,7 +524,7 @@ impl Registry {
         // collations enabled, so apply the same switch here.
         apply_new_collation_defaults(
             &mut registry,
-            crate::collation::new_collation_enabled_flag(),
+            new_collation_enabled(),
         );
         registry
     }
@@ -561,7 +562,24 @@ fn registry() -> &'static RwLock<Registry> {
     REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
 }
 
-pub(crate) fn set_new_collation_defaults(enabled: bool) {
+// Go initializes this to enabled in `pkg/util/collate.init`; bootstrap later
+// replaces it with the cluster's persisted compatibility setting.
+static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Go `collate.NewCollationEnabled()`: whether new collations are enabled,
+/// which also picks the Chinese charsets' default collations.
+pub fn new_collation_enabled() -> bool {
+    NEW_COLLATION_ENABLED.load(AtomicOrdering::SeqCst)
+}
+
+/// Go `collate.SetNewCollationEnabledForTest` and its
+/// `switchDefaultCollation`. Callers must serialize changes.
+pub fn set_new_collation_enabled(enabled: bool) {
+    set_new_collation_defaults(enabled);
+    NEW_COLLATION_ENABLED.store(enabled, AtomicOrdering::SeqCst);
+}
+
+fn set_new_collation_defaults(enabled: bool) {
     let mut guard = registry().write().expect("charset registry lock poisoned");
     apply_new_collation_defaults(&mut guard, enabled);
 }

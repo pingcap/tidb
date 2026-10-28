@@ -40,6 +40,7 @@
 //! `col IS NOT NULL` is `UnaryNotInt(IntIsNull(col))`. There is no
 //! `IsNotNull` signature to reach for.
 
+use tidb_datatype::CollationCollator;
 use std::{collections::HashSet, error::Error, fmt};
 
 use tidb_ast::BinaryOp;

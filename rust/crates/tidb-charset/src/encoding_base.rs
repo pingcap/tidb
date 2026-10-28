@@ -93,7 +93,8 @@ pub struct TransformResult<E> {
 }
 
 impl<E> TransformResult<E> {
-    pub(crate) fn new(bytes: Vec<u8>, error: Option<E>) -> Self {
+    /// A transform's bytes with the error it raised, if any.
+    pub fn new(bytes: Vec<u8>, error: Option<E>) -> Self {
         Self { bytes, error }
     }
 

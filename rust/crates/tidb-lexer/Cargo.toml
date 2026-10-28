@@ -20,6 +20,6 @@ path = "src/generate_keyword.rs"
 workspace = true
 
 [dependencies]
-tidb-datatype = { path = "../tidb-datatype" }
+tidb-charset = { path = "../tidb-charset" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }

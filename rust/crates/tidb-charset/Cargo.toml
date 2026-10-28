@@ -1,0 +1,16 @@
+[package]
+name = "tidb-charset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB character sets and encodings: Go pkg/parser/charset (Rust rewrite)."
+
+[dependencies]
+encoding_rs.workspace = true
+tidb-error = { path = "../tidb-error" }
+tidb-mysql = { path = "../tidb-mysql" }
+
+[lints]
+workspace = true

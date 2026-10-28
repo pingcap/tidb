@@ -26,7 +26,7 @@ tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }
-tidb-datatype = { path = "../tidb-datatype" }
+tidb-charset = { path = "../tidb-charset" }
 tidb-mysql = { path = "../tidb-mysql" }
 encoding_rs.workspace = true
 getrandom.workspace = true

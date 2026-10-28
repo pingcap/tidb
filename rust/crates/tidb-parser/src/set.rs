@@ -278,7 +278,7 @@ impl Parser {
         } else {
             self.bump().text
         };
-        let info = tidb_datatype::get_charset_info(&name).map_err(|_| {
+        let info = tidb_charset::get_charset_info(&name).map_err(|_| {
             self.err_coded(
                 &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
                 &format!("Unknown character set: '{name}'"),

@@ -16,6 +16,7 @@
 //! which takes a SHOW's literal LIKE pattern (or `DESCRIBE t col`'s column)
 //! off the plan and hands it to the executor as a name or wildcard filter.
 
+use tidb_datatype::CollationCollator;
 use tidb_ast::{Expr, ShowStmt, ShowStmtType};
 use tidb_hack::go_to_lower;
 use tidb_util::stringutil::{compile_pattern, is_exact_match};

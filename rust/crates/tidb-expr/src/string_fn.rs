@@ -17,6 +17,7 @@
 //! have dedicated AST grammars; the row evaluator handles those nodes
 //! directly, while the production rewriter lowers them to scalar functions.
 
+use tidb_datatype::CollationCollator;
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
 use crate::string_signature::StrUnits;

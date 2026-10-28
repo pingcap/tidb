@@ -11,7 +11,6 @@ description = "Go pkg/planner/funcdep: the functional-dependency graph and the n
 workspace = true
 
 [dependencies]
-tidb-expr = { path = "../tidb-expr" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
