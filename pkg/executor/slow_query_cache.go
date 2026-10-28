@@ -83,7 +83,7 @@ type slowQueryCache struct {
 	writePos    int
 	locations   map[slowQueryKey]int
 	memoryUsage int64
-	maxMemUsage      int64
+	maxMemUsage int64
 }
 
 var globalSlowQueryCache = newSlowQueryCache()
@@ -101,7 +101,7 @@ func newSlowQueryCacheWithLimits(capacity int, maxMem int64, chanSize int) *slow
 		readCh:      make(chan *slowQueryCacheReadTask, chanSize),
 		slowQueries: make([]SlowQuery, 0, capacity),
 		locations:   make(map[slowQueryKey]int),
-		maxMemUsage:      maxMem,
+		maxMemUsage: maxMem,
 	}
 }
 
