@@ -1,0 +1,16 @@
+use test;
+set time_zone='+00:00';
+drop table if exists load_missing_defaults;
+create table load_missing_defaults (id int primary key, a int not null default 100, b varchar(20) not null default 'fallback', d date not null default '2000-01-01', ts timestamp not null default '2000-01-01 01:02:03', n int, generated_value int as (a+1));
+load data local infile './t/executor/load_data_missing_defaults.csv' into table load_missing_defaults;
+show warnings;
+Level	Code	Message
+Warning	1261	Row 1 doesn't contain data for all columns
+Warning	1261	Row 2 doesn't contain data for all columns
+select * from load_missing_defaults order by id;
+id	a	b	d	ts	n	generated_value
+1	100	fallback	2000-01-01	2000-01-01 01:02:03	NULL	101
+2	100	fallback	2000-01-01	2000-01-01 01:02:03	NULL	101
+admin check table load_missing_defaults;
+drop table load_missing_defaults;
+set time_zone=default;
