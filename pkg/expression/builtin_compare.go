@@ -1206,15 +1206,7 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	// Like MySQL, only use a binary search when there are more than 8 arguments and all the intervals are
-	// not null constants, otherwise scan the intervals linearly. See MySQL's source code here:
-	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
-	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
-	useLinearSearch := len(args) <= 8
-	for i := 1; i < len(args) && !useLinearSearch; i++ {
-		c, ok := bf.args[i].(*Constant)
-		useLinearSearch = !ok || c.DeferredExpr != nil || c.ParamMarker != nil || c.Value.IsNull()
-	}
+	useLinearSearch := intervalUsesLinearSearch(bf.args)
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf, useLinearSearch}
@@ -1224,6 +1216,23 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
+}
+
+// intervalUsesLinearSearch tells whether to scan the intervals linearly. Like MySQL, a binary search is only
+// used when there are more than 8 arguments and all the intervals are not null constants. See MySQL's source code here:
+// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
+// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
+func intervalUsesLinearSearch(args []Expression) bool {
+	if len(args) <= 8 {
+		return true
+	}
+	for _, arg := range args[1:] {
+		c, ok := arg.(*Constant)
+		if !ok || c.DeferredExpr != nil || c.ParamMarker != nil || c.Value.IsNull() {
+			return true
+		}
+	}
+	return false
 }
 
 type builtinIntervalIntSig struct {
@@ -1292,25 +1301,23 @@ func (b *builtinIntervalIntSig) linearSearch(ctx EvalContext, target int64, isUi
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
 // The search is the same as MySQL's, so unsorted arguments give the same result as in MySQL.
+// The arguments are never null, see intervalUsesLinearSearch.
 func (b *builtinIntervalIntSig) binSearch(ctx EvalContext, target int64, isUint1 bool, args []Expression, row chunk.Row) (int, error) {
-	targetLess := func(idx int) (bool, error) {
-		v, isNull, err := args[idx].EvalInt(ctx, row)
-		if err != nil || isNull {
-			return false, err
-		}
-		isUint2 := mysql.HasUnsignedFlag(args[idx].GetType(ctx).GetFlag())
-		switch {
-		case !isUint1 && !isUint2:
-			return target < v, nil
-		case isUint1 && isUint2:
-			return uint64(target) < uint64(v), nil
-		case !isUint1 && isUint2:
-			return target < 0 || uint64(target) < uint64(v), nil
-		default:
-			return v > 0 && uint64(target) < uint64(v), nil
-		}
+	return intervalBinSearch(len(args), func(idx int) (bool, error) {
+		v, _, err := args[idx].EvalInt(ctx, row)
+		return intervalIntLess(target, isUint1, v, mysql.HasUnsignedFlag(args[idx].GetType(ctx).GetFlag())), err
+	})
+}
+
+// intervalIntLess tells whether target is less than v, each read as unsigned when its flag says so.
+func intervalIntLess(target int64, isUint1 bool, v int64, isUint2 bool) bool {
+	if !isUint1 && target < 0 {
+		return isUint2 || target < v
 	}
-	return intervalBinSearch(len(args), targetLess)
+	if !isUint2 && v < 0 {
+		return false
+	}
+	return uint64(target) < uint64(v)
 }
 
 // intervalBinSearch finds the last argument that is not larger than the target, as MySQL's
@@ -1384,11 +1391,8 @@ func (b *builtinIntervalRealSig) linearSearch(ctx EvalContext, target float64, a
 
 func (b *builtinIntervalRealSig) binSearch(ctx EvalContext, target float64, args []Expression, row chunk.Row) (int, error) {
 	return intervalBinSearch(len(args), func(idx int) (bool, error) {
-		v, isNull, err := args[idx].EvalReal(ctx, row)
-		if err != nil || isNull {
-			return false, err
-		}
-		return target < v, nil
+		v, _, err := args[idx].EvalReal(ctx, row)
+		return target < v, err
 	})
 }
 
