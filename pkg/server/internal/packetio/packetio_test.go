@@ -782,7 +782,8 @@ func TestCompressedReaderRejectsABrokenPacket(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			seq := uint8(0)
 			cr := newCompressedReader(bytes.NewReader(c.input), c.algorithm, &seq)
-			_, err := cr.Read(make([]byte, 4))
+			n, err := cr.Read(make([]byte, 4))
+			require.Zero(t, n)
 			c.check(t, err)
 		})
 	}
