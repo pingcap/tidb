@@ -85,6 +85,20 @@ func TestWindowPushDownPlans(t *testing.T) {
 }
 
 func TestWindowPlanWithOtherOperators(t *testing.T) {
+	t.Run("preserve nominal sort order", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_window_concurrency=4")
+		tk.MustExec("create table wm(v int,g int)")
+		tk.MustExec("insert into wm values(1,1),(2,1),(5,1),(3,2),(3,2)")
+		query := "select v,count(v) over (partition by g order by v) c from wm"
+		require.NotContains(t, tk.MustQuery("explain format='brief' "+query+" order by g,v").String(), "Shuffle")
+		for range 10 {
+			tk.MustQuery(query + " order by g,v").Check(testkit.Rows("1 1", "2 2", "5 3", "3 2", "3 2"))
+		}
+		tk.MustQuery(query + " order by g desc,v").Check(testkit.Rows("3 2", "3 2", "1 1", "2 2", "5 3"))
+		require.Contains(t, tk.MustQuery("explain format='brief' "+query).String(), "Shuffle")
+	})
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists employee")
