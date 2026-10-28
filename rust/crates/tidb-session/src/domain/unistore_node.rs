@@ -23,6 +23,7 @@
 //! supplying the same storage capabilities. Bootstrap and catalog reloads run
 //! against that store; no PD or etcd connection is needed.
 
+use crate::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 
 use tidb_distsql::cop_paging::CopRuntimeConfig;

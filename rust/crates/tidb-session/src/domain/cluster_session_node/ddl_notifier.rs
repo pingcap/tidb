@@ -14,6 +14,7 @@
 
 //! The `mysql.tidb_ddl_notifier` adapter for the cluster session owner.
 
+use crate::domain::cluster_session_node::DomainSessions as _;
 use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;

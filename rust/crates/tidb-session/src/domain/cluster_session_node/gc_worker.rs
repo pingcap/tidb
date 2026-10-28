@@ -20,6 +20,7 @@
 //! (leader lease, safe points, lock resolution, delete ranges) rather than
 //! the unified-GC keyspace path.
 
+use crate::domain::cluster_session_node::DomainSessions as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};

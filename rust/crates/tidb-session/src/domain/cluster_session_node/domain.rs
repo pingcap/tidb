@@ -711,6 +711,26 @@ pub struct Domain {
 }
 
 impl Domain {
+    /// The outgoing peer fleet, when the node has one.
+    pub fn cluster_peer(&self) -> Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>> {
+        self.cluster_peer.clone()
+    }
+
+    /// The node's privilege registry.
+    pub fn privileges(&self) -> PrivilegeRegistry {
+        self.privileges.clone()
+    }
+
+    /// The node's server-info syncer.
+    pub fn server_info(&self) -> Option<Arc<tidb_domain::serverinfo_syncer::Syncer>> {
+        self.server_info.clone()
+    }
+
+    /// The node's GLOBAL variable cache.
+    pub fn global_vars(&self) -> GlobalSysvars {
+        self.global_vars.clone()
+    }
+
     /// The domain's ANALYZE client.
     pub(crate) fn analyze(&self) -> Arc<dyn ClusterAnalyze> {
         Arc::clone(&self.analyze.read().unwrap_or_else(std::sync::PoisonError::into_inner))

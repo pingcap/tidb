@@ -20,12 +20,34 @@
 
 use super::*;
 
-impl Domain {
+/// Go `session.CreateSession` and `createSessionWithOpt` over the domain: the sessions the session package opens on it.
+pub trait DomainSessions {
     /// What every connection's session gets once it is opened, whoever opens
     /// it (Go `createSessionWithOpt`): its connection id, its process-list
     /// entry, the privilege cache, the domain's services and the
     /// global-binding writer.
-    pub(crate) fn attach_connection(
+    fn attach_connection(
+        &self,
+        session: &mut Session,
+        connection_id: u64,
+        process: crate::process::ProcessGuard,
+    );
+
+    /// Go `Domain.SysSessionPool().Get()` for one internal statement: a
+    /// session over this node with the internal identity, whose SQL an
+    /// account executor runs in its own transaction.
+    fn open_system_session(&self) -> Result<Session, SqlQueryError>;
+
+    /// Returns Go Domain's single advanced internal-session pool.
+    fn advanced_sys_session_pool(
+        self: &Arc<Self>,
+    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool>;
+
+    fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError>;
+}
+
+impl DomainSessions for Domain {
+    fn attach_connection(
         &self,
         session: &mut Session,
         connection_id: u64,
@@ -58,10 +80,7 @@ impl Domain {
         }
     }
 
-    /// Go `Domain.SysSessionPool().Get()` for one internal statement: a
-    /// session over this node with the internal identity, whose SQL an
-    /// account executor runs in its own transaction.
-    pub(crate) fn open_system_session(&self) -> Result<Session, SqlQueryError> {
+    fn open_system_session(&self) -> Result<Session, SqlQueryError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         // Apart from client connections and the advanced pool's range.
         static NEXT_SYSTEM_CONNECTION_ID: AtomicU64 = AtomicU64::new(1_u64 << 62);
@@ -83,8 +102,7 @@ impl Domain {
         Ok(session)
     }
 
-    /// Returns Go Domain's single advanced internal-session pool.
-    pub(crate) fn advanced_sys_session_pool(
+    fn advanced_sys_session_pool(
         self: &Arc<Self>,
     ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool> {
         Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
@@ -119,7 +137,7 @@ impl Domain {
         }))
     }
 
-    pub fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError> {
+    fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError> {
         let mut opened = self.open_storage_session(context.connection_id)?;
         let session = &mut opened;
         let identity = &context.identity;

@@ -24,6 +24,7 @@
 //!     INTEGRATION_TOPIC=executor/update cargo test -p tidb-server --lib \
 //!         production_replay -- --ignored --nocapture
 
+use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

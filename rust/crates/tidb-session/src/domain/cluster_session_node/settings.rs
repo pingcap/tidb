@@ -17,10 +17,30 @@
 //! status port itself is the server's.
 use super::*;
 
-impl Domain {
+/// The domain's settings and peer hooks that run on the session package's sessions.
+pub trait DomainSessionSettings {
     /// Go `rpcServer.createSession`: a session on this node's store for
     /// each peer coprocessor request, holding no client connection.
-    pub fn peer_session_builder(
+    fn peer_session_builder(
+        self: &Arc<Self>,
+    ) -> Arc<dyn Fn() -> Result<Session, String> + Send + Sync>;
+
+    /// Go `IsFromRemote` plans run on this instance alone; this node's
+    /// statements never broadcast, so an internal session runs a received
+    /// broadcast statement as-is.
+    fn broadcast_query_runner(
+        self: &Arc<Self>,
+    ) -> Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+    /// The HTTP status port's GLOBAL setter: a fixed handler name and a
+    /// validated ON/OFF value become a `SET GLOBAL` on an internal session.
+    fn http_global_setter(
+        self: &Arc<Self>,
+    ) -> Arc<dyn Fn(&str, &str) -> Result<(), String> + Send + Sync>;
+}
+
+impl DomainSessionSettings for Domain {
+    fn peer_session_builder(
         self: &Arc<Self>,
     ) -> Arc<dyn Fn() -> Result<Session, String> + Send + Sync> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,25 +54,7 @@ impl Domain {
         })
     }
 
-    /// The outgoing peer fleet, when the node has one.
-    pub fn cluster_peer(&self) -> Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>> {
-        self.cluster_peer.clone()
-    }
-
-    /// The node's privilege registry.
-    pub fn privileges(&self) -> PrivilegeRegistry {
-        self.privileges.clone()
-    }
-
-    /// The node's server-info syncer.
-    pub fn server_info(&self) -> Option<Arc<tidb_domain::serverinfo_syncer::Syncer>> {
-        self.server_info.clone()
-    }
-
-    /// Go `IsFromRemote` plans run on this instance alone; this node's
-    /// statements never broadcast, so an internal session runs a received
-    /// broadcast statement as-is.
-    pub fn broadcast_query_runner(
+    fn broadcast_query_runner(
         self: &Arc<Self>,
     ) -> Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> {
         let broadcast = Arc::downgrade(self);
@@ -89,14 +91,7 @@ impl Domain {
         })
     }
 
-    /// The node's GLOBAL variable cache.
-    pub fn global_vars(&self) -> GlobalSysvars {
-        self.global_vars.clone()
-    }
-
-    /// The HTTP status port's GLOBAL setter: a fixed handler name and a
-    /// validated ON/OFF value become a `SET GLOBAL` on an internal session.
-    pub fn http_global_setter(
+    fn http_global_setter(
         self: &Arc<Self>,
     ) -> Arc<dyn Fn(&str, &str) -> Result<(), String> + Send + Sync> {
         let factory = Arc::downgrade(self);

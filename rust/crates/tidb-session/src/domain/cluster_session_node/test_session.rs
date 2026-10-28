@@ -21,6 +21,7 @@
 //! domain; this file is the node's half: the session it opens and the
 //! connection-order statement it runs.
 
+use crate::domain::cluster_session_node::DomainSessions as _;
 use std::sync::Arc;
 
 use tidb_ast::Stmt;
@@ -31,7 +32,8 @@ use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::session_api::SqlQueryError;
 use crate::{Session, StmtOutput};
 
-impl Domain {
+/// The domain's test-session hooks (Go `CreateSession4Test` and its siblings).
+pub trait DomainTestSessions {
     /// Go `DDLExecutor().UpdateTableReplicaInfo(sctx, physicalID, available)`:
     /// the TiFlash replica manager's status change, as the persisted
     /// `ActionUpdateTiFlashReplicaStatus` job (none when the status already
@@ -40,7 +42,22 @@ impl Domain {
     /// # Errors
     ///
     /// The job's refusal, as Go returns it.
-    pub fn update_table_replica_info(
+    fn update_table_replica_info(
+        &self,
+        physical_id: i64,
+        available: bool,
+    ) -> Result<(), SqlQueryError>;
+
+    /// Go `session.CreateSession4Test`: a session over this node that no
+    /// client logged in. Go's testkit never calls `Auth`, so
+    /// `SessionVars.User` stays nil and every privilege request passes; the
+    /// session still enters the process list, as testkit registers it with
+    /// its mock session manager.
+    fn create_session_4_test(&self, connection_id: u64) -> Result<Session, SqlQueryError>;
+}
+
+impl DomainTestSessions for Domain {
+    fn update_table_replica_info(
         &self,
         physical_id: i64,
         available: bool,
@@ -56,12 +73,7 @@ impl Domain {
             .map(drop)
     }
 
-    /// Go `session.CreateSession4Test`: a session over this node that no
-    /// client logged in. Go's testkit never calls `Auth`, so
-    /// `SessionVars.User` stays nil and every privilege request passes; the
-    /// session still enters the process list, as testkit registers it with
-    /// its mock session manager.
-    pub fn create_session_4_test(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
+    fn create_session_4_test(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
         let mut opened = self.open_storage_session(connection_id)?;
         opened.set_restricted_sql(false);
         let guard = self.processes.register(

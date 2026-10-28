@@ -16,6 +16,7 @@
 //! service and the HTTP GLOBAL settings, assembled from what the domain's
 //! session factory supplies.
 
+use tidb_session::domain::cluster_session_node::DomainSessionSettings as _;
 use std::sync::Arc;
 
 use tidb_session::domain::cluster_session_node::Domain;

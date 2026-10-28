@@ -20,8 +20,13 @@ use tidb_util::sqlescape::{escape_sql, SqlArg};
 
 struct LoginStorage(Weak<Domain>);
 
-impl Domain {
-    pub fn attach_login_storage(self: &Arc<Self>, users: &ConfiguredUserStore) {
+/// Go's login-failure accounting (`FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME`), run on the domain's internal sessions.
+pub trait DomainLoginPolicy {
+    fn attach_login_storage(self: &Arc<Self>, users: &ConfiguredUserStore);
+}
+
+impl DomainLoginPolicy for Domain {
+    fn attach_login_storage(self: &Arc<Self>, users: &ConfiguredUserStore) {
         users.attach_login_storage(Arc::new(LoginStorage(Arc::downgrade(self))));
     }
 }

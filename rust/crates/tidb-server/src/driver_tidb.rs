@@ -22,7 +22,7 @@ use std::time::Duration;
 use tidb_ast::Stmt;
 use tidb_executor::compiler::prepared::PreparedExec as _;
 use tidb_executor::ddl_exec::map_error;
-use tidb_session::domain::cluster_session_node::Domain;
+use tidb_session::domain::cluster_session_node::{Domain, DomainSessions};
 use tidb_session::domain::session_api::{
     ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
     SqlQueryError,
@@ -37,7 +37,7 @@ impl QuerySessionFactory for Domain {
     type Session = Session;
 
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError> {
-        Domain::open_session(self, context)
+        DomainSessions::open_session(self, context)
     }
 
     fn install_tls_manager(

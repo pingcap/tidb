@@ -21,6 +21,7 @@
 //! workload repository and the session factory. The server binds its
 //! listeners over the [`ClusterStack`] it returns.
 
+use crate::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 use std::time::Duration;
 

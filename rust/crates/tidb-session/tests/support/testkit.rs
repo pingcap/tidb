@@ -20,6 +20,7 @@
 
 #![allow(dead_code)]
 
+use tidb_session::domain::cluster_session_node::DomainTestSessions as _;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tidb_datatype::Datum;

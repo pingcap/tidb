@@ -21,6 +21,7 @@
 //! store and a read goes through the coprocessor, exactly as Go's unit tests
 //! run them.
 
+use crate::domain::cluster_session_node::DomainTestSessions as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 

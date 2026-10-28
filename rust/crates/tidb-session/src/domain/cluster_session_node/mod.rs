@@ -354,6 +354,9 @@ mod domain;
 pub use domain::*;
 mod sessions;
 pub use sessions::*;
+pub use login_policy::DomainLoginPolicy;
+pub use settings::DomainSessionSettings;
+pub use test_session::DomainTestSessions;
 
 /// The store half of Go's `session`: the fields `session.go` keeps beside
 /// `sessionVars` for a session over a store -- its domain, its `txn`
