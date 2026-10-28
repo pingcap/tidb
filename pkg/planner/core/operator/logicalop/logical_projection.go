@@ -546,7 +546,7 @@ func (p *LogicalProjection) tryTransformSortItems(items []property.SortItem) ([]
 		idx := p.Schema().ColumnIndex(item.Col)
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
-			newItems = append(newItems, property.SortItem{Col: expr, Desc: item.Desc})
+			newItems = append(newItems, property.SortItem{Col: expr, Desc: item.Desc, NullsHigh: item.NullsHigh})
 		case *expression.ScalarFunction:
 			return nil, false
 		}
