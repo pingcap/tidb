@@ -173,6 +173,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/util",
         "//pkg/session",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/table",
