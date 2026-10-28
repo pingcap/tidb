@@ -39,11 +39,13 @@ const (
 type FlushSubscriber struct {
 	dialer  LogBackupService
 	cluster TiKVClusterMeta
+	// Releases connections owned by this subscriber, when provided by the dialer.
+	closeConnections func()
 
 	// Current connections.
 	subscriptions map[uint64]*subscription
 	// The output channel.
-	eventsTunnel chan spans.Valued
+	eventsTunnel chan []spans.Valued
 	// The background context for subscribes.
 	masterCtx context.Context
 	// The max duration a subscription can stay open without receiving any event.
@@ -72,9 +74,14 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 		cluster: cluster,
 
 		subscriptions:           map[uint64]*subscription{},
-		eventsTunnel:            make(chan spans.Valued, 1024),
+		eventsTunnel:            make(chan []spans.Valued, 8),
 		masterCtx:               context.Background(),
 		subscriptionIdleTimeout: subscriptionIdleTimeout,
+	}
+	if factory, ok := dialer.(interface {
+		newSubscriptionService() (LogBackupService, func())
+	}); ok {
+		subs.dialer, subs.closeConnections = factory.newSubscriptionService()
 	}
 
 	for _, c := range config {
@@ -99,6 +106,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 			f.subscriptions[store.ID].connect(f.masterCtx, f.dialer)
 		} else if sub.storeBootAt != store.BootAt {
 			sub.storeBootAt = store.BootAt
+			f.clearOwnedConnection(ctx, store.ID)
 			sub.connect(f.masterCtx, f.dialer)
 		}
 		storeSet[store.ID] = struct{}{}
@@ -134,6 +142,9 @@ func (f *FlushSubscriber) Clear() {
 // This subscriber would be no more usable.
 func (f *FlushSubscriber) Drop() {
 	f.Clear()
+	if f.closeConnections != nil {
+		f.closeConnections()
+	}
 	close(f.eventsTunnel)
 }
 
@@ -162,8 +173,8 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 	}
 }
 
-// Events returns the output channel of the events.
-func (f *FlushSubscriber) Events() <-chan spans.Valued {
+// Events returns decoded events in batches, one batch per received message.
+func (f *FlushSubscriber) Events() <-chan []spans.Valued {
 	return f.eventsTunnel
 }
 
@@ -206,7 +217,7 @@ type subscription struct {
 	// we need to try reconnect even there is a error cannot be retry.
 	storeBootAt uint64
 	idleTimeout time.Duration
-	output      chan<- spans.Valued
+	output      chan<- []spans.Valued
 
 	onDaemonExit func()
 }
@@ -232,7 +243,7 @@ func (s *subscription) clearError() {
 	s.err = nil
 }
 
-func newSubscription(toStore Store, output chan<- spans.Valued, idleTimeout time.Duration) *subscription {
+func newSubscription(toStore Store, output chan<- []spans.Valued, idleTimeout time.Duration) *subscription {
 	return &subscription{
 		storeID:     toStore.ID,
 		storeBootAt: toStore.BootAt,
@@ -362,6 +373,7 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream, cancel c
 		}
 
 		log.Debug("Sending events.", zap.Int("size", len(msg.Events)))
+		batch := make([]spans.Valued, 0, len(msg.Events))
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
@@ -384,11 +396,13 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream, cancel c
 				},
 				Value: m.Checkpoint,
 			}
+			batch = append(batch, evt)
+		}
+		if len(batch) != 0 {
 			select {
-			case s.output <- evt:
+			case s.output <- batch:
 			case <-ctx.Done():
-				logutil.CL(ctx).Warn("Context canceled while sending events.",
-					zap.Uint64("store", storeID))
+				logutil.CL(ctx).Warn("Context canceled while sending events.", zap.Uint64("store", storeID))
 				if idleTimedOut.Load() {
 					s.emitError(errors.Annotatef(context.DeadlineExceeded,
 						"flush subscription from store id %d has no activity for %s", s.storeID, s.idleTimeout))
@@ -411,7 +425,19 @@ func (f *FlushSubscriber) removeSubscription(ctx context.Context, toStore uint64
 		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
 			zap.Uint64("store", toStore))
 		subs.close(ctx)
+		f.clearOwnedConnection(ctx, toStore)
 		delete(f.subscriptions, toStore)
+	}
+}
+
+func (f *FlushSubscriber) clearOwnedConnection(ctx context.Context, storeID uint64) {
+	if f.closeConnections == nil {
+		return
+	}
+	// A topology update or Clear may have already exhausted its deadline.
+	if err := f.dialer.ClearCache(context.WithoutCancel(ctx), storeID); err != nil {
+		log.Warn("failed to clear cached subscription connection",
+			zap.Uint64("store", storeID), logutil.ShortError(err))
 	}
 }
 

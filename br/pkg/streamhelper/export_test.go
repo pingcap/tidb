@@ -36,19 +36,21 @@ func (c *CheckpointAdvancer) TESTResolveLockTargetCount() int {
 		return 0
 	}
 	upperBound := resolveLockTargetUpperBound(checkpointToResolve.TS, c.getResolveLockInterval(), currentTS)
-	return len(c.resolveLockTargetsForCheckpoint(checkpointToResolve, upperBound))
+	return len(c.resolveLockTargetsForCheckpoint(checkpointToResolve, upperBound, nil))
 }
 
 func (c *CheckpointAdvancer) TESTSetLastCheckpointToCurrentMin() {
 	var p *checkpoint
-	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-		p = NewCheckpointWithSpan(vsf.Min())
+	c.WithCheckpoints(func(vsf *spans.ValuedFull) {
+		selection := checkpointSelection{}
+		selection.scan(vsf, 0)
+		p = NewCheckpointWithSpan(selection.minimum)
 	})
 	c.UpdateLastCheckpoint(p)
 }
 
 func (c *CheckpointAdvancer) TESTTryResolveLocksForCheckpoint() {
-	c.tryResolveLocksForCheckpoint(context.Background())
+	c.tryResolveLocksForCheckpoint(context.Background(), nil)
 }
 
 func (c *CheckpointAdvancer) TESTRefreshLogBackupFlushInterval(ctx context.Context) {

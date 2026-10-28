@@ -174,6 +174,18 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 }
 
 func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
+	return mgr.removeConn(ctx, storeID, nil)
+}
+
+// RemoveConnIfMatch removes the cached connection only if it matches expected.
+func (mgr *StoreManager) RemoveConnIfMatch(ctx context.Context, storeID uint64, expected *grpc.ClientConn) error {
+	if expected == nil {
+		return nil
+	}
+	return mgr.removeConn(ctx, storeID, expected)
+}
+
+func (mgr *StoreManager) removeConn(ctx context.Context, storeID uint64, expected *grpc.ClientConn) error {
 	if ctx.Err() != nil {
 		return errors.Trace(ctx.Err())
 	}
@@ -182,6 +194,9 @@ func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
 	defer mgr.grpcClis.mu.Unlock()
 
 	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
+		if expected != nil && conn != expected {
+			return nil
+		}
 		// Find a cached backup client.
 		err := conn.Close()
 		if err != nil {

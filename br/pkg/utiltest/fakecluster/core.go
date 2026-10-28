@@ -182,8 +182,19 @@ func (t trivialFlushStream) SendMsg(any) error {
 	return nil
 }
 
-func (t trivialFlushStream) RecvMsg(any) error {
-	return nil
+func (t trivialFlushStream) RecvMsg(out any) error {
+	msg, err := t.Recv()
+	if err != nil {
+		return err
+	}
+	response := out.(*logbackup.SubscribeFlushEventResponse)
+	// Match gRPC ownership: the caller may reuse or mutate the response.
+	data, err := msg.Marshal()
+	if err != nil {
+		return err
+	}
+	response.Reset()
+	return response.Unmarshal(data)
 }
 
 type Store struct {

@@ -5,7 +5,6 @@ package spans
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"sort"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -22,18 +21,13 @@ func Overlaps(a, b Span) bool {
 	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
 }
 
-func Debug(full *ValueSortedFull) {
+func Debug(full *ValuedFull) {
 	var result []Valued
 	full.Traverse(func(v Valued) bool {
 		result = append(result, v)
 		return true
 	})
-	var idx []Valued
-	full.TraverseValuesLessThan(math.MaxUint64, func(v Valued) bool {
-		idx = append(idx, v)
-		return true
-	})
-	fmt.Printf("%s\n\tidx = %s\n", result, idx)
+	fmt.Printf("%s\n", result)
 }
 
 // Collapse collapse ranges overlapping or adjacent.

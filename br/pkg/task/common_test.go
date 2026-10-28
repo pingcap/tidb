@@ -53,6 +53,30 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     "upstream-storage",
+			expectedName:  "upstream-storage",
+			inputValue:    "s3://upstream-bucket/prefix?access-key=test-access-key&secret-access-key=test-secret-key&session-token=test-session-token",
+			expectedValue: "s3://upstream-bucket/prefix",
+		},
+		{
+			inputName:     "downstream-storage",
+			expectedName:  "downstream-storage",
+			inputValue:    "s3://downstream-bucket/prefix?access-key=test-access-key&secret-access-key=test-secret-key&session-token=test-session-token",
+			expectedValue: "s3://downstream-bucket/prefix",
+		},
+		{
+			inputName:     "upstream-storage",
+			expectedName:  "upstream-storage",
+			inputValue:    "s3://invalid%bucket/prefix?secret-access-key=test-secret-key",
+			expectedValue: "<invalid URI>",
+		},
+		{
+			inputName:     "downstream-storage",
+			expectedName:  "downstream-storage",
+			inputValue:    "s3://invalid%bucket/prefix?secret-access-key=test-secret-key",
+			expectedValue: "<invalid URI>",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",

@@ -179,8 +179,15 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	}
 	cps, err := cli.GetLastFlushTSOfRegion(ctx, &c.currentRequest)
 	if err != nil {
-		// try disable connection cache if met error
-		_ = c.service.ClearCache(ctx, c.storeID)
+		// Caller cancellation does not imply a connection failure. Otherwise,
+		// invalidation must still run after the RPC deadline has expired.
+		if ctx.Err() != context.Canceled {
+			if client, ok := cli.(*logBackupClient); ok {
+				_ = client.clearCache(context.WithoutCancel(ctx))
+			} else {
+				_ = c.service.ClearCache(ctx, c.storeID)
+			}
+		}
 		return err
 	}
 	metrics.GetCheckpointBatchSize.WithLabelValues("checkpoint").Observe(float64(len(c.currentRequest.GetRegions())))
