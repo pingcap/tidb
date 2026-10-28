@@ -794,7 +794,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
 		"└─IndexLookUp(Probe) 12487.50 root partition:all ",
 		"  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test_dr_join.thash.b))",
-		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan 12487.50 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
@@ -820,7 +820,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
 		"└─IndexReader(Probe) 12487.50 root partition:all index:Selection",
 		"  └─Selection 12487.50 cop[tikv]  not(isnull(test_dr_join.thash.b))",
-		"    └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+		"    └─IndexRangeScan 12487.50 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test indexLookUp + range
@@ -834,7 +834,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
 		"└─IndexLookUp(Probe) 12487.50 root partition:all ",
 		"  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test_dr_join.trange.b))",
-		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan 12487.50 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:trange keep order:false, stats:pseudo")) // check if IndexLookUp is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
@@ -861,7 +861,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
 		"└─IndexReader(Probe) 12487.50 root partition:all index:Selection",
 		"  └─Selection 12487.50 cop[tikv]  not(isnull(test_dr_join.trange.b))",
-		"    └─IndexRangeScan 12500.00 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+		"    └─IndexRangeScan 12487.50 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
@@ -896,7 +896,7 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`└─IndexReader(Probe) 12487.50 root partition:all index:Selection`,
 		`  └─Selection 12487.50 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
-		`    └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`))
+		`    └─IndexRangeScan 12487.50 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 
@@ -919,7 +919,7 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`└─IndexLookUp(Probe) 12487.50 root partition:all `,
 		`  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
-		`  │ └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`,
+		`  │ └─IndexRangeScan 12487.50 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`,
 		`  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:thash keep order:false, stats:pseudo`))
 	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
