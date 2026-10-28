@@ -13,13 +13,13 @@
 // limitations under the License.
 
 //! The statement context as Go's planner reads it (`base.PlanContext`): the
-//! planner's traits over `tidb_stmtctx::StmtContext`, and the planner state
+//! planner's traits over `tidb_sessionctx::StmtContext`, and the planner state
 //! the context carries for it -- the cost-model-v2 environment and the ranger
 //! switches derived from it.
 
 use std::sync::Arc;
 
-use tidb_stmtctx::{CostSessionValues, StmtContext, StmtContextData};
+use tidb_sessionctx::{CostSessionValues, StmtContext, StmtContextData};
 
 use crate::find_best_task::coster::CostEnv;
 use crate::ranger::detacher::RangerOptions;
@@ -47,6 +47,11 @@ pub trait PlannerStmtCtx {
     /// Go `sctx.GetRangerCtx()`'s session switches for this statement: the
     /// estimator snapshot's, with this statement's prefix-index switch.
     fn ranger_options(&self) -> RangerOptions;
+
+    /// Go `domain.GetDomain(sctx).InfoSchema()` as
+    /// `planner/util/domainmisc.GetLatestIndexInfo` reads it: the statement's
+    /// latest infoschema, when one is attached.
+    fn latest_index_schema(&self) -> Option<Arc<crate::domain_misc::LatestIndexSchema>>;
 }
 
 /// The cost environment's values the statement context reads itself.
@@ -104,6 +109,10 @@ impl PlannerStmtCtx for StmtContext {
             Some(env) => ctx.replace_optimizer_cost_env_any(env),
             None => ctx,
         }
+    }
+
+    fn latest_index_schema(&self) -> Option<Arc<crate::domain_misc::LatestIndexSchema>> {
+        self.latest_info_schema()?.downcast()
     }
 
     fn ranger_options(&self) -> RangerOptions {
@@ -343,7 +352,7 @@ impl crate::optimize::OptimizeContext for StmtContext {
 
 #[cfg(test)]
 mod tests {
-    use tidb_stmtctx::StmtContext;
+    use tidb_sessionctx::StmtContext;
 
     use super::PlannerStmtCtx;
 

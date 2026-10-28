@@ -537,6 +537,12 @@ impl BlockEncryptionMode {
 }
 
 /// Resolves column and session state during evaluation.
+/// Go `expression.DecodeKeyFromString` bound to the statement's infoschema
+/// (`GetLatestInfoSchema`): `TIDB_DECODE_KEY`'s hexadecimal argument decoded
+/// in the session's time zone, or the warning it raises instead.
+pub type DecodeKeyFromString =
+    std::sync::Arc<dyn Fn(&[u8], &SessionTimeZone) -> Result<Vec<u8>, String> + Send + Sync>;
+
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;

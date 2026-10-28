@@ -470,7 +470,7 @@ fn tidb_executor_default_database() -> &'static str {
 }
 
 pub use tidb_infoschema::run_create_system_table_in;
-pub use tidb_stmtctx::new_metabuild_context_with_sctx;
+pub use tidb_ddl_build::metabuild::new_metabuild_context_with_sctx;
 
 /// Go `NewMetaBuildContextWithSctx`: the metadata-build context a DDL
 /// statement's builder runs under, from the statement's context.

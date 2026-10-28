@@ -247,36 +247,6 @@ fn decode_text_result_set(framed: &[u8]) -> Result<StmtOutput, DriverError> {
     Ok(StmtOutput::Rows { columns, rows })
 }
 
-/// Go `Domain.ExpensiveQueryHandle`, which the server's main starts over its
-/// session manager: it is what interrupts a statement past its
-/// `max_execution_time`. The harness is the server's main here.
-struct ExpensiveQuerySweep {
-    exit: std::sync::mpsc::Sender<()>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl ExpensiveQuerySweep {
-    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
-        let (exit, receiver) = std::sync::mpsc::channel();
-        let handle = tidb_session::expensivequery::Handle::new(receiver);
-        handle.set_session_manager(manager);
-        let thread = std::thread::spawn(move || handle.run());
-        Self {
-            exit,
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for ExpensiveQuerySweep {
-    fn drop(&mut self) {
-        let _ = self.exit.send(());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
 /// A topic's connections over one fresh embedded store.
 struct UnistoreConnections {
     stack: UnistoreClusterStack,
@@ -284,7 +254,6 @@ struct UnistoreConnections {
     sessions: BTreeMap<String, UnistoreSession>,
     current: String,
     next_connection_id: u64,
-    _expensive_query: Option<ExpensiveQuerySweep>,
 }
 
 impl UnistoreConnections {
@@ -392,14 +361,19 @@ impl ReplayBackend for UnistoreConnections {
         );
         let stack = unistore_cluster_session_stack(&config, &users, None, None)
             .map_err(|error| format!("unistore stack: {error:?}"))?;
-        let expensive_query = Some(ExpensiveQuerySweep::start(stack.factory.session_manager()));
+        // The harness is the server's main here: Go `go dom.ExpensiveQueryHandle().
+        // SetSessionManager(svr).Run()`, which interrupts a statement past its
+        // `max_execution_time`.
+        crate::sql_node::run_expensive_query_handle(
+            stack.factory.expensive_query_handle(),
+            stack.factory.session_manager(),
+        );
         let mut pool = UnistoreConnections {
             stack,
             users,
             sessions: BTreeMap::new(),
             current: DEFAULT_CONNECTION.to_owned(),
             next_connection_id: 1,
-            _expensive_query: expensive_query,
         };
         let database = topic_database(topic);
         let mut session = pool.open_root(None)?;

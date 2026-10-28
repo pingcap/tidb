@@ -231,12 +231,7 @@ pub use tidb_executor::show::stats::AnalyzeStatusProvider;
 
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
-/// Go `kv.RunInNewTxn(sctx.GetStore(), ..., m.GenGlobalID())`: one id from
-/// meta's global allocator, in its own transaction on the session's store
-/// (the local temporary table DDL's ids, `newTemporaryTableFromTableInfo`).
-pub trait GlobalIdGenerator: Send + Sync {
-    fn gen_global_id(&self) -> Result<i64, DriverError>;
-}
+pub use tidb_domain_core::domain::GlobalIdGenerator;
 
 pub use tidb_executor::admin::BdrRoleStore;
 
@@ -1174,7 +1169,8 @@ pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
-pub mod expensivequery;
+#[cfg(test)]
+mod tests_expensivequery;
 pub use tidb_privilege as privilege;
 mod privilege_tables;
 #[cfg(test)]

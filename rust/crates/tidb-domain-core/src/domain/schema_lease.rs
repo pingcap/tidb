@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The session's commit-time schema lease checker.
+//! The domain's commit-time schema lease checker.
 //!
 //! Go `SetOptionsBeforeCommit` (`pkg/sessiontxn/isolation/base.go:560-616`)
 //! hands every committing transaction a `domain.SchemaChecker` over the

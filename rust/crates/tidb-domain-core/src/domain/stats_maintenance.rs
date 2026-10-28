@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::{Domain, UsageWorkerStop};
-use crate::domain::node_config::StatsLease;
+use crate::node_config::StatsLease;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tick {
@@ -72,7 +72,7 @@ impl StatsMaintenanceWorker {
                         // after errors, matching the Go worker's continuation.
                         if let Err(error) = active.gc_stats(lease, schema_lease) {
                             tidb_util::logutil::bg_logger()
-                                .warn("GC stats failed", &[crate::domain::zap_error(error)]);
+                                .warn("GC stats failed", &[tidb_util::logutil::zap_error(error)]);
                         }
                     }
                 }
@@ -115,7 +115,7 @@ impl StatsMaintenanceWorker {
             wake: Condvar::new(),
         });
         let running = Arc::clone(&stop);
-        let thread = crate::domain::session_api::sql_worker_thread("statistics-maintenance")
+        let thread = tidb_util::worker_stack::sql_worker_thread("statistics-maintenance")
             .spawn(move || {
                 while !initialized() {
                     // Shutdown remains independent of a blocked statistics read.
@@ -160,7 +160,7 @@ impl StatsMaintenanceWorker {
                 }));
                 // Go `defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)`.
                 if let Err(payload) = result {
-                    crate::domain::log_recovered_panic("gcStatsWorker", payload.as_ref());
+                    tidb_util::logutil::log_recovered_panic("gcStatsWorker", payload.as_ref());
                 }
             })
             .map_err(|error| format!("start statistics maintenance: {error}"))?;

@@ -43,6 +43,7 @@ pub mod multi_schema_change;
 pub mod cluster;
 pub mod ddl_executor;
 pub mod sequence;
+pub mod metabuild;
 pub mod session_context;
 pub mod session_pool;
 pub mod backfilling;

@@ -550,16 +550,22 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// is deliberate and matches Go, where `NEXTVAL` allocates in its own meta
     /// transaction -- see `with_statement_stage`'s note about a storage whose
     /// clone shares a handle rather than copying by value.
-    fn sequence_snapshot(&self) -> Arc<crate::SequenceSnapshot> {
+    fn sequence_snapshot(&self) -> Arc<tidb_infoschema::SequenceSnapshot> {
         let snapshot = |catalog: &crate::Catalog| {
-            Arc::new(crate::SequenceSnapshot::new(
+            Arc::new(tidb_infoschema::SequenceSnapshot::new(
                 catalog,
                 &self.session_vars().current_db,
-                Arc::clone(&self.sequence_last_values_ref()),
             ))
         };
         // The statement itself reports a poisoned catalog.
         self.with_txn_catalog(snapshot).unwrap_or_default()
+    }
+
+    /// Go `expression.DecodeKeyFromString` over this statement's catalog
+    /// version.
+    fn decode_key_from_string(&self) -> tidb_expr::DecodeKeyFromString {
+        let snapshot = self.tidb_decode_key_snapshot();
+        Arc::new(move |input, zone| snapshot.decode(input, zone))
     }
 
     fn tidb_decode_key_snapshot(&self) -> Arc<crate::TidbDecodeKeySnapshot> {
@@ -1518,7 +1524,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             retry_auto_ids: Arc::clone(&self.retry_auto_ids_ref()),
             row_id_shards: Arc::clone(&self.row_id_shards_ref()),
             planned_apply: Arc::clone(&self.planned_apply_ref()),
-            sequences: self.sequence_snapshot(),
+            sequences: Some(self.sequence_snapshot()),
+            sequence_state: Arc::clone(self.sequence_last_values_ref()),
             resource_group_name: self.active_resource_group().to_owned(),
             isolation_read_engines,
             select_limit: snapshot.select_limit,
@@ -1531,7 +1538,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             mdl_related_table: self.mdl_related_table_recorder(),
             process_privilege: self.has_process_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
-            fk_cascade_table_lock: self.fk_cascade_table_lock_check(),
+            locked_tables: self.locked_tables(),
             ddl_sql_mode: sql_mode.0,
             regions: self.region_store(),
         };
@@ -1642,7 +1649,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
-                    .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
+                    .with_decode_key_from_string(self.decode_key_from_string())
                     .with_parser_config(self.session_vars().build_parser_switches())
                     .with_ddl_job_context(
                         snapshot.ddl_cdc_write_source,
@@ -1705,7 +1712,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     ))
                     .with_lazy_clock(snapshot.timestamp, zone);
                 if let Some(latest_index_schema) = latest_index_schema {
-                    let _ = ctx.with_latest_index_schema(latest_index_schema);
+                    let _ = ctx.with_latest_info_schema(crate::LatestInfoSchema::new(latest_index_schema));
                 }
                 if let Some(parameters) = &self.prepared_params_ref() {
                     let _ = ctx.with_prepared_params(Arc::clone(parameters));
@@ -1777,7 +1784,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_parallel_apply(enable_parallel_apply)
                 .with_block_encryption_mode(block_encryption_mode)
-                .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
+                .with_decode_key_from_string(self.decode_key_from_string())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(crate::ReplicaReadType::Leader)
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
@@ -1873,7 +1880,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 let _ = ctx.with_prepared_params(Arc::clone(parameters));
             }
             if let Some(latest_index_schema) = latest_index_schema {
-                let _ = ctx.with_latest_index_schema(latest_index_schema);
+                let _ = ctx.with_latest_info_schema(crate::LatestInfoSchema::new(latest_index_schema));
             }
         })
     }
@@ -2342,9 +2349,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
     /// Whether this session may inspect process-wide diagnostic state.
     fn has_process_privilege(&self) -> bool;
-    /// The foreign-key cascade's `CheckTableLock`, handed to the executor
-    /// (`StmtContext::fk_cascade_table_lock`); `None` with the feature off.
-    fn fk_cascade_table_lock_check(&self) -> Option<crate::ForeignKeyCascadeLockCheck>;
+    /// Go `TableLockReadContext`: the table locks this session holds
+    /// (`StmtContext::locked_tables`); `None` with table locks disabled.
+    fn locked_tables(&self) -> Option<crate::LockedTables>;
     /// The connection's persistent resource group. A statement hint does not
     /// modify this value.
     fn current_resource_group(&self) -> &str;

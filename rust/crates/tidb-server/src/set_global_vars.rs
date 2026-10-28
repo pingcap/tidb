@@ -32,9 +32,9 @@
 //! * Plan-cache sizing (`PreparedPlanCacheMaxMemory`) — no prepared-plan
 //!   cache memory bound exists in this port to receive it.
 
-use crate::GlobalSysvars;
+use tidb_session::GlobalSysvars;
 
-use crate::domain::node_config::NodeConfig;
+use tidb_session::domain::node_config::NodeConfig;
 
 /// Applies the ported `setGlobalVars` writes to the node's sysvar registry.
 pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
@@ -153,7 +153,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::node_config::NodeOptions;
+    use tidb_session::domain::node_config::NodeOptions;
 
     struct RestoreMemoryUsageAlarmRatio(f64);
 
@@ -173,13 +173,13 @@ mod tests {
             RestoreMemoryUsageAlarmRatio(tidb_vardef::memory_usage_alarm_ratio());
         // Registry defaults before any startup push (Go's first asserts).
         assert_eq!(
-            crate::sysvar::get_sys_var("tidb_isolation_read_engines")
+            tidb_session::sysvar::get_sys_var("tidb_isolation_read_engines")
                 .expect("registered")
                 .value,
             "tikv,tiflash,tidb"
         );
         assert_eq!(
-            crate::sysvar::get_sys_var("tidb_mem_quota_query")
+            tidb_session::sysvar::get_sys_var("tidb_mem_quota_query")
                 .expect("registered")
                 .value,
             "1073741824"
@@ -218,7 +218,7 @@ mod tests {
         // NONE-scope variable from the same node tier (probe: SHOW GLOBAL
         // VARIABLES LIKE 'socket' reported the stale registry default while
         // `@@socket` reported the configured path).
-        let mut vars = crate::SessionVars::default();
+        let mut vars = tidb_session::SessionVars::default();
         let _ = vars.swap_globals(Some(std::sync::Arc::new(globals.clone())));
         assert_eq!(
             vars.get_global("socket").expect("readable"),

@@ -22,7 +22,7 @@ tidb-variable = { path = "../tidb-variable" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-table = { path = "../tidb-table" }
-tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
@@ -94,7 +94,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
-tidb-stmtctx = { path = "../tidb-stmtctx", features = ["test-util"] }
+tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }
 tidb-kv = { path = "../tidb-kv", features = ["test-util"] }
 tidb-table = { path = "../tidb-table", features = ["test-util"] }
 # Go's executor tests run over mockstore's unistore; the coprocessor reader's

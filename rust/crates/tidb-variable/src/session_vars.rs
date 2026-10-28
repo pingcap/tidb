@@ -687,3 +687,57 @@ mod tests {
         assert_eq!(RuntimeFilterMode::Global.as_str(), "GLOBAL");
     }
 }
+
+
+/// The session variables Go reads when it builds a reorganizing job's
+/// `ReorgMeta` (`NewDDLReorgMeta`, `initJobReorgMetaFromVariables`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DdlReorgVars {
+    /// `tidb_ddl_reorg_worker_cnt`.
+    pub worker_count: i64,
+    /// `tidb_ddl_reorg_batch_size`.
+    pub batch_size: i64,
+    /// `tidb_ddl_reorg_max_write_speed`, in bytes per second.
+    pub max_write_speed: i64,
+    /// `tidb_max_dist_task_nodes` (-1 means automatic).
+    pub max_dist_task_nodes: i64,
+    /// `tidb_enable_dist_task`.
+    pub enable_dist_task: bool,
+    /// `tidb_ddl_enable_fast_reorg`.
+    pub enable_fast_reorg: bool,
+    /// `tidb_service_scope` (Go `dxfhandle.GetTargetScope`).
+    pub target_scope: String,
+    /// The statement's resource group.
+    pub resource_group_name: String,
+    /// `tidb_stats_update_during_ddl`, as the job's session variable.
+    pub enable_ddl_analyze: String,
+    /// `tidb_analyze_version`, as the job's session variable.
+    pub analyze_version: String,
+    /// `tidb_scatter_region` (Go `getScatterScopeFromSessionctx`), as the
+    /// job's session variable.
+    pub scatter_region: String,
+    /// Go `ddlutil.GetTimeZone`: the session zone's name and offset.
+    pub time_zone_name: String,
+    /// See [`Self::time_zone_name`].
+    pub time_zone_offset: i64,
+}
+
+impl Default for DdlReorgVars {
+    fn default() -> Self {
+        Self {
+            worker_count: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+            batch_size: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+            max_write_speed: 0,
+            max_dist_task_nodes: tidb_vardef::defaults::DEF_TIDB_MAX_DIST_TASK_NODES,
+            enable_dist_task: true,
+            enable_fast_reorg: tidb_vardef::defaults::DEF_TIDB_ENABLE_FAST_REORG,
+            target_scope: String::new(),
+            resource_group_name: String::new(),
+            enable_ddl_analyze: "OFF".to_owned(),
+            analyze_version: "2".to_owned(),
+            scatter_region: tidb_vardef::defaults::DEF_TIDB_SCATTER_REGION.to_owned(),
+            time_zone_name: "UTC".to_owned(),
+            time_zone_offset: 0,
+        }
+    }
+}

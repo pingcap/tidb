@@ -77,6 +77,7 @@ mod domain_wire_tests;
 mod domain_test_support;
 #[cfg(test)]
 mod production_replay;
+mod set_global_vars;
 mod sql_node;
 mod stat;
 mod status_transport;

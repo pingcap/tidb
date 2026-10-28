@@ -166,7 +166,7 @@ struct Watchdog {
 impl Watchdog {
     fn start(processes: &ProcessRegistry) -> Self {
         let (exit, receiver) = mpsc::channel();
-        let handle = tidb_session::expensivequery::Handle::new(receiver);
+        let handle = tidb_expensivequery::Handle::new(receiver);
         handle.set_session_manager(Arc::new(processes.clone()));
         let thread = std::thread::spawn(move || handle.run());
         Self {

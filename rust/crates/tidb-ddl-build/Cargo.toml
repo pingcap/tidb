@@ -8,6 +8,8 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-table = { path = "../tidb-table" }

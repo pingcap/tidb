@@ -2998,7 +2998,7 @@ impl KvTableReader for KvTable {
             false,
             true,
             context,
-            &crate::remote_scan::pushdown_statement_context(tidb_stmtctx::stmt_context_of(context.expression())),
+            &crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(context.expression())),
             crate::remote_scan::PushdownReadEngine::TiKv,
             0,
         )? {

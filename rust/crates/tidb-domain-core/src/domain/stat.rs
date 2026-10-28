@@ -21,9 +21,9 @@ use std::sync::Arc;
 
 use tidb_cluster::catalog_watch::SharedCatalog;
 
-use crate::binding_cache::SharedBindingCache;
-use crate::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};
-use crate::SessionVars;
+use tidb_bindinfo::binding_cache::SharedBindingCache;
+use tidb_variable::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};
+use tidb_variable::SessionVars;
 
 /// Go `ddl`'s statuses: this instance's DDL id, which is its server id, and
 /// the schema version it follows.
@@ -55,7 +55,7 @@ pub(super) struct BindingStatistics(pub(super) SharedBindingCache);
 
 impl Statistics for BindingStatistics {
     fn get_scope(&self, _status: &str) -> u8 {
-        crate::sysvar::SCOPE_SESSION
+        tidb_variable::sysvar::SCOPE_SESSION
     }
 
     fn stats(&self, _vars: Option<&SessionVars>) -> Result<BTreeMap<String, String>, String> {

@@ -14,7 +14,6 @@
 
 //! The `mysql.tidb_ddl_notifier` adapter for the cluster session owner.
 
-use crate::domain::cluster_session_node::DomainSessions as _;
 use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,20 +25,21 @@ use tidb_ddl_notifier::{
 };
 
 use super::{table_and_partition_ids, Domain};
-use tidb_domain_core::sys_session::DomainSysSession;
+use crate::sys_session::DomainSysSession;
 
 fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
     NotifierError::Message(error.to_string())
 }
 
 struct ClusterNotifierSession {
-    session: Option<tidb_syssession::Session<dyn tidb_domain_core::sys_session::DomainSysSession>>,
+    session: Option<tidb_syssession::Session<dyn crate::sys_session::DomainSysSession>>,
 }
 
 impl ClusterNotifierSession {
     fn session(
         &self,
-    ) -> Result<&tidb_syssession::Session<dyn tidb_domain_core::sys_session::DomainSysSession>, NotifierError> {
+    ) -> Result<&tidb_syssession::Session<dyn crate::sys_session::DomainSysSession>, NotifierError>
+    {
         self.session
             .as_ref()
             .ok_or_else(|| NotifierError::Message("notifier session already returned".to_owned()))
@@ -87,14 +87,12 @@ impl NotifierSession for ClusterNotifierSession {
     }
 }
 
-pub(super) struct ClusterNotifierSessionPool {
-    pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+pub struct ClusterNotifierSessionPool {
+    pool: Arc<crate::sys_session::DomainSysSessionPool>,
 }
 
 impl ClusterNotifierSessionPool {
-    pub(super) fn new(
-        pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
-    ) -> Self {
+    pub fn new(pool: Arc<crate::sys_session::DomainSysSessionPool>) -> Self {
         Self { pool }
     }
 }
@@ -125,7 +123,7 @@ impl SessionPool for ClusterNotifierSessionPool {
 }
 
 /// Go `OpenTableStore` over the bootstrapped notifier system table.
-pub(super) struct ClusterNotifierTableStore;
+pub struct ClusterNotifierTableStore;
 
 fn cluster_session(
     session: &mut dyn NotifierSession,
@@ -148,7 +146,7 @@ fn bytes_literal(bytes: &[u8]) -> String {
     literal
 }
 
-fn run_auto_analyze(global_vars: &crate::GlobalSysvars) -> bool {
+fn run_auto_analyze(global_vars: &tidb_domain::global_sysvars::GlobalSysvars) -> bool {
     global_vars
         .get(tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE)
         .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
@@ -167,14 +165,14 @@ fn finish_stats_handler(
             "Failed to handle DDL event",
             &[
                 tidb_log::Field::new("event", tidb_log::Value::Str(event.to_string())),
-                crate::domain::zap_error(error),
+                tidb_util::logutil::zap_error(error),
             ],
         );
     }
     Ok(())
 }
 
-pub(super) fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNotifier> {
+pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNotifier> {
     let notifier = Arc::new(DdlNotifier::new(
         Arc::new(ClusterNotifierSessionPool::new(
             factory.advanced_sys_session_pool(),
@@ -310,7 +308,7 @@ pub(super) fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Ar
 mod tests {
     use super::{finish_stats_handler, run_auto_analyze};
     use tidb_ddl_notifier::{NotifierError, SchemaChangeEvent};
-    use crate::GlobalSysvars;
+    use tidb_domain::global_sysvars::GlobalSysvars;
 
     #[test]
     fn auto_analyze_gate_reads_each_global_change() {

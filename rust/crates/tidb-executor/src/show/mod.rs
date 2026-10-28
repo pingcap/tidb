@@ -315,7 +315,7 @@ pub fn fetch_show_collation(ctx: &dyn SessionContext, extractor: Extractor<'_>) 
     rows
 }
 
-pub use tidb_stmtctx::show_retrieval::ShowRetrieval;
+pub use tidb_sessionctx::show_retrieval::ShowRetrieval;
 
 /// What follows `DEFAULT ` in `SHOW CREATE TABLE`, quoting included.
 ///

@@ -49,7 +49,6 @@ pub use tidb_domain_core::session_transaction;
 pub mod global_config_sync;
 pub mod cluster_topology;
 pub mod serverinfo_etcd;
-pub mod set_global_vars;
 pub use tidb_domain_core::node_config;
 pub mod real_tikv_node;
 pub mod unistore_node;

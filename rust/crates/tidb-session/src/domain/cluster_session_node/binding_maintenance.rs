@@ -14,7 +14,10 @@
 
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
-use super::{Domain, InternalBindingWriter};
+use super::{Domain, DomainSessions as _, InternalBindingWriter};
+use crate::binding::Binding;
+use crate::binding_arm::GlobalBindingWriter;
+use crate::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
 use crate::Session;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -22,9 +25,6 @@ use std::sync::{
 };
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
-use crate::binding::Binding;
-use crate::binding_arm::GlobalBindingWriter;
-use crate::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
 
 pub(super) struct BindingSessions {
     factory: Weak<Domain>,

@@ -371,6 +371,12 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         None
     }
+
+    /// Go `Domain.ExpensiveQueryHandle`, which the server's main runs over
+    /// its session manager; `None` without a domain.
+    fn expensive_query_handle(&self) -> Option<Arc<tidb_expensivequery::Handle>> {
+        None
+    }
 }
 
 /// Go `shouldInstallConnectionAlive` (`pkg/server/conn.go`): EXECUTE, TRACE

@@ -59,6 +59,10 @@ impl QuerySessionFactory for Domain {
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         Some(Domain::session_manager(self))
     }
+
+    fn expensive_query_handle(&self) -> Option<Arc<tidb_expensivequery::Handle>> {
+        Some(Domain::expensive_query_handle(self))
+    }
 }
 
 /// Go `TiDBContext`: the connection's session, as the protocol layer drives it.

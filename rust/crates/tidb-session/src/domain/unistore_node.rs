@@ -240,7 +240,7 @@ pub struct UnistoreClusterStack {
     pub schema_version: i64,
     pub stats: Arc<tidb_exec::stats_watch::SharedStats>,
     pub _stats_maintenance:
-        Option<crate::domain::cluster_session_node::stats_maintenance::StatsMaintenanceWorker>,
+        Option<tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub _reloader: tidb_cluster::catalog_watch::CatalogReloader,
@@ -772,7 +772,7 @@ pub fn unistore_cluster_session_stack_from(
     );
 
     let stats_maintenance =
-        crate::domain::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(
+        tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker::start(
             &factory,
             config.stats_lease,
             config.schema_lease,

@@ -1,0 +1,41 @@
+[package]
+name = "tidb-sessionctx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB session context: Go pkg/sessionctx, the context a session hands every statement's planner and executor (Rust rewrite)."
+
+[dependencies]
+tidb-stats-handle = { path = "../tidb-stats-handle" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-table = { path = "../tidb-table" }
+chrono = { workspace = true }
+tikv-client = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[features]
+test-util = []
+
+[lints]
+workspace = true

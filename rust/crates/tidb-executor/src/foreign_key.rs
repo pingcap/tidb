@@ -575,8 +575,9 @@ fn cascade_at_depth(
         // Go `FKCascadeExec.buildFKCascadePlan` builds the child `DELETE`
         // or `UPDATE` once the parent withdrew a key, and
         // `OptimizeForForeignKeyCascade` checks its table locks.
-        if let Some(check) = ctx.fk_cascade_table_lock() {
-            check(
+        if let Some(locked_tables) = ctx.locked_tables() {
+            check_fk_cascade_table_lock(
+                locked_tables,
                 catalog,
                 child_db,
                 child_table,
@@ -806,5 +807,30 @@ fn cascade_triggers(
         if deleting { "Delete" } else { "Update" },
         &spec,
         &tidb_planner::plan_base::PlanIdAllocator::new(),
+    )
+}
+
+/// Go `OptimizeForForeignKeyCascade`'s `CheckTableLock` over the cascade
+/// sub-statement it builds: the child `DELETE` (`delete`) or `UPDATE` reads
+/// the child table and then writes it, in `buildDelete`/`buildUpdate`'s
+/// visit order.
+fn check_fk_cascade_table_lock(
+    locked_tables: &std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
+    catalog: &Catalog,
+    db: &str,
+    table: &str,
+    delete: bool,
+) -> Result<(), DriverError> {
+    if locked_tables.is_empty() && !catalog.has_table_locks() {
+        return Ok(());
+    }
+    let write = if delete {
+        tidb_mysql::DeletePriv
+    } else {
+        tidb_mysql::UpdatePriv
+    };
+    crate::lock::check_visits(
+        &crate::lock::Checker::new(locked_tables, catalog),
+        &[(db, table, tidb_mysql::SelectPriv), (db, table, write)],
     )
 }

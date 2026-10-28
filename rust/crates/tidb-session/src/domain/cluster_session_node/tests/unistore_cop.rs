@@ -34,9 +34,9 @@ use tidb_ddl_notifier::{
 use tidb_model::go_runtime::GoSharedSlice;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
-use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
+use tidb_domain_core::domain::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
-    partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, Domain, Session,
+    ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, Domain, Session,
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
@@ -2076,7 +2076,7 @@ fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) 
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
 // statistics. This fixture does not campaign the background statistics owner.
 fn drain_stats_ddl_events(factory: &Arc<Domain>, session: &mut Session) {
-    let notifier = super::super::ddl_notifier::build_notifier(factory, Duration::ZERO);
+    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(factory, Duration::ZERO);
     drain_stats_ddl_events_with_notifier(session, notifier);
 }
 
@@ -2124,7 +2124,7 @@ fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
         .unwrap()
         .1
         .id;
-    let notifier = super::super::ddl_notifier::build_notifier(&stack.factory, Duration::ZERO);
+    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(&stack.factory, Duration::ZERO);
     // Deterministically model the uninitialized priority queue's retry result
     // without modifying process-global auto-analyze settings in parallel tests.
     notifier.register_handler(
@@ -2545,7 +2545,7 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
     .expect("flashback event publishes");
     pool.put(publisher);
 
-    let notifier = super::super::ddl_notifier::build_notifier(&factory, Duration::ZERO);
+    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(&factory, Duration::ZERO);
     tidb_owner::Listener::on_become_owner(notifier.as_ref());
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let version_after = loop {
@@ -2964,7 +2964,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
                     Ok(())
                 })
                 .unwrap();
-            let (register, unregister) = super::super::system_process_trackers(factory.processes());
+            let (register, unregister) = tidb_domain_core::sys_session::system_process_trackers(factory.processes());
             let released_by_generator = Arc::clone(&released);
             let generator = tidb_stats_handle_util::Generator::new(
                 move || process_id,
@@ -25216,4 +25216,22 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         })
         .expect("catalog");
     assert!(has_client);
+}
+
+fn partition_id_map(
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    schema: &str,
+    table: &str,
+) -> Option<(i64, Vec<(String, i64)>)> {
+    let (_, table) = catalog.find_table(schema, table)?;
+    let partition = table.partition.as_ref()?.read();
+    Some((
+        table.id,
+        partition
+            .definitions
+            .snapshot()
+            .into_iter()
+            .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+            .collect(),
+    ))
 }

@@ -527,37 +527,16 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     connection_timeout: Duration,
     _server_memory_limit: Option<ServerMemoryLimitRunner>,
     _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
-    _expensive_query: Option<ExpensiveQueryRunner>,
 }
 
-/// Go `Domain.expensiveQueryHandle`, which the server's main starts with
-/// itself as the session manager (`dom.ExpensiveQueryHandle().
-/// SetSessionManager(svr).Run()`).
-struct ExpensiveQueryRunner {
-    exit: mpsc::Sender<()>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl ExpensiveQueryRunner {
-    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
-        let (exit, receiver) = mpsc::channel();
-        let handle = tidb_session::expensivequery::Handle::new(receiver);
-        handle.set_session_manager(manager);
-        let thread = std::thread::spawn(move || handle.run());
-        Self {
-            exit,
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for ExpensiveQueryRunner {
-    fn drop(&mut self) {
-        let _ = self.exit.send(());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
+/// Go `go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()`: the
+/// handle runs until its domain closes the exit it was built over.
+pub(crate) fn run_expensive_query_handle(
+    handle: Arc<tidb_expensivequery::Handle>,
+    manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>,
+) {
+    handle.set_session_manager(manager);
+    std::thread::spawn(move || handle.run());
 }
 
 struct ServerMemoryLimitRunner {
@@ -659,9 +638,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let server_memory_limit = session_manager
             .as_ref()
             .map(|manager| ServerMemoryLimitRunner::start(Arc::clone(manager)));
-        let expensive_query = session_manager
-            .as_ref()
-            .map(|manager| ExpensiveQueryRunner::start(Arc::clone(manager)));
+        if let (Some(handle), Some(manager)) = (factory.expensive_query_handle(), &session_manager) {
+            run_expensive_query_handle(handle, Arc::clone(manager));
+        }
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         let shutdown = ShutdownHandle::default();
         shutdown.waker.bind_to(&listener);
@@ -686,7 +665,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             connection_timeout: config.connection_timeout,
             _server_memory_limit: server_memory_limit,
             _memory_usage_alarm: memory_usage_alarm,
-            _expensive_query: expensive_query,
         })
     }
 

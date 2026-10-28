@@ -59,7 +59,10 @@ pub fn run_unistore_cluster_session(
     tidb_txnkv::client_go_metrics::init_embedded_store_series(
         tidb_unistore::region_manager::STORE_ID,
     );
-    let users = configured_account_store(&config)?;
+    // Go `setGlobalVars`, before the store and the domain are created.
+    let global_vars = tidb_session::GlobalSysvars::new();
+    crate::set_global_vars::set_global_vars(&config, &global_vars);
+    let users = configured_account_store(&config, global_vars)?;
     let users = Arc::new(users);
     let stack =
         unistore_cluster_session_stack(&config, &users, Some(spill_storage), memory_arbitrator)?;

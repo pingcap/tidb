@@ -29,6 +29,7 @@ pub mod cluster_sysvar_seam;
 pub mod cluster_transactions;
 pub mod connection_ids;
 pub mod ddl_job_history_store;
+pub mod domain;
 pub mod errors;
 pub mod node_config;
 pub mod schema_sync;

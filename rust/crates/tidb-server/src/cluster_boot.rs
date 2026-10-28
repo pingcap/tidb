@@ -38,7 +38,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
-    let (stack, authority) = cluster_session_stack(&config, spill_storage, memory_arbitrator)?;
+    // Go `setGlobalVars`, before the store and the domain are created.
+    let global_vars = tidb_session::GlobalSysvars::new();
+    crate::set_global_vars::set_global_vars(&config, &global_vars);
+    let (stack, authority) =
+        cluster_session_stack(&config, global_vars, spill_storage, memory_arbitrator)?;
     run_with_process_shutdown(stack, authority, move |mut stack: ClusterStack| {
         let factory = Arc::clone(&stack.factory);
         let users = Arc::clone(&stack.users);

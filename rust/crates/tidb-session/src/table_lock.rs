@@ -161,31 +161,14 @@ impl Session {
         )
     }
 
-    /// The foreign-key cascade's `CheckTableLock`, handed to the executor
-    /// (`StmtContext::fk_cascade_table_lock`); `None` with the feature off.
-    pub(crate) fn fk_cascade_table_lock_check(
-        &self,
-    ) -> Option<tidb_executor::ForeignKeyCascadeLockCheck> {
+    /// Go `TableLockReadContext`: the table locks this session holds, handed
+    /// to the executor (`StmtContext::locked_tables`); `None` with the
+    /// feature off.
+    pub(crate) fn statement_locked_tables(&self) -> Option<tidb_executor::LockedTables> {
         if !table_lock_enabled() {
             return None;
         }
-        let locked_tables = self.locked_tables.clone();
-        Some(std::sync::Arc::new(move |catalog, db, table, delete| {
-            if locked_tables.is_empty() && !catalog.has_table_locks() {
-                return Ok(());
-            }
-            // The cascade's `DELETE`/`UPDATE` reads the child table and then
-            // writes it, in `buildDelete`/`buildUpdate`'s visit order.
-            let write = if delete {
-                tidb_mysql::DeletePriv
-            } else {
-                tidb_mysql::UpdatePriv
-            };
-            tidb_executor::lock::check_visits(
-                &tidb_executor::lock::Checker::new(&locked_tables, catalog),
-                &[(db, table, tidb_mysql::SelectPriv), (db, table, write)],
-            )
-        }))
+        Some(std::sync::Arc::new(self.locked_tables.clone()))
     }
 
     /// Go `DDLExec.executeLockTables`' local-temporary refusal and

@@ -52,7 +52,7 @@ pub(super) struct ClusterRuStatsDeps<S: StoreClient> {
     /// store's keyspace (Go `store.GetPDClient()`).
     pd: tidb_txnkv::driver::tikv_store::TikvStore,
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+    pool: Arc<crate::sys_session::DomainSysSessionPool>,
     timeout: Duration,
 }
 
@@ -63,7 +63,7 @@ where
     pub(super) fn new(
         pd: tidb_txnkv::driver::tikv_store::TikvStore,
         opener: Arc<RealOptimisticTransactionOpener<S>>,
-        pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+        pool: Arc<crate::sys_session::DomainSysSessionPool>,
         timeout: Duration,
     ) -> Self {
         Self {
@@ -285,7 +285,7 @@ impl RuStatsWriterWorker {
         });
         let weak: Weak<Domain> = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = crate::domain::session_api::sql_worker_thread("ru-stats-writer")
+        let thread = tidb_util::worker_stack::sql_worker_thread("ru-stats-writer")
             .spawn(move || {
                 let local = chrono::Local;
                 let mut writer = RuStatsWriter::new(deps, chrono::Local::now(), local);

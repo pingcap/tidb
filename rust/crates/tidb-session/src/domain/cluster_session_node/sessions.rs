@@ -39,6 +39,10 @@ pub trait DomainSessions {
     fn open_system_session(&self) -> Result<Session, SqlQueryError>;
 
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError>;
+
+    /// A session over this node's storage for internal work: no
+    /// authentication identity, process-list entry or user transaction.
+    fn open_storage_session(&self, connection_id: u64) -> Result<Session, SqlQueryError>;
 }
 
 impl DomainSessions for Domain {
@@ -62,8 +66,8 @@ impl DomainSessions for Domain {
                 factory: self.binding_session_factory.clone(),
             }),
             sysvars: Arc::new(ClusterSysvarService(Arc::clone(&self.sysvars))),
-            analyze: self.analyze_service(),
-            stats: self.stats_statement_service(),
+            analyze: super::statistics::analyze_service(self),
+            stats: super::statistics::stats_statement_service(self),
         });
         if let Some(bindings) = &self.bindings {
             session.set_global_binding_cache(bindings.cache());
@@ -139,13 +143,11 @@ impl DomainSessions for Domain {
         self.attach_connection(session, context.connection_id, guard);
         Ok(opened)
     }
-}
 
-impl Domain {
     // No authentication identity, process-list entry, or user transaction is
     // copied into internal storage work. Its MDL holds nest in the caller's
     // connection scope, while its storage and transaction are independent.
-    pub(crate) fn open_storage_session(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
+    fn open_storage_session(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
         // The connection's own snapshot slot and staged writes: one session,
         // one transaction, exactly as Go's session owns one `kv.Transaction`.
         let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));

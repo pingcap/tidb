@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::super::*;
 use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 

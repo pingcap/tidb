@@ -72,7 +72,7 @@ pub mod planner_view;
 pub mod table_source;
 pub mod sequence;
 pub use sequence::SequenceSnapshot;
-pub use planner_view::{PlannerCatalog, PlannerSchemaView, MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
+pub use planner_view::{PlannerCatalog, PlannerSchemaView};
 pub mod statistics_access;
 pub mod temporary;
 pub use tidb_stats_handle::{PseudoStatsTable, StatisticsLoadWorkers, StatisticsSchema, StatisticsSource, StatisticsView};

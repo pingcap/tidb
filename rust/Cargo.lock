@@ -632,6 +632,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-executor",
+ "tidb-expensivequery",
  "tidb-expr",
  "tidb-parser",
  "tidb-protocol",
@@ -3624,12 +3625,14 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-sessionctx",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-ttl",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -3811,6 +3814,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-expensivequery",
  "tidb-expr",
  "tidb-kv",
  "tidb-log",
@@ -3822,15 +3826,25 @@ dependencies = [
  "tidb-pd-client",
  "tidb-privilege",
  "tidb-proto",
+ "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle",
  "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
+ "tidb-stats-handle-autoanalyze-refresher",
+ "tidb-stats-handle-cache",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-metrics",
+ "tidb-stats-handle-usage",
  "tidb-stats-handle-util",
  "tidb-syssession",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
+ "tidb-workloadrepo",
  "tikv-client",
 ]
 
@@ -4017,6 +4031,7 @@ dependencies = [
  "tidb-privilege",
  "tidb-proto",
  "tidb-resolve",
+ "tidb-sessionctx",
  "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
@@ -4025,7 +4040,6 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
- "tidb-stmtctx",
  "tidb-stmtsummary",
  "tidb-sysutil",
  "tidb-table",
@@ -4043,6 +4057,19 @@ dependencies = [
  "tonic",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "tidb-expensivequery"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-config",
+ "tidb-executor",
+ "tidb-log",
+ "tidb-stats-handle-util",
+ "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]
@@ -4169,12 +4196,14 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-sessionctx",
  "tidb-stats",
  "tidb-stats-handle",
  "tidb-stats-handle-metrics",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-util",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -4375,8 +4404,8 @@ dependencies = [
  "tidb-parser",
  "tidb-proto",
  "tidb-resolve",
+ "tidb-sessionctx",
  "tidb-stats",
- "tidb-stmtctx",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -4540,6 +4569,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-expensivequery",
  "tidb-expr",
  "tidb-gcworker",
  "tidb-hack",
@@ -4639,6 +4669,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-expensivequery",
  "tidb-expr",
  "tidb-gcutil",
  "tidb-gcworker",
@@ -4664,6 +4695,7 @@ dependencies = [
  "tidb-resourcemanager",
  "tidb-ristretto",
  "tidb-schemaver",
+ "tidb-sessionctx",
  "tidb-sessionstates",
  "tidb-sqlexec",
  "tidb-stats",
@@ -4678,7 +4710,6 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
- "tidb-stmtctx",
  "tidb-stmtsummary",
  "tidb-syssession",
  "tidb-sysutil",
@@ -4694,6 +4725,37 @@ dependencies = [
  "tokio",
  "toml",
  "x509-parser",
+]
+
+[[package]]
+name = "tidb-sessionctx"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-distsql",
+ "tidb-driver-error",
+ "tidb-error",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-kv",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-stats",
+ "tidb-stats-handle",
+ "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
+ "tidb-stmtctx",
+ "tidb-table",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-vardef",
+ "tidb-variable",
+ "tikv-client",
 ]
 
 [[package]]
@@ -4968,34 +5030,6 @@ dependencies = [
 [[package]]
 name = "tidb-stmtctx"
 version = "0.0.0"
-dependencies = [
- "chrono",
- "tidb-ast",
- "tidb-chunk",
- "tidb-config",
- "tidb-datatype",
- "tidb-ddl-build",
- "tidb-distsql",
- "tidb-driver-error",
- "tidb-error",
- "tidb-expr",
- "tidb-hack",
- "tidb-infoschema",
- "tidb-kv",
- "tidb-model",
- "tidb-mysql",
- "tidb-parser",
- "tidb-stats",
- "tidb-stats-handle",
- "tidb-stats-handle-usage",
- "tidb-stats-handle-usage-indexusage",
- "tidb-table",
- "tidb-txnkv",
- "tidb-util",
- "tidb-vardef",
- "tidb-variable",
- "tikv-client",
-]
 
 [[package]]
 name = "tidb-stmtsummary"
@@ -5272,6 +5306,7 @@ dependencies = [
  "tidb-naming",
  "tidb-parser",
  "tidb-sessionstates",
+ "tidb-stmtctx",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",

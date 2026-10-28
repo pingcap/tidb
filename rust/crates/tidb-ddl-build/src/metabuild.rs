@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The planner and DDL interfaces a statement context implements (Go's
-//! `sessionctx.Context` is what `pkg/planner` and `pkg/ddl` read).
+//! Go `pkg/ddl/metabuild.go`: the `metabuild.Context` a DDL statement's
+//! builders take, over the session context the statement runs in, and that
+//! context as `pkg/ddl` reads it.
 
-use crate::StmtContext;
+use tidb_sessionctx::StmtContext;
 
 pub fn new_metabuild_context_with_sctx(ctx: &StmtContext) -> tidb_expr::metabuild::Context {
     use tidb_expr::metabuild::{
@@ -31,14 +32,14 @@ pub fn new_metabuild_context_with_sctx(ctx: &StmtContext) -> tidb_expr::metabuil
         with_shard_row_id_bits(ctx.shard_row_id_bits()),
         with_pre_split_regions(ctx.pre_split_regions()),
         with_info_schema(
-            ctx.latest_index_schema()
-                .map(|schema| schema as std::sync::Arc<dyn MetaOnlyInfoSchema>),
+            ctx.latest_info_schema()
+                .map(|schema| schema.meta_only() as std::sync::Arc<dyn MetaOnlyInfoSchema>),
         ),
     ])
 }
 
 /// Go's `sessionctx.Context` as `pkg/ddl` reads it: a statement's context.
-impl tidb_ddl_build::session_context::DdlSessionContext for StmtContext {
+impl crate::session_context::DdlSessionContext for StmtContext {
     fn metabuild_context(&self) -> tidb_expr::metabuild::Context {
         new_metabuild_context_with_sctx(self)
     }
@@ -83,7 +84,7 @@ impl tidb_ddl_build::session_context::DdlSessionContext for StmtContext {
         StmtContext::ddl_cdc_write_source(self)
     }
 
-    fn ddl_reorg_vars(&self) -> &tidb_ddl_build::session_context::DdlReorgVars {
+    fn ddl_reorg_vars(&self) -> &tidb_variable::session_vars::DdlReorgVars {
         StmtContext::ddl_reorg_vars(self)
     }
 
@@ -162,7 +163,7 @@ impl tidb_ddl_build::session_context::DdlSessionContext for StmtContext {
         StmtContext::take_warnings(self)
     }
 
-    fn with_isolated_warnings(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
+    fn with_isolated_warnings(&self) -> Box<dyn crate::session_context::DdlSessionContext> {
         Box::new(StmtContext::with_isolated_warnings(self))
     }
 }

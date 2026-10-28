@@ -52,7 +52,7 @@ pub struct FromScope {
     /// contribute to [`FromScope::width`] or wildcard expansion because no
     /// executor ever produces them.
     pub plan_columns: Vec<PlanColumn>,
-    pub constant_context: Option<tidb_stmtctx::StmtContext>,
+    pub constant_context: Option<tidb_sessionctx::StmtContext>,
     /// The statement's session `time_zone`, which [`ScopeResolver`] publishes
     /// to the expression rewriter as [`ColumnResolver::time_zone`] -- Go's
     /// `ctx.Location()`, reached while BUILDING an expression (the
@@ -98,7 +98,7 @@ impl Default for FromScope {
 }
 
 impl FromScope {
-    pub fn for_statement(ctx: &tidb_stmtctx::StmtContext) -> Self {
+    pub fn for_statement(ctx: &tidb_sessionctx::StmtContext) -> Self {
         Self {
             constant_context: Some(ctx.clone()),
             zone: ctx.session_zone(),
@@ -268,7 +268,7 @@ impl ColumnResolver for ScopeResolver<'_> {
             Some(ctx) => tidb_expr::fold_constant_in_mode(expression, ctx, mode),
             None if mode != tidb_expr::ConstantFoldMode::Disabled => {
                 tidb_expr::derive_constant_null_flag(expression);
-                let minimal = tidb_stmtctx::StmtContext::for_query();
+                let minimal = tidb_sessionctx::StmtContext::for_query();
                 tidb_expr::fold_constant_in_mode(expression, &minimal, mode);
                 // go appends the fold-time warnings to StmtCtx.warnings; the
                 // minimal context is otherwise discarded, so its warnings

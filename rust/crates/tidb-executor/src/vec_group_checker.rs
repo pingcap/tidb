@@ -636,7 +636,7 @@ mod tests {
     fn constant_interior_warnings_follow_vectorization_mode() {
         use tidb_expr::constant::Constant;
         for vectorized in [false, true] {
-            let ctx = tidb_stmtctx::StmtContext::default()
+            let ctx = tidb_sessionctx::StmtContext::default()
                 .with_enable_vectorized_expression(vectorized)
                 .with_truncate_level(tidb_expr::ErrorLevel::Warn);
             let field = FieldType::new(FieldTypeCode::LongLong);
@@ -713,7 +713,7 @@ mod tests {
                         }
                         chunk.append_int64(2, i);
                     }
-                    let ctx = tidb_stmtctx::StmtContext::default()
+                    let ctx = tidb_sessionctx::StmtContext::default()
                         .with_enable_vectorized_expression(vectorized);
                     let mut checker = VecGroupChecker::new(vec![expression, column(2, integer)]);
                     let result = checker.split_into_groups(&ctx, &chunk);
@@ -821,7 +821,7 @@ mod tests {
                 let mut chunk = Chunk::new_with_capacity(&[left, right], 1);
                 chunk.append_datum(0, &value(a, lu));
                 chunk.append_datum(1, &value(b, ru));
-                let ctx = tidb_stmtctx::StmtContext::default();
+                let ctx = tidb_sessionctx::StmtContext::default();
                 let result = if vectorized {
                     try_eval_numeric_batch(&expression, &ctx, &chunk)
                         .map(|values| values.unwrap().remove(0))
@@ -898,7 +898,7 @@ mod tests {
                         )),
                     ],
                 ));
-                let ctx = tidb_stmtctx::StmtContext::default()
+                let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
                     .with_truncate_level(tidb_expr::ErrorLevel::Warn);
                 let mut input = Chunk::new_with_capacity(&[field], 4);
@@ -979,7 +979,7 @@ mod tests {
                         Datum::Decimal(Decimal::from_literal("1.234")),
                     )),
                 };
-                let ctx = tidb_stmtctx::StmtContext::default()
+                let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
                     .with_truncate_level(tidb_expr::ErrorLevel::Warn);
                 let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
@@ -1044,7 +1044,7 @@ mod tests {
             chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(text)));
         }
         for vectorized in [false, true] {
-            let ctx = tidb_stmtctx::StmtContext::default()
+            let ctx = tidb_sessionctx::StmtContext::default()
                 .with_enable_vectorized_expression(vectorized);
             let mut checker = VecGroupChecker::new(vec![Expression::Constant(constant.clone())]);
             let result = checker.split_into_groups(&ctx, &chunk);
@@ -1066,7 +1066,7 @@ mod tests {
     fn vectorized_nan_constant_keeps_unequal_adjacent_rows() {
         use tidb_expr::constant::Constant;
         for vectorized in [false, true] {
-            let ctx = tidb_stmtctx::StmtContext::default()
+            let ctx = tidb_sessionctx::StmtContext::default()
                 .with_enable_vectorized_expression(vectorized);
             let field = FieldType::new(FieldTypeCode::LongLong);
             let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
@@ -1133,7 +1133,7 @@ mod tests {
         chunk.append_int64(0, 2);
         for level in [ErrorLevel::Error, ErrorLevel::Warn, ErrorLevel::Ignore] {
             for (name, value, diagnostic, key) in &cases {
-                let ctx = tidb_stmtctx::StmtContext::default().with_truncate_level(level);
+                let ctx = tidb_sessionctx::StmtContext::default().with_truncate_level(level);
                 let constant = Constant::new(
                     value.clone(),
                     FieldType::new(FieldTypeCode::NewDecimal).with_decimal(3),
@@ -1690,7 +1690,7 @@ mod tests {
                 "010042000000000000f9",
             ),
         ];
-        let ctx = tidb_stmtctx::StmtContext::default().with_time_zone(
+        let ctx = tidb_sessionctx::StmtContext::default().with_time_zone(
             tidb_expr::SessionTimeZone::Fixed {
                 name: "+08:00".to_owned(),
                 offset_secs: 8 * 3600,

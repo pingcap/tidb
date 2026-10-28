@@ -15,6 +15,7 @@ use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::session_api::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Condvar;
 use tidb_datatype::Datum;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{

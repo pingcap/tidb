@@ -18,7 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
-pub use tidb_stmtctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+pub use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use crate::{
     cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},

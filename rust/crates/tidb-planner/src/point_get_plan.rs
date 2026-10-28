@@ -113,7 +113,7 @@ pub fn try_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &tidb_stmtctx::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     let plan = try_fast_point_physical_plan_with_allocator(
         select,
@@ -143,7 +143,7 @@ pub fn try_fast_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &tidb_stmtctx::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
@@ -158,7 +158,7 @@ pub fn try_fast_dml_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &tidb_stmtctx::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
@@ -212,7 +212,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &tidb_stmtctx::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &crate::plan_base::PlanIdAllocator,
     dml_source: bool,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
@@ -233,7 +233,7 @@ fn build_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &tidb_stmtctx::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &crate::plan_base::PlanIdAllocator,
     dml_source: bool,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {

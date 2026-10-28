@@ -39,8 +39,23 @@ use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-pub use tidb_ddl_build::session_context::DdlReorgVars;
-pub use tidb_infoschema::{MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
+pub use tidb_variable::session_vars::DdlReorgVars;
+
+/// Go `privilege.Manager.RequestVerificationWithUser`, as the planner asks it
+/// for a `SQL SECURITY DEFINER` view's definer: may this definer hold this
+/// privilege on this object, `(user, host, database, table, column,
+/// privilege)`.
+pub type ViewDefinerPrivilegeCheck = Arc<
+    dyn Fn(&str, &str, &str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync,
+>;
+
+/// Go `privilege.Manager.RequestVerification(activeRoles, ...)`: does this
+/// session hold this privilege, `(database, table, column, privilege)` for
+/// its own account with its active roles.
+pub type SessionPrivilegeCheck =
+    Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
+
+pub use tidb_variable::MdlRelatedTableRecorder;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -530,8 +545,10 @@ pub struct StmtContextSessionState {
     pub row_id_shards: Arc<Mutex<RowIdShardGenerator>>,
     /// Session's statement-plan Apply publication cell.
     pub planned_apply: Arc<AtomicBool>,
-    /// Current catalog sequence snapshot.
-    pub sequences: Arc<SequenceSnapshot>,
+    /// Current catalog sequence snapshot; `None` reaches no sequence.
+    pub sequences: Option<Arc<dyn SequenceSchema>>,
+    /// Go `SessionVars.SequenceState`: the session's per-sequence `LASTVAL`.
+    pub sequence_state: SequenceState,
     /// Resolved statement resource group.
     pub resource_group_name: String,
     /// Captured storage-engine policy.
@@ -567,9 +584,10 @@ pub struct StmtContextSessionState {
     /// runs through Go's SQL-executor property; `None` is a context with no
     /// session to run it.
     pub sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
-    /// The session's `CheckTableLock` over a foreign-key cascade's child
-    /// table; `None` when no table lock can be involved.
-    pub fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
+    /// Go `TableLockReadContext`: the table locks this session holds, which
+    /// a foreign-key cascade's `CheckTableLock` reads; `None` with table
+    /// locks disabled (`enable-table-lock`).
+    pub locked_tables: Option<LockedTables>,
     /// Complete typed SQL mode used by DDL.
     pub ddl_sql_mode: i64,
     /// The session's store's regions (Go `sctx.GetStore()` as
@@ -593,7 +611,8 @@ impl Default for StmtContextSessionState {
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
-            sequences: Arc::default(),
+            sequences: None,
+            sequence_state: Arc::default(),
             resource_group_name: "default".to_owned(),
             isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
             select_limit: u64::MAX,
@@ -606,7 +625,7 @@ impl Default for StmtContextSessionState {
             mdl_related_table: None,
             process_privilege: true,
             sql_digest_text_retriever: None,
-            fk_cascade_table_lock: None,
+            locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
             // A context with no store behind it: one in-process region map.
@@ -630,11 +649,41 @@ pub type SqlDigestTextRetrieval = Arc<
         + Sync,
 >;
 
-/// Go `planner.OptimizeForForeignKeyCascade`'s `CheckTableLock` over the
-/// cascade sub-statement it builds: `(catalog, schema, table, delete)` checks
-/// the child table as the `DELETE` (`delete`) or `UPDATE` the cascade runs.
-pub type ForeignKeyCascadeLockCheck =
-    Arc<dyn Fn(&tidb_infoschema::Catalog, &str, &str, bool) -> Result<(), tidb_driver_error::DriverError> + Send + Sync>;
+/// Go `sctx.GetLatestInfoSchema()`: the latest domain infoschema as
+/// statement code reads it (`infoschema/context.MetaOnlyInfoSchema`), with
+/// the schema behind it for the readers that type-assert it, as Go's
+/// `GetLatestInfoSchema().(infoschema.InfoSchema)` does.
+#[derive(Clone)]
+pub struct LatestInfoSchema {
+    meta_only: Arc<dyn tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync>,
+    schema: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+impl LatestInfoSchema {
+    pub fn new<T>(schema: Arc<T>) -> Self
+    where
+        T: tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync + 'static,
+    {
+        Self {
+            meta_only: Arc::clone(&schema) as _,
+            schema,
+        }
+    }
+
+    /// The schema as `infoschema/context.MetaOnlyInfoSchema`.
+    pub fn meta_only(&self) -> Arc<dyn tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync> {
+        Arc::clone(&self.meta_only)
+    }
+
+    /// The schema as `T`, when it is one.
+    pub fn downcast<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        Arc::clone(&self.schema).downcast().ok()
+    }
+}
+
+/// Go `TableLockReadContext.GetTableLocks`: the session's held table locks,
+/// keyed by table id.
+pub type LockedTables = Arc<BTreeMap<i64, tidb_model::TableLockTpInfo>>;
 
 /// Private configuration payload exposed only as the context's dereference
 /// target. Access and mutation remain on [`StmtContext`].
@@ -747,8 +796,9 @@ pub struct StmtContextData {
     /// the builtin is evaluated.
     active_roles: Option<Arc<Vec<(String, String)>>>,
     connection_id: Option<u64>,
-    /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
-    tidb_decode_key_snapshot: Option<Arc<tidb_infoschema::TidbDecodeKeySnapshot>>,
+    /// Go `expression.DecodeKeyFromString` over this statement's catalog
+    /// version, which `TIDB_DECODE_KEY` runs.
+    decode_key_from_string: Option<tidb_expr::DecodeKeyFromString>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
@@ -814,8 +864,8 @@ pub struct StmtContextData {
     process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
     sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
-    /// See [`StmtContextSessionState::fk_cascade_table_lock`].
-    fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
+    /// See [`StmtContextSessionState::locked_tables`].
+    locked_tables: Option<LockedTables>,
     /// Go expression BuildContext.NewCollationEnabled, captured for this task.
     new_collation_enabled: bool,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
@@ -1049,9 +1099,9 @@ pub struct StmtContextData {
     /// The statement snapshot consumed by Go's
     /// `checkIndexLookUpPushDownSupported` and system-variable policy.
     index_lookup_push_down_session: IndexLookupPushDownSession,
-    /// Go `domain.GetDomain(ctx).InfoSchema()` narrowed to the metadata read
-    /// by `planner/util/domainmisc.GetLatestIndexInfo`.
-    latest_index_schema: Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>>,
+    /// Go `sctx.GetLatestInfoSchema()`, which `metabuild` and
+    /// `planner/util/domainmisc.GetLatestIndexInfo` read.
+    latest_info_schema: Option<LatestInfoSchema>,
     /// Go `SessionVars.HypoIndexes`, which `EXPLAIN` planning and `SHOW
     /// CREATE TABLE` read.
     hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
@@ -1158,7 +1208,7 @@ pub struct StmtContextData {
     /// (`tidb_skip_missing_partition_stats`).
     skip_missing_partition_stats: bool,
     /// The sequences reachable from this statement, keyed by lowercase
-    /// `db.name`, plus the session's per-sequence `LASTVAL` record.
+    /// `db.name`.
     ///
     /// Go reaches a sequence through the info schema at evaluation time. Here
     /// the session hands over a snapshot instead, because every allocator is
@@ -1166,7 +1216,9 @@ pub struct StmtContextData {
     /// consuming a value through the snapshot moves the SAME counter the
     /// catalog holds. That is what keeps a `NEXTVAL` from being undone by a
     /// rollback or by a staged catalog swap.
-    sequences: Arc<SequenceSnapshot>,
+    sequences: Option<Arc<dyn SequenceSchema>>,
+    /// See [`StmtContextSessionState::sequence_state`].
+    sequence_state: SequenceState,
     /// Go `SessionVars.MemTracker` + `StmtCtx.MemTracker`: this statement's
     /// memory budget, which `tidb_mem_quota_query` is the limit of.
     ///
@@ -1857,11 +1909,8 @@ context_configuration! {
 
     /// Attaches the statement's latest-domain index metadata.
     #[must_use]
-    pub fn with_latest_index_schema(
-        mut self,
-        schema: Arc<tidb_infoschema::table_source::LatestIndexSchema>,
-    ) -> Self {
-        self.latest_index_schema = Some(schema);
+    pub fn with_latest_info_schema(mut self, schema: LatestInfoSchema) -> Self {
+        self.latest_info_schema = Some(schema);
         self
     }
 
@@ -2324,13 +2373,11 @@ context_configuration! {
         self
     }
 
-    /// Attaches the catalog metadata visible to this statement.
+    /// Attaches `TIDB_DECODE_KEY`'s decoder over the catalog visible to this
+    /// statement.
     #[must_use]
-    pub fn with_tidb_decode_key_snapshot(
-        mut self,
-        snapshot: Arc<tidb_infoschema::TidbDecodeKeySnapshot>,
-    ) -> Self {
-        self.tidb_decode_key_snapshot = Some(snapshot);
+    pub fn with_decode_key_from_string(mut self, decode: tidb_expr::DecodeKeyFromString) -> Self {
+        self.decode_key_from_string = Some(decode);
         self
     }
 
@@ -2515,7 +2562,11 @@ impl Default for ExecutorChunkSizes {
     }
 }
 
-pub use tidb_infoschema::SequenceSnapshot;
+pub use tidb_table::sequence::SequenceSchema;
+
+/// Go `SessionVars.SequenceState`: the value each sequence's last `NEXTVAL`
+/// returned in this session, which `LASTVAL` reads back.
+pub type SequenceState = Arc<Mutex<HashMap<i64, i64>>>;
 
 impl StmtContext {
     /// The same owner supplies declared types to planning and values to execution.
@@ -2607,7 +2658,7 @@ impl StmtContext {
             login_user: None,
             global_sysvars: None,
             connection_id: None,
-            tidb_decode_key_snapshot: None,
+            decode_key_from_string: None,
             advisory_locks: session.advisory_locks,
             selected_lock_keys: None,
             statement_clock: None,
@@ -2638,7 +2689,7 @@ impl StmtContext {
             mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
-            fk_cascade_table_lock: session.fk_cascade_table_lock,
+            locked_tables: session.locked_tables,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
             user_vars: None,
@@ -2711,7 +2762,7 @@ impl StmtContext {
             optimizer_fix_control: tidb_util::fixcontrol::OptimizerFixControl::default(),
             index_lookup_push_down_session:
                 IndexLookupPushDownSession::default(),
-            latest_index_schema: None,
+            latest_info_schema: None,
             hypo_indexes: None,
             hypo_tiflash_replicas: None,
             optimizer_cost_env: None,
@@ -2750,6 +2801,7 @@ impl StmtContext {
             skip_missing_partition_stats:
                 tidb_vardef::defaults::DEF_TIDB_SKIP_MISSING_PARTITION_STATS,
             sequences: session.sequences,
+            sequence_state: session.sequence_state,
             memory,
             executor_chunk_sizes: ExecutorChunkSizes::default(),
             enable_vectorized_expression: true,
@@ -3759,9 +3811,9 @@ impl StmtContext {
     /// Go's sequence builtins ask `RequestVerification` after resolving the
     /// sequence (`builtin_info.go:1551/1624/1691`): INSERT for `NEXTVAL` and
     /// `SETVAL`, SELECT for `LASTVAL`.
-    /// See [`StmtContextSessionState::fk_cascade_table_lock`].
-    pub fn fk_cascade_table_lock(&self) -> Option<&ForeignKeyCascadeLockCheck> {
-        self.fk_cascade_table_lock.as_ref()
+    /// See [`StmtContextSessionState::locked_tables`].
+    pub fn locked_tables(&self) -> Option<&LockedTables> {
+        self.locked_tables.as_ref()
     }
 
     /// The privilege answer the planner asks for a DEFINER view's definer.
@@ -3787,7 +3839,7 @@ impl StmtContext {
         let Some(check) = &self.sequence_privilege else {
             return Ok(());
         };
-        let Some((database, sequence)) = self.sequences.schema_and_name(path) else {
+        let Some((database, sequence)) = self.sequences().schema_and_name(path) else {
             return Ok(());
         };
         if check(database, sequence, insert) {
@@ -3882,16 +3934,24 @@ impl StmtContext {
     /// `NEXTVAL` reports that it needs a session rather than silently
     /// answering NULL.
     #[must_use]
-    pub fn with_sequences(mut self, sequences: Arc<SequenceSnapshot>) -> Self {
-        self.sequences = sequences;
+    pub fn with_sequences(mut self, sequences: Arc<dyn SequenceSchema>) -> Self {
+        self.sequences = Some(sequences);
         self
     }
 
     /// Validates a sequence name without consuming or otherwise mutating its
     /// allocator. Go resolves sequence builtins while building the expression
     /// tree, before an executor can evaluate an earlier projection item.
+    /// The sequences this statement reaches: none without an attached
+    /// snapshot.
+    fn sequences(&self) -> &dyn SequenceSchema {
+        self.sequences
+            .as_deref()
+            .unwrap_or(&tidb_table::sequence::NoSequences)
+    }
+
     pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
-        self.sequences.validate_path(path)
+        self.sequences().validate_path(path)
     }
 
     /// See [`StmtContext::with_cte_max_recursion_depth`].
@@ -3986,8 +4046,8 @@ impl StmtContext {
 
     /// Returns the latest-domain index metadata captured for this statement.
     #[must_use]
-    pub fn latest_index_schema(&self) -> Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>> {
-        self.latest_index_schema.clone()
+    pub fn latest_info_schema(&self) -> Option<&LatestInfoSchema> {
+        self.latest_info_schema.as_ref()
     }
 
     /// Resolved `tidb_executor_concurrency` for this statement.
@@ -5913,10 +5973,10 @@ impl Columns for StmtContext {
     }
 
     fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
-        let Some(snapshot) = &self.tidb_decode_key_snapshot else {
+        let Some(decode) = &self.decode_key_from_string else {
             return input.to_vec();
         };
-        match snapshot.decode(input, &self.time_zone()) {
+        match decode(input, &self.time_zone()) {
             Ok(decoded) => decoded,
             Err(message) => {
                 self.append_warning(1105, &message);
@@ -6208,16 +6268,15 @@ impl Columns for StmtContext {
     }
 
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences.resolve(path)?;
+        let sequence = self.sequences().resolve(path)?;
         self.check_sequence_privilege(path, true)?;
         let value = sequence.allocator.next_val().map_err(|_| {
-            let (database, name) = self.sequences.key(path);
+            let (database, name) = self.sequences().key(path);
             tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;
         // Go records the value in the SESSION's sequence state, which is what
         // `LASTVAL` reads back.
-        self.sequences
-            .last_values
+        self.sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(sequence.id, value);
@@ -6225,11 +6284,10 @@ impl Columns for StmtContext {
     }
 
     fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences.resolve(path)?;
+        let sequence = self.sequences().resolve(path)?;
         self.check_sequence_privilege(path, false)?;
         Ok(self
-            .sequences
-            .last_values
+            .sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&sequence.id)
@@ -6238,12 +6296,12 @@ impl Columns for StmtContext {
     }
 
     fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences.resolve(path)?;
+        let sequence = self.sequences().resolve(path)?;
         self.check_sequence_privilege(path, true)?;
         // Go `SetSequenceVal`: the reported value is NULL when the stored
         // counter was already at or past `value` (`alreadySatisfied`).
         let reported = sequence.allocator.set_val(value).map_err(|_| {
-            let (database, name) = self.sequences.key(path);
+            let (database, name) = self.sequences().key(path);
             tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;
         Ok(reported.map_or(Datum::Null, Datum::Int))

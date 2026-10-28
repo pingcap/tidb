@@ -88,19 +88,6 @@ impl DomainTestSessions for Domain {
     }
 }
 
-impl Domain {
-    /// This node's DDL notifier, owning: what Go's
-    /// `statstestutil.HandleNextDDLEventWithTxn` runs until the statistics
-    /// subscriber has handled every pending event. The caller stops it.
-    pub(crate) fn owned_ddl_notifier_for_test(
-        self: &Arc<Self>,
-    ) -> Arc<tidb_ddl_notifier::DdlNotifier> {
-        let notifier = super::ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
-        tidb_owner::Listener::on_become_owner(notifier.as_ref());
-        notifier
-    }
-}
-
 impl<'s> ClusterServerSession<'s> {
     /// Runs `body` over the driver session with a fresh committed snapshot
     /// bound to its tables, over the current schema: what a test that looks
@@ -190,7 +177,7 @@ impl<'s> ClusterServerSession<'s> {
             .domain_services()
             .expect("a node session holds its domain's services")
             .clone();
-        services.analyze = factory.analyze_service_over(Arc::clone(&analyze));
+        services.analyze = super::statistics::analyze_service_over(factory, Arc::clone(&analyze));
         self.session.install_domain_services(services);
         self.node.domain.set_analyze(analyze);
     }

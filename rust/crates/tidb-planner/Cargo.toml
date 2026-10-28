@@ -28,7 +28,7 @@ tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-infoschema = { path = "../tidb-infoschema" }
-tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-table = { path = "../tidb-table" }
 tidb-metadef = { path = "../tidb-metadef" }

@@ -12,17 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/sessionctx/stmtctx`: the statement-scoped state a session hands
-//! every executor and planner.
+//! Go `pkg/sessionctx/stmtctx`: the statement-scoped state Go keeps below
+//! the session variables, which `pkg/sessionctx/variable` imports.
 
-pub use tidb_variable::used_stats;
-pub mod statement_pushdown;
-pub mod advisory_lock_state;
-pub mod explain_format;
-pub mod plan_trace;
-pub mod show_retrieval;
-pub mod select_lock;
-mod stmt_context;
-pub use stmt_context::*;
-mod trait_impls;
-pub use trait_impls::new_metabuild_context_with_sctx;
+pub mod used_stats;

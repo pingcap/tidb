@@ -19,18 +19,8 @@
 
 use crate::*;
 
-/// The session's answer to "may this definer hold this privilege on this
-/// object": `(user, host, database, table, column, privilege)`.
-pub type ViewDefinerPrivilegeCheck =
-    Arc<dyn Fn(&str, &str, &str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
-
-/// The session's answer to "does this session hold this privilege": `(database,
-/// table, column, privilege)` for its own account with its active roles.
-pub type SessionPrivilegeCheck =
-    Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
-
-/// Records one stored table id on the statement's metadata-lock map.
-pub type MdlRelatedTableRecorder = Arc<dyn Fn(i64) + Send + Sync>;
+use tidb_sessionctx::{SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
+use tidb_variable::MdlRelatedTableRecorder;
 
 
 /// An owned snapshot of the catalog fields Go's logical [`PlanBuilder`]

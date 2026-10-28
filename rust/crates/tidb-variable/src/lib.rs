@@ -23,7 +23,6 @@ pub mod session_vars;
 pub mod set_hooks;
 pub mod slow_log;
 pub mod slow_log_rules;
-pub mod used_stats;
 pub mod statusvar;
 pub mod sysvar;
 pub mod varsutil;
@@ -31,7 +30,7 @@ pub mod vars;
 
 pub use error::VarError;
 pub use global_accessor::{GlobalVarAccessor, MockGlobalAccessor};
-pub use vars::{SessionVars, TlsConnectionState};
+pub use vars::{MdlRelatedTableRecorder, SessionVars, TlsConnectionState};
 
 pub mod global_accessor;
 

@@ -17,30 +17,75 @@
 //! sessions they run internal SQL on. The connection's store half, which
 //! sessions hold, is the parent module.
 
-use super::*;
+pub mod ddl_notifier;
+mod ru_stats_writer;
+pub mod schema_lease;
+mod stat;
+pub mod stats_maintenance;
 
-pub(crate) struct ClusterDataLockWaits {
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use chrono::{Datelike, Timelike, Utc};
+use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_cluster::schema_validator::SchemaValidator;
+use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_cluster::table_from_meta::TableAutoIds;
+use tidb_ddl::worker::ClusterDdl;
+use tidb_domain::global_sysvars::GlobalSysvars;
+use tidb_domain::historical_stats::{
+    HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
+    StatsHandle as HistoricalStatsHandle, TableMeta,
+};
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
+use tidb_exec::stats_watch::SharedStats;
+use tidb_executor::process::ProcessRegistry;
+use tidb_executor::table_size_stats::TableStorageStatsProvider;
+use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_privilege::PrivilegeRegistry;
+use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
+
+use crate::bdr_role_store;
+use crate::cluster_account_seam::ClusterAccountWriter;
+use crate::cluster_analyze_seam::ClusterAnalyze;
+use crate::cluster_session::{
+    cluster_session_catalog, detached_storage, KvTableTemplates, SkippedTable,
+};
+use crate::cluster_stats_lock_seam::ClusterStatsLock;
+use crate::cluster_sysvar_seam::ClusterSysvarWriter;
+use crate::cluster_transactions::ClusterTransactions;
+use crate::ddl_job_history_store;
+use crate::schema_sync;
+use crate::session_transaction::global_lock_wait_timeout;
+use crate::sys_session::{stats_session_error, system_process_trackers};
+use crate::util::{is_analyze_table_sql, sql_string_literal};
+
+pub struct ClusterDataLockWaits {
     transactions: Arc<dyn ClusterTransactions>,
 }
 
-pub(crate) struct ClusterStatisticsItemLoader {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
-    pub(crate) stats: Arc<SharedStats>,
-    pub(crate) global_vars: GlobalSysvars,
+pub struct ClusterStatisticsItemLoader {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub catalog: Arc<SharedClusterCatalog>,
+    pub stats: Arc<SharedStats>,
+    pub global_vars: GlobalSysvars,
 }
 
 /// The domain loading resources outlive each connection's schema catalog.
-pub(crate) struct ClusterStatisticsLoading {
-    pub(crate) loader: Arc<ClusterStatisticsItemLoader>,
-    pub(crate) workers: Arc<tidb_executor::driver::StatisticsLoadWorkers>,
-    pub(crate) view: Arc<tidb_executor::driver::StatisticsView>,
+pub struct ClusterStatisticsLoading {
+    pub loader: Arc<ClusterStatisticsItemLoader>,
+    pub workers: Arc<tidb_executor::driver::StatisticsLoadWorkers>,
+    pub view: Arc<tidb_executor::driver::StatisticsView>,
 }
 
 impl ClusterStatisticsLoading {
     /// The statistics handle one session plans from: the domain's view, and
     /// the storage loader behind the synchronous-load workers.
-    pub(crate) fn handle(&self) -> Arc<tidb_stats_handle::StatsHandle> {
+    pub fn handle(&self) -> Arc<tidb_stats_handle::StatsHandle> {
         let handle = Arc::new(tidb_stats_handle::StatsHandle::default());
         handle.set_statistics_view(Arc::clone(&self.view));
         handle.set_item_loader(self.loader.clone(), Arc::clone(&self.workers));
@@ -71,20 +116,20 @@ impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
     }
 }
 
-pub(crate) struct ClusterColumnStatsUsageProvider {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
+pub struct ClusterColumnStatsUsageProvider {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub catalog: Arc<SharedClusterCatalog>,
 }
 
-pub(crate) struct ClusterTableStorageStatsProvider {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
+pub struct ClusterTableStorageStatsProvider {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub catalog: Arc<SharedClusterCatalog>,
     /// Go `cache.TableRowStatsCache`
     /// (`pkg/statistics/handle/cache/stats_table_row_cache.go`): the size
     /// cache the information-schema `TABLES`/`PARTITIONS` readers refresh in
     /// batch and then serve from. Go keeps one process-wide instance; this
     /// node owns one per provider.
-    pub(crate) row_stats_cache: StatsTableRowCache,
+    pub row_stats_cache: StatsTableRowCache,
 }
 
 impl ClusterTableStorageStatsProvider {
@@ -211,7 +256,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
             // Go `updateStatsCacheIfNeed`.
             tidb_util::logutil::bg_logger().warn(
                 "cannot update stats cache for tables",
-                &[crate::domain::zap_error(error)],
+                &[tidb_util::logutil::zap_error(error)],
             );
         }
 
@@ -226,11 +271,11 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
     }
 }
 
-pub(crate) struct ClusterApproximateTableCountProvider {
-    transactions: Arc<dyn ClusterTransactions>,
-    cache: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
-    cleanup_tx: std::sync::mpsc::SyncSender<bool>,
-    cleanup_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+pub struct ClusterApproximateTableCountProvider {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub cache: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+    pub cleanup_tx: std::sync::mpsc::SyncSender<bool>,
+    pub cleanup_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl ClusterApproximateTableCountProvider {
@@ -339,13 +384,13 @@ impl tidb_exec::real_tikv_analyze::ApproximateTableCountProvider
     }
 }
 
-pub(crate) struct ClusterAnalyzeStatusProvider {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
-    pub(crate) approximate_counts: Arc<ClusterApproximateTableCountProvider>,
+pub struct ClusterAnalyzeStatusProvider {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub catalog: Arc<SharedClusterCatalog>,
+    pub approximate_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
-impl crate::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
+impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
     fn load_analyze_status(
         &self,
         resource_group: &str,
@@ -404,7 +449,7 @@ pub(crate) fn exact_physical_row_count(
     }
 }
 
-impl crate::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
+impl tidb_executor::show::stats::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
     fn load_column_stats_usage(
         &self,
         location: &tidb_datatype::SessionTimeZone,
@@ -444,7 +489,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
         let skipped_column_types = self
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
-            .map(|value| crate::varsutil::parse_analyze_skip_column_types(&value))
+            .map(|value| tidb_variable::varsutil::parse_analyze_skip_column_types(&value))
             .unwrap_or_default();
         for requested in items {
             let item = requested.table_item_id;
@@ -546,12 +591,12 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
     }
 }
 
-impl crate::DataLockWaitsProvider for ClusterDataLockWaits {
-    fn lock_waits(&self) -> Result<Vec<crate::DataLockWait>, String> {
+impl tidb_executor::memtable_reader::DataLockWaitsProvider for ClusterDataLockWaits {
+    fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
         self.transactions.lock_waits().map(|entries| {
             entries
                 .into_iter()
-                .map(|entry| crate::DataLockWait {
+                .map(|entry| tidb_executor::memtable_reader::DataLockWait {
                     txn: entry.txn,
                     wait_for_txn: entry.wait_for_txn,
                     key: entry.key,
@@ -568,145 +613,150 @@ impl crate::DataLockWaitsProvider for ClusterDataLockWaits {
 /// it opens, one cluster-backed [`Session`] per authenticated connection.
 /// Go `createSessionFunc`: how the session package opens one internal
 /// session over this domain for its system-session pool.
-pub type SysSessionOpener = fn(
-    &Arc<Domain>,
-    u64,
-) -> Result<Arc<dyn tidb_domain_core::sys_session::DomainSysSession>, String>;
+pub type SysSessionOpener =
+    fn(&Arc<Domain>, u64) -> Result<Arc<dyn crate::sys_session::DomainSysSession>, String>;
 
 pub struct Domain {
     /// The session package's opener of this domain's internal sessions.
     pub(crate) sys_session_opener: SysSessionOpener,
-    pub(crate) global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
-    pub(crate) bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
-    pub(crate) binding_session_factory: Weak<Domain>,
+    pub global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
+    pub bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
+    pub binding_session_factory: Weak<Domain>,
     /// The `SHOW STATUS` providers this domain registered as it started its
     /// DDL and binding handle, unregistered when it closes.
-    statistics: Vec<Arc<dyn crate::statusvar::Statistics>>,
+    statistics: Vec<Arc<dyn tidb_variable::statusvar::Statistics>>,
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
+    pub transactions: Arc<dyn ClusterTransactions>,
     /// Storage-backed wait-for graph exposed by `DATA_LOCK_WAITS`.
-    pub(crate) data_lock_waits: Arc<ClusterDataLockWaits>,
+    pub data_lock_waits: Arc<ClusterDataLockWaits>,
     /// The route a stored-schema change this node can express takes.
-    pub(crate) ddl: Arc<dyn ClusterDdl>,
+    pub ddl: Arc<dyn ClusterDdl>,
     /// The route a stored-account change takes; see
-    /// [`crate::domain::cluster_account_seam`].
-    pub(crate) accounts: Arc<dyn ClusterAccountWriter>,
+    /// [`crate::cluster_account_seam`].
+    pub accounts: Arc<dyn ClusterAccountWriter>,
     /// The route a `SET GLOBAL` change takes; see
-    /// [`crate::domain::cluster_sysvar_seam`].
-    pub(crate) sysvars: Arc<dyn ClusterSysvarWriter>,
+    /// [`crate::cluster_sysvar_seam`].
+    pub sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The route an `ANALYZE TABLE` takes; see
-    /// [`crate::domain::cluster_analyze_seam`].
+    /// [`crate::cluster_analyze_seam`].
     analyze: std::sync::RwLock<Arc<dyn ClusterAnalyze>>,
     /// The route a persisted statistics-lock operation takes.
-    pub(crate) stats_lock: Arc<dyn ClusterStatsLock>,
+    pub stats_lock: Arc<dyn ClusterStatsLock>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<SharedClusterCatalog>,
     /// Go's one `privilege.Manager` per `Domain`, here loaded from the
     /// cluster's own `mysql.*`.
-    pub(crate) privileges: PrivilegeRegistry,
+    pub privileges: PrivilegeRegistry,
     /// Go's one `sessmgr.Manager` per TiDB instance: what `SHOW PROCESSLIST`
     /// reads and `KILL` reaches into.
-    pub(crate) processes: ProcessRegistry,
+    pub processes: ProcessRegistry,
     /// Domain lifetime: independent of each connection's rebuilt catalog.
-    pub(crate) plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
+    pub plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
     /// Go `kv.Storage.GetMPPClient()`: the TiFlash MPP client this node's
     /// sessions serve columnar reads with, when the node has one.
-    pub(crate) mpp_client: Option<Arc<dyn tidb_txnkv::MppClient>>,
+    pub mpp_client: Option<Arc<dyn tidb_txnkv::MppClient>>,
     /// Go `kv.Storage.GetClient()`: the coprocessor client this node's
     /// sessions send built requests through, when it was given one. `None`
     /// keeps every scan on the raw key/value path.
-    pub(crate) kv_client: Option<Arc<dyn tidb_txnkv::Client>>,
+    pub kv_client: Option<Arc<dyn tidb_txnkv::Client>>,
     /// This node's server-info syncer, which
     /// `information_schema.TIDB_SERVERS_INFO` reads. `None` leaves that
     /// table empty, which is the honest answer for a node that never
     /// established an identity.
-    pub(crate) server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    pub server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     server_identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     /// Go `Domain.connIDAllocator`: the node's one connection-ID allocator,
     /// shared with the SQL listener and drawn from by internal processes
     /// (auto-analyze's `NextConnID`).
     connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
-    pub(crate) cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
-    pub(crate) cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
-    pub(crate) cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
-    pub(crate) cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    pub cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
+    pub cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    pub cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
+    pub cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
-    pub(crate) global_vars: GlobalSysvars,
+    pub global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
     /// node reports them once at startup instead of per connection.
     boot_skipped: Vec<SkippedTable>,
     /// This node's loaded tables' `mysql.stats_*`, republished whole by the
     /// stats reload thread [`run_cluster_session_node`] owns. Plumbing only:
     /// the estimator that will read this is a parallel unit.
-    pub(crate) stats: Arc<SharedStats>,
+    pub stats: Arc<SharedStats>,
     /// Go's per-`tidb-server` auto-increment allocators. Held HERE, above the
     /// per-session catalogs, because a reserved id range must outlive the
-    /// `KvTable` that was handing it out; see [`crate::domain::cluster_auto_id_seam`].
-    pub(crate) auto_ids: Arc<dyn TableAutoIds>,
+    /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
+    pub auto_ids: Arc<dyn TableAutoIds>,
     /// Process-owned spill authority inherited by every connection.
-    pub(crate) spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
+    pub spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     /// Process-wide memory admission authority installed before listener bind.
-    pub(crate) mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    pub mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     /// The catalog versions live statements and transactions still read at
     /// -- the MDL gate the schema-sync acknowledger consults before telling
     /// a Go DDL owner this node has the new schema. See
     /// [`schema_sync::SchemaPinRegistry`].
-    pub(crate) schema_pins: Arc<schema_sync::SchemaPinRegistry>,
+    pub schema_pins: Arc<schema_sync::SchemaPinRegistry>,
     /// The node's schema validator (Go `Domain.SchemaValidator`), which
     /// every commit asks whether its schema version is still in force. `None`
     /// is a tier with no cluster schema to follow, which commits unchecked.
-    pub(crate) schema_validator: Option<Arc<SchemaValidator>>,
+    pub schema_validator: Option<Arc<SchemaValidator>>,
     /// One live planner view over the domain's canonical statistics.
-    pub(crate) statistics_view: Arc<tidb_executor::driver::StatisticsView>,
+    pub statistics_view: Arc<tidb_executor::driver::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
-    pub(crate) stats_load_workers: std::sync::OnceLock<Arc<tidb_executor::driver::StatisticsLoadWorkers>>,
+    pub stats_load_workers: std::sync::OnceLock<Arc<tidb_executor::driver::StatisticsLoadWorkers>>,
     /// Fully built tables of one schema version, shared by every session
     /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
     /// shared `infoschema`. A session clones its table and swaps in its own
     /// storage seam, so building ~700 restored tables happens once per DDL
     /// instead of once per CONNECTION (~30MB retained each before this).
-    pub(crate) session_kv_cache: Arc<Mutex<KvTableTemplates>>,
+    pub session_kv_cache: Arc<Mutex<KvTableTemplates>>,
     /// The store's regions every session of this node reads (Go
     /// `kv.SplittableStore` and the region cache).
-    pub(crate) region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go Domain's single workload-repository worker.
-    pub(crate) workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
+    pub workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
-    pub(crate) stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+    pub stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     /// Go Domain's index-GC and positive-lease usage-dump workers.
-    pub(crate) stats_usage_workers: std::sync::OnceLock<StatsUsageWorkers>,
+    pub stats_usage_workers: std::sync::OnceLock<StatsUsageWorkers>,
     /// Go Domain's statistics owner, used by analyze-job history GC and
     /// dead-instance cleanup.
-    pub(crate) stats_owner: Option<Arc<dyn tidb_owner::Manager>>,
+    pub stats_owner: Option<Arc<dyn tidb_owner::Manager>>,
     /// Go Domain's capacity-200 advanced system-session pool. It is installed
     /// after stable `Arc` ownership because its factory retains only a weak
     /// reference back to the domain-shaped session factory.
     pub(crate) advanced_sys_session_pool:
-        std::sync::OnceLock<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
+        std::sync::OnceLock<Arc<crate::sys_session::DomainSysSessionPool>>,
     /// Pinned Go Domain's durable DDL notifier, registered before the stats
     /// owner campaigns and driven by that owner's lifecycle.
     ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
-    pub(crate) analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
+    pub analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `Domain.requestUnitsWriterLoop`.
     ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
-    pub(crate) bdr_role_store: std::sync::OnceLock<Arc<dyn crate::BdrRoleStore>>,
-    pub(crate) ddl_job_history_store: std::sync::OnceLock<Arc<dyn crate::DdlJobHistoryStore>>,
+    pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_executor::admin::BdrRoleStore>>,
+    pub ddl_job_history_store:
+        std::sync::OnceLock<Arc<dyn tidb_executor::memtable_reader::DdlJobHistoryStore>>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
-    pub(crate) auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
+    pub auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
-    pub(crate) historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+    pub historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
     /// Go `Domain.LoadSigningCertLoop`'s reload thread.
     signing_cert_loop: std::sync::OnceLock<SigningCertLoop>,
+    /// Go `Domain.expensiveQueryHandle`, built over the domain's exit
+    /// (`expensivequery.NewExpensiveQueryHandle(do.exit)`).
+    expensive_query_handle: Arc<tidb_expensivequery::Handle>,
+    /// Go `do.exit` as the expensive-query handle waits on it: dropped when
+    /// the domain closes.
+    expensive_query_exit: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     /// Go's process-global approximate table-count cache.
-    pub(crate) approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
+    pub approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
     /// Go StatsHandle's one auto-analyze priority queue. The refresher creates
     /// it lazily because the source needs a weak reference to this factory.
     auto_analyze_priority_queue: Arc<
@@ -741,14 +791,22 @@ impl Domain {
     }
 
     /// The domain's ANALYZE client.
-    pub(crate) fn analyze(&self) -> Arc<dyn ClusterAnalyze> {
-        Arc::clone(&self.analyze.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+    pub fn analyze(&self) -> Arc<dyn ClusterAnalyze> {
+        Arc::clone(
+            &self
+                .analyze
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     /// Replaces the domain's ANALYZE client.
-    #[cfg(test)]
-    pub(crate) fn set_analyze(&self, analyze: Arc<dyn ClusterAnalyze>) {
-        *self.analyze.write().unwrap_or_else(std::sync::PoisonError::into_inner) = analyze;
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn set_analyze(&self, analyze: Arc<dyn ClusterAnalyze>) {
+        *self
+            .analyze
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = analyze;
     }
 }
 
@@ -766,7 +824,7 @@ impl Domain {
     /// sessions [`Self::sys_session_opener`] opens.
     pub fn advanced_sys_session_pool(
         self: &Arc<Self>,
-    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool> {
+    ) -> Arc<crate::sys_session::DomainSysSessionPool> {
         Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
             let domain = Arc::downgrade(self);
             let open = self.sys_session_opener;
@@ -796,7 +854,7 @@ impl Domain {
     /// Install the node-owned global-binding authority before opening sessions.
     pub fn with_bindings(
         mut self,
-        bindings: Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>,
+        bindings: Arc<dyn crate::cluster_binding_seam::ClusterBindings>,
     ) -> Arc<Self> {
         self.bindings = Some(Arc::clone(&bindings));
         // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.
@@ -839,6 +897,7 @@ impl Domain {
         let data_lock_waits = Arc::new(ClusterDataLockWaits {
             transactions: Arc::clone(&transactions),
         });
+        let (expensive_query_exit, expensive_query_exited) = std::sync::mpsc::channel();
         let historical_stats_worker =
             Arc::new(HistoricalStatsWorker::new(ClusterHistoricalInfoSchema {
                 catalog: Arc::clone(&catalog),
@@ -868,7 +927,7 @@ impl Domain {
             kv_client: None,
             server_info: None,
             server_identity: None,
-            connection_ids: crate::domain::session_api::new_connection_id_allocator(
+            connection_ids: crate::connection_ids::new_connection_id_allocator(
                 &tidb_config::config_tree::Config::default(),
                 None,
             ),
@@ -903,6 +962,8 @@ impl Domain {
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),
+            expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(expensive_query_exited)),
+            expensive_query_exit: Mutex::new(Some(expensive_query_exit)),
             approximate_table_counts,
             auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),
             auto_analyze_refresher: std::sync::OnceLock::new(),
@@ -1148,7 +1209,7 @@ impl Domain {
         result
     }
 
-    pub(crate) fn check_auto_analyze_windows_at(&self, now: chrono::DateTime<Utc>) {
+    pub fn check_auto_analyze_windows_at(&self, now: chrono::DateTime<Utc>) {
         let Ok(parameters) = self.auto_analyze_refresh_parameters() else {
             return;
         };
@@ -1189,10 +1250,7 @@ impl Domain {
     /// Starts Go Domain's usage workers after the factory has stable `Arc`
     /// ownership. Index GC runs for every lease; delta and column dumps run
     /// only for a positive lease.
-    pub fn start_stats_usage_workers(
-        self: &Arc<Self>,
-        lease: crate::domain::node_config::StatsLease,
-    ) {
+    pub fn start_stats_usage_workers(self: &Arc<Self>, lease: crate::node_config::StatsLease) {
         if self.stats_usage_workers.get().is_some() {
             return;
         }
@@ -1205,9 +1263,9 @@ impl Domain {
     /// `statsLease > 0`; zero and negative leases return before this worker.
     pub fn start_analyze_jobs_cleanup_worker(
         self: &Arc<Self>,
-        lease: crate::domain::node_config::StatsLease,
+        lease: crate::node_config::StatsLease,
     ) {
-        let crate::domain::node_config::StatsLease::Positive(lease) = lease else {
+        let crate::node_config::StatsLease::Positive(lease) = lease else {
             return;
         };
         if self.analyze_jobs_cleanup_worker.get().is_some() {
@@ -1268,11 +1326,8 @@ impl Domain {
 
     /// Starts pinned Go `autoAnalyzeWorker`. Like Go, only a positive stats
     /// lease starts it; every tick checks the process switch and ownership.
-    pub fn start_auto_analyze_worker(
-        self: &Arc<Self>,
-        lease: crate::domain::node_config::StatsLease,
-    ) {
-        let crate::domain::node_config::StatsLease::Positive(lease) = lease else {
+    pub fn start_auto_analyze_worker(self: &Arc<Self>, lease: crate::node_config::StatsLease) {
+        let crate::node_config::StatsLease::Positive(lease) = lease else {
             return;
         };
         if self.auto_analyze_worker.get().is_some() {
@@ -1283,7 +1338,11 @@ impl Domain {
             .set(AutoAnalyzeWorker::start(self, lease));
     }
 
-    pub(crate) fn handle_auto_analyze_tick(self: &Arc<Self>, run_auto_analyze: bool, stats_lease: Duration) {
+    pub fn handle_auto_analyze_tick(
+        self: &Arc<Self>,
+        run_auto_analyze: bool,
+        stats_lease: Duration,
+    ) {
         let is_owner = self
             .stats_owner
             .as_ref()
@@ -1340,7 +1399,7 @@ impl Domain {
                     plan.mutations,
                     read_ts,
                     resource_group,
-                    crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                    crate::session_transaction::restricted_transaction_options(&self.global_vars),
                 )
                 .map_err(|error| error.message)?;
             Ok(())
@@ -1368,7 +1427,7 @@ impl Domain {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn dump_stats_delta_to_kv_parts(
+    pub fn dump_stats_delta_to_kv_parts(
         stats_usage: &tidb_stats_handle_usage::StatsUsageHandle,
         transactions: &dyn ClusterTransactions,
         catalog_store: &SharedClusterCatalog,
@@ -1436,7 +1495,7 @@ impl Domain {
                 true,
                 false,
                 resource_group,
-                crate::domain::session_transaction::restricted_transaction_options(global_vars),
+                crate::session_transaction::restricted_transaction_options(global_vars),
             )?;
             let read_ts = transaction.start_ts();
             let staged = MutationBuffer::new();
@@ -1533,7 +1592,7 @@ impl Domain {
                             true,
                             false,
                             resource_group,
-                            crate::domain::session_transaction::restricted_transaction_options(global_vars),
+                            crate::session_transaction::restricted_transaction_options(global_vars),
                         )?;
                         let staged = MutationBuffer::new();
                         transaction.bind_mutation_buffer(&staged);
@@ -1623,7 +1682,7 @@ impl Domain {
                                     "tableID",
                                     tidb_log::Value::I64(update.table_id),
                                 ),
-                                crate::domain::zap_error(error),
+                                tidb_util::logutil::zap_error(error),
                             ],
                         );
                     }
@@ -1742,7 +1801,7 @@ impl Domain {
 
     /// Installs the node's connection-ID allocator, built from the node's
     /// configuration and server identity (see
-    /// [`crate::domain::session_api::new_connection_id_allocator`]).
+    /// [`crate::connection_ids::new_connection_id_allocator`]).
     #[must_use]
     pub fn with_connection_ids(
         mut self,
@@ -1777,8 +1836,8 @@ impl Domain {
     }
 
     /// Go `variable.RegisterStatistics`, kept for the domain's close.
-    fn register_statistics(&mut self, statistics: Arc<dyn crate::statusvar::Statistics>) {
-        crate::statusvar::register_statistics(Arc::clone(&statistics));
+    fn register_statistics(&mut self, statistics: Arc<dyn tidb_variable::statusvar::Statistics>) {
+        tidb_variable::statusvar::register_statistics(Arc::clone(&statistics));
         self.statistics.push(statistics);
     }
 
@@ -1833,7 +1892,7 @@ impl Domain {
     /// reached its stable process lifetime.
     pub fn campaign_stats_owner(
         self: &Arc<Self>,
-        stats_lease: crate::domain::node_config::StatsLease,
+        stats_lease: crate::node_config::StatsLease,
     ) -> Result<(), String> {
         let owner = self
             .stats_owner
@@ -1878,18 +1937,18 @@ impl Domain {
     }
 }
 
-pub(crate) struct StatsUsageWorkers {
-    pub(crate) stop: Arc<UsageWorkerStop>,
-    pub(crate) threads: Vec<std::thread::JoinHandle<()>>,
-    pub(crate) flush_on_drop: bool,
+pub struct StatsUsageWorkers {
+    pub stop: Arc<UsageWorkerStop>,
+    pub threads: Vec<std::thread::JoinHandle<()>>,
+    pub flush_on_drop: bool,
 }
 
-pub(crate) struct AnalyzeJobsCleanupWorker {
+pub struct AnalyzeJobsCleanupWorker {
     stop: Arc<UsageWorkerStop>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-pub(crate) struct AutoAnalyzeWorker {
+pub struct AutoAnalyzeWorker {
     stop: Arc<UsageWorkerStop>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -1902,7 +1961,7 @@ impl AutoAnalyzeWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = crate::domain::session_api::sql_worker_thread("auto-analyze")
+        let thread = tidb_util::worker_stack::sql_worker_thread("auto-analyze")
             .spawn(move || loop {
                 if running.wait(stats_lease) {
                     return;
@@ -1945,7 +2004,7 @@ impl AnalyzeJobsCleanupWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = crate::domain::session_api::sql_worker_thread("analyze-jobs-cleanup")
+        let thread = tidb_util::worker_stack::sql_worker_thread("analyze-jobs-cleanup")
             .spawn(move || {
                 let gc_interval = Duration::from_secs(60 * 60);
                 let cleanup_interval = stats_lease.saturating_mul(100);
@@ -1997,7 +2056,7 @@ impl AnalyzeJobsCleanupWorker {
                                     {
                                         tidb_util::logutil::bg_logger().warn(
                                             "cleanup analyze jobs on dead instances failed",
-                                            &[crate::domain::zap_error(error)],
+                                            &[tidb_util::logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -2017,13 +2076,16 @@ impl AnalyzeJobsCleanupWorker {
 
 // Go `Domain.analyzeJobsCleanupWorker`'s lines.
 pub(crate) fn log_gc_analyze_history_failed(error: impl std::fmt::Display) {
-    tidb_util::logutil::bg_logger().warn("gc analyze history failed", &[crate::domain::zap_error(error)]);
+    tidb_util::logutil::bg_logger().warn(
+        "gc analyze history failed",
+        &[tidb_util::logutil::zap_error(error)],
+    );
 }
 
 pub(crate) fn log_cleanup_analyze_jobs_current_instance_failed(error: impl std::fmt::Display) {
     tidb_util::logutil::bg_logger().warn(
         "cleanup analyze jobs on current instance failed",
-        &[crate::domain::zap_error(error)],
+        &[tidb_util::logutil::zap_error(error)],
     );
 }
 
@@ -2051,13 +2113,13 @@ pub(crate) fn timestamp_before(duration: Duration) -> Result<tidb_datatype::Time
         .map_err(|error| error.to_string())
 }
 
-pub(crate) struct UsageWorkerStop {
-    pub(crate) stopped: Mutex<bool>,
-    pub(crate) wake: Condvar,
+pub struct UsageWorkerStop {
+    pub stopped: Mutex<bool>,
+    pub wake: Condvar,
 }
 
 impl UsageWorkerStop {
-    pub(crate) fn wait(&self, interval: Duration) -> bool {
+    pub fn wait(&self, interval: Duration) -> bool {
         let stopped = self
             .stopped
             .lock()
@@ -2074,7 +2136,7 @@ impl UsageWorkerStop {
 }
 
 impl StatsUsageWorkers {
-    fn start(factory: &Arc<Domain>, lease: crate::domain::node_config::StatsLease) -> Self {
+    fn start(factory: &Arc<Domain>, lease: crate::node_config::StatsLease) -> Self {
         let stop = Arc::new(UsageWorkerStop {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
@@ -2088,7 +2150,7 @@ impl StatsUsageWorkers {
             Domain::gc_index_usage,
         )];
         let mut flush_on_drop = false;
-        if let crate::domain::node_config::StatsLease::Positive(lease) = lease {
+        if let crate::node_config::StatsLease::Positive(lease) = lease {
             flush_on_drop = true;
             let jitter = || {
                 Duration::from_nanos(tidb_util::fastrand::uint64_n(
@@ -2118,7 +2180,7 @@ impl StatsUsageWorkers {
     }
 
     /// Stops and joins every usage worker before Go's shutdown delta flush.
-    pub(crate) fn stop_before_shutdown_flush(self) -> bool {
+    pub fn stop_before_shutdown_flush(self) -> bool {
         let flush = self.flush_on_drop;
         drop(self);
         flush
@@ -2141,9 +2203,16 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for Domain {
     fn drop(&mut self) {
+        // Go `Domain.Close`: `close(do.exit)` stops the expensive-query handle.
+        drop(
+            self.expensive_query_exit
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
         // Go `ddl.close` and `Domain.Close`: `variable.UnregisterStatistics`.
         for statistics in &self.statistics {
-            crate::statusvar::unregister_statistics(statistics);
+            tidb_variable::statusvar::unregister_statistics(statistics);
         }
         self.plan_cache_invalidation.stop_maintenance();
         // Positive-lease maintenance has already joined. For zero/negative
@@ -2166,19 +2235,21 @@ impl Drop for Domain {
         if flush_stats {
             if let Err(error) = self.dump_stats_delta_to_kv(true, &[], "default") {
                 // Go `Handle.FlushStats`.
-                tidb_stats_handle_logutil::stats_logger()
-                    .warn("dump stats delta fail", &[crate::domain::zap_error(error)]);
+                tidb_stats_handle_logutil::stats_logger().warn(
+                    "dump stats delta fail",
+                    &[tidb_util::logutil::zap_error(error)],
+                );
             }
         }
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct ClusterHistoricalInfoSchema {
-    catalog: Arc<SharedClusterCatalog>,
+pub struct ClusterHistoricalInfoSchema {
+    pub catalog: Arc<SharedClusterCatalog>,
 }
 
-pub(crate) struct ClusterHistoricalSchemaView {
+pub struct ClusterHistoricalSchemaView {
     catalog: ClusterCatalog,
 }
 
@@ -2237,12 +2308,12 @@ impl SessionInfoSchema for ClusterHistoricalInfoSchema {
     }
 }
 
-pub(crate) struct ClusterHistoricalStatsHandle {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) catalog: Arc<SharedClusterCatalog>,
-    pub(crate) global_vars: GlobalSysvars,
+pub struct ClusterHistoricalStatsHandle {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub catalog: Arc<SharedClusterCatalog>,
+    pub global_vars: GlobalSysvars,
     /// The node's live row-ID allocators for new rows.
-    pub(crate) auto_ids: Arc<dyn TableAutoIds>,
+    pub auto_ids: Arc<dyn TableAutoIds>,
 }
 
 #[derive(Clone, Copy)]
@@ -2252,7 +2323,7 @@ pub(crate) enum OutdatedHistoryTable {
 }
 
 impl ClusterHistoricalStatsHandle {
-    pub(crate) fn commit_stats_plan(
+    pub fn commit_stats_plan(
         &self,
         build: impl FnOnce(
             &mut SnapshotMetaSnapshot,
@@ -2268,7 +2339,7 @@ impl ClusterHistoricalStatsHandle {
                 plan.mutations,
                 read_ts,
                 "default",
-                crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
             )
             .map_err(|error| error.message)
     }
@@ -2309,7 +2380,7 @@ impl ClusterHistoricalStatsHandle {
                 plan.mutations,
                 read_ts,
                 "default",
-                crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
             )
             .map_err(|error| error.message)
     }
@@ -2540,7 +2611,7 @@ impl ClusterHistoricalStatsHandle {
                 "failed to gc outdated historical stats",
                 &[
                     tidb_log::Field::new("duration", tidb_log::Value::Duration(duration)),
-                    crate::domain::zap_error(error),
+                    tidb_util::logutil::zap_error(error),
                 ],
             );
         }
@@ -2787,7 +2858,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             true,
             false,
             "default",
-            crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+            crate::session_transaction::restricted_transaction_options(&self.global_vars),
         )?;
         let staged = MutationBuffer::new();
         transaction.bind_mutation_buffer(&staged);
@@ -2899,7 +2970,7 @@ impl HistoricalStatsRuntime {
         handle: Arc<ClusterHistoricalStatsHandle>,
     ) -> Self {
         let running = Arc::clone(&worker);
-        let thread = crate::domain::session_api::sql_worker_thread("historical-stats-worker")
+        let thread = tidb_util::worker_stack::sql_worker_thread("historical-stats-worker")
             .spawn(move || {
                 while let Some(table_id) = running.recv_historical_stats_table() {
                     if let Err(error) = running.dump_historical_stats(
@@ -2911,7 +2982,7 @@ impl HistoricalStatsRuntime {
                         tidb_util::logutil::bg_logger().warn(
                             "dump historical stats failed",
                             &[
-                                crate::domain::zap_error(error),
+                                tidb_util::logutil::zap_error(error),
                                 tidb_log::Field::new("tableID", tidb_log::Value::I64(table_id)),
                             ],
                         );
@@ -2944,7 +3015,7 @@ pub(crate) fn spawn_usage_worker(
 ) -> std::thread::JoinHandle<()> {
     let worker_name = name.to_owned();
     let log_name = worker_name.clone();
-    crate::domain::session_api::sql_worker_thread(worker_name)
+    tidb_util::worker_stack::sql_worker_thread(worker_name)
         .spawn(move || {
             while !stop.wait(interval) {
                 let Some(factory) = factory.upgrade() else {
@@ -2960,12 +3031,12 @@ pub(crate) fn spawn_usage_worker(
 
 // Go `subscriber.handle`'s best-effort DROP SCHEMA line: one entry whichever
 // half of `delayedDeleteStats4PhysicalID` failed.
-pub(crate) fn log_stats_gc_version_failed(physical_id: i64, error: String) {
+pub fn log_stats_gc_version_failed(physical_id: i64, error: String) {
     tidb_stats_handle_logutil::stats_logger().error(
         "Failed to update stats meta version for gc",
         &[
             tidb_log::Field::new("tableID", tidb_log::Value::I64(physical_id)),
-            crate::domain::zap_error(error),
+            tidb_util::logutil::zap_error(error),
         ],
     );
 }
@@ -2973,7 +3044,7 @@ pub(crate) fn log_stats_gc_version_failed(physical_id: i64, error: String) {
 // The failure line of the Go worker each usage worker ports:
 // `indexUsageWorker`, `dumpColStatsUsageWorker`, `deltaUpdateTickerWorker`.
 pub(crate) fn log_usage_worker_failure(name: &str, error: String) {
-    let error = [crate::domain::zap_error(error)];
+    let error = [tidb_util::logutil::zap_error(error)];
     match name {
         "index-usage-gc" => {
             tidb_stats_handle_logutil::stats_logger().error("gc index usage failed", &error);
@@ -2985,7 +3056,7 @@ pub(crate) fn log_usage_worker_failure(name: &str, error: String) {
     }
 }
 
-pub(crate) fn persist_column_stats_usage_batches(
+pub fn persist_column_stats_usage_batches(
     pending: &mut tidb_stats_handle_usage::ColumnStatsUsageDump<'_>,
     entries: &[(tidb_model::TableItemID, SystemTime)],
     mut persist: impl FnMut(&[(tidb_model::TableItemID, SystemTime)]) -> Result<(), String>,
@@ -2997,7 +3068,7 @@ pub(crate) fn persist_column_stats_usage_batches(
     Ok(())
 }
 
-pub(crate) fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, String> {
+pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, String> {
     let value: chrono::DateTime<chrono::Utc> = value.into();
     tidb_datatype::Time::from_date_checked(
         value.year(),
@@ -3034,25 +3105,6 @@ pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> O
     None
 }
 
-#[cfg(test)]
-pub(crate) fn partition_id_map(
-    catalog: &ClusterCatalog,
-    schema: &str,
-    table: &str,
-) -> Option<(i64, Vec<(String, i64)>)> {
-    let (_, table) = catalog.find_table(schema, table)?;
-    let partition = table.partition.as_ref()?.read();
-    Some((
-        table.id,
-        partition
-            .definitions
-            .snapshot()
-            .into_iter()
-            .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
-            .collect(),
-    ))
-}
-
 pub(crate) fn table_and_partition_ids(table: &tidb_model::table_info::TableInfo) -> Vec<i64> {
     let mut ids = vec![table.id];
     if let Some(partition) = &table.partition {
@@ -3068,7 +3120,7 @@ pub(crate) fn table_and_partition_ids(table: &tidb_model::table_info::TableInfo)
     ids
 }
 
-pub(crate) fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) -> Vec<i64> {
+pub fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) -> Vec<i64> {
     let Some(partition) = &table.partition else {
         return vec![table.id];
     };
@@ -3091,7 +3143,7 @@ impl Domain {
 
     pub fn install_tls_manager(
         &self,
-        manager: Arc<dyn crate::process::TlsManager>,
+        manager: Arc<dyn tidb_executor::process::TlsManager>,
         variables: Vec<(&'static str, String)>,
     ) {
         self.processes.set_tls_manager(manager);
@@ -3104,14 +3156,19 @@ impl Domain {
         self.server_identity.clone()
     }
 
+    /// Go `Domain.ExpensiveQueryHandle`.
+    pub fn expensive_query_handle(&self) -> Arc<tidb_expensivequery::Handle> {
+        Arc::clone(&self.expensive_query_handle)
+    }
+
     pub fn session_manager(&self) -> Arc<dyn tidb_util::memoryusagealarm::SessionManager> {
         Arc::new(self.processes.clone())
     }
 }
 
-pub(crate) struct ClusterGlobalIds {
-    pub(crate) transactions: Arc<dyn ClusterTransactions>,
-    pub(crate) global_vars: GlobalSysvars,
+pub struct ClusterGlobalIds {
+    pub transactions: Arc<dyn ClusterTransactions>,
+    pub global_vars: GlobalSysvars,
 }
 
 impl std::fmt::Debug for ClusterGlobalIds {
@@ -3120,7 +3177,7 @@ impl std::fmt::Debug for ClusterGlobalIds {
     }
 }
 
-impl crate::GlobalIdGenerator for ClusterGlobalIds {
+impl GlobalIdGenerator for ClusterGlobalIds {
     fn gen_global_id(&self) -> Result<i64, tidb_executor::DriverError> {
         let allocate_once = || -> Result<i64, SqlQueryError> {
             let snapshot = self
@@ -3136,7 +3193,7 @@ impl crate::GlobalIdGenerator for ClusterGlobalIds {
                 vec![mutation],
                 read_ts,
                 "default",
-                crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
             )?;
             Ok(id)
         };
@@ -3164,10 +3221,10 @@ impl crate::GlobalIdGenerator for ClusterGlobalIds {
     }
 }
 
-pub(crate) struct ClusterPriorityQueueSource {
-    pub(crate) factory: Weak<Domain>,
-    pub(crate) stats_lease: Duration,
-    pub(crate) session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+pub struct ClusterPriorityQueueSource {
+    pub factory: Weak<Domain>,
+    pub stats_lease: Duration,
+    pub session_pool: Arc<crate::sys_session::DomainSysSessionPool>,
 }
 
 impl ClusterPriorityQueueSource {
@@ -3177,7 +3234,7 @@ impl ClusterPriorityQueueSource {
             .ok_or_else(|| "cluster session factory is stopped".to_owned())
     }
 
-    pub(crate) fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
+    pub fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
         let mut value = None;
         tidb_stats_handle_util::call_with_sctx(
             self.session_pool.as_ref(),
@@ -3433,5 +3490,40 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
             })
             .and_then(|value| value.parse().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_PARTITION_BATCH_SIZE as usize)
+    }
+}
+
+struct ClusterExternalTimestamp(Arc<dyn ClusterTransactions>);
+impl std::fmt::Debug for ClusterExternalTimestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClusterExternalTimestamp")
+    }
+}
+
+/// Go `kv.RunInNewTxn(sctx.GetStore(), ..., m.GenGlobalID())`: one id from
+/// meta's global allocator, in its own transaction on the session's store
+/// (the local temporary table DDL's ids, `newTemporaryTableFromTableInfo`).
+pub trait GlobalIdGenerator: Send + Sync {
+    /// One id from meta's global allocator.
+    fn gen_global_id(&self) -> Result<i64, tidb_executor::DriverError>;
+}
+
+impl tidb_variable::vars::ExternalTimestampProvider for ClusterExternalTimestamp {
+    fn get(&self) -> Result<u64, String> {
+        self.0.external_timestamp(None)
+    }
+    fn set(&self, ts: u64) -> Result<(), String> {
+        self.0.external_timestamp(Some(ts)).map(|_| ())
+    }
+}
+
+impl Domain {
+    /// This node's DDL notifier, owning: what Go's
+    /// `statstestutil.HandleNextDDLEventWithTxn` runs until the statistics
+    /// subscriber has handled every pending event. The caller stops it.
+    pub fn owned_ddl_notifier_for_test(self: &Arc<Self>) -> Arc<tidb_ddl_notifier::DdlNotifier> {
+        let notifier = ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
+        tidb_owner::Listener::on_become_owner(notifier.as_ref());
+        notifier
     }
 }

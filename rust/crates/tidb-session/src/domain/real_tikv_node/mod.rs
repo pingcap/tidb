@@ -17,6 +17,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::GlobalSysvars;
+
 use tidb_cluster::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_cluster::cluster_catalog::ClusterCatalog;
 use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
@@ -72,20 +74,20 @@ pub fn server_start_unix_timestamp() -> i64 {
     })
 }
 
+/// The node's account store over `global_vars`, the process's sysvar
+/// registry, which the server's main has already filled (Go `setGlobalVars`).
 pub fn configured_account_store(
     config: &NodeConfig,
+    global_vars: GlobalSysvars,
 ) -> Result<ConfiguredUserStore, RunConfiguredNodeError> {
     let users = if config.skip_grant_table {
         ConfiguredUserStore::empty_for_skip_grant_table()
     } else {
         ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?
     };
-    let users = apply_account_policies(config, users);
-    // Go `setGlobalVars` runs before any listener starts; this store carries
-    // the node's registry, so the push happens where the store is born. The
-    // start timestamp pins here for the same reason.
+    let users = apply_account_policies(config, users.with_global_vars(global_vars));
+    // The start timestamp pins before any listener starts, as Go's does.
     server_start_unix_timestamp();
-    crate::domain::set_global_vars::set_global_vars(config, &users.global_vars());
     Ok(users)
 }
 
@@ -106,13 +108,10 @@ pub fn configured_account_store(
 pub fn node_accounts(
     config: &NodeConfig,
     authority: &ProductionReadProcessAuthority,
+    global_vars: GlobalSysvars,
 ) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
-    if config.skip_grant_table {
-        let users = configured_account_store(config)?;
-        return Ok((Arc::new(users), None));
-    }
-    if !config.load_privileges {
-        let users = configured_account_store(config)?;
+    if config.skip_grant_table || !config.load_privileges {
+        let users = configured_account_store(config, global_vars)?;
         return Ok((Arc::new(users), None));
     }
     let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
@@ -130,7 +129,7 @@ pub fn node_accounts(
     }
     // Go's privilege cache logs nothing on a successful load.
     let loaded = crate::domain::cluster_privileges::registry_from_cluster(&accounts.privileges);
-    let users = ConfiguredUserStore::from_accounts(loaded.registry);
+    let users = ConfiguredUserStore::from_accounts(loaded.registry).with_global_vars(global_vars);
     // Seed the same startup snapshot's global variables now; `run_bound_*`
     // immediately replaces this with a fresh complete image and starts the
     // ongoing sysvar reloader before bind. Keeping the first image here makes
@@ -424,7 +423,7 @@ mod tests {
         )
         .expect("base config");
         config.skip_grant_table = true;
-        let users = configured_account_store(&config)
+        let users = configured_account_store(&config, GlobalSysvars::new())
             .expect("skip-grant-table does not read the nonexistent auth file");
         assert_eq!(
             users.match_identity_plugin("no-row", "127.0.0.1").as_deref(),
@@ -501,7 +500,7 @@ mod tests {
             sysvar_reload_interval(Duration::from_secs(10)),
             Duration::from_secs(30)
         );
-        let users = configured_account_store(&config)
+        let users = configured_account_store(&config, GlobalSysvars::new())
             .expect("skip-grant startup creates no file-backed accounts");
 
         load_cluster_sysvars_with_read(&users, || {

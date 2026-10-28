@@ -103,6 +103,7 @@ impl ClusterStack {
 /// after every worker and the factory are gone.
 pub fn cluster_session_stack(
     config: &NodeConfig,
+    global_vars: crate::GlobalSysvars,
     spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(ClusterStack, ProductionReadProcessAuthority), RunConfiguredNodeError> {
@@ -200,7 +201,7 @@ pub fn cluster_session_stack(
     // `node_accounts` also hands back the privilege reloader (landed in
     // parallel); it must stay alive for the node's run and drop before the
     // authority's shutdown drain, like the catalog reloader below.
-    let (users, privilege_reloader) = node_accounts(config, &authority)?;
+    let (users, privilege_reloader) = node_accounts(config, &authority, global_vars)?;
     crate::domain::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
@@ -649,7 +650,7 @@ pub fn cluster_session_stack(
             })?;
     }
     factory.start_stats_usage_workers(config.stats_lease);
-    let stats_maintenance = crate::domain::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(
+    let stats_maintenance = tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker::start(
         &factory,
         config.stats_lease,
         config.schema_lease,

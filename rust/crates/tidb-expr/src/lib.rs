@@ -392,7 +392,8 @@ pub use field_name::{find_field_name, find_field_name_index_by_column, NonUnique
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
 pub use coerce::{truthy_in, truthy_of};
 pub use context::{
-    BlockEncryptionMode, Columns, CurrentTso, ErrorLevel, EvalError, JsonError, NoColumns,
+    BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, ErrorLevel, EvalError,
+    JsonError, NoColumns,
     SequenceEvalError, SessionTimeZone, ZonedNoColumns,
 };
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};

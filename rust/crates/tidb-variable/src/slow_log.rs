@@ -27,7 +27,7 @@ use tidb_util::execdetails::exec_details::{
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
-use crate::used_stats::UsedStatsInfoForTable;
+use tidb_stmtctx::used_stats::UsedStatsInfoForTable;
 use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`.

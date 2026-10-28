@@ -422,8 +422,8 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::has_process_privilege(self)
     }
 
-    fn fk_cascade_table_lock_check(&self) -> Option<tidb_executor::ForeignKeyCascadeLockCheck> {
-        Session::fk_cascade_table_lock_check(self)
+    fn locked_tables(&self) -> Option<tidb_executor::LockedTables> {
+        Session::statement_locked_tables(self)
     }
 
     fn current_resource_group(&self) -> &str {

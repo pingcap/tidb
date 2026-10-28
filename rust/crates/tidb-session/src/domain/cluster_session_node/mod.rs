@@ -166,38 +166,33 @@
 //! [`StatementSnapshot`]: tidb_cluster::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_cluster::cluster_table_storage::SessionTransaction
 
-use crate::store_session::{sql_query_error, StoreTxnOps};
 use crate::statement_lifecycle::CatalogFollowing as _;
-use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
+use crate::store_session::{sql_query_error, StoreTxnOps};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, SystemTime};
+use tidb_executor::compiler::PreparedAstCompile;
 use tidb_executor::compiler::PreparedExec;
 use tidb_executor::ddl_exec::DdlExec as _;
 use tidb_executor::stats_exec::StatsExec as _;
-use tidb_executor::compiler::PreparedAstCompile;
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::sync::{Arc, Condvar, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 
 use crate::domain::resultset_source::ResultSetSource;
 use crate::identity::CompiledExecutor;
-use chrono::{Datelike, Timelike, Utc};
+use crate::privilege::PrivilegeRegistry;
+use crate::{GlobalSysvars, Session, StmtKind, StmtOutput};
 use tidb_ast::Stmt;
-use tidb_domain::historical_stats::{
-    HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
-    StatsHandle as HistoricalStatsHandle, TableMeta,
-};
 use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_cluster::schema_validator::SchemaValidator;
 use tidb_ddl::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats_parsed;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
-use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_cluster::schema_validator::SchemaValidator;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
@@ -206,32 +201,24 @@ use tidb_executor::cluster_storage::{
 use tidb_planner::transaction_control::{
     classify_transaction_control, classify_transaction_control_stmt, TransactionControl,
 };
-use crate::privilege::PrivilegeRegistry;
-use crate::process::ProcessRegistry;
-use crate::{
-    GlobalSysvars, Session, StmtKind, StmtOutput,
-    TableStorageStatsProvider,
-};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
-use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
+use tidb_stats_handle_cache::StatsTableRowCache;
 
 use crate::domain::cluster_account_seam::ClusterAccountWriter;
+#[cfg(test)]
 use crate::domain::cluster_analyze_seam::ClusterAnalyze;
 use crate::domain::cluster_session::{
-    cluster_session_catalog, cluster_session_catalog_with_templates, KvTableTemplates,
-    SkippedTable, TableAutoIds,
+    cluster_session_catalog_with_templates, SkippedTable, TableAutoIds,
 };
-use crate::domain::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::domain::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::domain::pipeline_session::MaterializedResultSetSource;
 use crate::domain::session_api::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
     SqlQueryError, WriteOutcome,
 };
-use tidb_executor::ddl_exec::map_error;
 use crate::domain::wire_status::WireStatus;
-
+use tidb_executor::ddl_exec::map_error;
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
@@ -242,32 +229,22 @@ pub const STATS_OWNER_KEY: &str = "/tidb/stats/owner";
 /// Pinned Go `statistics/handle.StatsPrompt`.
 pub const STATS_OWNER_PROMPT: &str = "stats";
 
-/// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
-/// for.
-
-pub(crate) use tidb_domain_core::bdr_role_store;
-mod catalog_follower;
 mod binding_maintenance;
+mod catalog_follower;
 pub use binding_maintenance::attach_binding_sessions;
 use tidb_ddl::worker as ddl;
-pub(crate) use tidb_domain_core::ddl_job_history_store;
-mod ddl_notifier;
 pub mod gc_worker;
-use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
 #[cfg(test)]
 use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
+use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
+use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 #[cfg(test)]
 use tidb_cluster::cluster_table_storage::LockKeysOutcome;
-use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 mod non_transactional_dml;
 mod record_set;
-mod ru_stats_writer;
-pub mod schema_lease;
 pub use tidb_domain_core::schema_sync;
-mod stat;
 mod statistics;
 mod test_session;
-pub mod stats_maintenance;
 use crate::cluster_transactions as transactions;
 
 pub use ddl::{ClusterDdl, RealClusterDdl};
@@ -346,15 +323,13 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
     trace
 }
 
-mod domain;
-pub use domain::*;
 pub(crate) use tidb_domain_core::cluster_session::detached_storage;
-pub(crate) use tidb_domain_core::session_transaction::global_lock_wait_timeout;
-pub(crate) use tidb_domain_core::sys_session::{stats_session_error, system_process_trackers};
-pub(crate) use tidb_domain_core::util::{is_analyze_table_sql, sql_string_literal};
+pub use tidb_domain_core::domain::*;
+pub(crate) use tidb_domain_core::sys_session::stats_session_error;
+pub(crate) use tidb_domain_core::util::is_analyze_table_sql;
 mod sessions;
-pub use sessions::*;
 pub use login_policy::DomainLoginPolicy;
+pub use sessions::*;
 pub use settings::DomainSessionSettings;
 pub use test_session::DomainTestSessions;
 
@@ -582,7 +557,7 @@ impl CommitHooks for NodeCommitHooks {
     /// The physical tables it wrote and the MDL switch are read at commit.
     fn schema_lease_checker(&self) -> Option<Arc<dyn SchemaLeaseChecker>> {
         self.schema_validator.as_ref().map(|validator| {
-            Arc::new(schema_lease::SessionSchemaLeaseChecker::new(
+            Arc::new(tidb_domain_core::domain::schema_lease::SessionSchemaLeaseChecker::new(
                 Arc::clone(validator),
                 self.schema_version,
             )) as Arc<dyn SchemaLeaseChecker>
@@ -2940,9 +2915,9 @@ impl<'s> ClusterServerSession<'s> {
             // Go runs `SetExecutor` through the ordinary statement
             // lifecycle: a value's subquery reads the statement snapshot,
             // and a failure is recorded as the statement's error.
-            CompiledStatement::AccountSimple => self.observe_routed_write(sql, stmt, |node| {
-                node.run_account_executor(sql, stmt)
-            }),
+            CompiledStatement::AccountSimple => {
+                self.observe_routed_write(sql, stmt, |node| node.run_account_executor(sql, stmt))
+            }
             CompiledStatement::Set => self.observe_routed_write(sql, stmt, |node| {
                 let outcome = node.execute_ordinary_write_parsed(sql, stmt)?;
                 // SET autocommit=1 may commit the open transaction.
@@ -3103,10 +3078,8 @@ struct ClusterPendingSysvarChange(Box<dyn crate::domain::cluster_sysvar_seam::Pe
 impl crate::stored_state_service::SysvarService for ClusterSysvarService {
     fn begin(
         &self,
-    ) -> Result<
-        Box<dyn crate::stored_state_service::PendingSysvarChange>,
-        tidb_executor::DriverError,
-    > {
+    ) -> Result<Box<dyn crate::stored_state_service::PendingSysvarChange>, tidb_executor::DriverError>
+    {
         let pending = self
             .0
             .begin()
@@ -3216,18 +3189,3 @@ mod tests;
 
 mod login_policy;
 mod settings;
-
-struct ClusterExternalTimestamp(Arc<dyn ClusterTransactions>);
-impl std::fmt::Debug for ClusterExternalTimestamp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ClusterExternalTimestamp")
-    }
-}
-impl crate::vars::ExternalTimestampProvider for ClusterExternalTimestamp {
-    fn get(&self) -> Result<u64, String> {
-        self.0.external_timestamp(None)
-    }
-    fn set(&self, ts: u64) -> Result<(), String> {
-        self.0.external_timestamp(Some(ts)).map(|_| ())
-    }
-}

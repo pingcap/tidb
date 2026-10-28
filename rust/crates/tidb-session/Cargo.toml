@@ -36,7 +36,7 @@ tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-kv = { path = "../tidb-kv" }
-tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
@@ -117,7 +117,9 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
+tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
+tidb-domain-core = { path = "../tidb-domain-core", features = ["test-util"] }
 tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }

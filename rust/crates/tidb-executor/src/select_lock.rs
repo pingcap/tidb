@@ -27,7 +27,7 @@ use tidb_expr::schema::Schema;
 use tidb_txnkv::transaction::LockWaitTime;
 
 use crate::{ExecError, Executor};
-pub use tidb_stmtctx::select_lock::*;
+pub use tidb_sessionctx::select_lock::*;
 
 /// A physical plan's record-key expression over a selected row. Each joined
 /// base table supplies one expression. `None` denotes a null-extended input

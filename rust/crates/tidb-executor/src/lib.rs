@@ -214,7 +214,7 @@ pub mod slow_query;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod expand;
 pub mod fts_like_rewrite;
-pub(crate) use tidb_stmtctx::plan_trace;
+pub(crate) use tidb_sessionctx::plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
 mod pushdown_blacklist;
@@ -295,7 +295,7 @@ pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanCompari
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use tidb_stmtctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+pub use tidb_sessionctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, GlobalSysvarAccessor, KeysReadBudget, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSchema, SequenceState, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_distsql::ReplicaReadType;
@@ -364,7 +364,7 @@ pub(crate) mod test_temp_storage {
 }
 
 /// Session-owned reference counts over shared advisory-lock services.
-pub use tidb_stmtctx::advisory_lock_state;
+pub use tidb_sessionctx::advisory_lock_state;
 pub mod metrics;
 pub use tidb_infoschema::TidbDecodeKeySnapshot;
 pub use tidb_infoschema::StatementStage;

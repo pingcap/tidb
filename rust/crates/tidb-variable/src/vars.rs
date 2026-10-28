@@ -2210,3 +2210,7 @@ pub fn global_get_hook(name: &str, value: String) -> String {
         _ => value,
     }
 }
+
+/// Go `SessionVars.GetRelatedTableForMDL().Store(id, ...)`: records one stored
+/// table id on the statement's metadata-lock map.
+pub type MdlRelatedTableRecorder = std::sync::Arc<dyn Fn(i64) + Send + Sync>;
