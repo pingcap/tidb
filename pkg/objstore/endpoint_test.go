@@ -23,7 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
@@ -66,6 +69,52 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 				}
 				require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
 			})
+		}
+	}
+}
+
+func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
+	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider} {
+		for _, entry := range []string{"dispatcher", "constructor"} {
+			for _, endpoint := range []string{
+				"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
+				"https://FAKE_USER:FAKE_PASS@host:badport/path?sig=FAKE_SIGNATURE",
+				"https://FAKE_USER:FAKE_PASS@host/path\n?sig=FAKE_SIGNATURE",
+			} {
+				t.Run(provider+"/"+entry+"/"+url.QueryEscape(endpoint), func(t *testing.T) {
+					// Given a backend that bypasses ParseBackend's endpoint validation.
+					backend := &backuppb.S3{
+						Provider: provider, Endpoint: endpoint, Bucket: "bucket", Region: "us-east-1",
+						AccessKey: "FAKE_ACCESS_KEY", SecretAccessKey: "FAKE_SECRET_KEY", ForcePathStyle: true,
+					}
+					original, err := backend.Marshal()
+					require.NoError(t, err)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					opts := &storeapi.Options{HTTPClient: &http.Client{Transport: rejectEndpointTransport{t: t}}}
+
+					// When constructing through either public entry point.
+					if entry == "dispatcher" {
+						_, err = New(ctx, &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: backend}}, opts)
+					} else if provider == s3like.KS3SDKProvider {
+						_, err = s3store.NewKS3Storage(ctx, backend, opts)
+					} else {
+						_, err = s3store.NewS3Storage(ctx, backend, opts)
+					}
+
+					// Then rejection occurs before SDK errors, logs or credential mutation.
+					require.Error(t, err)
+					for _, output := range []string{err.Error(), fmt.Sprintf("%v", err), fmt.Sprintf("%+v", err)} {
+						for _, secret := range []string{"FAKE_USER", "FAKE_PASS", "FAKE_SIGNATURE", "FAKE_ACCESS_KEY", "FAKE_SECRET_KEY"} {
+							require.NotContains(t, output, secret)
+						}
+					}
+					require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
+					after, marshalErr := backend.Marshal()
+					require.NoError(t, marshalErr)
+					require.Equal(t, original, after, "invalid configuration must not mutate the backend")
+				})
+			}
 		}
 	}
 }

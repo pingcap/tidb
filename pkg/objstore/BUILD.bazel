@@ -96,6 +96,7 @@ go_test(
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
         "//pkg/objstore/s3like",
+        "//pkg/objstore/s3store",
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/util/intest",
