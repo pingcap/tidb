@@ -993,3 +993,77 @@ func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
 		})
 	}
 }
+
+func TestReplaceConflictFailsOnAnUndecodableRow(t *testing.T) {
+	node, _, err := parser.New().ParseSQL("create table a (id int primary key clustered, email varchar(64) not null, unique key uk(email));")
+	require.NoError(t, err)
+	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 109)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables, Timestamp: 1234567890}
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl, SessionOptions: sessionOpts, Logger: log.L()})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
+	encodeRow := func(id int64, email string) (rowKey, indexKey, indexValue []byte) {
+		_, err := encoder.AddRecord([]types.Datum{types.NewIntDatum(id), types.NewStringDatum(email)})
+		require.NoError(t, err)
+		for _, pair := range encoder.SessionCtx.TakeKvPairs().Pairs {
+			if tablecodec.IsRecordKey(pair.Key) {
+				rowKey = pair.Key
+			} else {
+				indexKey, indexValue = pair.Key, pair.Val
+			}
+		}
+		return
+	}
+	row1Key, indexKey, index1Value := encodeRow(1, "a@example.com")
+	_, _, index2Value := encodeRow(2, "a@example.com")
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+	mockDB.MatchExpectationsInOrder(false)
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v4.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, indexKey, "uk", index1Value, row1Key))
+
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := errormanager.New(db, cfg, log.L())
+	ctx := context.Background()
+	require.NoError(t, em.Init(ctx))
+
+	var deletedKeys [][]byte
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "a", &sessionOpts, util.NewWorkerPool(16, "resolve duplicate rows by replace"),
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			switch {
+			case bytes.Equal(key, indexKey):
+				return index2Value, nil
+			case bytes.Equal(key, row1Key):
+				return []byte{0xff}, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
+		},
+		func(ctx context.Context, keys [][]byte) error {
+			deletedKeys = append(deletedKeys, keys...)
+			return nil
+		},
+	)
+	require.ErrorContains(t, err, "invalid encoded key flag")
+	require.Empty(t, deletedKeys)
+}
