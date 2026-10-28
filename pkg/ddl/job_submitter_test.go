@@ -600,9 +600,6 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 		oldMViewID   int64  = 900000000000000020
 		shadowTblID  int64  = 900000000000000022
 		oldMLogID    int64  = 900000000000000024
-		sourceID     int64  = 900000000000000026
-		sourceMLogID int64  = 900000000000000028
-		childMViewID int64  = 900000000000000030
 		buildReadTSO uint64 = 12345
 	)
 	// The metadata write set includes upstream sources/logs and children, but MDL
@@ -614,16 +611,20 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 			SchemaName: "test",
 			TableName:  "mv_cutover",
 			TableID:    oldMViewID,
+			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+				{Database: "test", Table: "mv_cutover", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "mv_shadow", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "output_log", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "source", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "source_log", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "child_mv", Mode: model.ExclusiveInvolving},
+			},
 		},
 		&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 			OldMViewID:    oldMViewID,
 			ShadowTableID: shadowTblID,
 			BuildReadTSO:  buildReadTSO,
 			OldMLogID:     oldMLogID,
-			InvolvingTableIDs: []int64{
-				oldMViewID, shadowTblID, oldMLogID,
-				sourceID, sourceMLogID, childMViewID,
-			},
 		},
 		false,
 	)
@@ -646,6 +647,7 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	}, tableIDs)
 	var persisted model.Job
 	require.NoError(t, persisted.Decode([]byte(fmt.Sprint(tk.MustQuery(fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()[0][0]))))
+	require.Equal(t, jobW.InvolvingSchemaInfo, persisted.InvolvingSchemaInfo)
 	persistedArgs, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(&persisted)
 	require.NoError(t, err)
 	require.Equal(t, args, persistedArgs)

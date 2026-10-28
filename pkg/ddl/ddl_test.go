@@ -333,7 +333,7 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 		},
 	})
 
-	involving, tableIDs, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 		context.Background(),
 		is,
 		pmodel.NewCIStr("test"),
@@ -341,7 +341,6 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 		shadowID,
 	)
 	require.NoError(t, err)
-	require.Equal(t, []int64{oldMViewID, baseTableID, shadowID}, tableIDs)
 	require.Equal(t, []model.InvolvingSchemaInfo{
 		{
 			Database: "test",
@@ -377,13 +376,16 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 		{ID: 107, Name: pmodel.NewCIStr("second_source"), State: model.StatePublic, MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 108}},
 		{ID: 108, Name: pmodel.NewCIStr("second_log"), State: model.StatePublic},
 	})
-	involving, tableIDs, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), nested, pmodel.NewCIStr("test"), oldMViewID, shadowID)
+	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), nested, pmodel.NewCIStr("test"), oldMViewID, shadowID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, []int64{oldMViewID, baseTableID, shadowID, 104, 105, 106, 107, 108}, tableIDs)
 	require.Len(t, involving, 8)
+	tableNames := make([]string, 0, len(involving))
 	for _, info := range involving {
+		require.Equal(t, "test", info.Database)
 		require.Equal(t, model.ExclusiveInvolving, info.Mode)
+		tableNames = append(tableNames, info.Table)
 	}
+	require.ElementsMatch(t, []string{"mv_old", "base_tbl", "mv_shadow", "input_log", "output_log", "shared_child", "second_source", "second_log"}, tableNames)
 
 }
 

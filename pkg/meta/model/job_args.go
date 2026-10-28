@@ -826,8 +826,6 @@ type MViewRefreshSource struct {
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for
 // ActionMViewRefreshOutOfPlaceCutover ddl.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
-	// InvolvingTableIDs lists the existing tables claimed when submitting the job.
-	InvolvingTableIDs                  []int64              `json:"involving_table_ids,omitempty"`
 	OldMLogID                          int64                `json:"old_mlog_id,omitempty"`
 	NewMLogID                          int64                `json:"new_mlog_id,omitempty"`
 	BuildSources                       []MViewRefreshSource `json:"build_sources"`
@@ -854,7 +852,6 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) [
 		a.BuildSources,
 		a.OldMLogID,
 		a.NewMLogID,
-		a.InvolvingTableIDs,
 	}
 }
 
@@ -871,7 +868,6 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job
 		&a.BuildSources,
 		&a.OldMLogID,
 		&a.NewMLogID,
-		&a.InvolvingTableIDs,
 	))
 }
 

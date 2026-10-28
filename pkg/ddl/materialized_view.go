@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,10 +54,26 @@ const (
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
+	mviewCutoverPurgeLockWaitTimeoutSec                   = int64(5)
+	mviewCutoverPurgeLockTimeout                          = time.Minute
 )
 
-func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlogID int64) error {
-	ctx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL)
+var errMViewCutoverPurgeLockTimeout = errors.NewNoStackError("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh")
+
+func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlogID int64) (err error) {
+	timeout := mviewCutoverPurgeLockTimeout
+	failpoint.Inject("mockMViewOutOfPlacePurgeAdvisoryLockTimeout", func(val failpoint.Value) {
+		timeout = time.Duration(val.(int)) * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeoutCause(kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL), timeout, errMViewCutoverPurgeLockTimeout)
+	defer func() {
+		// Advisory lock acquisition has its own context. Recheck the budget on
+		// return, including when acquisition succeeds or SQL reports cancellation.
+		if ctx.Err() != nil {
+			err = errors.Trace(context.Cause(ctx))
+		}
+		cancel()
+	}()
 	requestSctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -79,7 +96,7 @@ WHERE MLOG_ID = %?
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := w.sess.GetAdvisoryLock(lockName, 1); err == nil {
+		if err := w.sess.GetAdvisoryLock(lockName, mviewCutoverPurgeLockWaitTimeoutSec); err == nil {
 			// The scheduler releases job-scoped advisory locks after schema sync,
 			// including on cancellation or failure. Retain this lock across retries.
 			return nil
@@ -1108,7 +1125,7 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
 	is := e.infoCache.GetLatest()
-	involvingSchemas, involvingTableIDs, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+	involvingSchemas, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 		context.Background(),
 		is,
 		schemaName,
@@ -1137,7 +1154,6 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		oldMLogID = base.MLogID
 	}
 	args := &model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-		InvolvingTableIDs:                  involvingTableIDs,
 		OldMLogID:                          oldMLogID,
 		OldMViewID:                         oldMViewID,
 		ShadowTableID:                      shadowTableID,
@@ -1158,9 +1174,8 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 	schemaName pmodel.CIStr,
 	oldMViewID int64,
 	shadowTableID int64,
-) ([]model.InvolvingSchemaInfo, []int64, error) {
+) ([]model.InvolvingSchemaInfo, error) {
 	var involving []model.InvolvingSchemaInfo
-	var tableIDs []int64
 	seen := make(map[int64]struct{})
 	addTable := func(id int64) (*model.TableInfo, error) {
 		tbl, ok := is.TableByID(ctx, id)
@@ -1176,7 +1191,6 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 				return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName.O)
 			}
 			seen[id] = struct{}{}
-			tableIDs = append(tableIDs, id)
 			involving = append(involving, model.InvolvingSchemaInfo{
 				Database: db.Name.L, Table: info.Name.L, Mode: model.ExclusiveInvolving,
 			})
@@ -1185,10 +1199,10 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 	}
 	oldMView, err := addTable(oldMViewID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if oldMView.MaterializedView == nil {
-		return nil, nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
 			"refresh materialized view complete OUT OF PLACE cutover: old materialized view metadata missing",
 		)
 	}
@@ -1196,33 +1210,33 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 	for _, id := range oldMView.MaterializedView.BaseTableIDs {
 		base, err := addTable(id)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if base.MaterializedViewBase != nil && base.MaterializedViewBase.MLogID != 0 {
 			inputMLogIDs = append(inputMLogIDs, base.MaterializedViewBase.MLogID)
 		}
 	}
 	if _, err := addTable(shadowTableID); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, id := range inputMLogIDs {
 		if _, err := addTable(id); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	if base := oldMView.MaterializedViewBase; base != nil {
 		if base.MLogID != 0 {
 			if _, err := addTable(base.MLogID); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		for _, id := range base.MViewIDs {
 			if _, err := addTable(id); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 	}
-	return involving, tableIDs, nil
+	return involving, nil
 }
 
 func (e *executor) updateMaterializedViewRefreshInfoNextUnixSeconds(

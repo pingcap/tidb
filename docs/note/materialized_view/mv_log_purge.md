@@ -44,10 +44,12 @@ Purge and OOP cutover share an advisory lock identified by the physical MLog ID.
 it before starting its control transaction and returns an error on acquisition timeout, without
 retrying. It releases the advisory lock after its transaction and DELETE work have finished.
 Cutover requests cancellation of running old-log purges through independently committed history
-updates and attempts the same lock with a one-second timeout. On contention it repeats both
-operations, including when a starting purge has not published its running history yet. This
-wait happens before metadata mutations and before taking the shared schema-version mutex; the
-DDL transaction remains optimistic. The DDL scheduler retains the advisory lock across retries
+updates and attempts the same lock with a five-second timeout. On contention it repeats both
+operations, including when a starting purge has not published its running history yet, within
+a one-minute total budget. Budget exhaustion cancels the cutover job instead of restarting the
+wait through DDL retries, preserving the old MV/MLog for a later refresh. This wait happens before
+metadata mutations and before taking the shared schema-version mutex; the DDL transaction remains
+optimistic. The DDL scheduler retains an acquired advisory lock across retries
 and releases it when the job finishes, after schema synchronization. A purge holding old MDL
 fails on lock contention rather than waiting for that DDL job.
 

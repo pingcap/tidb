@@ -804,8 +804,8 @@ func job2TableIDs(jobW *JobWrapper) string {
 		intest.Assert(args != nil)
 		if args != nil {
 			// By design, MDL only waits on the physical MV/MLog objects replaced by
-			// cutover. InvolvingSchemaInfo and InvolvingTableIDs cover the broader
-			// metadata write set for DDL serialization and worker validation.
+			// cutover. InvolvingSchemaInfo covers the broader metadata write set
+			// for DDL serialization.
 			// Upstream objects only change reverse references; children keep their
 			// physical storage, and child refresh reads the parent MV/MLog already
 			// covered by this MDL set.

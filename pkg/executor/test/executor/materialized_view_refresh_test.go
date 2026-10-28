@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -4126,6 +4127,12 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverKeepsTiFlashProgressUnt
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		infosync.SetMockTiFlash(nil)
+		tiflash.StatusServer.Close()
+	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_tiflash_cutover (a int not null, b int not null)")
@@ -4133,29 +4140,77 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverKeepsTiFlashProgressUnt
 	tk.MustExec("create materialized view log on t_tiflash_cutover (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_tiflash_cutover (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_tiflash_cutover group by a")
 	tk.MustExec("alter table mv_tiflash_cutover set tiflash replica 1")
+	tk.MustExec("create materialized view log on mv_tiflash_cutover (a, s, cnt) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("alter table `$mlog$mv_tiflash_cutover` set tiflash replica 2 location labels 'zone'")
 
 	mvTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_tiflash_cutover"))
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
+	oldMLogID := mvTable.Meta().MaterializedViewBase.MLogID
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), oldMLogID, true))
+	oldLog, ok := dom.InfoSchema().TableByID(context.Background(), oldMLogID)
+	require.True(t, ok)
+	oldReplica := *oldLog.Meta().TiFlashReplica
+	require.True(t, oldReplica.Available)
 	infosync.UpdateTiFlashProgressCache(oldMViewID, 0.75)
+	infosync.UpdateTiFlashProgressCache(oldMLogID, 1)
 	_, exists := infosync.GetTiFlashProgressFromCache(oldMViewID)
 	require.True(t, exists)
 
 	originErrLimit := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(0)
 	defer variable.SetDDLErrorCountLimit(originErrLimit)
+	var cancelledJobID, cancelledLogID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionMViewRefreshOutOfPlaceCutover && job.TableID == oldMViewID {
+			args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+			require.NoError(t, err)
+			cancelledJobID.Store(job.ID)
+			cancelledLogID.Store(args.NewMLogID)
+		}
+	})
 	require.NoError(t, failpoint.Enable(cutoverBeforeCommitFailpoint, "return"))
 	tk.MustExec("insert into t_tiflash_cutover values (3, 4)")
 	err = tk.ExecToErr("refresh materialized view mv_tiflash_cutover complete out of place")
 	require.ErrorContains(t, err, "error before commit")
 	require.NoError(t, failpoint.Disable(cutoverBeforeCommitFailpoint))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.Positive(t, cancelledLogID.Load())
+	tk.MustQuery(fmt.Sprintf("select start_key, end_key from mysql.gc_delete_range where job_id = %[1]d union all select start_key, end_key from mysql.gc_delete_range_done where job_id = %[1]d", cancelledJobID.Load())).Check(testkit.Rows(fmt.Sprintf("%x %x", []byte(tablecodec.EncodeTablePrefix(cancelledLogID.Load())), []byte(tablecodec.EncodeTablePrefix(cancelledLogID.Load()+1)))))
 
 	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
 	require.True(t, exists)
+	_, exists = infosync.GetTiFlashProgressFromCache(oldMLogID)
+	require.True(t, exists)
+	oldLog, ok = dom.InfoSchema().TableByID(context.Background(), oldMLogID)
+	require.True(t, ok)
+	require.Equal(t, oldReplica, *oldLog.Meta().TiFlashReplica)
 
 	tk.MustExec("refresh materialized view mv_tiflash_cutover complete out of place")
 	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
 	require.False(t, exists)
+	newLog, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$mv_tiflash_cutover"))
+	require.NoError(t, err)
+	require.NotEqual(t, oldMLogID, newLog.Meta().ID)
+	replica := newLog.Meta().TiFlashReplica
+	require.NotNil(t, replica)
+	require.Equal(t, oldReplica.Count, replica.Count)
+	require.Equal(t, oldReplica.LocationLabels, replica.LocationLabels)
+	t.Run("replica state", func(t *testing.T) {
+		require.False(t, replica.Available)
+		require.Empty(t, replica.AvailablePartitionIDs)
+		require.True(t, oldLog.Meta().TiFlashReplica.Available)
+	})
+	t.Run("placement rule", func(t *testing.T) {
+		rule, ok := tiflash.GetPlacementRule(infosync.MakeRuleID(newLog.Meta().ID))
+		require.True(t, ok)
+		require.Equal(t, int(replica.Count), rule.Count)
+		require.Equal(t, replica.LocationLabels, rule.LocationLabels)
+	})
+	t.Run("old log progress", func(t *testing.T) {
+		_, exists := infosync.GetTiFlashProgressFromCache(oldMLogID)
+		require.False(t, exists)
+	})
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testing.T) {
@@ -5334,7 +5389,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceOutputMLogRollbackAndRetry(t *
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T) {
-	for _, stage := range []string{"running", "starting", "resolved"} {
+	for _, stage := range []string{"running", "starting", "resolved", "timeout"} {
 		t.Run(stage, func(t *testing.T) {
 			store, tk, oldMV, _ := newMViewRefreshSourceFixture(t)
 			tk.MustExec("create materialized view log on mv_source_init (a, s, cnt)")
@@ -5342,6 +5397,20 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 			tk.MustExec("refresh materialized view mv_source_init fast")
 			oldLog := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='$mlog$mv_source_init'").Rows()[0][0]
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(10)")
+			var beforeInfo, beforeSources, beforePurge, beforeTables [][]any
+			var cutoverAttempts atomic.Int32
+			if stage == "timeout" {
+				beforeInfo = tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows()
+				beforeSources = tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows()
+				beforePurge = tk.MustQuery("select * from mysql.tidb_mlog_purge_info order by MLOG_ID").Rows()
+				beforeTables = tk.MustQuery("select TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' order by TABLE_NAME").Rows()
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMViewOutOfPlacePurgeAdvisoryLockTimeout", "return(1000)")
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+					if job.Type == model.ActionMViewRefreshOutOfPlaceCutover && job.TableID == oldMV {
+						cutoverAttempts.Add(1)
+					}
+				})
+			}
 
 			entered, release := make(chan struct{}), make(chan struct{})
 			running, releaseRunning := make(chan struct{}), make(chan struct{})
@@ -5382,7 +5451,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 			}
 			if stage != "resolved" {
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/purgeMaterializedViewLogDeleteSQL", func(string) {
-					if stage == "running" {
+					if stage == "running" || stage == "timeout" {
 						pause(0, 0)
 					} else if runningPaused.CompareAndSwap(false, true) {
 						close(running)
@@ -5448,6 +5517,26 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 				}
 				waitFor(requested, "cutover cancellation observed by purge")
 				require.False(t, retiring.Load(), "cutover must wait before mutating runtime metadata")
+				if stage == "timeout" {
+					// Purge still holds the lock after observing cancellation. The
+					// total budget must fail the job instead of restarting DDL retries.
+					waitFor(cutoverFinished, "cutover purge-lock timeout")
+					require.ErrorContains(t, <-cutoverDone, "timed out waiting for materialized view log purge")
+					require.Equal(t, int32(1), cutoverAttempts.Load())
+					require.False(t, retiring.Load())
+					require.Equal(t, beforeInfo, tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows())
+					require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows())
+					require.Equal(t, beforePurge, tk.MustQuery("select * from mysql.tidb_mlog_purge_info order by MLOG_ID").Rows())
+					require.Equal(t, beforeTables, tk.MustQuery("select TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' order by TABLE_NAME").Rows())
+					tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
+					unblock()
+					waitFor(purgeFinished, "cancelled purge after cutover timeout")
+					require.ErrorContains(t, <-purgeDone, "materialized view task canceled manually")
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockMViewOutOfPlacePurgeAdvisoryLockTimeout"))
+					tk.MustExec("refresh materialized view mv_source_init complete out of place")
+					tk.MustExec("purge materialized view log on mv_source_init")
+					return
+				}
 
 				// A cancelled purge may still be finishing a DELETE batch.
 				// Waiting must not hold the shared schema-version lock.

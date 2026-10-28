@@ -1538,46 +1538,80 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 }
 
 func TestGCPlacementRulesForMaterializedViewOutOfPlaceCutover(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	for _, tc := range []struct {
+		name      string
+		oldMLogID int64
+		cancelled bool
+	}{
+		{name: "without log"},
+		{name: "with log", oldMLogID: 40},
+		{name: "cancelled", oldMLogID: 40, cancelled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := createGCWorkerSuite(t)
+			tiflash := infosync.NewMockTiFlash()
+			infosync.SetMockTiFlash(tiflash)
+			defer func() {
+				infosync.SetMockTiFlash(nil)
+				tiflash.StatusServer.Close()
+			}()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("mview-cutover:20:30")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
-	}()
+			historyJob := "mview-cutover:20:30"
+			retiredIDs := []int64{20}
+			preservedIDs := []int64{30, 50}
+			if tc.oldMLogID != 0 {
+				historyJob += fmt.Sprintf(":%d", tc.oldMLogID)
+				retiredIDs = append(retiredIDs, tc.oldMLogID)
+			}
+			if tc.cancelled {
+				historyJob += ":50"
+				retiredIDs = []int64{50}
+				preservedIDs = []int64{20, 30, tc.oldMLogID}
+			}
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", fmt.Sprintf("return(%q)", historyJob)))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
 
-	var gcPlacementRuleCache sync.Map
-	oldBundleID := "TiDB_DDL_20"
-	oldBundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
-		PrimaryRegion: "r1",
-		Regions:       "r1, r2",
-	})
-	require.NoError(t, err)
-	oldBundle.ID = oldBundleID
-	shadowBundleID := "TiDB_DDL_30"
-	shadowBundle := oldBundle.Clone()
-	shadowBundle.ID = shadowBundleID
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
+				PrimaryRegion: "r1",
+				Regions:       "r1, r2",
+			})
+			require.NoError(t, err)
+			allIDs := []int64{20, 30, 50}
+			if tc.oldMLogID != 0 {
+				allIDs = append(allIDs, tc.oldMLogID)
+			}
+			for _, id := range allIDs {
+				current := bundle.Clone()
+				current.ID = fmt.Sprintf("TiDB_DDL_%d", id)
+				require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{current}))
+				require.NoError(t, infosync.ConfigureTiFlashPDForTable(id, 1, &[]string{}))
+			}
 
-	require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{oldBundle, shadowBundle}))
-	got, err := infosync.GetRuleBundle(context.Background(), oldBundleID)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.False(t, got.IsEmpty())
-
-	dr := util.DelRangeTask{JobID: 1, ElementID: 20}
-	err = doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache)
-	require.NoError(t, err)
-	v, ok := gcPlacementRuleCache.Load(int64(20))
-	require.True(t, ok)
-	require.Equal(t, struct{}{}, v)
-
-	got, err = infosync.GetRuleBundle(context.Background(), oldBundleID)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.True(t, got.IsEmpty())
-	got, err = infosync.GetRuleBundle(context.Background(), shadowBundleID)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.False(t, got.IsEmpty())
+			var gcPlacementRuleCache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: retiredIDs[0]}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache))
+			for _, id := range retiredIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.True(t, got.IsEmpty())
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.False(t, ok)
+			}
+			for _, id := range preservedIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.False(t, ok)
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.False(t, got.IsEmpty())
+			}
+		})
+	}
 }
 
 func TestGCLabelRules(t *testing.T) {
