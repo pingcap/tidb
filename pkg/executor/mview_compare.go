@@ -220,7 +220,7 @@ func (e *CompareMaterializedViewExec) Next(ctx context.Context, req *chunk.Chunk
 
 		currentMarkerCol := joinResult.Column(layout.currentMarkerColIdx)
 		recomputedMarkerCol := joinResult.Column(layout.recomputedMarkerColIdx)
-		for rowIdx := 0; rowIdx < joinResult.NumRows(); rowIdx++ {
+		for rowIdx := range joinResult.NumRows() {
 			diffType := classifyCompareMaterializedViewRowDiff(
 				currentMarkerCol.IsNull(rowIdx),
 				recomputedMarkerCol.IsNull(rowIdx),
@@ -698,7 +698,7 @@ func newCompareMaterializedViewHashJoinExec(
 		childrenUsedSchema,
 		false,
 	)
-	for i := uint(0); i < concurrency; i++ {
+	for i := range concurrency {
 		probeJoiner := fullJoinProbeJoiner.Clone()
 		hashJoinExec.ProbeWorkers[i] = &join.ProbeWorkerV1{
 			HashJoinCtx:         hashJoinExec.HashJoinCtxV1,
@@ -804,7 +804,7 @@ func prepareCompareMaterializedViewRowIdxes(rowIdxes []int, rowCnt int) []int {
 	} else {
 		rowIdxes = rowIdxes[:rowCnt]
 	}
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		rowIdxes[i] = i
 	}
 	return rowIdxes
@@ -812,7 +812,7 @@ func prepareCompareMaterializedViewRowIdxes(rowIdxes []int, rowCnt int) []int {
 
 func buildCompareMaterializedViewOrdinalSlice(colCnt int) []int {
 	ordinals := make([]int, colCnt)
-	for i := 0; i < colCnt; i++ {
+	for i := range colCnt {
 		ordinals[i] = i
 	}
 	return ordinals
@@ -931,7 +931,7 @@ func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row 
 	}
 	// Schema: current MV rows (probe/left) + recomputed base-query rows (build/right).
 	useRight := diffType == compareMaterializedViewVacuumType
-	for colIdx := 0; colIdx < w.mvColumnCount; colIdx++ {
+	for colIdx := range w.mvColumnCount {
 		sourceColIdx := colIdx
 		if useRight {
 			sourceColIdx += w.mvColumnCount
