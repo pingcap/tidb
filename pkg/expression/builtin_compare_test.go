@@ -273,6 +273,11 @@ func TestIntervalFunc(t *testing.T) {
 		{types.MakeDatums(10.5, 30, 1, 17), 0, false},
 		{types.MakeDatums(7, 17, 17, 4, 17, 1, 16, 20, 0, 19), 5, false},
 		{types.MakeDatums(7.5, 17, 17, 4, 17, 1, 16, 20, 0, 19), 5, false},
+		{types.MakeDatums(10, 30, 1, 17, 1, 1, 1, 1), 0, false},
+		{types.MakeDatums(10, 30, nil, nil, nil, nil, nil, nil, nil), 0, false},
+		{types.MakeDatums(0, 1, 2, 3, 4, 5, 6, 7, 8), 0, false},
+		{types.MakeDatums(23, 1, 15, 17, 23, 23, 30, 44, 200, 300), 5, false},
+		{types.MakeDatums(23, 1.5, 15, 17, 23, 23, 30, 44, 200, 300), 5, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
@@ -291,6 +296,31 @@ func TestIntervalFunc(t *testing.T) {
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, test.ret, v.GetInt64())
+	}
+}
+
+func TestIntervalFuncNonConstantArgs(t *testing.T) {
+	ctx := createContext(t)
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(30))
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	ones := datumsToConstants(types.MakeDatums(1, 1, 1, 1, 1, 1, 1))
+	row := chunk.MutRowFromDatums(types.MakeDatums(10, 30)).ToRow()
+	for _, test := range []struct {
+		target   Expression
+		first    Expression
+		expected int64
+	}{
+		{&Column{RetType: intTp, Index: 0}, &Constant{Value: types.NewIntDatum(30), RetType: intTp}, 8},
+		{&Constant{Value: types.NewIntDatum(10), RetType: intTp}, &Column{RetType: intTp, Index: 1}, 0},
+		{&Constant{Value: types.NewIntDatum(10), RetType: intTp}, &Constant{Value: types.NewIntDatum(30), RetType: intTp, DeferredExpr: &Constant{Value: types.NewIntDatum(30), RetType: intTp}}, 0},
+		{&Constant{Value: types.NewIntDatum(10), RetType: intTp}, &Constant{ParamMarker: &ParamMarker{order: 0}, RetType: intTp}, 0},
+	} {
+		args := append([]Expression{test.target, test.first}, ones...)
+		f, err := funcs[ast.Interval].getFunction(ctx, args)
+		require.NoError(t, err)
+		v, err := evalBuiltinFunc(f, ctx, row)
+		require.NoError(t, err)
+		require.Equal(t, test.expected, v.GetInt64())
 	}
 }
 
