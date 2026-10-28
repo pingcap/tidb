@@ -12,6 +12,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-cluster = { path = "../tidb-cluster" }
 tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-ddl = { path = "../tidb-ddl" }

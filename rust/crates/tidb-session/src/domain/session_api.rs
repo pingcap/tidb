@@ -23,7 +23,6 @@ use std::sync::{Arc, Mutex};
 
 use tidb_ast::Stmt;
 use tidb_exec::ResultFieldMetadata;
-use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
 use crate::domain::configured_user_store::AuthenticatedIdentity;
 use crate::domain::resultset_source::ResultSetSource;
@@ -690,27 +689,4 @@ pub struct SessionContext {
     pub close: ConnectionClose,
 }
 
-/// Go `Domain`'s connection-ID allocator (`domain.go`, "initialize the global
-/// kill"): with global kill on, a global allocator whose IDs name this node's
-/// server ID -- the leased one, or `serverIDForStandalone` without etcd --
-/// so `KILL` can route by ID; otherwise the simple allocator. One instance
-/// serves a node: client connections and internal process IDs such as
-/// auto-analyze's (Go `NextConnID`) draw from it.
-pub fn new_connection_id_allocator(
-    config: &tidb_config::config_tree::Config,
-    identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
-) -> Arc<dyn Allocator + Send + Sync> {
-    if config.enable_global_kill {
-        let owner = identity;
-        Arc::new(GlobalAllocator::new(
-            move || {
-                owner
-                    .as_ref()
-                    .map_or(tidb_util::globalconn::SERVER_ID_FOR_STANDALONE, |owner| owner.id())
-            },
-            config.enable_32bits_connection_id,
-        ))
-    } else {
-        Arc::new(SimpleAllocator::new())
-    }
-}
+pub use tidb_domain_core::connection_ids::new_connection_id_allocator;

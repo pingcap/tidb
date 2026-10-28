@@ -22,29 +22,28 @@
 //! this file used to hold a second, unused state machine that assumed `BEGIN`
 //! is lazy, which Go's `OnInitialize` (`activeNow = true`) refutes.
 
-/// Go `SetOptionsOnTxnActive`: capture the validated session values once.
-pub use crate::txn_manager::transaction_options;
+use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
 
 /// A restricted operation without a retained SQL session starts with the
 /// global values a new system session would inherit.
 pub fn restricted_transaction_options(
-    globals: &crate::GlobalSysvars,
+    globals: &tidb_domain::global_sysvars::GlobalSysvars,
 ) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
-    options_from_values(|name| {
+    options_from_getter(|name| {
         globals
             .get(name)
             .expect("transaction options are registered")
     })
 }
 
-fn options_from_values<V: AsRef<str>>(
+fn options_from_getter<V: AsRef<str>>(
     get: impl Fn(&str) -> V,
 ) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
-    use crate::varsutil::{tidb_opt_assertion_level, AssertionLevel};
+    use tidb_variable::varsutil::{tidb_opt_assertion_level, AssertionLevel};
     use tidb_vardef::tidb_vars::{
         TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,
     };
-    crate::txn_manager::options_from_values(
+    options_from_values(
         get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
         get(TIDB_ENABLE1_PC).as_ref(),
         match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
@@ -53,4 +52,42 @@ fn options_from_values<V: AsRef<str>>(
             AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
         },
     )
+}
+
+/// Go `SetOptionsOnTxnActive`: capture the validated session values once.
+pub fn transaction_options(vars: &tidb_variable::SessionVars) -> SessionTransactionOptions {
+    use tidb_variable::varsutil::{tidb_opt_assertion_level, AssertionLevel};
+    use tidb_vardef::tidb_vars::{
+        TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,
+    };
+    let get = |name: &str| {
+        vars.system_value(name)
+            .expect("transaction options are registered")
+    };
+    options_from_values(
+        get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
+        get(TIDB_ENABLE1_PC).as_ref(),
+        match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
+            AssertionLevel::Off => tidb_proto::KvrpcAssertionLevel::Off,
+            AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
+            AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
+        },
+    )
+}
+
+/// The options built from the three session values a transaction captures;
+/// shared with the restricted operations that have no session.
+pub fn options_from_values(
+    async_commit: &str,
+    one_pc: &str,
+    assertion_level: tidb_proto::KvrpcAssertionLevel,
+) -> SessionTransactionOptions {
+    SessionTransactionOptions {
+        commit_protocol: tidb_txnkv::transaction::CommitProtocol {
+            async_commit: tidb_vardef::option_values::tidb_opt_on(async_commit),
+            one_pc: tidb_vardef::option_values::tidb_opt_on(one_pc),
+        },
+        assertion_level,
+        kv_context: None,
+    }
 }

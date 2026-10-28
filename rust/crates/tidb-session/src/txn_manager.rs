@@ -27,6 +27,7 @@
 //! the catalog a write-conflict message is rewritten against -- as
 //! [`CommitHooks`], the way Go's commit reads them off the session.
 
+pub use tidb_domain_core::session_transaction::{options_from_values, transaction_options};
 use std::sync::Arc;
 
 use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
@@ -40,43 +41,7 @@ use crate::cluster_transactions::{
 use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};
 use crate::Session;
 
-/// Go `SetOptionsOnTxnActive`: capture the validated session values once.
-pub fn transaction_options(vars: &crate::SessionVars) -> SessionTransactionOptions {
-    use crate::varsutil::{tidb_opt_assertion_level, AssertionLevel};
-    use tidb_vardef::tidb_vars::{
-        TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,
-    };
-    let get = |name: &str| {
-        vars.system_value(name)
-            .expect("transaction options are registered")
-    };
-    options_from_values(
-        get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
-        get(TIDB_ENABLE1_PC).as_ref(),
-        match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
-            AssertionLevel::Off => tidb_proto::KvrpcAssertionLevel::Off,
-            AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
-            AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
-        },
-    )
-}
 
-/// The options built from the three session values a transaction captures;
-/// shared with the restricted operations that have no session.
-pub fn options_from_values(
-    async_commit: &str,
-    one_pc: &str,
-    assertion_level: tidb_proto::KvrpcAssertionLevel,
-) -> SessionTransactionOptions {
-    SessionTransactionOptions {
-        commit_protocol: tidb_txnkv::transaction::CommitProtocol {
-            async_commit: tidb_vardef::option_values::tidb_opt_on(async_commit),
-            one_pc: tidb_vardef::option_values::tidb_opt_on(one_pc),
-        },
-        assertion_level,
-        kv_context: None,
-    }
-}
 
 /// Go's metadata lock at transaction scope: holding the guard keeps the
 /// schema-sync acknowledger from reporting anything newer than `version` to a

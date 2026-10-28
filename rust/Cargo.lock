@@ -3802,6 +3802,7 @@ dependencies = [
  "tidb-bindinfo",
  "tidb-cluster",
  "tidb-codec",
+ "tidb-config",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",

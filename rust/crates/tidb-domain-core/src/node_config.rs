@@ -133,7 +133,7 @@ pub struct NodeConfig {
     ///
     /// This is the bridge to a keyspace a Go TiDB bootstrapped: whatever
     /// `CREATE USER`/`GRANT` wrote there is what this node admits. Startup
-    /// reads one snapshot; a [`crate::domain::cluster_privileges::PrivilegeReloader`]
+    /// reads one snapshot; a [`crate::cluster_privileges::PrivilegeReloader`]
     /// then re-reads on the same `schema_lease / 2` cadence the catalog
     /// reloader uses, so a grant made afterwards reaches this node without a
     /// restart.
