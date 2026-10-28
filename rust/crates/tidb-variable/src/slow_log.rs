@@ -22,12 +22,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::exec_details::{
+use tidb_util::execdetails::exec_details::{
     format_seconds, get_ia_remote_read_segment_stats, CopTasksDetails, ExecDetails,
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
-use tidb_stmtctx::used_stats::UsedStatsInfoForTable;
+use crate::used_stats::UsedStatsInfoForTable;
 use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`.
@@ -228,7 +228,7 @@ pub struct JsonSqlWarnForSlowLog {
 }
 
 /// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
-pub use tidb_variable::phase_durations::{DurationOptimizer, RewritePhaseInfo};
+pub use crate::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
 pub use tidb_util::execdetails::exec_details::KvExecDetails;
 
@@ -1020,30 +1020,13 @@ static GLOBAL_SLOW_LOG_RATE_LIMITER: std::sync::LazyLock<std::sync::Mutex<SlowLo
 
 /// Go `vardef.GlobalSlowLogRateLimiter.Allow()` under the current
 /// `tidb_slow_log_max_per_sec`.
-pub(crate) fn slow_log_rate_limiter_allow(max_per_sec: i64) -> bool {
+pub fn slow_log_rate_limiter_allow(max_per_sec: i64) -> bool {
     let now = std::time::Instant::now();
     let mut limiter = GLOBAL_SLOW_LOG_RATE_LIMITER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     limiter.configure(max_per_sec.max(0), now);
     limiter.allow(now)
-}
-
-/// Go `executor.sampleLoggerFactory`: one entry per minute, category
-/// `slow log`.
-pub(crate) fn slow_log_sample_logger() -> tidb_util::logutil::SampledLogger {
-    static LOGGER: std::sync::LazyLock<tidb_util::logutil::SampledLogger> =
-        std::sync::LazyLock::new(|| {
-            tidb_util::logutil::sample_logger_factory(
-                Duration::from_secs(60),
-                1,
-                vec![tidb_log::Field::new(
-                    tidb_util::logutil::LOG_FIELD_CATEGORY,
-                    tidb_log::Value::Str("slow log".to_owned()),
-                )],
-            )()
-        });
-    LOGGER.clone()
 }
 
 /// Go `executor.QueryReplacer`: carriage returns, newlines and tabs become
@@ -1110,14 +1093,14 @@ mod tests {
             ..ExecDetails::default()
         };
         exec_detail.cop_exec_details.backoff_time = Duration::from_millis(1);
-        exec_detail.cop_exec_details.scan_detail = Some(tidb_exec::exec_details::ScanDetail {
+        exec_detail.cop_exec_details.scan_detail = Some(tidb_util::execdetails::exec_details::ScanDetail {
             processed_keys: 20001,
             total_keys: 10000,
             ia_cache_hit_count: 2,
             ia_remote_read_segment_count: 4,
             ia_remote_read_segment_bytes: 4096,
             ia_remote_read_segment_duration: Duration::from_millis(15),
-            ..tidb_exec::exec_details::ScanDetail::default()
+            ..tidb_util::execdetails::exec_details::ScanDetail::default()
         });
         exec_detail.cop_exec_details.time_detail.process_time = Duration::from_secs(2);
         exec_detail.cop_exec_details.time_detail.wait_time = Duration::from_secs(60);
@@ -1152,14 +1135,14 @@ mod tests {
         );
         let mut cop_tasks = CopTasksDetails {
             num_cop_tasks: 10,
-            process_time_stats: tidb_exec::exec_details::TaskTimeStats {
+            process_time_stats: tidb_util::execdetails::exec_details::TaskTimeStats {
                 avg_time: Duration::from_secs(1),
                 p90_time: Duration::from_secs(2),
                 max_address: "10.6.131.78".to_owned(),
                 max_time: Duration::from_secs(3),
                 tot_time: Duration::ZERO,
             },
-            wait_time_stats: tidb_exec::exec_details::TaskTimeStats {
+            wait_time_stats: tidb_util::execdetails::exec_details::TaskTimeStats {
                 avg_time: Duration::from_millis(10),
                 p90_time: Duration::from_millis(20),
                 max_time: Duration::from_millis(30),
@@ -1171,7 +1154,7 @@ mod tests {
         for backoff in ["rpcTiKV", "rpcPD", "regionMiss"] {
             cop_tasks.backoff_time_stats_map.insert(
                 backoff.to_owned(),
-                tidb_exec::exec_details::TaskTimeStats {
+                tidb_util::execdetails::exec_details::TaskTimeStats {
                     max_time: Duration::from_millis(200),
                     max_address: "127.0.0.1".to_owned(),
                     avg_time: Duration::from_millis(200),
@@ -1351,7 +1334,7 @@ mod tests {
         cop_tasks.process_time_stats.max_address = "store1".to_owned();
         cop_tasks.backoff_time_stats_map.insert(
             "regionMiss".to_owned(),
-            tidb_exec::exec_details::TaskTimeStats {
+            tidb_util::execdetails::exec_details::TaskTimeStats {
                 tot_time: Duration::from_millis(2),
                 ..Default::default()
             },

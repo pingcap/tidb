@@ -15,7 +15,7 @@
 //! Go `pkg/sessionctx/stmtctx`: the statement-scoped state a session hands
 //! every executor and planner.
 
-pub mod used_stats;
+pub use tidb_variable::used_stats;
 pub mod statement_pushdown;
 pub mod advisory_lock_state;
 pub mod explain_format;

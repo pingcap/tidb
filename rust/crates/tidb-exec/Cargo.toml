@@ -36,6 +36,10 @@ tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-error = { path = "../tidb-error" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-hint = { path = "../tidb-hint" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-table = { path = "../tidb-table" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }

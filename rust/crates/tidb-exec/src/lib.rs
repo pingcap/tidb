@@ -28,6 +28,7 @@
 
 pub use tidb_privilege::account_policy;
 pub mod adapter;
+pub mod exec_stmt_observation;
 pub use tidb_cluster::auto_id_client;
 mod batch_cop_tasks;
 pub use tidb_cluster::catalog_reload;
