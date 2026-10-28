@@ -2712,3 +2712,30 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestCorrelatedSubqueryOverRollupSeesNullGroupingKeyOnlyAboveAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ta (id int primary key, c0 int)")
+	tk.MustExec("create table tb (id int primary key, c0 int, c1 int)")
+	tk.MustExec("insert into ta values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("insert into tb values (1, 10, 100), (2, 20, 200), (3, 20, 300)")
+
+	tk.MustQuery("select c0, grouping(c0), (select tb.c1 from tb where tb.c0 = ta.c0 order by tb.c1 limit 1) from ta group by c0 with rollup").
+		Sort().Check(testkit.Rows("10 0 100", "20 0 200", "30 0 <nil>", "<nil> 1 <nil>"))
+	tk.MustQuery("select c0, exists(select 1 from tb where tb.c0 = ta.c0) from ta group by c0 with rollup").
+		Sort().Check(testkit.Rows("10 1", "20 1", "30 0", "<nil> 0"))
+	tk.MustQuery("select c0, row_number() over (order by c0), (select count(*) from tb where tb.c0 = ta.c0) from ta group by c0 with rollup").
+		Sort().Check(testkit.Rows("10 2 1", "20 3 2", "30 4 0", "<nil> 1 0"))
+	tk.MustQuery("select c0 k, count(*) from ta group by c0 with rollup having (select count(*) from tb where tb.c0 = k) = 0").
+		Sort().Check(testkit.Rows("30 1", "<nil> 3"))
+
+	tk.MustQuery("select c0, sum((select count(*) from tb where tb.c0 = ta.c0)) from ta group by c0 with rollup").
+		Sort().Check(testkit.Rows("10 1", "20 2", "30 0", "<nil> 3"))
+	tk.MustQuery("select c0, sum((select count(*) from tb where tb.c0 = d.c0)) from (select c0 from ta group by c0) d group by c0 with rollup").
+		Sort().Check(testkit.Rows("10 1", "20 2", "30 0", "<nil> 3"))
+
+	tk.MustQuery("select c0 from ta group by c0 with rollup union all select c0 from ta where exists(select 1 from tb where tb.c0 = ta.c0)").
+		Sort().Check(testkit.Rows("10", "10", "20", "20", "30", "<nil>"))
+}
