@@ -12,22 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The `SHOW` family: every `AdminStmt::Show*` (and `DESCRIBE`/`KILL`-adjacent
-//! `ShowCreate`/`ShowColumns`/`ShowTables`) arm,
-//! reached through [`Session::dispatch_admin_stmt`], plus the `SHOW CREATE TABLE`/`VIEW` text
-//! builders and column-description rows those arms share with
-//! `Session::retrieve_memory_table` in `dispatch.rs`.
-//!
-//! `EXPLAIN`, account management (`CREATE`/`ALTER`/`DROP`/`RENAME USER`,
-//! `GRANT`/`REVOKE`/`SHOW GRANTS`), and `KILL`/processlist live in their own
-//! modules (`explain_arm`, `account`, `process_arm`) and are only delegated
-//! to from [`Session::dispatch_admin_stmt`] here.
+//! The session side of Go's SHOW and ADMIN statements: `Compile` + `runStmt`
+//! for a planned SHOW (`run_planned_show`), and the session primitives
+//! `tidb_executor::show::exec::ShowExec`, `tidb_executor::admin::AdminExec`
+//! and `tidb_executor::simple::exec::SimpleExec` read -- Go's `sctx`, its
+//! domain and its session manager. The executors' bodies live in
+//! `tidb_executor`.
 
 use crate::privilege::PrivilegeTypeExt;
 use crate::*;
-use tidb_executor::admin::AdminExec;
 use tidb_executor::show::exec::ShowExec;
-use tidb_executor::simple::account::AccountExec;
 
 impl Session {
     /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
@@ -163,473 +157,6 @@ impl Session {
         ))
     }
 
-    /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
-    /// `EXPLAIN`, `GRANT`/`REVOKE`/`SHOW GRANTS`, and `KILL` delegated to
-    /// their own modules.
-    pub(crate) fn dispatch_admin_stmt(
-        &mut self,
-        admin: &tidb_ast::AdminStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        match admin {
-            // `EXPLAIN <select>`: plan the statement and report the plan,
-            // running nothing. Go's EXPLAIN plans without executing (an
-            // `EXPLAIN INSERT` inserts no row, captured), and so does
-            // this: `tidb_executor::explain_select_stmt` re-runs the
-            // driver's own read-path decisions without touching storage.
-            //
-            // See `tidb_executor::explain`'s module doc for every place
-            // this tier's plan text diverges from Go's and why.
-            tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
-            // Go `executeAdminSetBDRRole` / `executeAdminUnsetBDRRole` write
-            // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it.
-            tidb_ast::AdminStmt::SetBdrRole(_)
-            | tidb_ast::AdminStmt::UnsetBdrRole
-            | tidb_ast::AdminStmt::ShowBdrRole => {
-                let role = match admin {
-                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Primary) => "primary",
-                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
-                    tidb_ast::AdminStmt::UnsetBdrRole => "",
-                    _ => {
-                        let role = self
-                            .bdr_role_store()?
-                            .get()
-                            .map_err(DriverError::unsupported)?;
-                        let mut field_type =
-                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::String);
-                        field_type.set_flen(1);
-                        return Ok(Some(StmtOutput::Rows {
-                            columns: vec![("BDR_ROLE".to_owned(), field_type)],
-                            rows: vec![vec![Datum::Bytes(role.into_bytes())]],
-                        }));
-                    }
-                };
-                self.bdr_role_store()?
-                    .set(role)
-                    .map_err(DriverError::unsupported)?;
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            tidb_ast::AdminStmt::FlushPlanCache(scope) => {
-                self.flush_session_plan_cache(*scope)?;
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            // SQL bindings. See `crate::binding_arm`, and `crate::binding`
-            // for the normalization and hint-transfer they are built on.
-            tidb_ast::AdminStmt::CreateBinding(create) => {
-                Ok(Some(self.create_binding_stmt(create)?))
-            }
-            tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
-            tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
-            // ANALYZE, LOAD STATS and DROP STATS write the statistics storage
-            // and the domain's cache: the session's node runs them
-            // (`StatementRoute::Analyze` / `LoadStats` / `DropStats`).
-            tidb_ast::AdminStmt::AnalyzeTable(_)
-            | tidb_ast::AdminStmt::AnalyzeIncremental(_)
-            | tidb_ast::AdminStmt::LoadStats(_)
-            | tidb_ast::AdminStmt::DropStats(_)
-            | tidb_ast::AdminStmt::LockStats(_)
-            | tidb_ast::AdminStmt::UnlockStats(_) => Err(DriverError::unsupported(
-                "statistics statements run on the session's node",
-            )),
-            tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
-                let worker = self.workload_repository.as_ref().ok_or_else(|| {
-                    DriverError::from(
-                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
-                            .generate_with_stack_by_args(&[
-                                "Workload repository is not enabled".into()
-                            ]),
-                    )
-                })?;
-                worker.take_snapshot().map_err(|error| {
-                    if error == "Workload repository is not enabled" {
-                        DriverError::from(
-                            tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
-                                .generate_with_stack_by_args(&[error.into()]),
-                        )
-                    } else {
-                        DriverError::unsupported(error)
-                    }
-                })?;
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
-            // and `ReloadOptRuleBlacklist` executors, each of which reads its
-            // `mysql.*` table and publishes what the optimizer consults. Both
-            // answer no rows, as every ADMIN maintenance statement does.
-            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::ExprPushdownBlacklist) => {
-                self.reload_expr_pushdown_blacklist()?;
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::OptRuleBlacklist) => {
-                self.reload_opt_rule_blacklist()?;
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            // go `SimpleExec.executeReloadBindings` (`pkg/executor/simple.go`):
-            // the reload re-syncs the binding cache from storage and answers
-            // no rows, like every maintenance statement.
-            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => {
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            // Go `executeAdminReloadStatistics`.
-            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Statistics) => Err(
-                DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                    "Extended statistics feature has been removed",
-                )),
-            ),
-            // Go `plugin.ChangeDisableFlagAndFlush`: no plugin is loaded
-            // here, so the first named plugin is unknown.
-            tidb_ast::AdminStmt::Plugins { plugins, .. } => match plugins.first() {
-                Some(name) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                    format!("plugin '{name}' not found"),
-                ))),
-                None => Ok(Some(StmtOutput::Done(true))),
-            },
-            // go `SimpleExec.executeAdminBindingControl` (`pkg/executor/simple.go`):
-            // `ADMIN FLUSH BINDINGS` publishes the cache and answers OK;
-            // `CAPTURE`/`EVOLVE` refuse with the two messages Go's own
-            // feature gates produce (`Auto Capture is not supported` when
-            // `tidb_capture_plan_baselines` is off, and the baseline-evolution
-            // GA refusal).
-            tidb_ast::AdminStmt::BindingControl(kind) => match kind {
-                tidb_ast::AdminBindingControlKind::Flush => Ok(Some(StmtOutput::Done(true))),
-                tidb_ast::AdminBindingControlKind::Capture => Err(DriverError::unsupported(
-                    "Auto Capture is not supported",
-                )),
-                tidb_ast::AdminBindingControlKind::Evolve => Err(DriverError::unsupported(
-                    "Cannot enable baseline evolution feature, it is not generally available now",
-                )),
-            },
-            // go `execCommandOnDDLJobs` (`pkg/executor/admin.go`): one
-            // `(JOB_ID, RESULT)` row per requested id, not an error.
-            tidb_ast::AdminStmt::DdlJobControl(control) => {
-                Ok(Some(self.ddl_job_control_stmt(control)?))
-            }
-            tidb_ast::AdminStmt::SplitRegion(split) => Ok(Some(self.split_region_stmt(split)?)),
-            // go `ChecksumTableExec` (`pkg/executor/checksum.go`).
-            tidb_ast::AdminStmt::AdminChecksum(checksum) => {
-                Ok(Some(self.admin_checksum_stmt(&checksum.tables)?))
-            }
-            // go `adminShowSlowExec` over the domain's slow-query memory.
-            tidb_ast::AdminStmt::ShowSlow(show) => Ok(Some(self.admin_show_slow_stmt(show)?)),
-            // go `fetchShowDDLJobs` over the finished-job history.
-            tidb_ast::AdminStmt::ShowDdlJobs(show) => {
-                Ok(Some(self.admin_show_ddl_jobs_stmt(show)?))
-            }
-            // go `ShowDDLJobQueriesExec` / `...WithRangeExec`.
-            tidb_ast::AdminStmt::ShowDdlJobQueries(show) => {
-                Ok(Some(self.admin_show_ddl_job_queries_stmt(show)?))
-            }
-            // go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`):
-            // the target connection must exist on this server
-            // (`ErrNoSuchThread` 1094, `Unknown thread id: %d`); its running
-            // statement then explains through the ordinary machinery.
-            tidb_ast::AdminStmt::ExplainFor(explain_for) => {
-                let target = explain_for.connection_id;
-                let Some(guard) = self.process.as_ref() else {
-                    return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_NO_SUCH_THREAD
-                            .generate_with_stack_by_args(&[target.into()]),
-                    ));
-                };
-                let registry = guard.registry();
-                let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target)
-                else {
-                    return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_NO_SUCH_THREAD
-                            .generate_with_stack_by_args(&[target.into()]),
-                    ));
-                };
-                let plan = registry.plan_of(target);
-                // Go `buildExplainFor`: another user's connection needs SUPER,
-                // refused with `ErrAccessDenied` over the two names alone.
-                if let Some((_, user, host)) = self.privilege_context() {
-                    if user != target_row.user
-                        && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
-                    {
-                        return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(&tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(format!(
-                                "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
-                            )))));
-                    }
-                }
-                let format = explain_for.format.to_lowercase();
-                let text = |name: &str| {
-                    (
-                        name.to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                    )
-                };
-                // Go `buildExplainFor`: no plan at all is the statement's own
-                // empty result; any other plan needs one of the three formats.
-                if matches!(plan, crate::process::ProcessPlan::None) {
-                    return Ok(Some(StmtOutput::Affected(0)));
-                }
-                let explain_format = match format.as_str() {
-                    "" | "row" => tidb_executor::ExplainFormat::Row,
-                    "brief" => tidb_executor::ExplainFormat::Brief,
-                    "verbose" => tidb_executor::ExplainFormat::Verbose,
-                    other => {
-                        return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                            format!("explain format '{other}' for connection is not supported now"),
-                        )));
-                    }
-                };
-                let plan = match plan {
-                    crate::process::ProcessPlan::Plan(plan) => plan,
-                    // An `Explain` plan renders nothing, under the analyze
-                    // header of the format.
-                    _ => {
-                        let names: &[&str] = if explain_format == tidb_executor::ExplainFormat::Verbose
-                        {
-                            &[
-                                "id",
-                                "estRows",
-                                "estCost",
-                                "actRows",
-                                "task",
-                                "access object",
-                                "execution info",
-                                "operator info",
-                                "memory",
-                                "disk",
-                            ]
-                        } else {
-                            &[
-                                "id",
-                                "estRows",
-                                "actRows",
-                                "task",
-                                "access object",
-                                "execution info",
-                                "operator info",
-                                "memory",
-                                "disk",
-                            ]
-                        };
-                        return Ok(Some(StmtOutput::Rows {
-                            columns: names.iter().map(|name| text(name)).collect(),
-                            rows: Vec::new(),
-                        }));
-                    }
-                };
-                let ctx = self.statement_context(false);
-                let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::explain_connection_plan(&plan.0, catalog, &ctx, explain_format)
-                })?;
-                Ok(Some(StmtOutput::Rows { columns, rows }))
-            }
-            // Go `TraceExec`: runs the statement, then reports the spans.
-            tidb_ast::AdminStmt::Trace(trace) => {
-                crate::trace::check_options(trace)
-                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                        message,
-                    )))?;
-                let inner_sql = crate::trace::statement_text(&trace.statement);
-                let inner = (*trace.statement).clone();
-                let recorder = crate::trace::StatementTrace::start();
-                let entered = recorder.enter();
-                // Go `session.ExecuteStmt`; this path drains the record set
-                // inside it.
-                let execute_stmt =
-                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-                let outcome = self.execute_statement_owned(inner, &inner_sql);
-                drop(execute_stmt);
-                drop(entered);
-                // Go `executeChild` and `drainRecordSet`'s events.
-                let affected = match outcome {
-                    Ok(StmtOutput::Rows { rows, .. }) => {
-                        recorder.event(&format!(
-                            "execute done, ReturnRow: {}, ModifyRow: 0",
-                            rows.len()
-                        ));
-                        0
-                    }
-                    Ok(StmtOutput::Affected(count)) => count,
-                    Ok(_) => 0,
-                    Err(error) => {
-                        let mysql = error.to_mysql_error();
-                        recorder.event(&format!(
-                            "execute with error({}): {}",
-                            mysql.code, mysql.message
-                        ));
-                        0
-                    }
-                };
-                recorder.event(&format!("execute done, modify row: {affected}"));
-                let (spans, started) = recorder.finish();
-                let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
-                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                        message,
-                    )))?;
-                Ok(Some(StmtOutput::Rows { columns, rows }))
-            }
-            // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
-            // TiProxy, and this deployment has none.
-            tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                "no tiproxy server found",
-            ))),
-            // Go `RecommendIndexExec` (`executor/recommend_index.go`).
-            tidb_ast::AdminStmt::RecommendIndex(recommend) => {
-                self.recommend_index_stmt(recommend).map(Some)
-            }
-            tidb_ast::AdminStmt::Grant(grant) => {
-                self.grant_stmt(grant)?;
-                Ok(Some(StmtOutput::Affected(0)))
-            }
-            tidb_ast::AdminStmt::Revoke(revoke) => {
-                self.revoke_stmt(revoke)?;
-                Ok(Some(StmtOutput::Affected(0)))
-            }
-            tidb_ast::AdminStmt::GrantRole(grant) => {
-                self.grant_role_stmt(grant)?;
-                Ok(Some(StmtOutput::Affected(0)))
-            }
-            tidb_ast::AdminStmt::RevokeRole(revoke) => {
-                self.revoke_role_stmt(revoke)?;
-                Ok(Some(StmtOutput::Affected(0)))
-            }
-            // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
-            // `fetchShowMasterStatus` live in `crate::show_admin`: they
-            // answer without touching a user table, and keeping them here
-            // pushed this file past the repository's 2200-line ceiling.
-            tidb_ast::AdminStmt::Flush(flush) => {
-                if matches!(flush.target, tidb_ast::FlushTarget::Status) {
-                    self.vars.keys_examined = 0;
-                }
-                if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
-                    self.flush_privileges()?;
-                }
-                return tidb_executor::admin::flush_stmt(flush).map(Some);
-            }
-            tidb_ast::AdminStmt::ShowDdl => {
-                return Ok(Some(tidb_executor::admin::show_ddl_output(
-                    &self.show_ddl_rows(),
-                )));
-            }
-            // Go `Compile` + `runStmt` over `buildShow`'s plan.
-            tidb_ast::AdminStmt::Show(show) if is_planned_show(show.tp) => {
-                self.run_planned_show(show).map(Some)
-            }
-            // Go has no `ShowImports` fetcher or schema (`buildShowSchema`
-            // names no columns for it); this tier answers the empty
-            // `Job_ID | State` listing.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Imports => {
-                Ok(Some(tidb_executor::admin::show_imports_output()))
-            }
-            // Go `SimpleExec.executeKillStmt`.
-            tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
-            // Go `CheckTableExec` / `CheckIndexRangeExec`. See
-            // [`crate::admin_check_arm`] for the shapes and the refusals.
-            tidb_ast::AdminStmt::AdminCheck(check) => {
-                self.admin_check_stmt(check.as_ref()).map(Some)
-            }
-            // Go `RecoverIndexExec` / `CleanupIndexExec`.
-            tidb_ast::AdminStmt::AdminRecoverIndex(recover) => {
-                self.admin_recover_index_stmt(recover.as_ref()).map(Some)
-            }
-            tidb_ast::AdminStmt::AdminCleanupIndex(cleanup) => {
-                self.admin_cleanup_index_stmt(cleanup.as_ref()).map(Some)
-            }
-            // Go `fetchShowCreateProcedure`'s object is not stored here: the
-            // statement answers nothing.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::CreateProcedure => {
-                Ok(None)
-            }
-            // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
-            // (pkg/executor/simple.go:3584-3611): the statement answers
-            // success immediately, and a 1-second-delayed task SIGTERMs this
-            // very process, whose installed handler performs the graceful
-            // stop. `RESTART`/`HELP` keep their unsupported report.
-            tidb_ast::AdminStmt::ServerControl(control) => match &**control {
-                tidb_ast::ServerControlStmt::Shutdown => {
-                    std::thread::spawn(|| {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                        signal_hook::low_level::raise(signal_hook::consts::SIGTERM);
-                    });
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                // Go's executor builder names the AST node of the statements
-                // it has no executor for (`Unsupported type *ast.HelpStmt`,
-                // 8108).
-                tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
-                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .generate_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
-                )),
-                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
-                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .generate_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
-                )),
-            },
-            _ => Ok(None),
-        }
-    }
-}
-
-/// The SHOW kinds Go's `buildShow` plans here ([`Session::run_planned_show`]);
-/// the rest still answer in the session's SHOW arms.
-fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
-    use tidb_ast::ShowStmtType as T;
-    matches!(
-        tp,
-        T::Charset
-            | T::Collation
-            | T::Databases
-            | T::Engines
-            | T::ProcedureStatus
-            | T::FunctionStatus
-            | T::Triggers
-            | T::Events
-            | T::Profiles
-            | T::OpenTables
-            | T::Plugins
-            | T::Backups
-            | T::Restores
-            | T::Tables
-            | T::Variables
-            | T::MasterStatus
-            | T::BinlogStatus
-            | T::Privileges
-            | T::Builtins
-            | T::Warnings
-            | T::Errors
-            | T::Status
-            | T::TableStatus
-            | T::Columns
-            | T::Index
-            | T::CreateTable
-            | T::CreateView
-            | T::CreateSequence
-            | T::CreateDatabase
-            | T::CreatePlacementPolicy
-            | T::CreateResourceGroup
-            | T::Grants
-            | T::CreateUser
-            | T::StatsExtended
-            | T::StatsMeta
-            | T::StatsHealthy
-            | T::ColumnStatsUsage
-            | T::HistogramsInFlight
-            | T::AnalyzeStatus
-            | T::StatsTopN
-            | T::StatsBuckets
-            | T::StatsHistograms
-            | T::StatsLocked
-            | T::Bindings
-            | T::BindingCacheStatus
-            | T::ProcessList
-            | T::SessionStates
-            | T::Config
-            | T::Affinity
-            | T::ReplicaStatus
-            | T::Placement
-            | T::PlacementLabels
-            | T::PlacementForDatabase
-            | T::PlacementForTable
-            | T::PlacementForPartition
-            | T::Regions
-            | T::Distributions
-            | T::ImportJobs
-            | T::ImportGroups
-            | T::TableNextRowId
-    )
 }
 
 impl tidb_executor::show::exec::ShowExec for Session {
@@ -763,6 +290,94 @@ impl tidb_executor::admin::AdminExec for Session {
     ) -> Result<T, DriverError> {
         Session::with_catalog_retrieving(self, ctx, attempt)
     }
+
+    fn explain_stmt(
+        &mut self,
+        explain: &tidb_ast::ExplainStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::explain_stmt(self, explain)
+    }
+
+    fn explain_for_stmt(
+        &mut self,
+        explain_for: &tidb_ast::ExplainForStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::explain_for_stmt(self, explain_for)
+    }
+
+    fn trace_stmt(
+        &mut self,
+        trace: &tidb_ast::TraceStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::trace_stmt(self, trace)
+    }
+
+    fn bdr_role_store(&self) -> Result<std::sync::Arc<dyn BdrRoleStore>, DriverError> {
+        Session::bdr_role_store(self)
+    }
+
+    fn flush_session_plan_cache(
+        &mut self,
+        scope: tidb_ast::AdminPlanCacheScope,
+    ) -> Result<(), DriverError> {
+        Session::flush_session_plan_cache(self, scope)
+    }
+
+    fn create_binding_stmt(
+        &mut self,
+        create: &tidb_ast::CreateBindingStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::create_binding_stmt(self, create)
+    }
+
+    fn drop_binding_stmt(
+        &mut self,
+        drop: &tidb_ast::DropBindingStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::drop_binding_stmt(self, drop)
+    }
+
+    fn set_binding_stmt(
+        &mut self,
+        set: &tidb_ast::SetBindingStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::set_binding_stmt(self, set)
+    }
+
+    fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>> {
+        self.workload_repository.clone()
+    }
+
+    fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
+        Session::reload_expr_pushdown_blacklist(self)
+    }
+
+    fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
+        Session::reload_opt_rule_blacklist(self)
+    }
+
+    fn recommend_index_stmt(
+        &mut self,
+        recommend: &tidb_ast::RecommendIndexStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::recommend_index_stmt(self, recommend)
+    }
+
+    fn flush_privileges(&mut self) -> Result<(), DriverError> {
+        Session::flush_privileges(self)
+    }
+
+    fn show_ddl_rows(&self) -> Vec<Vec<Datum>> {
+        Session::show_ddl_rows(self)
+    }
+
+    fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError> {
+        Session::run_planned_show(self, show)
+    }
+
+    fn kill_stmt(&mut self, kill: &tidb_ast::KillStmt) -> Result<Option<StmtOutput>, DriverError> {
+        Session::kill_stmt(self, kill)
+    }
 }
 
 impl tidb_executor::simple::exec::SimpleExec for Session {
@@ -780,11 +395,153 @@ impl tidb_executor::simple::exec::SimpleExec for Session {
             .reload_tls(no_rollback_on_error)
             .map_err(DriverError::unsupported)
     }
+}
 
-    fn dispatch_admin_stmt(
+impl Session {
+    /// go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`):
+    /// the target connection must exist on this server
+    /// (`ErrNoSuchThread` 1094, `Unknown thread id: %d`); its running
+    /// statement then explains through the ordinary machinery.
+    pub(crate) fn explain_for_stmt(
         &mut self,
-        admin: &tidb_ast::AdminStmt,
+        explain_for: &tidb_ast::ExplainForStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        Session::dispatch_admin_stmt(self, admin)
+        let target = explain_for.connection_id;
+        let Some(guard) = self.process.as_ref() else {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                    .generate_with_stack_by_args(&[target.into()]),
+            ));
+        };
+        let registry = guard.registry();
+        let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target) else {
+            return Err(DriverError::from(
+                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                    .generate_with_stack_by_args(&[target.into()]),
+            ));
+        };
+        let plan = registry.plan_of(target);
+        // Go `buildExplainFor`: another user's connection needs SUPER,
+        // refused with `ErrAccessDenied` over the two names alone.
+        if let Some((_, user, host)) = self.privilege_context() {
+            if user != target_row.user && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
+            {
+                return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                    &tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(
+                        format!(
+                        "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
+                    ),
+                    ),
+                )));
+            }
+        }
+        let format = explain_for.format.to_lowercase();
+        let text = |name: &str| {
+            (
+                name.to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            )
+        };
+        // Go `buildExplainFor`: no plan at all is the statement's own
+        // empty result; any other plan needs one of the three formats.
+        if matches!(plan, crate::process::ProcessPlan::None) {
+            return Ok(Some(StmtOutput::Affected(0)));
+        }
+        let explain_format = match format.as_str() {
+            "" | "row" => tidb_executor::ExplainFormat::Row,
+            "brief" => tidb_executor::ExplainFormat::Brief,
+            "verbose" => tidb_executor::ExplainFormat::Verbose,
+            other => {
+                return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                    format!("explain format '{other}' for connection is not supported now"),
+                )));
+            }
+        };
+        let plan = match plan {
+            crate::process::ProcessPlan::Plan(plan) => plan,
+            // An `Explain` plan renders nothing, under the analyze
+            // header of the format.
+            _ => {
+                let names: &[&str] = if explain_format == tidb_executor::ExplainFormat::Verbose {
+                    &[
+                        "id",
+                        "estRows",
+                        "estCost",
+                        "actRows",
+                        "task",
+                        "access object",
+                        "execution info",
+                        "operator info",
+                        "memory",
+                        "disk",
+                    ]
+                } else {
+                    &[
+                        "id",
+                        "estRows",
+                        "actRows",
+                        "task",
+                        "access object",
+                        "execution info",
+                        "operator info",
+                        "memory",
+                        "disk",
+                    ]
+                };
+                return Ok(Some(StmtOutput::Rows {
+                    columns: names.iter().map(|name| text(name)).collect(),
+                    rows: Vec::new(),
+                }));
+            }
+        };
+        let ctx = self.statement_context(false);
+        let (columns, rows) = self.with_catalog_mut(|catalog| {
+            tidb_executor::explain_connection_plan(&plan.0, catalog, &ctx, explain_format)
+        })?;
+        Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Go `TraceExec`: runs the statement, then reports the spans.
+    pub(crate) fn trace_stmt(
+        &mut self,
+        trace: &tidb_ast::TraceStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        crate::trace::check_options(trace)
+            .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+        let inner_sql = crate::trace::statement_text(&trace.statement);
+        let inner = (*trace.statement).clone();
+        let recorder = crate::trace::StatementTrace::start();
+        let entered = recorder.enter();
+        // Go `session.ExecuteStmt`; this path drains the record set
+        // inside it.
+        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        let outcome = self.execute_statement_owned(inner, &inner_sql);
+        drop(execute_stmt);
+        drop(entered);
+        // Go `executeChild` and `drainRecordSet`'s events.
+        let affected = match outcome {
+            Ok(StmtOutput::Rows { rows, .. }) => {
+                recorder.event(&format!(
+                    "execute done, ReturnRow: {}, ModifyRow: 0",
+                    rows.len()
+                ));
+                0
+            }
+            Ok(StmtOutput::Affected(count)) => count,
+            Ok(_) => 0,
+            Err(error) => {
+                let mysql = error.to_mysql_error();
+                recorder.event(&format!(
+                    "execute with error({}): {}",
+                    mysql.code, mysql.message
+                ));
+                0
+            }
+        };
+        recorder.event(&format!("execute done, modify row: {affected}"));
+        let (spans, started) = recorder.finish();
+        let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
+            .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+        Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 }

@@ -261,13 +261,7 @@ pub trait GlobalIdGenerator: Send + Sync {
     fn gen_global_id(&self) -> Result<i64, DriverError>;
 }
 
-pub trait BdrRoleStore: Send + Sync {
-    /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
-    /// transaction; "" when unset.
-    fn get(&self) -> Result<String, String>;
-    /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
-    fn set(&self, role: &str) -> Result<(), String>;
-}
+pub use tidb_executor::admin::BdrRoleStore;
 
 pub use tidb_executor::table_size_stats::TableStorageStatsProvider;
 
@@ -751,7 +745,7 @@ pub struct Session {
     /// Go `pdhelper.GlobalPDHelper`: the node's, installed when the session
     /// opens; a session with no node behind it has a store without PD.
     approximate_table_counts:
-        std::sync::Arc<dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider>,
+        std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider>,
     /// Pinned Go's fresh information-schema table-size reader.
     table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
     /// Where the BDR role lives when it is not this catalog's (a cluster
@@ -1223,7 +1217,6 @@ pub use tidb_variable::slow_log_rules;
 pub mod trace;
 mod index_advisor;
 mod account_password;
-mod analyze_arm;
 pub mod binding;
 mod binding_arm;
 pub mod binding_cache;
@@ -1717,7 +1710,7 @@ impl Session {
     /// Installs the node's `GlobalPDHelper`.
     pub fn set_approximate_table_count_provider(
         &mut self,
-        provider: std::sync::Arc<dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider>,
+        provider: std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider>,
     ) {
         self.approximate_table_counts = provider;
     }

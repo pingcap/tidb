@@ -474,3 +474,72 @@ pub fn show_privileges_rows() -> Vec<Vec<Datum>> {
     }));
     rows
 }
+
+/// The SHOW kinds Go's `buildShow` plans here (the session's `run_planned_show`);
+/// the rest still answer in the session's SHOW arms.
+pub fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
+    use tidb_ast::ShowStmtType as T;
+    matches!(
+        tp,
+        T::Charset
+            | T::Collation
+            | T::Databases
+            | T::Engines
+            | T::ProcedureStatus
+            | T::FunctionStatus
+            | T::Triggers
+            | T::Events
+            | T::Profiles
+            | T::OpenTables
+            | T::Plugins
+            | T::Backups
+            | T::Restores
+            | T::Tables
+            | T::Variables
+            | T::MasterStatus
+            | T::BinlogStatus
+            | T::Privileges
+            | T::Builtins
+            | T::Warnings
+            | T::Errors
+            | T::Status
+            | T::TableStatus
+            | T::Columns
+            | T::Index
+            | T::CreateTable
+            | T::CreateView
+            | T::CreateSequence
+            | T::CreateDatabase
+            | T::CreatePlacementPolicy
+            | T::CreateResourceGroup
+            | T::Grants
+            | T::CreateUser
+            | T::StatsExtended
+            | T::StatsMeta
+            | T::StatsHealthy
+            | T::ColumnStatsUsage
+            | T::HistogramsInFlight
+            | T::AnalyzeStatus
+            | T::StatsTopN
+            | T::StatsBuckets
+            | T::StatsHistograms
+            | T::StatsLocked
+            | T::Bindings
+            | T::BindingCacheStatus
+            | T::ProcessList
+            | T::SessionStates
+            | T::Config
+            | T::Affinity
+            | T::ReplicaStatus
+            | T::Placement
+            | T::PlacementLabels
+            | T::PlacementForDatabase
+            | T::PlacementForTable
+            | T::PlacementForPartition
+            | T::Regions
+            | T::Distributions
+            | T::ImportJobs
+            | T::ImportGroups
+            | T::TableNextRowId
+    )
+}

@@ -25,6 +25,7 @@ use tidb_exec::real_tikv_analyze::ClusterAnalyzeReport;
 use tidb_util::stringutil::go_to_lower;
 
 use crate::*;
+use tidb_executor::analyze::exec::AnalyzeExec;
 
 /// Samples and persists the statistics an `ANALYZE` builds.
 pub trait AnalyzeService {
@@ -269,5 +270,17 @@ pub fn analyze_scan_concurrency_variable(auto_analyze: bool) -> &'static str {
         tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
     } else {
         tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
+    }
+}
+
+impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
+    fn approximate_table_counts(
+        &self,
+    ) -> std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider> {
+        std::sync::Arc::clone(&self.approximate_table_counts)
+    }
+
+    fn drain_context_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+        crate::Session::drain_context_warnings(self, ctx);
     }
 }

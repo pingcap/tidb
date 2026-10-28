@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! `EXPLAIN` / `EXPLAIN ANALYZE`: [`Session::explain_stmt`] is the
-//! `AdminStmt::Explain` arm of [`crate::Session::dispatch_admin_stmt`],
+//! `AdminStmt::Explain` arm of `tidb_executor::admin::AdminExec::admin_next`,
 //! pulled out on its own because the dispatch fans out over every wrapped
 //! statement kind (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) twice -- once for
 //! the plan-only form and once for `ANALYZE`, which additionally executes.

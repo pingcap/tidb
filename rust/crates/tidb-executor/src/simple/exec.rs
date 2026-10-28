@@ -24,11 +24,6 @@ pub trait SimpleExec: crate::admin::AdminExec {
     /// Go `executeAlterInstance`: `util.LoadTLSCertificates` and the
     /// server's TLS config swap.
     fn reload_tls(&mut self, no_rollback_on_error: bool) -> Result<(), DriverError>;
-    /// The ADMIN arms this tier still answers in the session.
-    fn dispatch_admin_stmt(
-        &mut self,
-        admin: &tidb_ast::AdminStmt,
-    ) -> Result<Option<StmtOutput>, DriverError>;
 
     /// Go `SimpleExec.Next`: one arm per statement type.
     fn simple_next(&mut self, stmt: &tidb_ast::Stmt) -> Result<Option<StmtOutput>, DriverError> {
@@ -119,7 +114,7 @@ pub trait SimpleExec: crate::admin::AdminExec {
                 // refused it, or noted `IF EXISTS`; the executor does nothing
                 // and the open transaction stays.
                 tidb_ast::AdminStmt::DropProcedure(_) => Ok(Some(StmtOutput::Affected(0))),
-                _ => self.dispatch_admin_stmt(admin),
+                _ => self.admin_next(admin),
             },
             _ => Ok(None),
         }

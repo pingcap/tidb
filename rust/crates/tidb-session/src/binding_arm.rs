@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The `CREATE BINDING` / `DROP BINDING` / `SHOW BINDINGS` arms of
-//! [`crate::Session::dispatch_admin_stmt`], plus the plan-time match every
+//! `tidb_executor::admin::AdminExec::admin_next`, plus the plan-time match every
 //! `SELECT` runs through. The mechanics they build on live in
 //! [`crate::binding`]; read that module's doc first.
 

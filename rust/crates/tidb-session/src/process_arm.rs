@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The `SHOW [FULL] PROCESSLIST` / `information_schema.PROCESSLIST` rows and
-//! `KILL`: the arms `Session::dispatch_admin_stmt` delegates to, plus the
+//! `KILL`: the arms `AdminExec::admin_next` delegates to, plus the
 //! helpers `Session::retrieve_memory_table` (in `dispatch.rs`) calls to build the
 //! virtual `PROCESSLIST` table.
 //!

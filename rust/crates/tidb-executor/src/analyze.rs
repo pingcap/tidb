@@ -49,6 +49,7 @@
 //! the planner trusts it and a missing one falls back to the pseudo rates
 //! that are visibly labelled `stats:pseudo`.
 
+pub mod exec;
 pub mod kv;
 pub mod panic_recovery;
 
@@ -1536,4 +1537,51 @@ mod tests {
         assert_eq!(analyzed.sampled_rows, 3);
         assert_eq!(analyzed.columns[0].histogram.correlation, -0.5);
     }
+}
+
+/// Go `pdhelper.PDHelper`'s approximate-count query as consumed by ANALYZE.
+pub trait ApproximateTableCountProvider: Send + Sync {
+    /// Returns the count and whether PD/storage supplied it. Cached values
+    /// return `true`, matching Go's cache-hit contract.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> (f64, bool);
+}
+
+/// go `getAdjustedSampleRate`'s reason strings, branch for branch
+/// (`pkg/executor/builder.go:3270`).
+pub fn sample_rate_reason(
+    realtime_count: Option<i64>,
+    approximate_count: Option<f64>,
+    rate: f64,
+) -> String {
+    let realtime = realtime_count.unwrap_or(0);
+    if realtime_count.is_none() && approximate_count.is_none() {
+        return format!(
+            "TiDB cannot get the row count of the table, use the default-rate={}",
+            0.001
+        );
+    }
+    if realtime == 0 && approximate_count.is_none() {
+        return "TiDB assumes that the table is empty and cannot get row count from PD, \
+                use sample-rate=1"
+            .to_owned();
+    }
+    if let Some(approximate) = approximate_count {
+        if (realtime as f64) * 5.0 < approximate {
+            return format!(
+                "Row count in stats_meta is much smaller compared with the row count got by PD, \
+                 use min(1, 150000/{approximate}) as the sample-rate={rate}"
+            );
+        }
+    }
+    if realtime == 0 {
+        return "TiDB assumes that the table is empty, use sample-rate=1".to_owned();
+    }
+    format!("use min(1, 110000/{realtime}) as the sample-rate={rate}")
 }

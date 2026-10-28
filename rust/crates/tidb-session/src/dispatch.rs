@@ -418,7 +418,7 @@ impl Session {
                 Ok(None)
             }
             _ => match stmt {
-                Stmt::Admin(admin) => self.dispatch_admin_stmt(admin),
+                Stmt::Admin(admin) => tidb_executor::admin::AdminExec::admin_next(self, admin),
                 _ => Ok(None),
             },
         }
@@ -2267,14 +2267,15 @@ impl Session {
             ))),
             // SHOW compiles itself (`run_planned_show`), and a logical
             // ADMIN plan (`LogicalShowDDLJobs`) reaches its executor here.
-            Stmt::Admin(admin) => self.dispatch_admin_stmt(admin).and_then(|output| {
-                output.ok_or_else(|| {
-                    DriverError::unsupported(format!(
-                        "this statement kind (ADMIN {}) is not supported yet",
-                        variant_name(&**admin)
-                    ))
-                })
-            }),
+            Stmt::Admin(admin) => tidb_executor::admin::AdminExec::admin_next(self, admin)
+                .and_then(|output| {
+                    output.ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "this statement kind (ADMIN {}) is not supported yet",
+                            variant_name(&**admin)
+                        ))
+                    })
+                }),
             Stmt::Session(session) => Err(DriverError::unsupported(format!(
                 "this statement kind ({}) is not supported yet",
                 variant_name(&**session)

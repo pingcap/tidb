@@ -13,9 +13,9 @@
 // limitations under the License.
 
 //! `ANALYZE TABLE`: the `AdminStmt::AnalyzeTable` arm of
-//! [`crate::Session::dispatch_admin_stmt`].
+//! `crate::admin::AdminExec::admin_next`.
 //!
-//! What an `ANALYZE` computes is [`tidb_executor::analyze`]'s, shared with the
+//! What an `ANALYZE` computes is [`crate::analyze`]'s, shared with the
 //! cluster tier; what it means for THIS session is here: which tables the
 //! statement names, and where the result is published.
 //!
@@ -48,24 +48,23 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tidb_executor::analyze::kv::{
+use crate::analyze::kv::{
     analyze_kv_table_columns, analyze_kv_table_independent_index, is_special_global_index,
 };
-use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
-use tidb_executor::analyze::{
+use crate::analyze::panic_recovery::recover_analyze_panic;
+use crate::analyze::{
     resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement, PhysicalAnalyzeOptions,
     SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
-use tidb_executor::{DriverError, TableEntry};
+use crate::{DriverError, TableEntry};
 
-use crate::Session;
 use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 
 /// Publish merged ANALYZE items as a real cache table. Go's storage loader
 /// derives the table format from histogram rows; these local results bypass
 /// that reload and must refresh the same metadata after replacing items.
-fn finish_analyze_publication(statistics: &mut tidb_executor::access_cost::TableStatistics) {
+fn finish_analyze_publication(statistics: &mut crate::access_cost::TableStatistics) {
     if let Some(version) = statistics
         .columns
         .values()
@@ -89,10 +88,10 @@ fn finish_analyze_publication(statistics: &mut tidb_executor::access_cost::Table
 }
 
 fn merge_analyzed_statistics(
-    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
-    mut fresh: tidb_executor::access_cost::TableStatistics,
+    old: Option<Arc<crate::access_cost::TableStatistics>>,
+    mut fresh: crate::access_cost::TableStatistics,
     replace_counts: bool,
-) -> tidb_executor::access_cost::TableStatistics {
+) -> crate::access_cost::TableStatistics {
     let Some(old) = old else {
         finish_analyze_publication(&mut fresh);
         return fresh;
@@ -130,17 +129,17 @@ fn merge_analyzed_statistics(
 }
 
 fn merge_partial_statistics(
-    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
-    fresh: tidb_executor::access_cost::TableStatistics,
+    old: Option<Arc<crate::access_cost::TableStatistics>>,
+    fresh: crate::access_cost::TableStatistics,
     partial: bool,
-) -> tidb_executor::access_cost::TableStatistics {
+) -> crate::access_cost::TableStatistics {
     merge_analyzed_statistics(if partial { old } else { None }, fresh, true)
 }
 
 fn merge_independent_index_statistics(
-    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
-    fresh: tidb_executor::access_cost::TableStatistics,
-) -> tidb_executor::access_cost::TableStatistics {
+    old: Option<Arc<crate::access_cost::TableStatistics>>,
+    fresh: crate::access_cost::TableStatistics,
+) -> crate::access_cost::TableStatistics {
     // An independent index task updates histogram rows without changing
     // stats_meta row/modify counts, unlike a full column-sampling task.
     merge_analyzed_statistics(old, fresh, false)
@@ -149,12 +148,12 @@ fn merge_independent_index_statistics(
 /// Rebuilds dynamic-mode global statistics from the physical partition
 /// statistics, the same source used by Go's `MergePartitionStats2GlobalStats`.
 fn merge_partitioned_global_statistics(
-    table: &tidb_executor::kv_table::KvTable,
-    partitions: &[(i64, Arc<tidb_executor::access_cost::TableStatistics>)],
-    previous: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
-    options: &tidb_executor::analyze::AnalyzeOptions,
+    table: &crate::kv_table::KvTable,
+    partitions: &[(i64, Arc<crate::access_cost::TableStatistics>)],
+    previous: Option<Arc<crate::access_cost::TableStatistics>>,
+    options: &crate::analyze::AnalyzeOptions,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<tidb_executor::access_cost::TableStatistics, DriverError> {
+) -> Result<crate::access_cost::TableStatistics, DriverError> {
     let row_count = partitions
         .iter()
         .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.row_count.max(0)));
@@ -164,7 +163,7 @@ fn merge_partitioned_global_statistics(
     let mut global = previous
         .as_deref()
         .cloned()
-        .unwrap_or_else(|| tidb_executor::access_cost::TableStatistics::new(
+        .unwrap_or_else(|| crate::access_cost::TableStatistics::new(
             row_count,
             modify_count,
             Default::default(),
@@ -224,7 +223,7 @@ fn merge_partitioned_global_statistics(
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
-            if tidb_executor::analyze::kv::is_local_unique(table, false, column.id) {
+            if crate::analyze::kv::is_local_unique(table, false, column.id) {
                 histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
                     items.iter().map(|(stats, _)| &stats.histogram),
                     row_count,
@@ -297,7 +296,7 @@ fn merge_partitioned_global_statistics(
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
-            if tidb_executor::analyze::kv::is_local_unique(table, true, index.id) {
+            if crate::analyze::kv::is_local_unique(table, true, index.id) {
                 histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
                     items.iter().map(|(stats, _)| &stats.histogram),
                     row_count,
@@ -337,7 +336,7 @@ struct AnalyzeIndexTasks {
 }
 
 fn select_index_tasks(
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
     statement: &AnalyzeStatement,
 ) -> Result<AnalyzeIndexTasks, DriverError> {
     let Some(names) = &statement.index_names else {
@@ -416,7 +415,7 @@ fn select_index_tasks(
 }
 
 fn analyze_partition_ids(
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
     requested: &[String],
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {
@@ -463,14 +462,14 @@ fn effective_column_choice(
 }
 
 fn selected_column_ids(
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
     choice: &AnalyzeColumnChoice,
     default_choice: &AnalyzeColumnChoice,
     predicate_ids: &HashSet<(i64, i64)>,
     table_id: i64,
     schema: &str,
     table_name: &str,
-    context: &tidb_executor::StmtContext,
+    context: &crate::StmtContext,
     predicate_warning_emitted: &mut bool,
     explicit_warning_emitted: &mut bool,
 ) -> Result<Option<HashSet<i64>>, DriverError> {
@@ -579,7 +578,7 @@ fn selected_column_ids(
 /// or the integer handle needs their sample values, then the generated columns
 /// that depend on a skipped one.
 fn skip_column_types(
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
     selected: Option<HashSet<i64>>,
     skip_types: &std::collections::BTreeSet<String>,
 ) -> Option<HashSet<i64>> {
@@ -662,7 +661,7 @@ fn skip_column_types(
 }
 
 fn saved_options(
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
     options: &PhysicalAnalyzeOptions,
     selected: Option<&HashSet<i64>>,
 ) -> SavedAnalyzeOptions {
@@ -688,15 +687,15 @@ fn saved_options(
 /// column ids resolved against `table` (an id it no longer has is dropped).
 fn saved_options_from_row(
     row: &[tidb_datatype::Datum],
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
 ) -> SavedAnalyzeOptions {
-    let text = |index: usize| row.get(index).and_then(crate::datum_text).unwrap_or_default();
+    let text = |index: usize| row.get(index).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
     let int = |index: usize| text(index).parse::<i64>().unwrap_or(0);
     let sample_num = int(0);
     let sample_rate = text(1).parse::<f64>().unwrap_or(0.0);
     let buckets = int(2);
     let topn = int(3);
-    let raw = tidb_executor::analyze::AnalyzeOptionOverrides {
+    let raw = crate::analyze::AnalyzeOptionOverrides {
         num_buckets: (buckets > 0).then(|| buckets as isize),
         num_topn: (topn >= 0).then(|| topn as isize),
         num_samples: (sample_num > 0).then(|| sample_num as usize),
@@ -722,7 +721,7 @@ fn saved_options_from_row(
 /// over `saved`, a LIST's column names stored as `table`'s column ids.
 fn save_analyze_options_sql(
     saved: &[(i64, SavedAnalyzeOptions)],
-    table: &tidb_executor::kv_table::KvTable,
+    table: &crate::kv_table::KvTable,
 ) -> String {
     let rows = saved
         .iter()
@@ -766,7 +765,15 @@ fn save_analyze_options_sql(
     )
 }
 
-impl Session {
+/// Go `AnalyzeExec` for the tables this session's catalog holds.
+pub trait AnalyzeExec: crate::show::exec::ShowExec {
+    /// Go `pdhelper.GlobalPDHelper`.
+    fn approximate_table_counts(
+        &self,
+    ) -> std::sync::Arc<dyn crate::analyze::ApproximateTableCountProvider>;
+    /// Moves the statement context's warnings onto the session.
+    fn drain_context_warnings(&mut self, ctx: &crate::StmtContext);
+
     /// Runs one `ANALYZE` through the session catalog when its resolved table
     /// is temporary.
     ///
@@ -777,7 +784,7 @@ impl Session {
     /// an ordinary analyze task for these tables; this narrow entry point lets
     /// the cluster route preserve that behavior without creating a second
     /// temporary-table analyzer.
-    pub fn analyze_temporary_table(
+    fn analyze_temporary_table(
         &mut self,
         statement: &AnalyzeStatement,
     ) -> Result<Option<(i64, Arc<tidb_stats::Table>)>, DriverError> {
@@ -800,7 +807,7 @@ impl Session {
         Ok(Some((
             table_id,
             Arc::new(
-                tidb_executor::load_stats::statistics_table_from_planner_statistics(
+                crate::load_stats::statistics_table_from_planner_statistics(
                     &table,
                     table_id,
                     &statistics,
@@ -814,17 +821,17 @@ impl Session {
         &mut self,
         statement: &AnalyzeStatement,
     ) -> Result<
-        std::collections::HashMap<i64, Arc<tidb_executor::access_cost::TableStatistics>>,
+        std::collections::HashMap<i64, Arc<crate::access_cost::TableStatistics>>,
         DriverError,
     > {
-        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
+        let stats_handle = self.stats_handle();
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
-        let usage_provider = self.column_stats_usage.clone();
+        let usage_provider = self.column_stats_usage_provider();
         let session_time_zone = self.session_time_zone();
-        let resource_group = self.active_resource_group.clone();
-        let approximate_table_counts = std::sync::Arc::clone(&self.approximate_table_counts);
+        let resource_group = self.active_resource_group().to_owned();
+        let approximate_table_counts = self.approximate_table_counts();
         // Go `getSavedAnalyzeOpts`, per physical table, by restricted SQL.
         let mut persisted = std::collections::HashMap::new();
         if statement.persist_options {
@@ -1014,7 +1021,7 @@ impl Session {
                 let rate =
                     tidb_stats::row_sample_collector::adjusted_sample_rate(realtime, approximate);
                 let reason =
-                    tidb_exec::real_tikv_analyze::sample_rate_reason(realtime, approximate, rate);
+                    crate::analyze::sample_rate_reason(realtime, approximate, rate);
                 options.effective.sample_rate = Some(rate);
                 let target = if partition_name.is_empty() {
                     format!("{schema}.{name}")
@@ -1185,8 +1192,8 @@ impl Session {
     /// (`variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`,
     /// `pkg/executor/select.go:141`), so the value in force is whatever the
     /// last `SET GLOBAL` stored. Its default, `-1`, is no bound.
-    pub(crate) fn analyze_memory_quota(&self) -> SampleMemoryQuota {
-        self.vars()
+    fn analyze_memory_quota(&self) -> SampleMemoryQuota {
+        self.session_vars()
             .get_global(MEM_QUOTA_ANALYZE_VARIABLE)
             .ok()
             .and_then(|value| value.trim().parse::<i64>().ok())

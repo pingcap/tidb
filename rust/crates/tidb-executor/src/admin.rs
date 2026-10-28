@@ -661,6 +661,323 @@ pub trait AdminExec: crate::show::exec::ShowExec {
             .map_err(admin_check_error)
         })
     }
+
+    /// Go `ExplainExec` over the planned statement.
+    fn explain_stmt(
+        &mut self,
+        explain: &tidb_ast::ExplainStmt,
+    ) -> Result<Option<StmtOutput>, DriverError>;
+    /// Go `SimpleExec.executeExplainFor`, over the session manager.
+    fn explain_for_stmt(
+        &mut self,
+        explain_for: &tidb_ast::ExplainForStmt,
+    ) -> Result<Option<StmtOutput>, DriverError>;
+    /// Go `TraceExec`, which runs the statement through the session.
+    fn trace_stmt(
+        &mut self,
+        trace: &tidb_ast::TraceStmt,
+    ) -> Result<Option<StmtOutput>, DriverError>;
+    /// Go `meta.Mutator`'s BDR role, read and written in a new transaction.
+    fn bdr_role_store(&self) -> Result<std::sync::Arc<dyn BdrRoleStore>, DriverError>;
+    /// Go `SimpleExec.executeAdminFlushPlanCache`.
+    fn flush_session_plan_cache(
+        &mut self,
+        scope: tidb_ast::AdminPlanCacheScope,
+    ) -> Result<(), DriverError>;
+    /// Go `SQLBindExec` for CREATE BINDING.
+    fn create_binding_stmt(
+        &mut self,
+        create: &tidb_ast::CreateBindingStmt,
+    ) -> Result<StmtOutput, DriverError>;
+    /// Go `SQLBindExec` for DROP BINDING.
+    fn drop_binding_stmt(
+        &mut self,
+        drop: &tidb_ast::DropBindingStmt,
+    ) -> Result<StmtOutput, DriverError>;
+    /// Go `SQLBindExec` for SET BINDING.
+    fn set_binding_stmt(
+        &mut self,
+        set: &tidb_ast::SetBindingStmt,
+    ) -> Result<StmtOutput, DriverError>;
+    /// Go `domain.GetDomain(ctx).GetWorkloadRepository()`.
+    fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>>;
+    /// Go `ReloadExprPushdownBlacklistExec`.
+    fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError>;
+    /// Go `ReloadOptRuleBlacklistExec`.
+    fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError>;
+    /// Go `RecommendIndexExec`.
+    fn recommend_index_stmt(
+        &mut self,
+        recommend: &tidb_ast::RecommendIndexStmt,
+    ) -> Result<StmtOutput, DriverError>;
+    /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
+    /// privilege cache and notify the domain.
+    fn flush_privileges(&mut self) -> Result<(), DriverError>;
+    /// Go `ShowDDLExec`'s rows: the node identity and the followed schema
+    /// version.
+    fn show_ddl_rows(&self) -> Vec<Vec<Datum>>;
+    /// Go `Compile` + `runStmt` over `buildShow`'s plan.
+    fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError>;
+    /// Go `SimpleExec.executeKillStmt`.
+    fn kill_stmt(&mut self, kill: &tidb_ast::KillStmt) -> Result<Option<StmtOutput>, DriverError>;
+
+    /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
+    /// `EXPLAIN`, `GRANT`/`REVOKE`/`SHOW GRANTS`, and `KILL` delegated to
+    /// their own modules.
+    /// Go `executorBuilder.build` over the ADMIN plans and the executors
+    /// `Next` runs: one arm per statement.
+    fn admin_next(
+        &mut self,
+        admin: &tidb_ast::AdminStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        match admin {
+            // `EXPLAIN <select>`: plan the statement and report the plan,
+            // running nothing. Go's EXPLAIN plans without executing (an
+            // `EXPLAIN INSERT` inserts no row, captured), and so does
+            // this: `crate::explain_select_stmt` re-runs the
+            // driver's own read-path decisions without touching storage.
+            //
+            // See `crate::explain`'s module doc for every place
+            // this tier's plan text diverges from Go's and why.
+            tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
+            // Go `executeAdminSetBDRRole` / `executeAdminUnsetBDRRole` write
+            // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it.
+            tidb_ast::AdminStmt::SetBdrRole(_)
+            | tidb_ast::AdminStmt::UnsetBdrRole
+            | tidb_ast::AdminStmt::ShowBdrRole => {
+                let role = match admin {
+                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Primary) => "primary",
+                    tidb_ast::AdminStmt::SetBdrRole(tidb_ast::BdrRole::Secondary) => "secondary",
+                    tidb_ast::AdminStmt::UnsetBdrRole => "",
+                    _ => {
+                        let role = self
+                            .bdr_role_store()?
+                            .get()
+                            .map_err(DriverError::unsupported)?;
+                        let mut field_type =
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::String);
+                        field_type.set_flen(1);
+                        return Ok(Some(StmtOutput::Rows {
+                            columns: vec![("BDR_ROLE".to_owned(), field_type)],
+                            rows: vec![vec![Datum::Bytes(role.into_bytes())]],
+                        }));
+                    }
+                };
+                self.bdr_role_store()?
+                    .set(role)
+                    .map_err(DriverError::unsupported)?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            tidb_ast::AdminStmt::FlushPlanCache(scope) => {
+                self.flush_session_plan_cache(*scope)?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            // SQL bindings. See `crate::binding_arm`, and `crate::binding`
+            // for the normalization and hint-transfer they are built on.
+            tidb_ast::AdminStmt::CreateBinding(create) => {
+                Ok(Some(self.create_binding_stmt(create)?))
+            }
+            tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
+            tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
+            // ANALYZE, LOAD STATS and DROP STATS write the statistics storage
+            // and the domain's cache: the session's node runs them
+            // (`StatementRoute::Analyze` / `LoadStats` / `DropStats`).
+            tidb_ast::AdminStmt::AnalyzeTable(_)
+            | tidb_ast::AdminStmt::AnalyzeIncremental(_)
+            | tidb_ast::AdminStmt::LoadStats(_)
+            | tidb_ast::AdminStmt::DropStats(_)
+            | tidb_ast::AdminStmt::LockStats(_)
+            | tidb_ast::AdminStmt::UnlockStats(_) => Err(DriverError::unsupported(
+                "statistics statements run on the session's node",
+            )),
+            tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
+                let worker = self.workload_repository().ok_or_else(|| {
+                    DriverError::from(
+                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                            .generate_with_stack_by_args(&[
+                                "Workload repository is not enabled".into()
+                            ]),
+                    )
+                })?;
+                worker.take_snapshot().map_err(|error| {
+                    if error == "Workload repository is not enabled" {
+                        DriverError::from(
+                            tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                                .generate_with_stack_by_args(&[error.into()]),
+                        )
+                    } else {
+                        DriverError::unsupported(error)
+                    }
+                })?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
+            // and `ReloadOptRuleBlacklist` executors, each of which reads its
+            // `mysql.*` table and publishes what the optimizer consults. Both
+            // answer no rows, as every ADMIN maintenance statement does.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::ExprPushdownBlacklist) => {
+                self.reload_expr_pushdown_blacklist()?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::OptRuleBlacklist) => {
+                self.reload_opt_rule_blacklist()?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            // go `SimpleExec.executeReloadBindings` (`pkg/executor/simple.go`):
+            // the reload re-syncs the binding cache from storage and answers
+            // no rows, like every maintenance statement.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => {
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            // Go `executeAdminReloadStatistics`.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Statistics) => {
+                Err(DriverError::Mysql(crate::MysqlError::unknown(
+                    "Extended statistics feature has been removed",
+                )))
+            }
+            // Go `plugin.ChangeDisableFlagAndFlush`: no plugin is loaded
+            // here, so the first named plugin is unknown.
+            tidb_ast::AdminStmt::Plugins { plugins, .. } => match plugins.first() {
+                Some(name) => Err(DriverError::Mysql(crate::MysqlError::unknown(format!(
+                    "plugin '{name}' not found"
+                )))),
+                None => Ok(Some(StmtOutput::Done(true))),
+            },
+            // go `SimpleExec.executeAdminBindingControl` (`pkg/executor/simple.go`):
+            // `ADMIN FLUSH BINDINGS` publishes the cache and answers OK;
+            // `CAPTURE`/`EVOLVE` refuse with the two messages Go's own
+            // feature gates produce (`Auto Capture is not supported` when
+            // `tidb_capture_plan_baselines` is off, and the baseline-evolution
+            // GA refusal).
+            tidb_ast::AdminStmt::BindingControl(kind) => match kind {
+                tidb_ast::AdminBindingControlKind::Flush => Ok(Some(StmtOutput::Done(true))),
+                tidb_ast::AdminBindingControlKind::Capture => {
+                    Err(DriverError::unsupported("Auto Capture is not supported"))
+                }
+                tidb_ast::AdminBindingControlKind::Evolve => Err(DriverError::unsupported(
+                    "Cannot enable baseline evolution feature, it is not generally available now",
+                )),
+            },
+            // go `execCommandOnDDLJobs` (`pkg/executor/admin.go`): one
+            // `(JOB_ID, RESULT)` row per requested id, not an error.
+            tidb_ast::AdminStmt::DdlJobControl(control) => {
+                Ok(Some(self.ddl_job_control_stmt(control)?))
+            }
+            tidb_ast::AdminStmt::SplitRegion(split) => Ok(Some(self.split_region_stmt(split)?)),
+            // go `ChecksumTableExec` (`pkg/executor/checksum.go`).
+            tidb_ast::AdminStmt::AdminChecksum(checksum) => {
+                Ok(Some(self.admin_checksum_stmt(&checksum.tables)?))
+            }
+            // go `adminShowSlowExec` over the domain's slow-query memory.
+            tidb_ast::AdminStmt::ShowSlow(show) => Ok(Some(self.admin_show_slow_stmt(show)?)),
+            // go `fetchShowDDLJobs` over the finished-job history.
+            tidb_ast::AdminStmt::ShowDdlJobs(show) => {
+                Ok(Some(self.admin_show_ddl_jobs_stmt(show)?))
+            }
+            // go `ShowDDLJobQueriesExec` / `...WithRangeExec`.
+            tidb_ast::AdminStmt::ShowDdlJobQueries(show) => {
+                Ok(Some(self.admin_show_ddl_job_queries_stmt(show)?))
+            }
+            // go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`).
+            tidb_ast::AdminStmt::ExplainFor(explain_for) => self.explain_for_stmt(explain_for),
+            // Go `TraceExec`: runs the statement, then reports the spans.
+            tidb_ast::AdminStmt::Trace(trace) => self.trace_stmt(trace),
+            // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
+            // TiProxy, and this deployment has none.
+            tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(crate::MysqlError::unknown(
+                "no tiproxy server found",
+            ))),
+            // Go `RecommendIndexExec` (`executor/recommend_index.go`).
+            tidb_ast::AdminStmt::RecommendIndex(recommend) => {
+                self.recommend_index_stmt(recommend).map(Some)
+            }
+            tidb_ast::AdminStmt::Grant(grant) => {
+                self.grant_stmt(grant)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::Revoke(revoke) => {
+                self.revoke_stmt(revoke)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::GrantRole(grant) => {
+                self.grant_role_stmt(grant)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            tidb_ast::AdminStmt::RevokeRole(revoke) => {
+                self.revoke_role_stmt(revoke)?;
+                Ok(Some(StmtOutput::Affected(0)))
+            }
+            // Go `SimpleExec.executeFlush`.
+            tidb_ast::AdminStmt::Flush(flush) => {
+                if matches!(flush.target, tidb_ast::FlushTarget::Status) {
+                    self.session_vars_mut().keys_examined = 0;
+                }
+                if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
+                    self.flush_privileges()?;
+                }
+                return flush_stmt(flush).map(Some);
+            }
+            tidb_ast::AdminStmt::ShowDdl => {
+                return Ok(Some(show_ddl_output(&self.show_ddl_rows())));
+            }
+            // Go `Compile` + `runStmt` over `buildShow`'s plan.
+            tidb_ast::AdminStmt::Show(show) if crate::show::is_planned_show(show.tp) => {
+                self.run_planned_show(show).map(Some)
+            }
+            // Go has no `ShowImports` fetcher or schema (`buildShowSchema`
+            // names no columns for it); this tier answers the empty
+            // `Job_ID | State` listing.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Imports => {
+                Ok(Some(show_imports_output()))
+            }
+            // Go `SimpleExec.executeKillStmt`.
+            tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
+            // Go `CheckTableExec` / `CheckIndexRangeExec`.
+            tidb_ast::AdminStmt::AdminCheck(check) => {
+                self.admin_check_stmt(check.as_ref()).map(Some)
+            }
+            // Go `RecoverIndexExec` / `CleanupIndexExec`.
+            tidb_ast::AdminStmt::AdminRecoverIndex(recover) => {
+                self.admin_recover_index_stmt(recover.as_ref()).map(Some)
+            }
+            tidb_ast::AdminStmt::AdminCleanupIndex(cleanup) => {
+                self.admin_cleanup_index_stmt(cleanup.as_ref()).map(Some)
+            }
+            // Go `fetchShowCreateProcedure`'s object is not stored here: the
+            // statement answers nothing.
+            tidb_ast::AdminStmt::Show(show)
+                if show.tp == tidb_ast::ShowStmtType::CreateProcedure =>
+            {
+                Ok(None)
+            }
+            // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
+            // (pkg/executor/simple.go:3584-3611): the statement answers
+            // success immediately, and a 1-second-delayed task SIGTERMs this
+            // very process, whose installed handler performs the graceful
+            // stop. `RESTART`/`HELP` keep their unsupported report.
+            tidb_ast::AdminStmt::ServerControl(control) => match &**control {
+                tidb_ast::ServerControlStmt::Shutdown => {
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        signal_hook::low_level::raise(signal_hook::consts::SIGTERM);
+                    });
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                // Go's executor builder names the AST node of the statements
+                // it has no executor for (`Unsupported type *ast.HelpStmt`,
+                // 8108).
+                tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
+                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                        .generate_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
+                )),
+                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
+                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                        .generate_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
+                )),
+            },
+            _ => Ok(None),
+        }
+    }
 }
 
 /// What a passing `ADMIN CHECK TABLE`/`CHECK INDEX` answers.
@@ -797,4 +1114,13 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
                 .generate_with_stack_by_args(&[]),
         ),
     }
+}
+
+/// Go `meta.Mutator`'s BDR role key, read and written in a new transaction.
+pub trait BdrRoleStore: Send + Sync {
+    /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
+    /// transaction; "" when unset.
+    fn get(&self) -> Result<String, String>;
+    /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
+    fn set(&self, role: &str) -> Result<(), String>;
 }

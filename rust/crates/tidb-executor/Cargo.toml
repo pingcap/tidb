@@ -28,6 +28,8 @@ tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-log = { path = "../tidb-log" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
+signal-hook = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
 stacker = { workspace = true }
