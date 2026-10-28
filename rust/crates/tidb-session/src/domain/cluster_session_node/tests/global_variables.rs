@@ -97,6 +97,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
                 .expect("statistics cache"),
         ),
         Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
+        crate::domain::cluster_session_node::open_pool_session,
     )
 }
 

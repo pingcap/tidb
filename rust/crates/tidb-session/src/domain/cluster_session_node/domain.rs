@@ -566,7 +566,16 @@ impl crate::DataLockWaitsProvider for ClusterDataLockWaits {
 /// statistics handle, the DDL and transaction clients, the privilege and
 /// process registries and the background workers -- shared by every session
 /// it opens, one cluster-backed [`Session`] per authenticated connection.
+/// Go `createSessionFunc`: how the session package opens one internal
+/// session over this domain for its system-session pool.
+pub type SysSessionOpener = fn(
+    &Arc<Domain>,
+    u64,
+) -> Result<Arc<dyn tidb_domain_core::sys_session::DomainSysSession>, String>;
+
 pub struct Domain {
+    /// The session package's opener of this domain's internal sessions.
+    pub(crate) sys_session_opener: SysSessionOpener,
     pub(crate) global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     pub(crate) bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
     pub(crate) binding_session_factory: Weak<Domain>,
@@ -753,6 +762,26 @@ impl Domain {
         self
     }
 
+    /// Returns Go Domain's single advanced internal-session pool, whose
+    /// sessions [`Self::sys_session_opener`] opens.
+    pub fn advanced_sys_session_pool(
+        self: &Arc<Self>,
+    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool> {
+        Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
+            let domain = Arc::downgrade(self);
+            let open = self.sys_session_opener;
+            let next_connection_id = Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61));
+            Arc::new(tidb_syssession::AdvancedSessionPool::new(200, move || {
+                let domain = domain.upgrade().ok_or_else(|| {
+                    tidb_syssession::SysSessionError::new("cluster session factory is stopped")
+                })?;
+                let connection_id =
+                    next_connection_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                open(&domain, connection_id).map_err(tidb_syssession::SysSessionError::new)
+            }))
+        }))
+    }
+
     /// The factory behind the `Arc` its internal sessions (restricted SQL,
     /// the binding and statistics maintenance) are opened through: Go's
     /// domain owns its session pool for its whole life.
@@ -795,6 +824,7 @@ impl Domain {
         global_vars: GlobalSysvars,
         stats: Arc<SharedStats>,
         auto_ids: Arc<dyn TableAutoIds>,
+        sys_session_opener: SysSessionOpener,
     ) -> Self {
         global_vars.set_external_timestamp_provider(Arc::new(ClusterExternalTimestamp(
             Arc::clone(&transactions),
@@ -819,6 +849,7 @@ impl Domain {
             Arc::clone(&transactions),
         ));
         Self {
+            sys_session_opener,
             transactions,
             bindings: None,
             statistics: Vec::new(),

@@ -38,11 +38,6 @@ pub trait DomainSessions {
     /// account executor runs in its own transaction.
     fn open_system_session(&self) -> Result<Session, SqlQueryError>;
 
-    /// Returns Go Domain's single advanced internal-session pool.
-    fn advanced_sys_session_pool(
-        self: &Arc<Self>,
-    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool>;
-
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError>;
 }
 
@@ -100,41 +95,6 @@ impl DomainSessions for Domain {
         })?;
         session.set_restricted_sql(true);
         Ok(session)
-    }
-
-    fn advanced_sys_session_pool(
-        self: &Arc<Self>,
-    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool> {
-        Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
-            let session_factory = Arc::downgrade(self);
-            let next_connection_id = Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61));
-            Arc::new(tidb_syssession::AdvancedSessionPool::new(200, move || {
-                use std::sync::atomic::Ordering;
-
-                let factory = session_factory.upgrade().ok_or_else(|| {
-                    tidb_syssession::SysSessionError::new("cluster session factory is stopped")
-                })?;
-                let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
-                let global_vars = factory.global_vars.clone();
-                let session = factory
-                    .open_session(SessionContext {
-                        connection_id,
-                        peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
-                "127.0.0.1:0".parse().expect("loopback socket address"),
-            ),
-                        identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
-                        client_found_rows: false,
-                        tls_state: None,
-                        compression_algorithm: tidb_mysql::consts::CompressionNone,
-                        compression_level: 0,
-                        cancellation: crate::domain::session_api::ConnectionCancellation::default(),
-                        close: crate::domain::session_api::ConnectionClose::default(),
-                    })
-                    .map_err(|error| tidb_syssession::SysSessionError::new(error.message))?;
-                Ok(Arc::new(ClusterStatsSessionContext::new(session, global_vars))
-                    as Arc<dyn tidb_domain_core::sys_session::DomainSysSession>)
-            }))
-        }))
     }
 
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError> {
@@ -1319,4 +1279,30 @@ pub(crate) fn cluster_stats_session(
         .as_any()
         .downcast_ref::<ClusterStatsSessionContext>()
         .expect("the domain's pool holds the session package's sessions")
+}
+
+/// Go `createSessionFunc` for the domain's system-session pool: one internal
+/// session over the store, which [`Domain::new`] receives as its
+/// `sys_session_opener`.
+pub fn open_pool_session(
+    domain: &Arc<Domain>,
+    connection_id: u64,
+) -> Result<Arc<dyn tidb_domain_core::sys_session::DomainSysSession>, String> {
+    let global_vars = domain.global_vars.clone();
+    let session = domain
+        .open_session(SessionContext {
+            connection_id,
+            peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
+                "127.0.0.1:0".parse().expect("loopback socket address"),
+            ),
+            identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
+            client_found_rows: false,
+            tls_state: None,
+            compression_algorithm: tidb_mysql::consts::CompressionNone,
+            compression_level: 0,
+            cancellation: crate::domain::session_api::ConnectionCancellation::default(),
+            close: crate::domain::session_api::ConnectionClose::default(),
+        })
+        .map_err(|error| error.message)?;
+    Ok(Arc::new(ClusterStatsSessionContext::new(session, global_vars)))
 }

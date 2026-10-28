@@ -732,6 +732,7 @@ pub fn unistore_cluster_session_stack_from(
         users.global_vars(),
         Arc::clone(&stats),
         Arc::clone(&node_auto_ids),
+        crate::domain::cluster_session_node::open_pool_session,
     )
     .with_kv_client(kv_client)
     .with_region_store(region_store)

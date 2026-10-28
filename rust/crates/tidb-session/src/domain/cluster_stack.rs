@@ -562,6 +562,7 @@ pub fn cluster_session_stack(
         users.global_vars(),
         Arc::clone(&stats),
         Arc::clone(&node_auto_ids),
+        crate::domain::cluster_session_node::open_pool_session,
     )
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_mpp_client(mpp_client)

@@ -496,6 +496,7 @@ fn open_session_on_with_context_and_seams_and_usage(
                 .expect("statistics cache"),
         ),
         Arc::clone(&node.auto_ids) as _,
+        crate::domain::cluster_session_node::open_pool_session,
     )
     .shared();
     node.keep(&factory);
