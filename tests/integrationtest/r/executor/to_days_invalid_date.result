@@ -1,0 +1,24 @@
+set sql_mode='ALLOW_INVALID_DATES';
+create table day_dates(id int primary key, d date);
+insert into day_dates values(1,'2024-00-15'),(2,'2024-01-00'),(3,'2024-01-15');
+create table day_keys(n bigint);
+insert into day_keys values(739234),(739250);
+set sql_mode=default;
+set tidb_enable_vectorized_expression=0;
+delete day_dates from day_dates join day_keys on to_days(day_dates.d)=day_keys.n;
+Error 1292 (22007): Incorrect datetime value: '2024-00-15'
+select id from day_dates order by id;
+id
+1
+2
+3
+set tidb_enable_vectorized_expression=1;
+delete day_dates from day_dates join day_keys on to_days(day_dates.d)=day_keys.n;
+Error 1292 (22007): Incorrect datetime value: '2024-00-15'
+select id from day_dates order by id;
+id
+1
+2
+3
+drop table day_dates, day_keys;
+set tidb_enable_vectorized_expression=default;
