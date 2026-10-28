@@ -45,6 +45,7 @@ pub use tidb_planner::plan_builder::field_name::{
 };
 
 pub mod access;
+pub mod point_get_plan;
 mod agg_build;
 mod catalog_ctx;
 #[cfg(test)]
@@ -78,6 +79,7 @@ pub(crate) mod write_cast;
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
 pub(crate) use access::*;
+pub(crate) use point_get_plan::*;
 pub use tidb_infoschema::*;
 pub use catalog_ctx::CatalogStatisticsLoad;
 pub(crate) use catalog_ctx::PlannerCatalogContext;
@@ -353,7 +355,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     DriverError,
 > {
     if let QueryStmt::Select(select) = query {
-        if let Some(plan) = access::try_fast_point_physical_plan(select, catalog, current_db, ctx)?
+        if let Some(plan) = point_get_plan::try_fast_point_physical_plan(select, catalog, current_db, ctx)?
         {
             return Ok((plan, Vec::new()));
         }

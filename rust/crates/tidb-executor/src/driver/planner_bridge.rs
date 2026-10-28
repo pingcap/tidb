@@ -3277,7 +3277,7 @@ pub(crate) fn cached_physical_query_plan(
     // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
     let fast = match query {
         tidb_ast::QueryStmt::Select(select) => {
-            super::access::try_fast_point_physical_plan(select, catalog, current_database, ctx)
+            super::point_get_plan::try_fast_point_physical_plan(select, catalog, current_database, ctx)
                 .ok()?
         }
         tidb_ast::QueryStmt::SetOpr(_) => None,

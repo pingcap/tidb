@@ -229,7 +229,7 @@ pub fn statement_read_shape(
     {
         return StatementReadShape::Unknown;
     }
-    let Some(table_ref) = crate::driver::access::single_table_ref(&select.from) else {
+    let Some(table_ref) = crate::driver::point_get_plan::single_table_ref(&select.from) else {
         return StatementReadShape::Unknown;
     };
     let (database, table_name) = match table_ref.name.as_slice() {
@@ -257,10 +257,10 @@ pub fn statement_read_shape(
     // helpers, so a statement this predicate accepts is a statement that arm
     // accepts. It reads nothing: both helpers walk the AST only.
     let mut pairs = Vec::new();
-    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs, zone) {
+    if !crate::driver::point_get_plan::name_value_pairs(where_clause, &mut pairs, zone) {
         return StatementReadShape::Unknown;
     }
-    if !crate::driver::access::convert_pairs_to_column_domain(&mut pairs, &columns) {
+    if !crate::driver::point_get_plan::convert_pairs_to_column_domain(&mut pairs, &columns) {
         return StatementReadShape::Unknown;
     }
     if let Some(handle_offset) = table.pk_handle_offset() {

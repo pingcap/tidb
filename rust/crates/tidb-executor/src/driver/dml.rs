@@ -409,7 +409,7 @@ fn physical_dml_plan_with_cache_mode(
                 && update.is_none_or(|update| update_allows_fast_plan(update));
             let fast = (!use_plan_cache && allow_fast_plan)
                 .then(|| {
-                    super::access::try_fast_dml_point_physical_plan_with_allocator(
+                    super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
                         select, catalog, current_db, ctx, &plan_ids,
                     )
                 })
@@ -3371,7 +3371,7 @@ fn run_update_with_physical(
         // pair the planning refused is refused again -- but must not report
         // it a second time.
         let warning_bookmark = ctx.warning_count();
-        let fast = super::access::try_fast_dml_point_physical_plan_with_allocator(
+        let fast = super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
             select,
             catalog,
             current_db,
@@ -3823,7 +3823,7 @@ fn delete_has_fk(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> bool {
-    let Some(table_ref) = super::access::sole_table_ref(&select.from) else {
+    let Some(table_ref) = super::point_get_plan::sole_table_ref(&select.from) else {
         return false;
     };
     let Ok((database, name)) = single_table_name(table_ref, current_db) else {
