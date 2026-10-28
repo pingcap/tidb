@@ -2847,7 +2847,7 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
     tidb_stats_handle_util::call_with_sctx(
         pool.as_ref(),
         |context| {
-            context.with_session(|session| {
+            super::super::cluster_stats_session(context).with_session(|session| {
                 let analyze = Arc::new(KillingSystemAnalyze {
                     inner: session.node.domain.analyze(),
                     processes: factory.processes(),
@@ -2948,7 +2948,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
     tidb_stats_handle_util::call_with_sctx(
         pool.as_ref(),
         |context| {
-            context
+            super::super::cluster_stats_session(context)
                 .with_session(|session| {
                     let analyze = Arc::new(ObservedSystemAnalyze {
                         inner: session.node.domain.analyze(),

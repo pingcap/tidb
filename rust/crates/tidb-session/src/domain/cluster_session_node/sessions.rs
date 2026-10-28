@@ -86,7 +86,7 @@ impl Domain {
     /// Returns Go Domain's single advanced internal-session pool.
     pub(crate) fn advanced_sys_session_pool(
         self: &Arc<Self>,
-    ) -> Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>> {
+    ) -> Arc<tidb_domain_core::sys_session::DomainSysSessionPool> {
         Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
             let session_factory = Arc::downgrade(self);
             let next_connection_id = Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61));
@@ -113,10 +113,8 @@ impl Domain {
                         close: crate::domain::session_api::ConnectionClose::default(),
                     })
                     .map_err(|error| tidb_syssession::SysSessionError::new(error.message))?;
-                Ok(Arc::new(ClusterStatsSessionContext::new(
-                    session,
-                    global_vars,
-                )))
+                Ok(Arc::new(ClusterStatsSessionContext::new(session, global_vars))
+                    as Arc<dyn tidb_domain_core::sys_session::DomainSysSession>)
             }))
         }))
     }
@@ -1252,4 +1250,55 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
             }
         }
     }
+}
+
+/// Go `createSessionFunc`'s session as the domain's workers use it.
+impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
+    fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
+        ClusterStatsSessionContext::scalar(self, sql)
+    }
+
+    fn execute_internal_write(&self, sql: &str) -> Result<u64, String> {
+        self.with_session(|session| {
+            session
+                .execute_internal(sql)
+                .map(|_| session.node.ok_packet.affected_rows)
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    fn query_internal(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+        self.state
+            .materialize(sql)
+            .map(|(rows, _)| rows)
+            .map_err(|error| error.to_string())
+    }
+
+    fn handle_stats_ddl_event(
+        &self,
+        event: &tidb_ddl_notifier::SchemaChangeEvent,
+    ) -> Result<(), String> {
+        self.with_session(|session| {
+            session
+                .stage_stats_notifier_event(event)
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The session package's concrete session behind a pooled
+/// [`tidb_domain_core::sys_session::DomainSysSession`].
+pub(crate) fn cluster_stats_session(
+    context: &dyn tidb_domain_core::sys_session::DomainSysSession,
+) -> &ClusterStatsSessionContext {
+    context
+        .as_any()
+        .downcast_ref::<ClusterStatsSessionContext>()
+        .expect("the domain's pool holds the session package's sessions")
 }

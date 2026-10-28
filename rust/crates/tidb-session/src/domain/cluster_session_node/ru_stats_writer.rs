@@ -40,7 +40,7 @@ use tidb_txnkv::{
     INTERNAL_TXN_OTHERS,
 };
 
-use super::{ClusterStatsSessionContext, Domain, UsageWorkerStop};
+use super::{Domain, UsageWorkerStop};
 
 /// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)`, the context
 /// `ExecRCRestrictedSQL` executes under (`runaway/record.go:401`).
@@ -52,7 +52,7 @@ pub(super) struct ClusterRuStatsDeps<S: StoreClient> {
     /// store's keyspace (Go `store.GetPDClient()`).
     pd: tidb_txnkv::driver::tikv_store::TikvStore,
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+    pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
     timeout: Duration,
 }
 
@@ -63,7 +63,7 @@ where
     pub(super) fn new(
         pd: tidb_txnkv::driver::tikv_store::TikvStore,
         opener: Arc<RealOptimisticTransactionOpener<S>>,
-        pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+        pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
         timeout: Duration,
     ) -> Self {
         Self {

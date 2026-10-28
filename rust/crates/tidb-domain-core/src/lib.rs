@@ -31,3 +31,4 @@ pub mod ddl_job_history_store;
 pub mod errors;
 pub mod schema_sync;
 pub mod session_time_zone;
+pub mod sys_session;

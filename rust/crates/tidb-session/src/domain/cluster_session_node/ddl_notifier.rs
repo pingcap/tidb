@@ -24,69 +24,47 @@ use tidb_ddl_notifier::{
     Store, PRIORITY_QUEUE_HANDLER_ID, STATS_META_HANDLER_ID,
 };
 
-use super::{table_and_partition_ids, ClusterServerSession, ClusterStatsSessionContext, Domain};
+use super::{table_and_partition_ids, Domain};
+use tidb_domain_core::sys_session::DomainSysSession;
 
 fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
     NotifierError::Message(error.to_string())
 }
 
 struct ClusterNotifierSession {
-    session: Option<tidb_syssession::Session<ClusterStatsSessionContext>>,
+    session: Option<tidb_syssession::Session<dyn tidb_domain_core::sys_session::DomainSysSession>>,
 }
 
 impl ClusterNotifierSession {
     fn session(
         &self,
-    ) -> Result<&tidb_syssession::Session<ClusterStatsSessionContext>, NotifierError> {
+    ) -> Result<&tidb_syssession::Session<dyn tidb_domain_core::sys_session::DomainSysSession>, NotifierError> {
         self.session
             .as_ref()
             .ok_or_else(|| NotifierError::Message("notifier session already returned".to_owned()))
     }
 
-    fn with_server<T>(
+    fn with_context<T>(
         &self,
-        callback: impl FnOnce(&mut ClusterServerSession) -> Result<T, NotifierError>,
+        callback: impl FnOnce(&dyn DomainSysSession) -> Result<T, String>,
     ) -> Result<T, NotifierError> {
         self.session()?
             .with_session_context(|context| {
-                context
-                    .with_session(|session| {
-                        callback(session)
-                            .map_err(|error| super::stats_session_error(error.to_string()))
-                    })
-                    .map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
+                callback(context).map_err(tidb_syssession::SysSessionError::new)
             })
             .map_err(notifier_error)
     }
 
     fn write(&self, sql: &str) -> Result<u64, NotifierError> {
-        self.with_server(|session| {
-            session
-                .execute_internal(sql)
-                .map(|_| session.node.ok_packet.affected_rows)
-                .map_err(|error| NotifierError::Message(error.message))
-        })
+        self.with_context(|context| context.execute_internal_write(sql))
     }
 
     fn query(&self, sql: &str) -> Result<Vec<Vec<Datum>>, NotifierError> {
-        self.session()?
-            .with_session_context(|context| {
-                context
-                    .state
-                    .materialize(sql)
-                    .map(|(rows, _)| rows)
-                    .map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
-            })
-            .map_err(notifier_error)
+        self.with_context(|context| context.query_internal(sql))
     }
 
     fn control_transaction(&self, sql: &str) -> Result<(), NotifierError> {
-        self.with_server(|session| {
-            session
-                .execute_internal(sql)
-                .map(|_| ())
-                .map_err(|error| NotifierError::Message(error.message))
-        })
+        self.with_context(|context| context.execute_internal_write(sql).map(|_| ()))
     }
 }
 
@@ -109,12 +87,12 @@ impl NotifierSession for ClusterNotifierSession {
 }
 
 pub(super) struct ClusterNotifierSessionPool {
-    pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+    pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
 }
 
 impl ClusterNotifierSessionPool {
     pub(super) fn new(
-        pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+        pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
     ) -> Self {
         Self { pool }
     }
@@ -204,11 +182,11 @@ pub(super) fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Ar
         Duration::from_secs(1),
     ));
     let stats_handler: Handler = Arc::new(|session, event| {
-        cluster_session(session)?.with_server(|server| {
-            let result = server
-                .stage_stats_notifier_event(event)
-                .map_err(|error| notifier_error(error.message));
-            finish_stats_handler(event, result)
+        cluster_session(session)?.with_context(|context| {
+            let result = context
+                .handle_stats_ddl_event(event)
+                .map_err(notifier_error);
+            finish_stats_handler(event, result).map_err(|error| error.to_string())
         })
     });
     notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);

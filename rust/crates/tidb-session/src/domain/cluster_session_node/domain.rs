@@ -676,7 +676,7 @@ pub struct Domain {
     /// after stable `Arc` ownership because its factory retains only a weak
     /// reference back to the domain-shaped session factory.
     pub(crate) advanced_sys_session_pool:
-        std::sync::OnceLock<Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>>,
+        std::sync::OnceLock<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
     /// Pinned Go Domain's durable DDL notifier, registered before the stats
     /// owner campaigns and driven by that owner's lifecycle.
     ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
@@ -3118,7 +3118,7 @@ impl crate::GlobalIdGenerator for ClusterGlobalIds {
 pub(crate) struct ClusterPriorityQueueSource {
     pub(crate) factory: Weak<Domain>,
     pub(crate) stats_lease: Duration,
-    pub(crate) session_pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+    pub(crate) session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
 }
 
 impl ClusterPriorityQueueSource {

@@ -52,7 +52,7 @@ impl Domain {
         self.advanced_sys_session_pool()
             .with_session(|lease| {
                 lease.with_session_context(|context| {
-                    let mut slot = context
+                    let mut slot = cluster_stats_session(context)
                         .state
                         .session
                         .lock()
