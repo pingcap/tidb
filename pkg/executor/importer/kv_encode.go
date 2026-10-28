@@ -80,25 +80,17 @@ func (en *TableKVEncoder) UseFileColumns(names []string) error {
 	if en.fileColumnsTable == nil || slices.Equal(names, en.fileColumns) {
 		return nil
 	}
-	var (
-		fieldMappings []*FieldMapping
-		columnNames   []string
-	)
-	if len(names) == 0 {
-		fieldMappings, columnNames = tableVisCols2FieldMappings(en.fileColumnsTable)
-	} else {
-		tableCols := en.fileColumnsTable.VisibleCols()
-		columnsAndUserVars := make([]*ast.ColumnNameOrUserVar, 0, len(names))
-		for _, name := range names {
-			if table.FindCol(tableCols, name) == nil {
-				return dbterror.ErrBadField.GenWithStackByArgs(name, "field list")
-			}
-			columnsAndUserVars = append(columnsAndUserVars, &ast.ColumnNameOrUserVar{
-				ColumnName: &ast.ColumnName{Name: ast.NewCIStr(name)},
-			})
+	tableCols := en.fileColumnsTable.VisibleCols()
+	columnsAndUserVars := make([]*ast.ColumnNameOrUserVar, 0, len(names))
+	for _, name := range names {
+		if table.FindCol(tableCols, name) == nil {
+			return dbterror.ErrBadField.GenWithStackByArgs(name, "field list")
 		}
-		fieldMappings, columnNames = buildFieldMappings(en.fileColumnsTable, columnsAndUserVars)
+		columnsAndUserVars = append(columnsAndUserVars, &ast.ColumnNameOrUserVar{
+			ColumnName: &ast.ColumnName{Name: ast.NewCIStr(name)},
+		})
 	}
+	fieldMappings, columnNames := buildFieldMappings(en.fileColumnsTable, columnsAndUserVars)
 	insertColumns, err := buildInsertColumns(en.fileColumnsTable, columnNames, nil)
 	if err != nil {
 		return err
