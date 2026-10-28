@@ -82,7 +82,7 @@ use tidb_stats::{
 pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
-use crate::access_cost::TableStatistics;
+use tidb_planner::table_statistics::TableStatistics;
 use crate::kv_table::KvTable;
 use tidb_hack::GoToLower;
 

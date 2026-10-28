@@ -118,8 +118,8 @@ pub use foreign_key::check_foreign_key_constrain;
 pub use tidb_ddl_build::generated_column;
 #[cfg(test)]
 mod tests_generated_column_ddl;
-pub(crate) mod handle_range;
-pub use handle_range::split_ranges_across_int64_boundary;
+pub(crate) use tidb_table::handle_range;
+pub use tidb_table::handle_range::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
@@ -132,7 +132,7 @@ pub use tidb_keydecoder as keydecoder;
 pub mod kv_table;
 pub mod limit;
 pub mod load_data;
-pub mod load_stats;
+pub use tidb_table::load_stats;
 pub mod max_one_row;
 pub use tidb_kv::mem_quota;
 #[cfg(test)]

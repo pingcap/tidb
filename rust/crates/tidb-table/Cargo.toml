@@ -25,6 +25,14 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-planner = { path = "../tidb-planner" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+flate2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-stats = { path = "../tidb-stats" }
+base64 = { workspace = true }
 tidb-util = { path = "../tidb-util" }
 
 [features]

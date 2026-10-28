@@ -77,6 +77,7 @@
 //! alternatives. EXPLAIN derives metadata from the same physical tree.
 
 pub mod access;
+pub mod table_statistics;
 pub mod access_path;
 pub mod aggregation_descriptor;
 pub mod base_traits;

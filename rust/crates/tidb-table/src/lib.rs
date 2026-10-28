@@ -17,6 +17,9 @@
 //! partition routing and auto ids -- below the executor, which reads and
 //! writes through it, and the DDL package, which builds it from a
 //! `TableInfo` (`TableFromMeta`).
+pub mod handle_range;
+pub mod hypo_index;
+pub mod load_stats;
 pub mod zero_date;
 pub mod column_default;
 pub mod context;

@@ -125,7 +125,7 @@ impl StatisticsView {
         // Weak references prevent address reuse while allowing obsolete raw
         // payloads to be released. Prune conversions no longer in any snapshot.
         converted.retain(|_, entry| entry.source.strong_count() != 0);
-        let value = Arc::new(crate::load_stats::table_statistics_from_table_schema(
+        let value = Arc::new(tidb_table::load_stats::table_statistics_from_table_schema(
             &source,
             &schema.columns,
             &schema.indexes,

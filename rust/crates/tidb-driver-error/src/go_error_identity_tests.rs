@@ -14,7 +14,7 @@
 
 //! Go-pinned identity of an error that crosses the storage layer.
 
-use crate::driver::error::*;
+use crate::*;
 use tidb_kv::storage::StorageError;
 use tidb_table::kv_table::KvTableError;
 

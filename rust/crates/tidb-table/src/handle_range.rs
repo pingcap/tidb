@@ -75,7 +75,7 @@ use tidb_txnkv::Key;
 /// TiDB exposes this metadata as an index for range building and statistics,
 /// but physically reads its ranges from the table's `_r<common_handle>`
 /// record keys. It is therefore a table path, not a secondary-index path.
-pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
+pub fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
     table
         .plan_indexes()
         .find(|index| index.primary && index.column_offsets == table.common_handle_offsets())
@@ -97,7 +97,7 @@ pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
 ///
 /// The tables that DO store a PRIMARY `KvIndex` (test scaffolding injects one
 /// for statistics) keep using it, its id and its declared parts.
-pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_, KvIndex>> {
+pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_, KvIndex>> {
     if table.common_handle_offsets().is_empty() {
         return None;
     }
@@ -259,7 +259,7 @@ fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
 /// `None` means a bound this tier cannot encode, and the caller falls back to
 /// the whole record range -- reading a superset is always correct, because
 /// the `WHERE` above the source filters every row it returns.
-pub(crate) fn record_key_ranges(
+pub fn record_key_ranges(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
@@ -330,7 +330,7 @@ fn common_handle_record_key_ranges(
     Ok(key_ranges)
 }
 
-pub(crate) fn record_key_range_value_halves(
+pub fn record_key_range_value_halves(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,

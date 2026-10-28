@@ -30,6 +30,7 @@ members = [
     "crates/tidb-meta",
     "crates/tidb-vardef",
     "crates/tidb-chunk",
+    "crates/tidb-driver-error",
     "crates/tidb-executor",
     "crates/tidb-stmtctx",
     "crates/tidb-ast",

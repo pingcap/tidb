@@ -1,0 +1,20 @@
+[package]
+name = "tidb-driver-error"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB SQL-layer errors: DriverError / ExecError and their MySQL wire rendering (Rust rewrite)."
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-table = { path = "../tidb-table" }
+tidb-util = { path = "../tidb-util" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-datatype = { path = "../tidb-datatype" }
+
+[lints]
+workspace = true
