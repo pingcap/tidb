@@ -58,8 +58,10 @@ const (
 
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *s3like.Storage, errRet error) {
-	if _, err := url.Parse(backend.Endpoint); err != nil {
+	u, err := url.Parse(backend.Endpoint)
+	if err != nil || (backend.Endpoint != "" && (u.RawQuery != "" || (u.Scheme != "http" && u.Scheme != "https"))) {
 		// SDK endpoint errors and retry logs can expose the full URL.
+		// Match the SDK's custom endpoint rules before it can log a rejection.
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid S3 endpoint URL")
 	}
 	qs := *backend
