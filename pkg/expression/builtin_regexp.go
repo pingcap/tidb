@@ -423,29 +423,11 @@ func (re *builtinRegexpSubstrFuncSig) evalString(ctx EvalContext, row chunk.Row)
 		bexpr = []byte(expr)
 	}
 
+	pos := int64(1)
 	if argNum >= 3 {
-		pos, isNull, err := re.args[2].EvalInt(ctx, row)
+		pos, isNull, err = re.args[2].EvalInt(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
-		}
-
-		// Check position and trim expr
-		if re.isBinaryCollation() {
-			if pos < 1 || pos > int64(len(bexpr)) {
-				if checkOutRangePos(len(bexpr), pos) {
-					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
-			}
-
-			bexpr = bexpr[pos-1:] // Trim
-		} else {
-			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if checkOutRangePos(len(expr), pos) {
-					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
-			}
-
-			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 	}
 
@@ -464,6 +446,29 @@ func (re *builtinRegexpSubstrFuncSig) evalString(ctx EvalContext, row chunk.Row)
 		matchType, isNull, err = re.args[4].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
+		}
+	}
+
+	// Check position only after every argument is read, so that a NULL argument
+	// returns NULL instead of an error, as in vecEvalString.
+	if argNum >= 3 {
+		// Check position and trim expr
+		if re.isBinaryCollation() {
+			if pos < 1 || pos > int64(len(bexpr)) {
+				if checkOutRangePos(len(bexpr), pos) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+				if checkOutRangePos(len(expr), pos) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 	}
 
@@ -725,7 +730,36 @@ func (re *builtinRegexpInStrFuncSig) evalInt(ctx EvalContext, row chunk.Row) (in
 		if isNull || err != nil {
 			return 0, true, err
 		}
+	}
 
+	if argNum >= 4 {
+		occurrence, isNull, err = re.args[3].EvalInt(ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		if occurrence < 1 {
+			occurrence = 1
+		}
+	}
+
+	if argNum >= 5 {
+		returnOption, isNull, err = re.args[4].EvalInt(ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	if argNum == 6 {
+		matchType, isNull, err = re.args[5].EvalString(ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	// Check position and return option only after every argument is read, so that
+	// a NULL argument returns NULL instead of an error, as in vecEvalInt.
+	if argNum >= 3 {
 		// Check position and trim expr
 		if re.isBinaryCollation() {
 			bexprLen := int64(len(bexpr))
@@ -748,33 +782,8 @@ func (re *builtinRegexpInStrFuncSig) evalInt(ctx EvalContext, row chunk.Row) (in
 		}
 	}
 
-	if argNum >= 4 {
-		occurrence, isNull, err = re.args[3].EvalInt(ctx, row)
-		if isNull || err != nil {
-			return 0, true, err
-		}
-
-		if occurrence < 1 {
-			occurrence = 1
-		}
-	}
-
-	if argNum >= 5 {
-		returnOption, isNull, err = re.args[4].EvalInt(ctx, row)
-		if isNull || err != nil {
-			return 0, true, err
-		}
-
-		if returnOption != 0 && returnOption != 1 {
-			return 0, true, ErrRegexp.GenWithStackByArgs(invalidReturnOption)
-		}
-	}
-
-	if argNum == 6 {
-		matchType, isNull, err = re.args[5].EvalString(ctx, row)
-		if isNull || err != nil {
-			return 0, true, err
-		}
+	if returnOption != 0 && returnOption != 1 {
+		return 0, true, ErrRegexp.GenWithStackByArgs(invalidReturnOption)
 	}
 
 	reg, err := re.getRegexp(ctx, pat, matchType, regexpInstrMatchTypeIdx)
@@ -1208,25 +1217,6 @@ func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row
 		if isNull || err != nil {
 			return "", true, err
 		}
-
-		// Check position and trim expr
-		if re.isBinaryCollation() {
-			if pos < 1 || pos > int64(len(trimmedBexpr)) {
-				if checkOutRangePos(len(trimmedBexpr), pos) {
-					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
-			}
-
-			trimmedBexpr = bexpr[pos-1:] // Trim
-		} else {
-			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
-				if checkOutRangePos(len(trimmedExpr), pos) {
-					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
-			}
-
-			trimmedLen = stringutil.TrimUtf8String(&trimmedExpr, pos-1) // Trim
-		}
 	}
 
 	if argNum >= 5 {
@@ -1244,6 +1234,29 @@ func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row
 		matchType, isNull, err = re.args[5].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
+		}
+	}
+
+	// Check position only after every argument is read, so that a NULL argument
+	// returns NULL instead of an error, as in vecEvalString.
+	if argNum >= 4 {
+		// Check position and trim expr
+		if re.isBinaryCollation() {
+			if pos < 1 || pos > int64(len(trimmedBexpr)) {
+				if checkOutRangePos(len(trimmedBexpr), pos) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedBexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
+				if checkOutRangePos(len(trimmedExpr), pos) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedLen = stringutil.TrimUtf8String(&trimmedExpr, pos-1) // Trim
 		}
 	}
 

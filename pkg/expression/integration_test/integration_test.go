@@ -4354,6 +4354,22 @@ func TestIssue66661(t *testing.T) {
 	}
 }
 
+func TestIssue72396(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (expr varchar(8), pat varchar(8), pos int, occ int, ropt int, mt varchar(8))")
+	tk.MustExec("insert into t values ('a', 'a', 0, 1, 0, NULL), ('a', 'a', 1, 1, 2, NULL)")
+
+	// A NULL argument makes the result NULL before the position or return option is validated.
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select regexp_instr(expr, pat, pos, occ, ropt, mt) from t").Check(testkit.Rows("<nil>", "<nil>"))
+		tk.MustQuery("select regexp_substr(expr, pat, pos, occ, mt) from t where pos = 0").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select regexp_replace(expr, pat, 'b', pos, occ, mt) from t where pos = 0").Check(testkit.Rows("<nil>"))
+	}
+}
+
 func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
