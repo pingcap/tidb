@@ -161,7 +161,8 @@ type pitrCollector struct {
 	// Mutable state.
 	ingestedSSTMeta     ingestedSSTsMeta
 	ingestedSSTMetaLock sync.Mutex
-	putMigOnce          sync.Once
+	prepareMigLock      sync.Mutex
+	migrationPrepared   bool // Protected by prepareMigLock.
 	writerRoutine       persisterHandle
 	concControl         *util.WorkerPool
 
@@ -438,11 +439,18 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	return nil
 }
 
-func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
-	c.putMigOnce.Do(func() {
-		err = c.prepareMig(ctx)
-	})
-	return
+func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) error {
+	c.prepareMigLock.Lock()
+	defer c.prepareMigLock.Unlock()
+	if c.migrationPrepared {
+		return nil
+	}
+	if err := c.prepareMig(ctx); err != nil {
+		return err
+	}
+	// A failed attempt must not allow later batches to skip publication.
+	c.migrationPrepared = true
+	return nil
 }
 
 func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
