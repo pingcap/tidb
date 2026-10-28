@@ -164,6 +164,15 @@ impl SessionVars {
             self.warn_truncated_var(name, &value);
         }
         self.append_fix_control_parse_warnings(name, &value);
+        if is_global {
+            // `SetGlobal` hooks consume the stored, type-normalized value:
+            // the original `-1`/`7201` text would make a hook reject an
+            // assignment the variable layer already accepted and clamped.
+            if let Some(globals) = self.globals.clone() {
+                let stored = self.get_global(name)?;
+                globals.run_set_global_hook(name, &stored)?;
+            }
+        }
         Ok(())
     }
 

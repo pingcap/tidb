@@ -41,8 +41,26 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Go `setGlobalVars`, before the store and the domain are created.
     let global_vars = tidb_session::GlobalSysvars::new();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
-    let (stack, authority) =
+    let (mut stack, authority) =
         cluster_session_stack(&config, global_vars, spill_storage, memory_arbitrator)?;
+    // Go `store/driver` -> `gcworker.NewGCWorker` + `Start`: the GC leader
+    // lease, safe points, lock resolution and delete ranges on TiKV. It
+    // retires with the stack's workers, right after the replica-read checker.
+    let gc_worker = tidb_gcworker::node::start_gc_worker(
+        &stack.factory,
+        authority.tikv_store(),
+        Arc::new(authority.transaction_opener()),
+    )
+    .map_err(|error| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+            "start gc worker failed: {error}"
+        )))
+    })?;
+    stack.workers.insert(1, Box::new(gc_worker));
+    // Go `repository.SetupRepository(dom)` in the server's main; the worker
+    // retires last of the workers, and `StopRepository` stops it first.
+    let workload_repository = tidb_workloadrepo::node::setup_repository(&stack.factory);
+    stack.workers.push(Box::new(Arc::clone(&workload_repository)));
     run_with_process_shutdown(stack, authority, move |mut stack: ClusterStack| {
         let factory = Arc::clone(&stack.factory);
         let users = Arc::clone(&stack.users);
@@ -84,7 +102,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stack.stats_receipt.pseudo,
         );
         let outcome = node.run().map_err(|error| RunConfiguredNodeError::Node(Box::new(error)));
-        stack.workload_repository.stop();
+        workload_repository.stop();
         // The reload threads hold their own transaction openers; joining
         // them here releases those PD handles before the authority's
         // shutdown drain.

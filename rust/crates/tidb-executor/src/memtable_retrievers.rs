@@ -23,6 +23,7 @@
 //! store's PD HTTP client (Go `helper.Storage.GetPDHTTPClient()`); a store
 //! without PD answers Go's no-PD errors.
 
+use crate::StatsStmtCtx as _;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tidb_datatype::Datum;

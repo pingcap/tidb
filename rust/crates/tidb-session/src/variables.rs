@@ -397,12 +397,9 @@ impl Session {
         self.take_var_warnings();
         result.map_err(var_error)?;
         if is_global {
-            // `SetGlobal` stores Go's type-normalized value. Workloadrepo
-            // hooks consume that stored value too; passing the original
-            // `-1`/`7201` text would make the worker reject an assignment
-            // that the sysvar layer had already accepted and clamped.
+            // `SetGlobal` stores Go's type-normalized value, which the global
+            // config sync publishes.
             let stored = self.vars.get_global(name).map_err(var_error)?;
-            self.apply_workload_repository_global(name, &stored)?;
             self.notify_global_config_change(name, &stored);
         }
         Ok(())
@@ -445,7 +442,6 @@ impl Session {
                 tidb_log::Field::new("val", tidb_log::Value::Str(shown)),
             ],
         );
-        self.apply_workload_repository_global(name, &stored)?;
         self.notify_global_config_change(name, &stored);
         Ok(())
     }
@@ -488,20 +484,6 @@ impl Session {
                 Err(error)
             }
         }
-    }
-
-    fn apply_workload_repository_global(&self, name: &str, value: &str) -> Result<(), DriverError> {
-        let Some(worker) = self.workload_repository.as_ref() else {
-            return Ok(());
-        };
-        let result = match name.to_ascii_lowercase().as_str() {
-            tidb_workloadrepo::REPOSITORY_DEST => worker.set_repository_dest(value),
-            tidb_workloadrepo::REPOSITORY_RETENTION_DAYS => worker.set_retention_days(value),
-            tidb_workloadrepo::REPOSITORY_SAMPLING_INTERVAL => worker.set_sampling_interval(value),
-            tidb_workloadrepo::REPOSITORY_SNAPSHOT_INTERVAL => worker.set_snapshot_interval(value),
-            _ => return Ok(()),
-        };
-        result.map_err(DriverError::unsupported)
     }
 
     /// Go's `rand_seed1`/`rand_seed2` `SetSession` hooks: the value SET is a

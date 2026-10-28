@@ -61,7 +61,6 @@ tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-variable = { path = "../tidb-variable" }
-tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
 # The PD-backed memory tables ask PD through the store's PD HTTP client
@@ -110,7 +109,6 @@ tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 async-trait.workspace = true
 ctrlc.workspace = true
-tidb-gcworker = { path = "../tidb-gcworker" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }

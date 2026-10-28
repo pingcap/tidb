@@ -11,6 +11,11 @@ description = "TiDB workload repository worker"
 workspace = true
 
 [dependencies]
+tidb-domain = { path = "../tidb-domain" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-session = { path = "../tidb-session" }
 tidb-variable = { path = "../tidb-variable" }
 chrono.workspace = true
 tidb-owner = { path = "../tidb-owner" }
@@ -18,4 +23,5 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 
 [dev-dependencies]
+tidb-config = { path = "../tidb-config" }
 chrono-tz.workspace = true

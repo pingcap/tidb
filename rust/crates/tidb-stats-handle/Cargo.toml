@@ -8,6 +8,10 @@ repository.workspace = true
 description = "TiDB statistics handle: Go pkg/statistics/handle as the planner reads it (Rust rewrite)."
 
 [dependencies]
+base64 = { workspace = true }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-util = { path = "../tidb-util" }
 tidb-model = { path = "../tidb-model" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-table = { path = "../tidb-table" }

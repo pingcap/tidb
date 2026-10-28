@@ -681,6 +681,16 @@ impl LatestInfoSchema {
     }
 }
 
+/// Go `sessionctx.Context.UpdateColStatsUsage`: records the predicate
+/// columns one planning pass used on the session's collector, all at one
+/// timestamp.
+pub type ColStatsUsageUpdater =
+    Arc<dyn Fn(&mut dyn Iterator<Item = tidb_model::TableItemID>) + Send + Sync>;
+
+/// One entry of Go `StmtCtx.TableStats` (`map[int64]any`): a visited table's
+/// runtime statistics, read back by the plan replayer.
+pub type RuntimeTableStats = Arc<dyn std::any::Any + Send + Sync>;
+
 /// Go `TableLockReadContext.GetTableLocks`: the session's held table locks,
 /// keyed by table id.
 pub type LockedTables = Arc<BTreeMap<i64, tidb_model::TableLockTpInfo>>;
@@ -1190,10 +1200,10 @@ pub struct StmtContextData {
     /// consults it short-circuits on empty, so the ordinary path pays
     /// nothing.
     expr_pushdown_blacklist: std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
-    /// Go `StmtCtx`'s `GetStatsHandle()`: the domain's statistics handle this
-    /// statement plans from. A context with no domain behind it gets an empty
-    /// handle, so every table is Go's `PseudoTable`.
-    stats_handle: Arc<tidb_stats_handle::StatsHandle>,
+    /// Go `domain.GetDomain(sctx).StatsHandle()`: the domain's statistics
+    /// handle this statement plans from, held as Go holds the domain on the
+    /// session (an `any` value); the executor's `StatsStmtCtx` reads it.
+    stats_handle: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Go `plannercore.DefaultDisabledLogicalRulesList`, published by `ADMIN
     /// RELOAD OPT_RULE_BLACKLIST` and read by `isLogicalRuleDisabled`.
     disabled_logical_rules: std::sync::Arc<std::collections::HashSet<String>>,
@@ -1317,9 +1327,10 @@ pub struct StmtContextData {
     /// Go `StmtCtx.OperatorNum`, populated by
     /// `CollectPredicateColumnsPoint` before later optimizer phases.
     operator_num: Arc<AtomicU64>,
-    /// Go session `SessionStatsItem.statsUsage`, shared by every statement
-    /// context built for this session.
-    column_stats_usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `sessionctx.Context.UpdateColStatsUsage` over the session's
+    /// `SessionStatsItem`, shared by every statement context built for this
+    /// session.
+    column_stats_usage: Option<ColStatsUsageUpdater>,
     /// Go `StmtCtx.IndexUsageCollector`, allocated for one statement from
     /// the session-local collector when execution-info collection is on.
     index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
@@ -1327,13 +1338,12 @@ pub struct StmtContextData {
     /// execution-info collection is enabled.
     executor_runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
-    table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
+    table_delta: Option<Arc<tidb_variable::table_delta::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
     plan_replayer_capture_enabled: bool,
     /// Go `StmtCtx.TableStats`, populated while predicate columns are
     /// collected so a plan-replayer dump uses the same runtime snapshot.
-    table_runtime_statistics:
-        Arc<Mutex<HashMap<i64, Option<Arc<tidb_stats::table_statistics::TableStatistics>>>>>,
+    table_runtime_statistics: Arc<Mutex<HashMap<i64, Option<RuntimeTableStats>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
     /// Go `PlanCacheTracker.cacheType`: whether a cached plan for this
@@ -1679,10 +1689,7 @@ context_configuration! {
 
     /// Attaches Go's per-session predicate-column usage collector.
     #[must_use]
-    pub fn with_column_stats_usage(
-        mut self,
-        usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
-    ) -> Self {
+    pub fn with_column_stats_usage(mut self, usage: Option<ColStatsUsageUpdater>) -> Self {
         self.column_stats_usage = usage;
         self
     }
@@ -1709,7 +1716,7 @@ context_configuration! {
 
     /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
     #[must_use]
-    pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
+    pub fn with_table_delta(mut self, delta: Arc<tidb_variable::table_delta::TableDeltaMap>) -> Self {
         self.table_delta = Some(delta);
         self
     }
@@ -2152,10 +2159,11 @@ context_configuration! {
         self
     }
 
-    /// Installs the domain's statistics handle (Go `GetStatsHandle()`).
+    /// Installs the domain's statistics handle, type-erased (the executor's
+    /// `StatsStmtCtx::with_stats_handle`).
     #[must_use]
-    pub fn with_stats_handle(mut self, handle: Arc<tidb_stats_handle::StatsHandle>) -> Self {
-        self.stats_handle = handle;
+    pub fn with_stats_handle_any(mut self, handle: Arc<dyn std::any::Any + Send + Sync>) -> Self {
+        self.stats_handle = Some(handle);
         self
     }
 
@@ -2793,7 +2801,7 @@ impl StmtContext {
             cop_response_sink: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
-            stats_handle: Arc::default(),
+            stats_handle: None,
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
@@ -3644,7 +3652,7 @@ impl StmtContext {
         let Some(usage) = &self.column_stats_usage else {
             return;
         };
-        usage.update_col_stats_usage(items, std::time::SystemTime::now());
+        usage(&mut items.into_iter());
     }
 
     /// Go `TransactionContext.UpdateDeltaForTable`.
@@ -3662,10 +3670,10 @@ impl StmtContext {
 
     /// Go `recordTableRuntimeStats`: retain one entry for every visited
     /// logical table, including `None` when the table has no loaded stats.
-    pub fn record_table_runtime_statistics(
+    pub fn record_table_runtime_statistics_any(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
-        mut get: impl FnMut(i64) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+        mut get: impl FnMut(i64) -> Option<RuntimeTableStats>,
     ) {
         if !self.plan_replayer_capture_enabled {
             return;
@@ -3683,18 +3691,18 @@ impl StmtContext {
 
     /// Snapshot of Go `StmtCtx.TableStats` for plan-replayer dumping.
     #[must_use]
-    pub fn table_runtime_statistics(
+    pub fn table_runtime_statistics_any(
         &self,
-    ) -> HashMap<i64, Option<Arc<tidb_stats::table_statistics::TableStatistics>>> {
+    ) -> HashMap<i64, Option<RuntimeTableStats>> {
         self.table_runtime_statistics
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
-    pub fn install_pending_statistics_load(
+    pub fn install_pending_statistics_load_any(
         &self,
-        receivers: Vec<std::sync::mpsc::Receiver<tidb_stats_handle::sync_load::SyncLoadOutcome>>,
+        receivers: Box<dyn std::any::Any + Send>,
         items: Vec<tidb_model::StatsLoadItem>,
         timeout: std::time::Duration,
     ) {
@@ -3709,7 +3717,7 @@ impl StmtContext {
         });
     }
 
-    pub fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
+    pub fn take_pending_statistics_load_any(&self) -> Option<PendingStatisticsLoad> {
         self.pending_statistics_load
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -4368,8 +4376,8 @@ impl StmtContext {
 
     /// The statistics handle this statement plans from.
     #[must_use]
-    pub fn stats_handle(&self) -> &Arc<tidb_stats_handle::StatsHandle> {
-        &self.stats_handle
+    pub fn stats_handle_any(&self) -> Option<&Arc<dyn std::any::Any + Send + Sync>> {
+        self.stats_handle.as_ref()
     }
 
     /// The published `mysql.expr_pushdown_blacklist`.
@@ -5621,8 +5629,12 @@ impl StmtContext {
     }
 }
 
+/// Go `StmtCtx.StatsLoad`: the synchronous statistics loads one statement
+/// waits for.
 pub struct PendingStatisticsLoad {
-    pub receivers: Vec<std::sync::mpsc::Receiver<tidb_stats_handle::sync_load::SyncLoadOutcome>>,
+    /// Go `StatsLoad.ResultCh`, whose results are `singleflight.Result`
+    /// values (`any`); the executor's `StatsStmtCtx` reads them.
+    pub receivers: Box<dyn std::any::Any + Send>,
     pub items: Vec<tidb_model::StatsLoadItem>,
     pub timeout: std::time::Duration,
     pub started: std::time::Instant,

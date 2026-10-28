@@ -605,8 +605,8 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
-    /// Go's process-global `workloadrepo.workerCtx`, installed by Domain.
-    workload_repository: Option<std::sync::Arc<tidb_workloadrepo::Worker>>,
+    /// Go `executor.TakeSnapshot`, which the workload repository installs.
+    take_snapshot: Option<tidb_executor::admin::TakeSnapshot>,
     /// Go Domain's node-global index-usage collector, read by
     /// `information_schema.TIDB_INDEX_USAGE`.
     index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
@@ -908,7 +908,7 @@ impl Session {
             // `set_server_info_syncer`.
             server_id_getter: Arc::new(|| tidb_util::globalconn::SERVER_ID_FOR_STANDALONE),
             cluster_schema_version: None,
-            workload_repository: None,
+            take_snapshot: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             session_index_usage_collector: None,
             data_lock_waits: None,
@@ -1506,10 +1506,10 @@ impl Session {
         self.cluster_schema_version = Some(source);
     }
 
-    /// Binds the process workload-repository worker used by its sysvars and
-    /// `ADMIN CREATE WORKLOAD SNAPSHOT`.
-    pub fn set_workload_repository(&mut self, worker: std::sync::Arc<tidb_workloadrepo::Worker>) {
-        self.workload_repository = Some(worker);
+    /// Binds Go `executor.TakeSnapshot`, which `ADMIN CREATE WORKLOAD
+    /// SNAPSHOT` runs.
+    pub fn set_take_snapshot(&mut self, take_snapshot: tidb_executor::admin::TakeSnapshot) {
+        self.take_snapshot = Some(take_snapshot);
     }
 
     /// Installs the Domain-owned index-usage collector shared by every

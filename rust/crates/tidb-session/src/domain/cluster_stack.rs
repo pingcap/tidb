@@ -66,8 +66,6 @@ pub struct ClusterStack {
     pub factory: Arc<Domain>,
     /// The node's accounts.
     pub users: Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
-    /// The workload repository, stopped before the workers retire.
-    pub workload_repository: Arc<tidb_workloadrepo::Worker>,
     /// The schema version the node booted at.
     pub schema_version: i64,
     /// The boot catalog's refusals, rendered for the ready event.
@@ -676,76 +674,9 @@ pub fn cluster_session_stack(
         Arc::new(authority.transaction_opener()),
         TRANSACTION_RPC_TIMEOUT,
     );
-    // Go `Domain.Start` -> `gcworker.NewGCWorker` + `Start`: the GC leader
-    // lease, safe points, lock resolution and delete ranges on TiKV.
-    let gc_worker = Some(crate::domain::cluster_session_node::gc_worker::start_gc_worker(
-        &factory,
-        authority.tikv_store(),
-        Arc::new(authority.transaction_opener()),
-    ))
-    .transpose()
-    .map_err(|error| {
-        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-            "start gc worker failed: {error}"
-        )))
-    })?;
-    let workload_etcd = etcd.clone();
-    let workload_store = workload_etcd
-        .as_ref()
-        .map(|client| Arc::clone(client) as Arc<dyn tidb_workloadrepo::RepositoryStore>);
-    let workload_owner_factory = workload_etcd.as_ref().map(|client| {
-        let client = Arc::clone(client);
-        let instance_id = server_info.local_server_info().static_info.id.clone();
-        Arc::new(move |key: &str, prompt: &str| {
-            Arc::new(tidb_owner::OwnerManager::new(
-                tidb_owner::Context::background(),
-                Arc::clone(&client) as Arc<dyn tidb_owner::OwnerStore>,
-                prompt,
-                instance_id.clone(),
-                key,
-            )) as Arc<dyn tidb_owner::Manager>
-        }) as tidb_workloadrepo::OwnerFactory
-    });
-    let workload_repository = tidb_workloadrepo::Worker::new(
-        workload_store,
-        Some(Arc::new(crate::domain::cluster_session_node::WorkloadRepositorySessionPool::new(
-            &factory,
-        ))),
-        workload_owner_factory,
-        server_info.local_server_info().static_info.id.clone(),
-    );
-    let globals = users.global_vars();
-    for (name, apply) in [
-        (
-            tidb_workloadrepo::REPOSITORY_SAMPLING_INTERVAL,
-            tidb_workloadrepo::Worker::set_sampling_interval
-                as fn(&tidb_workloadrepo::Worker, &str) -> Result<(), String>,
-        ),
-        (
-            tidb_workloadrepo::REPOSITORY_SNAPSHOT_INTERVAL,
-            tidb_workloadrepo::Worker::set_snapshot_interval,
-        ),
-        (
-            tidb_workloadrepo::REPOSITORY_RETENTION_DAYS,
-            tidb_workloadrepo::Worker::set_retention_days,
-        ),
-    ] {
-        if let Ok(value) = globals.get(name) {
-            let _ = apply(&workload_repository, &value);
-        }
-    }
-    assert!(
-        factory
-            .set_workload_repository(Arc::clone(&workload_repository))
-            .is_ok(),
-        "workload repository is installed once"
-    );
-    if globals
-        .get(tidb_workloadrepo::REPOSITORY_DEST)
-        .is_ok_and(|value| value == "table")
-        && workload_repository.start().is_err()
-    {
-        workload_repository.stop();
+    // Go `Domain.etcdClient`, which `SetupRepository` reads.
+    if let Some(client) = &etcd {
+        factory.install_etcd_client(Arc::clone(client));
     }
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
@@ -756,13 +687,11 @@ pub fn cluster_session_stack(
     Ok((ClusterStack {
         factory,
         users,
-        workload_repository: Arc::clone(&workload_repository),
         schema_version,
         skipped,
         stats_receipt,
         workers: vec![
             Box::new(replica_read_checker),
-            Box::new(gc_worker),
             Box::new(stats_maintenance),
             Box::new(replica_poll),
             Box::new(global_config_keeper),
@@ -774,7 +703,6 @@ pub fn cluster_session_stack(
             Box::new(stats_reloader),
             Box::new(binding_reloader),
             Box::new(async_stats_loader),
-            Box::new(workload_repository),
         ],
         // Dropped last: once the registration is gone nobody waits on this
         // node, so the acknowledger has nothing left to say.

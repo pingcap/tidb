@@ -16,6 +16,7 @@
 //! image together: `RequestLoadStats` / `SyncWaitStatsLoad`, and the
 //! statement state a [`PlannerCatalog`] is planned under.
 
+use crate::StatsStmtCtx as _;
 use crate::{Catalog, StmtContext};
 use tidb_infoschema::PlannerCatalog;
 

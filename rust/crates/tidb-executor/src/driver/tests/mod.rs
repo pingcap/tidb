@@ -30,6 +30,7 @@ mod set_operations;
 mod subqueries;
 mod table_round_trip;
 
+use crate::StatsStmtCtx as _;
 use super::*;
 
 fn test_catalog() -> Catalog {

@@ -20,6 +20,7 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
+use crate::StatsStmtCtx as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};

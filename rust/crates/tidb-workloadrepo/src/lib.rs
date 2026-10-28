@@ -14,6 +14,8 @@
 
 //! Go `pkg/util/workloadrepo`: the cluster workload-repository worker.
 
+pub mod node;
+
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

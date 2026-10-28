@@ -233,7 +233,6 @@ mod binding_maintenance;
 mod catalog_follower;
 pub use binding_maintenance::attach_binding_sessions;
 use tidb_ddl::worker as ddl;
-pub mod gc_worker;
 #[cfg(test)]
 use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
 use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
@@ -2782,7 +2781,7 @@ impl<'s> ClusterServerSession<'s> {
     /// Go `ExecuteInternal`: one statement of internal SQL through
     /// [`ClusterServerSession::execute_stmt`]. Answers the rows of a result set, none
     /// otherwise; [`Session::affected_rows`] then holds the count.
-    pub(crate) fn execute_internal(
+    pub fn execute_internal(
         &mut self,
         sql: &str,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, SqlQueryError> {

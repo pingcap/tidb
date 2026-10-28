@@ -83,7 +83,7 @@ pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_stats::table_statistics::TableStatistics;
-use crate::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 use tidb_hack::GoToLower;
 
 /// The `TableInfo` subset Go `TableStatsFromJSON` reads.
@@ -960,7 +960,7 @@ pub fn table_statistics_from_json(
     table: &KvTable,
     json: &JsonTable,
 ) -> Result<TableStatistics, LoadStatsError> {
-    let statistics = statistics_table_from_json(table, table.table_id, json)?;
+    let statistics = statistics_table_from_json(table, table.table_id(), json)?;
     Ok(table_statistics_from_table(&statistics, table))
 }
 
@@ -1133,8 +1133,8 @@ mod tests {
         assert!(projected.column_is_load_needed(3, true));
     }
 
-    fn column(id: i64, name: &str) -> crate::kv_table::KvColumn {
-        crate::kv_table::KvColumn {
+    fn column(id: i64, name: &str) -> tidb_table::kv_table::KvColumn {
+        tidb_table::kv_table::KvColumn {
             id,
             name: name.to_owned(),
             field_type: FieldType::new(FieldTypeCode::LongLong),

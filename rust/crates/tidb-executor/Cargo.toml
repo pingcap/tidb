@@ -33,7 +33,6 @@ tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-log = { path = "../tidb-log" }
-tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-sysutil = { path = "../tidb-sysutil" }

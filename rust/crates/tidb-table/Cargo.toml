@@ -30,8 +30,6 @@ tidb-sessionstates = { path = "../tidb-sessionstates" }
 flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tidb-stats = { path = "../tidb-stats" }
-base64 = { workspace = true }
 tidb-util = { path = "../tidb-util" }
 
 [features]

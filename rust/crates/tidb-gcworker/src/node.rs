@@ -12,31 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The production collaborators of Go's GC worker (`pkg/store/gcworker`,
-//! `tidb_gcworker`) on a node against TiKV and PD, and its start at boot
-//! (Go `Domain.Start` -> `gcworker.NewGCWorker` + `Start`).
+//! The production collaborators of Go's GC worker on a node against TiKV and
+//! PD -- its sessions (Go `session.CreateSession`), placement rules and store
+//! client -- and its start at boot (Go `store/driver` -> `gcworker.NewGCWorker`
+//! + `Start`), which the server's main runs.
 //!
 //! The node serves the null keyspace, so the worker runs Go's full procedure
 //! (leader lease, safe points, lock resolution, delete ranges) rather than
 //! the unified-GC keyspace path.
 
-use crate::domain::cluster_session_node::DomainSessions as _;
+use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use tidb_gcworker::seams::{
+use crate::seams::{
     DelRangeTask, GcError, GcResult, GcRuleClient, GcSession, GcSessionFactory,
 };
-use tidb_gcworker::tikv_store::TikvStoreClient;
-use tidb_gcworker::{GcWorker, GcWorkerDeps, GcWorkerHandle};
+use crate::tikv_store::TikvStoreClient;
+use crate::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
 
-use super::{ClusterServerSession, Domain};
-use crate::Session;
-use crate::domain::session_api::SessionContext;
-use crate::domain::session_api::SqlQueryError;
+use tidb_session::domain::cluster_session_node::{ClusterServerSession, Domain};
+use tidb_session::Session;
+use tidb_session::domain::session_api::SessionContext;
+use tidb_session::domain::session_api::SqlQueryError;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -123,16 +124,16 @@ impl GcSessionFactory for NodeGcSessions {
                 factory
                     .open_session(SessionContext {
                         connection_id: self.next_connection_id.fetch_add(1, Ordering::Relaxed),
-                        peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
+                        peer_addr: tidb_session::domain::peer_address::PeerAddress::Tcp(
                 "127.0.0.1:0".parse().expect("loopback socket address"),
             ),
-                        identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
+                        identity: tidb_session::domain::configured_user_store::AuthenticatedIdentity::internal(),
                         client_found_rows: false,
                         tls_state: None,
                         compression_algorithm: tidb_mysql::consts::CompressionNone,
                         compression_level: 0,
-                        cancellation: crate::domain::session_api::ConnectionCancellation::default(),
-                        close: crate::domain::session_api::ConnectionClose::default(),
+                        cancellation: tidb_session::domain::session_api::ConnectionCancellation::default(),
+                        close: tidb_session::domain::session_api::ConnectionClose::default(),
                     })
                     .map_err(|error| GcError::new(error.message))
             });

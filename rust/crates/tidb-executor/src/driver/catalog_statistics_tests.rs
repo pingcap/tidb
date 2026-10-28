@@ -958,7 +958,7 @@
         let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle))
             .with_stats_load_policy(100, true, 0)
             .with_plan_replayer_capture(true)
-            .with_column_stats_usage(Some(Arc::clone(&usage)));
+            .with_column_stats_usage(crate::stmt_ctx_build::col_stats_usage_updater(&Some(Arc::clone(&usage))));
 
         crate::run_select_on("SELECT * FROM t WHERE a > 1", &catalog, &context)
             .expect("planned query");

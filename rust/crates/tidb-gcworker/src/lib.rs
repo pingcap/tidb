@@ -23,6 +23,7 @@
 //! services through [`seams`]; the server implements them over the cluster.
 
 mod gc_worker;
+pub mod node;
 pub mod seams;
 pub mod tikv_store;
 

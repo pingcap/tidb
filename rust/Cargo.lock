@@ -3860,7 +3860,6 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
- "tidb-workloadrepo",
  "tikv-client",
 ]
 
@@ -4065,7 +4064,6 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
- "tidb-workloadrepo",
  "tikv-client",
  "tikv-jemallocator",
  "tokio",
@@ -4152,11 +4150,15 @@ dependencies = [
  "tidb-cluster",
  "tidb-codec",
  "tidb-config",
+ "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-label",
+ "tidb-domain",
  "tidb-log",
  "tidb-model",
+ "tidb-mysql",
  "tidb-placement",
+ "tidb-session",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
@@ -4709,7 +4711,6 @@ dependencies = [
  "tidb-expensivequery",
  "tidb-expr",
  "tidb-gcutil",
- "tidb-gcworker",
  "tidb-hack",
  "tidb-hint",
  "tidb-kv",
@@ -4757,7 +4758,6 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
- "tidb-workloadrepo",
  "tikv-client",
  "tokio",
  "toml",
@@ -4782,9 +4782,6 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
- "tidb-stats",
- "tidb-stats-handle",
- "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtctx",
  "tidb-table",
@@ -4865,13 +4862,17 @@ dependencies = [
 name = "tidb-stats-handle"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "crossbeam-channel",
  "serde_json",
  "tidb-config",
+ "tidb-datatype",
+ "tidb-hack",
  "tidb-model",
  "tidb-stats",
  "tidb-stats-handle-metrics",
  "tidb-table",
+ "tidb-util",
  "tracing",
 ]
 
@@ -5019,6 +5020,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-model",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -5124,7 +5126,6 @@ dependencies = [
 name = "tidb-table"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "crc32fast",
@@ -5145,7 +5146,6 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-sessionstates",
- "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -5353,8 +5353,14 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-domain",
+ "tidb-executor",
+ "tidb-mysql",
  "tidb-owner",
  "tidb-pd-client",
+ "tidb-session",
  "tidb-stmtsummary",
  "tidb-variable",
 ]

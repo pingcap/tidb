@@ -21,6 +21,7 @@
 //! `Next`), so what they need of the viewing session is a [`ViewerState`]
 //! the session snapshots when a scan first asks for one of them.
 
+use crate::StatsStmtCtx as _;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType};

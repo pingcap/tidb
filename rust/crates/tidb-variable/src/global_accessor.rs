@@ -106,6 +106,17 @@ pub trait GlobalVarAccessor: crate::GlobalSysvarAccessor + std::fmt::Debug {
 
     /// Installs the storage authority behind `tidb_external_ts`.
     fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>);
+
+    /// Go `SysVar.SetGlobal` for a variable another package registered
+    /// (`variable.RegisterSysVar` from `workloadrepo`'s `init`): run once
+    /// the GLOBAL value is stored, with the stored, type-normalized value.
+    ///
+    /// # Errors
+    ///
+    /// The hook's refusal.
+    fn run_set_global_hook(&self, _name: &str, _value: &str) -> Result<(), VarError> {
+        Ok(())
+    }
 }
 
 /// Go `MockGlobalAccessor` from `NewMockGlobalAccessor4Tests`: every

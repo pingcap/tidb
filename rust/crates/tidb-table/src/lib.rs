@@ -19,7 +19,6 @@
 //! `TableInfo` (`TableFromMeta`).
 pub mod handle_range;
 pub mod hypo_index;
-pub mod load_stats;
 pub mod zero_date;
 pub mod column_default;
 pub mod context;

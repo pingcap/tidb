@@ -715,8 +715,11 @@ pub struct Domain {
     /// The store's regions every session of this node reads (Go
     /// `kv.SplittableStore` and the region cache).
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
-    /// Go Domain's single workload-repository worker.
-    pub workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
+    /// Go `executor.TakeSnapshot`, which the workload repository installs
+    /// when the server's main sets it up (`SetupRepository`).
+    pub take_snapshot: std::sync::OnceLock<tidb_executor::admin::TakeSnapshot>,
+    /// Go `Domain.etcdClient`: the node's one etcd client, when it has PD.
+    etcd_client: std::sync::OnceLock<Arc<tidb_pd_client::EtcdClient>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
     pub stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     /// Go Domain's index-GC and positive-lease usage-dump workers.
@@ -948,7 +951,8 @@ impl Domain {
             stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             region_store: None,
-            workload_repository: std::sync::OnceLock::new(),
+            take_snapshot: std::sync::OnceLock::new(),
+            etcd_client: std::sync::OnceLock::new(),
             stats_usage,
             stats_usage_workers: std::sync::OnceLock::new(),
             stats_owner: None,
@@ -1706,14 +1710,22 @@ impl Domain {
         Ok(())
     }
 
-    /// Installs Go Domain's single workload-repository worker after the
-    /// factory is placed in an `Arc` (the worker's internal-session pool keeps
-    /// only a weak reference back to it).
-    pub fn set_workload_repository(
+    /// Installs Go `executor.TakeSnapshot`, once.
+    pub fn set_take_snapshot(
         &self,
-        worker: Arc<tidb_workloadrepo::Worker>,
-    ) -> Result<(), Arc<tidb_workloadrepo::Worker>> {
-        self.workload_repository.set(worker)
+        take_snapshot: tidb_executor::admin::TakeSnapshot,
+    ) -> Result<(), tidb_executor::admin::TakeSnapshot> {
+        self.take_snapshot.set(take_snapshot)
+    }
+
+    /// Installs Go `Domain.etcdClient`, once.
+    pub fn install_etcd_client(&self, client: Arc<tidb_pd_client::EtcdClient>) {
+        let _ = self.etcd_client.set(client);
+    }
+
+    /// Go `Domain.GetEtcdClient`.
+    pub fn etcd_client(&self) -> Option<Arc<tidb_pd_client::EtcdClient>> {
+        self.etcd_client.get().cloned()
     }
 
     /// Replaces the factory's pin registry with the node-owned one the

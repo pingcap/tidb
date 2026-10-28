@@ -47,6 +47,8 @@ pub mod base_join_probe;
 pub mod concurrent_entry_map;
 pub use tidb_util::execdetails;
 pub mod sessionctx;
+pub mod stats_stmt_ctx;
+pub use stats_stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
 pub use sessionctx::StmtOutput;
 pub mod admin;
 pub mod ddl_exec;
@@ -160,7 +162,7 @@ pub use tidb_keydecoder as keydecoder;
 pub mod kv_table;
 pub mod limit;
 pub mod load_data;
-pub use tidb_table::load_stats;
+pub use tidb_stats_handle::load_stats;
 pub mod max_one_row;
 pub use tidb_kv::mem_quota;
 #[cfg(test)]

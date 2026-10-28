@@ -35,16 +35,7 @@ pub const BATCH_INSERT_SIZE: usize = 2_048;
 /// Go `dumpDeltaBatchSize`.
 pub const DUMP_DELTA_BATCH_SIZE: usize = 100_000;
 
-/// Go `variable.TableDelta`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TableDelta {
-    /// The table row-count change.
-    pub delta: i64,
-    /// The number of modified rows.
-    pub count: i64,
-    /// The first time represented by this accumulated delta.
-    pub init_time: Option<SystemTime>,
-}
+pub use tidb_variable::table_delta::{TableDelta, TableDeltaMap};
 
 /// Go `storage.DeltaUpdate`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,79 +81,6 @@ pub fn prepare_delta_updates(
     updates
 }
 
-impl TableDelta {
-    /// Go `TableDelta.MergeFrom`.
-    pub fn merge_from(&mut self, incoming: Self) {
-        self.delta = self.delta.wrapping_add(incoming.delta);
-        self.count = self.count.wrapping_add(incoming.count);
-        if self.init_time.is_none()
-            || incoming
-                .init_time
-                .is_some_and(|incoming| self.init_time.is_some_and(|current| incoming < current))
-        {
-            self.init_time = incoming.init_time;
-        }
-    }
-}
-
-/// Go `TableDeltaMap`.
-#[derive(Default)]
-pub struct TableDeltaMap {
-    delta: Mutex<HashMap<i64, TableDelta>>,
-}
-
-impl TableDeltaMap {
-    /// Go `NewTableDeltaMap`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Go `TableDeltaMap.Reset`.
-    pub fn reset(&self) {
-        self.delta
-            .lock()
-            .expect("table delta lock poisoned")
-            .clear();
-    }
-
-    /// Go `TableDeltaMap.GetDeltaAndReset`.
-    pub fn get_delta_and_reset(&self) -> HashMap<i64, TableDelta> {
-        std::mem::take(&mut *self.delta.lock().expect("table delta lock poisoned"))
-    }
-
-    /// Go `TableDeltaMap.Update`.
-    pub fn update(&self, id: i64, delta: i64, count: i64) {
-        debug_assert!(id > 0, "table ID should be greater than 0");
-        let mut values = self.delta.lock().expect("table delta lock poisoned");
-        let item = values.entry(id).or_default();
-        item.delta = item.delta.wrapping_add(delta);
-        item.count = item.count.wrapping_add(count);
-    }
-
-    /// Go `TableDeltaMap.Merge`.
-    pub fn merge(&self, incoming: HashMap<i64, TableDelta>) {
-        if incoming.is_empty() {
-            return;
-        }
-        let mut values = self.delta.lock().expect("table delta lock poisoned");
-        for (id, incoming) in incoming {
-            values.entry(id).or_default().merge_from(incoming);
-        }
-    }
-
-    /// Go `TransactionContext.GetCurrentSavepoint`'s table-delta clone.
-    pub fn snapshot(&self) -> HashMap<i64, TableDelta> {
-        self.delta
-            .lock()
-            .expect("table delta lock poisoned")
-            .clone()
-    }
-
-    /// Go `TransactionContext.RestoreBySavepoint`'s table-delta restore.
-    pub fn restore(&self, snapshot: HashMap<i64, TableDelta>) {
-        *self.delta.lock().expect("table delta lock poisoned") = snapshot;
-    }
-}
 
 /// Go `StatsUsage`.
 #[derive(Default)]

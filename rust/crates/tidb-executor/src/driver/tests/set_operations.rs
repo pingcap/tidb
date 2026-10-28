@@ -4,6 +4,7 @@
 //! sets, and a CTE names one for reuse. Mirrors Go `pkg/executor`'s
 //! `UnionExec`/`SetOprExec` and CTE executors.
 
+use crate::StatsStmtCtx as _;
 use super::*;
 
 /// Non-recursive CTEs resolve like ordinary tables. Go inlines exactly one

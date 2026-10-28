@@ -6,6 +6,7 @@
 //! Mirrors Go `pkg/table/tables`' `PKIsHandle`/`IsCommonHandle` behaviour and
 //! the `_tidb_rowid` allocation that stands in when neither applies.
 
+use crate::StatsStmtCtx as _;
 use super::*;
 
 /// A single-column integer PRIMARY KEY becomes the row handle (Go's

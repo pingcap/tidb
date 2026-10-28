@@ -54,6 +54,9 @@ use tidb_variable::VarError;
 /// notify).
 #[derive(Clone, Debug)]
 pub struct GlobalSysvars {
+    /// Go `SysVar.SetGlobal` hooks other packages registered, by lowercase
+    /// variable name.
+    set_global_hooks: SetGlobalHooks,
     pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
     external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
     /// Go `Domain.sysVarCache`: the global and session views every read and
@@ -132,9 +135,23 @@ fn tso_rpc_concurrency(value: &str) -> isize {
     }
 }
 
+/// Go `SysVar.SetGlobal` registered by a package outside the variable
+/// registry (`variable.RegisterSysVar`): run with the stored GLOBAL value.
+pub type SetGlobalHook = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+#[derive(Clone, Default)]
+struct SetGlobalHooks(Arc<RwLock<HashMap<String, SetGlobalHook>>>);
+
+impl std::fmt::Debug for SetGlobalHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SetGlobalHooks")
+    }
+}
+
 impl Default for GlobalSysvars {
     fn default() -> Self {
         Self {
+            set_global_hooks: SetGlobalHooks::default(),
             external_timestamp: Arc::default(),
             pd_region_policy: Arc::default(),
             cache: Arc::default(),
@@ -152,6 +169,20 @@ impl Default for GlobalSysvars {
 
 /// Go `session`'s `GlobalVarAccessor` implementation over the domain.
 impl tidb_variable::GlobalVarAccessor for GlobalSysvars {
+    fn run_set_global_hook(&self, name: &str, value: &str) -> Result<(), VarError> {
+        let hook = self
+            .set_global_hooks
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&name.to_ascii_lowercase())
+            .cloned();
+        match hook {
+            Some(hook) => hook(value).map_err(tidb_error::mysql::MysqlError::unknown),
+            None => Ok(()),
+        }
+    }
+
     fn get(&self, name: &str) -> Result<String, VarError> {
         GlobalSysvars::get(self, name)
     }
@@ -434,6 +465,25 @@ impl GlobalSysvars {
     /// A fresh registry with every variable at its default (Go's state on a
     /// cluster nobody has ever run `SET GLOBAL` against).
     #[must_use]
+    /// This table with `other`'s registered `SetGlobal` hooks: Go's hooks
+    /// live in the process-wide variable registry, not in one value table,
+    /// so a statement's scratch copy runs the node's hooks.
+    #[must_use]
+    pub fn sharing_set_global_hooks(mut self, other: &Self) -> Self {
+        self.set_global_hooks = other.set_global_hooks.clone();
+        self
+    }
+
+    /// Go `variable.RegisterSysVar`'s `SetGlobal` for `name`, from a
+    /// package outside the registry.
+    pub fn register_set_global_hook(&self, name: &str, hook: SetGlobalHook) {
+        self.set_global_hooks
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_ascii_lowercase(), hook);
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

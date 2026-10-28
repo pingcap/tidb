@@ -366,7 +366,10 @@ where
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let loaded =
                 load_cluster_sysvars(&mut snapshot, &catalog).map_err(|error| error.to_string())?;
-            let scratch = GlobalSysvars::from_cluster_rows(loaded);
+            // The statement's assignments run the node's registered
+            // `SetGlobal` hooks, as Go's registry is process-wide.
+            let scratch =
+                GlobalSysvars::from_cluster_rows(loaded).sharing_set_global_hooks(&self.live);
             (catalog, scratch)
         };
         Ok(Box::new(RealPendingSysvarChange {

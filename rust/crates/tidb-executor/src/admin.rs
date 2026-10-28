@@ -116,6 +116,10 @@ pub fn show_imports_output() -> StmtOutput {
 /// Go's ADMIN executors (`ShowDDLJobsExec`, `ShowDDLJobQueriesExec`,
 /// `ShowSlowExec`, `ChecksumTableExec`, `SplitTableRegionExec`,
 /// `CancelDDLJobsExec` and its siblings) over the session primitives.
+/// Go `executor.TakeSnapshot`: the workload repository's manual snapshot,
+/// installed by the repository when it is set up (`SetupRepository`).
+pub type TakeSnapshot = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
     /// history newest first, read on a fresh system-session transaction.
@@ -680,8 +684,8 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         &mut self,
         scope: tidb_ast::AdminPlanCacheScope,
     ) -> Result<(), DriverError>;
-    /// Go `domain.GetDomain(ctx).GetWorkloadRepository()`.
-    fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>>;
+    /// Go `executor.TakeSnapshot`, which the workload repository installs.
+    fn take_snapshot(&self) -> Option<TakeSnapshot>;
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;
@@ -768,7 +772,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                 "statistics statements run on the session's node",
             )),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
-                let worker = self.workload_repository().ok_or_else(|| {
+                let take_snapshot = self.take_snapshot().ok_or_else(|| {
                     DriverError::from(
                         tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
                             .generate_with_stack_by_args(&[
@@ -776,7 +780,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                             ]),
                     )
                 })?;
-                worker.take_snapshot().map_err(|error| {
+                take_snapshot().map_err(|error| {
                     if error == "Workload repository is not enabled" {
                         DriverError::from(
                             tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET

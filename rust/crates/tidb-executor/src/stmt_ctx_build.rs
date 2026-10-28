@@ -21,6 +21,7 @@
 //! channel -- is funnelled through [`Session::statement_context`], so an
 //! expression never reaches back into the session for anything.
 
+use crate::StatsStmtCtxData as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtxData as _;
 use std::sync::Arc;
 
@@ -1667,7 +1668,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         max_execution_time_ms,
                     )
                     .with_plan_replayer_capture(plan_replayer_capture_enabled)
-                    .with_column_stats_usage(self.stats_collector_ref().clone())
+                    .with_column_stats_usage(col_stats_usage_updater(self.stats_collector_ref()))
                     .with_index_usage_collector(index_usage_collector)
                     .with_executor_runtime_stats_source(runtime_stats_source.clone())
                     .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
@@ -1806,7 +1807,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     max_execution_time_ms,
                 )
                 .with_plan_replayer_capture(plan_replayer_capture_enabled)
-                .with_column_stats_usage(self.stats_collector_ref().clone())
+                .with_column_stats_usage(col_stats_usage_updater(self.stats_collector_ref()))
                 .with_index_usage_collector(index_usage_collector)
                 .with_executor_runtime_stats_source(runtime_stats_source.clone())
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
@@ -2359,4 +2360,15 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn breakpoint_notify_func(&self) -> Option<Arc<dyn Fn(String) + Send + Sync + 'static>>;
     /// Go `session.ExecuteStmt`'s parse observation (`session.go:2611`).
     fn observe_parse_duration(&self, seconds: f64, internal: bool);
+}
+
+/// Go `session.UpdateColStatsUsage` over the session's collector: every
+/// item of one planning pass gets the same timestamp.
+pub(crate) fn col_stats_usage_updater(
+    usage: &Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+) -> Option<tidb_sessionctx::ColStatsUsageUpdater> {
+    let usage = Arc::clone(usage.as_ref()?);
+    Some(Arc::new(move |items| {
+        usage.update_col_stats_usage(items, std::time::SystemTime::now());
+    }))
 }

@@ -367,8 +367,8 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::flush_session_plan_cache(self, scope)
     }
 
-    fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>> {
-        self.workload_repository.clone()
+    fn take_snapshot(&self) -> Option<tidb_executor::admin::TakeSnapshot> {
+        self.take_snapshot.clone()
     }
 
     fn flush_privileges(&mut self) -> Result<(), DriverError> {

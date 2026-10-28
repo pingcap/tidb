@@ -308,7 +308,7 @@ pub struct SessionVars {
     /// Go `SessionVars.GlobalVarsAccessor`: the GLOBAL and INSTANCE tiers,
     /// which the session installs when it is created (Go `createSession`
     /// sets it to the session itself). `None` until then, Go's nil.
-    globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
+    pub(crate) globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
     /// The GLOBAL values this session read for variables `SkipInit` left
     /// out of its copy; see [`Self::unseeded_global_value`].
     first_read_globals: FirstReadGlobals,

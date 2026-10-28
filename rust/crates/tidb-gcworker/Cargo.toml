@@ -11,6 +11,10 @@ description = "Go pkg/store/gcworker: the GC leader that advances safe points, r
 workspace = true
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-domain = { path = "../tidb-domain" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-session = { path = "../tidb-session" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 chrono.workspace = true
