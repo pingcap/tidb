@@ -123,7 +123,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	return s.update(ctx, is, false, tableAndPartitionIDs...)
 }
 
-// UpdateTableStatsMeta refreshes only table metadata while preserving cached histograms and pseudo state.
+// UpdateTableStatsMeta refreshes table metadata, preserving cached histograms and pseudo state
+// when the schema is unchanged. Missing entries and schema changes are loaded from storage.
 func (s *StatsCacheImpl) UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
 	if len(tableIDs) == 0 {
 		return nil
@@ -219,22 +220,18 @@ func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, m
 			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
+		updateMetaOnly := metaOnly && ok && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS
 		var tbl *statistics.Table
-		if metaOnly {
+		if updateMetaOnly {
 			// A partition ANALYZE always flushes the logical table's row count,
 			// but it may not persist a new global histogram. Preserve the cached
-			// histogram and pseudo state instead of loading an older global row.
-			if ok {
-				tbl = oldTbl.CopyAs(statistics.MetaOnly)
-			} else {
-				tbl = statistics.PseudoTable(tableInfo, false, true)
-				tbl.PhysicalID = physicalID
-			}
+			// histogram and pseudo state only when the cached schema is current.
+			tbl = oldTbl.CopyAs(statistics.MetaOnly)
 		} else {
 			needLoadColAndIdxStats := true
 			// If the column/index stats has not been updated, we can reuse the old table stats.
 			// Only need to update the count and modify count.
-			if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
+			if !metaOnly && ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
 				tbl = oldTbl.CopyAs(statistics.MetaOnly)
 				// count and modify count is updated in finalProcess
 				needLoadColAndIdxStats = false
@@ -262,7 +259,7 @@ func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, m
 			}
 		}
 		tbl.Version = version
-		if !metaOnly {
+		if !updateMetaOnly {
 			tbl.LastStatsHistVersion = latestHistUpdateVersion
 		}
 		tbl.RealtimeCount = count
@@ -275,7 +272,7 @@ func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, m
 		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
 		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
 		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
-		if !metaOnly && tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+		if !updateMetaOnly && tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
 		tblToUpdateOrDelete.addToUpdate(tbl)

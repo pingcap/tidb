@@ -132,7 +132,7 @@
 
 ### Tests
 - `pkg/statistics/handle/handletest/statstest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/statistics/handle/handletest/statstest/stats_test.go` - statistics/handle/handletest: Tests full and targeted stats cache updates.
+- `pkg/statistics/handle/handletest/statstest/stats_test.go` - statistics/handle/handletest: Tests full, targeted, and metadata-only stats cache updates, including cache misses and schema changes.
 
 ## pkg/statistics/handle/lockstats
 

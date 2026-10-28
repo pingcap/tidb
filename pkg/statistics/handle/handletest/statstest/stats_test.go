@@ -226,6 +226,75 @@ func TestStatsCacheProcess(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, analyzedTableVersion, statsTbl.Version)
 	require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+	// A metadata-only refresh must initialize persisted global stats on a true
+	// cache miss. GetPhysicalTableStats would insert a pseudo entry here.
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table global_meta(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into global_meta values (1), (11)")
+	tk.MustExec("analyze table global_meta all columns")
+	is = dom.InfoSchema()
+	globalTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("global_meta"))
+	require.NoError(t, err)
+	globalInfo := globalTable.Meta()
+	persistedGlobalStats := handle.GetPhysicalTableStats(globalInfo.ID, globalInfo)
+	require.False(t, persistedGlobalStats.Pseudo)
+	require.NotZero(t, persistedGlobalStats.LastStatsHistVersion)
+	require.NotZero(t, persistedGlobalStats.LastAnalyzeVersion)
+
+	handle.Clear()
+	_, ok := handle.Get(globalInfo.ID)
+	require.False(t, ok, "the global stats entry must be absent before the metadata refresh")
+	require.NoError(t, handle.UpdateTableStatsMeta(context.Background(), is, globalInfo.ID))
+	globalStats, ok := handle.Get(globalInfo.ID)
+	require.True(t, ok)
+	require.False(t, globalStats.Pseudo)
+	require.Equal(t, globalInfo.ID, globalStats.PhysicalID)
+	require.Equal(t, persistedGlobalStats.Version, globalStats.Version)
+	require.Equal(t, persistedGlobalStats.StatsVer, globalStats.StatsVer)
+	require.Equal(t, persistedGlobalStats.LastStatsHistVersion, globalStats.LastStatsHistVersion)
+	require.Equal(t, persistedGlobalStats.LastAnalyzeVersion, globalStats.LastAnalyzeVersion)
+	require.Equal(t, globalInfo.UpdateTS, globalStats.TblInfoUpdateTS)
+	require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(globalInfo.Columns[0].ID, false))
+	require.Zero(t, handle.MaxTableStatsVersion())
+
+	// With an unchanged schema, refresh counts without replacing the cached
+	// histogram or its analyze/version state.
+	oldGlobalStats := globalStats
+	tk.MustExec("insert into global_meta values (2)")
+	// Clear reset the session delta collectors, so persist the metadata change
+	// explicitly rather than relying on this session's old collector.
+	tk.MustExec("update mysql.stats_meta set version = ?, count = 3, modify_count = 1 where table_id = ?", oldGlobalStats.Version+1, globalInfo.ID)
+	require.NoError(t, handle.UpdateTableStatsMeta(context.Background(), is, globalInfo.ID))
+	globalStats, ok = handle.Get(globalInfo.ID)
+	require.True(t, ok)
+	require.False(t, globalStats.Pseudo)
+	require.Greater(t, globalStats.Version, oldGlobalStats.Version)
+	require.Equal(t, int64(3), globalStats.RealtimeCount)
+	require.Equal(t, int64(1), globalStats.ModifyCount)
+	require.Same(t, oldGlobalStats.GetCol(globalInfo.Columns[0].ID), globalStats.GetCol(globalInfo.Columns[0].ID))
+	require.Equal(t, oldGlobalStats.LastStatsHistVersion, globalStats.LastStatsHistVersion)
+	require.Equal(t, oldGlobalStats.LastAnalyzeVersion, globalStats.LastAnalyzeVersion)
+	require.Zero(t, handle.MaxTableStatsVersion())
+
+	// A meta row can record an analyze snapshot without column/index stats.
+	// Storage initialization must still apply both version fields.
+	const (
+		analyzeSnapshot uint64 = 123
+		histVersion     uint64 = 456
+	)
+	tk.MustExec("delete from mysql.stats_histograms where table_id = ?", globalInfo.ID)
+	tk.MustExec("update mysql.stats_meta set snapshot = ?, last_stats_histograms_version = ? where table_id = ?", analyzeSnapshot, histVersion, globalInfo.ID)
+	handle.Clear()
+	_, ok = handle.Get(globalInfo.ID)
+	require.False(t, ok)
+	require.NoError(t, handle.UpdateTableStatsMeta(context.Background(), is, globalInfo.ID))
+	globalStats, ok = handle.Get(globalInfo.ID)
+	require.True(t, ok)
+	require.False(t, globalStats.Pseudo)
+	require.Equal(t, histVersion, globalStats.LastStatsHistVersion)
+	require.Equal(t, analyzeSnapshot, globalStats.LastAnalyzeVersion)
 }
 
 func TestStatsCache(t *testing.T) {
@@ -274,6 +343,58 @@ func TestStatsCache(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// A metadata-only refresh must reload stats when the cached schema differs,
+	// even if the cached histogram version is already current.
+	handle := do.StatsHandle()
+	oldStats := statsTbl
+	testKit.MustExec("alter table t add column c11 int default 7")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	newColID := tableInfo.Columns[len(tableInfo.Columns)-1].ID
+	require.NotEqual(t, tableInfo.UpdateTS, oldStats.TblInfoUpdateTS)
+	require.False(t, oldStats.ColAndIdxExistenceMap.Has(newColID, false))
+	// Hold the histogram watermark steady to exercise schema invalidation
+	// independently of histogram-version invalidation.
+	testKit.MustExec("update mysql.stats_meta set last_stats_histograms_version = ? where table_id = ?", oldStats.LastStatsHistVersion, tableInfo.ID)
+
+	// Process an unchanged cached pseudo entry after the schema-change fallback.
+	// The effective metadata-only mode must be decided separately for each row.
+	testKit.MustExec("create table meta_unchanged(a int)")
+	testKit.MustExec("insert into meta_unchanged values (1)")
+	testKit.MustExec("analyze table meta_unchanged all columns")
+	is = do.InfoSchema()
+	unchangedTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("meta_unchanged"))
+	require.NoError(t, err)
+	unchangedInfo := unchangedTable.Meta()
+	pseudoStats := statistics.PseudoTable(unchangedInfo, false, true)
+	pseudoStats.TblInfoUpdateTS = unchangedInfo.UpdateTS
+	handle.Put(unchangedInfo.ID, pseudoStats)
+	handle.WaitForAsyncUpdates()
+	// Rows are ordered by version, so the changed schema is processed first.
+	testKit.MustExec("update mysql.stats_meta set version = 300 where table_id = ?", tableInfo.ID)
+	testKit.MustExec("update mysql.stats_meta set version = 301 where table_id = ?", unchangedInfo.ID)
+	cacheVersion := handle.MaxTableStatsVersion()
+
+	require.NoError(t, handle.UpdateTableStatsMeta(context.Background(), is, tableInfo.ID, unchangedInfo.ID))
+	statsTbl, ok := handle.Get(tableInfo.ID)
+	require.True(t, ok)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, tableInfo.UpdateTS, statsTbl.TblInfoUpdateTS)
+	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(newColID, false))
+	require.Equal(t, uint64(300), statsTbl.Version)
+	unchangedStats, ok := handle.Get(unchangedInfo.ID)
+	require.True(t, ok)
+	require.True(t, unchangedStats.Pseudo)
+	require.Equal(t, uint64(301), unchangedStats.Version)
+	require.Equal(t, unchangedInfo.UpdateTS, unchangedStats.TblInfoUpdateTS)
+	require.Same(t, pseudoStats.GetCol(unchangedInfo.Columns[0].ID), unchangedStats.GetCol(unchangedInfo.Columns[0].ID))
+	require.Zero(t, unchangedStats.LastStatsHistVersion)
+	require.Zero(t, unchangedStats.LastAnalyzeVersion)
+	require.Equal(t, cacheVersion, handle.MaxTableStatsVersion())
 }
 
 func TestStatsCacheMemTracker(t *testing.T) {

@@ -204,8 +204,11 @@ func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
 			tk.MustExec("update mysql.stats_meta set version = ? where table_id = ?", staleGlobalVersion, tableInfo.ID)
 			handle := dom.StatsHandle()
 			handle.Clear()
-			globalStats := handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-			require.True(t, globalStats.Pseudo)
+			globalStats := statistics.PseudoTable(tableInfo, false, true)
+			// Model a cached entry built with the current schema. A pseudo
+			// entry with an unknown schema timestamp must be reloaded instead.
+			globalStats.TblInfoUpdateTS = tableInfo.UpdateTS
+			handle.Put(tableInfo.ID, globalStats)
 			handle.Put(tableInfo.ID+1000, &statistics.Table{
 				HistColl:              statistics.HistColl{PhysicalID: tableInfo.ID + 1000},
 				Version:               cacheWideMaxVersion,
