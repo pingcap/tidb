@@ -50,6 +50,7 @@ pub mod sessionctx;
 pub use sessionctx::StmtOutput;
 pub mod admin;
 pub mod ddl_exec;
+pub mod lock;
 pub mod lock_stats;
 pub mod stats_exec;
 pub mod record_set;
