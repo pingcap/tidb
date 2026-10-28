@@ -265,6 +265,9 @@ pub(super) struct MockNode {
     /// the node: Go's domain owns the internal-session pool its restricted
     /// SQL draws from for its whole life.
     pub(super) factories: std::sync::Mutex<Vec<Arc<Domain>>>,
+    /// The node's auto-id registry, which every connection's table
+    /// allocates through.
+    pub(super) auto_ids: Arc<crate::domain::cluster_session::LocalTableAutoIds>,
 }
 
 impl MockNode {
@@ -310,6 +313,7 @@ impl MockNode {
             sysvars: Arc::new(MockSysvarWriter::new()),
             catalog,
             factories: std::sync::Mutex::default(),
+            auto_ids: Arc::default(),
         }
     }
 }
@@ -491,7 +495,7 @@ fn open_session_on_with_context_and_seams_and_usage(
             SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
-        Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
+        Arc::clone(&node.auto_ids) as _,
     )
     .shared();
     node.keep(&factory);
