@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -1213,23 +1214,21 @@ func (b *builtinRandSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinRandSig) getRng(ctx EvalContext) (*mathutil.MysqlRng, error) {
+func (b *builtinRandSig) getRng(ctx EvalContext) *mathutil.MysqlRng {
 	if b.seededRng == nil {
-		return b.mysqlRng, nil
+		return b.mysqlRng
 	}
-	return b.seededRng.getOrInitCache(ctx, func() (*mathutil.MysqlRng, error) {
+	rng, err := b.seededRng.getOrInitCache(ctx, func() (*mathutil.MysqlRng, error) {
 		return mathutil.NewWithSeed(b.seed), nil
 	})
+	intest.AssertNoError(err)
+	return rng
 }
 
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	rng, err := b.getRng(ctx)
-	if err != nil {
-		return 0, true, err
-	}
-	return rng.Gen(), false, nil
+	return b.getRng(ctx).Gen(), false, nil
 }
 
 type builtinRandWithSeedFirstGenSig struct {

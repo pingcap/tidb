@@ -720,10 +720,7 @@ func (b *builtinRandSig) vectorized() bool {
 }
 
 func (b *builtinRandSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	rng, err := b.getRng(ctx)
-	if err != nil {
-		return err
-	}
+	rng := b.getRng(ctx)
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
