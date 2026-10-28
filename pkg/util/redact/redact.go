@@ -239,6 +239,9 @@ func (t TaskInfoRedacted) String() string {
 	}
 
 	infoCopy := *t.Info
+	// Encryption keys and KMS credentials must never enter diagnostic output,
+	// regardless of whether general log redaction is enabled.
+	infoCopy.SecurityConfig = nil
 
 	if t.Info.Storage != nil {
 		// Create a copy of StorageBackend to modify
