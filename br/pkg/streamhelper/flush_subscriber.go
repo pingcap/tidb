@@ -39,6 +39,8 @@ const (
 type FlushSubscriber struct {
 	dialer  LogBackupService
 	cluster TiKVClusterMeta
+	// Releases connections owned by this subscriber, when provided by the dialer.
+	closeConnections func()
 
 	// Current connections.
 	subscriptions map[uint64]*subscription
@@ -76,6 +78,11 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 		masterCtx:               context.Background(),
 		subscriptionIdleTimeout: subscriptionIdleTimeout,
 	}
+	if factory, ok := dialer.(interface {
+		newSubscriptionService() (LogBackupService, func())
+	}); ok {
+		subs.dialer, subs.closeConnections = factory.newSubscriptionService()
+	}
 
 	for _, c := range config {
 		c(subs)
@@ -99,6 +106,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 			f.subscriptions[store.ID].connect(f.masterCtx, f.dialer)
 		} else if sub.storeBootAt != store.BootAt {
 			sub.storeBootAt = store.BootAt
+			f.clearOwnedConnection(ctx, store.ID)
 			sub.connect(f.masterCtx, f.dialer)
 		}
 		storeSet[store.ID] = struct{}{}
@@ -134,6 +142,9 @@ func (f *FlushSubscriber) Clear() {
 // This subscriber would be no more usable.
 func (f *FlushSubscriber) Drop() {
 	f.Clear()
+	if f.closeConnections != nil {
+		f.closeConnections()
+	}
 	close(f.eventsTunnel)
 }
 
@@ -414,7 +425,19 @@ func (f *FlushSubscriber) removeSubscription(ctx context.Context, toStore uint64
 		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
 			zap.Uint64("store", toStore))
 		subs.close(ctx)
+		f.clearOwnedConnection(ctx, toStore)
 		delete(f.subscriptions, toStore)
+	}
+}
+
+func (f *FlushSubscriber) clearOwnedConnection(ctx context.Context, storeID uint64) {
+	if f.closeConnections == nil {
+		return
+	}
+	// A topology update or Clear may have already exhausted its deadline.
+	if err := f.dialer.ClearCache(context.WithoutCancel(ctx), storeID); err != nil {
+		log.Warn("failed to clear cached subscription connection",
+			zap.Uint64("store", storeID), logutil.ShortError(err))
 	}
 }
 

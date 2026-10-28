@@ -134,11 +134,22 @@ type clusterEnv struct {
 
 var _ Env = &clusterEnv{}
 
+// logBackupClient invalidates only the connection used by this client.
+type logBackupClient struct {
+	logbackup.LogBackupClient
+	clearCache func(context.Context) error
+}
+
 // GetLogBackupClient gets the log backup client.
 func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
 	var cli logbackup.LogBackupClient
 	err := t.clis.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
-		cli = logbackup.NewLogBackupClient(cc)
+		cli = &logBackupClient{
+			LogBackupClient: logbackup.NewLogBackupClient(cc),
+			clearCache: func(ctx context.Context) error {
+				return t.clis.RemoveConnIfMatch(ctx, storeID, cc)
+			},
+		}
 	})
 	if err != nil {
 		return nil, err
@@ -149,6 +160,14 @@ func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (log
 // ClearCache clears the log backup client connection cache.
 func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
 	return t.clis.RemoveConn(ctx, storeID)
+}
+
+// newSubscriptionService isolates long-lived subscriptions from polling's
+// connection resets. The subscriber owns and closes this connection cache.
+func (t clusterEnv) newSubscriptionService() (LogBackupService, func()) {
+	clis := utils.NewStoreManager(t.clis.PDClient(), t.clis.GetKeepalive(), t.clis.TLSConfig())
+	clis.DialTimeout = t.clis.DialTimeout
+	return clusterEnv{clis: clis}, clis.Close
 }
 
 func (t clusterEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
