@@ -428,10 +428,10 @@ pub trait ExecStmtObservation: tidb_executor::sessionctx::SessionContext {
             .as_deref()
             .and_then(|identity| identity.split_once('@'))
             .map(|(user, host)| (user.to_owned(), host.to_owned()));
-        let keyspace_name = tidb_util::keyspace::get_keyspace_name_by_settings();
+        let keyspace_name = tidb_keyspace::get_keyspace_name_by_settings();
         let items = tidb_variable::slow_log::SlowQueryLogItems {
             txn_ts,
-            keyspace_name: if tidb_util::keyspace::is_keyspace_name_empty(&keyspace_name) {
+            keyspace_name: if tidb_keyspace::is_keyspace_name_empty(&keyspace_name) {
                 String::new()
             } else {
                 keyspace_name

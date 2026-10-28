@@ -99,7 +99,7 @@ pub mod expression_rewriter;
 pub mod final_mode_agg;
 pub mod fk_plan;
 pub mod find_best_task;
-pub use tidb_util::fixcontrol as fix_control;
+pub use tidb_fixcontrol as fix_control;
 pub mod from_scope;
 pub mod point_get_key;
 pub mod point_get_plan;

@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tidb_variable::sysvar::{alias_of, get_sys_var, SysVarDef, SCOPE_GLOBAL, SCOPE_INSTANCE};
-use tidb_util::fixcontrol::OptimizerFixControl;
+use tidb_fixcontrol::OptimizerFixControl;
 use tidb_variable::vars::{
     global_get_hook, parse_read_timestamp, validation_var_error,
     ExternalTimestampProvider, PdRegionPolicy, ResolvedGlobals, SET_GLOBAL_RESOURCE_CONTROL,

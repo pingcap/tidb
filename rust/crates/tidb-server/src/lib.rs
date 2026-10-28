@@ -192,8 +192,8 @@ fn setup_log() -> Result<(), RunConfiguredNodeError> {
     log_config.config.timeout = log.timeout;
     // `keyspace.WrapZapcoreWithKeyspace`: entries carry `keyspaceName` only
     // when a keyspace is configured.
-    let keyspace_name = tidb_util::keyspace::get_keyspace_name_by_settings();
-    let core_fields = if tidb_util::keyspace::is_keyspace_name_empty(&keyspace_name) {
+    let keyspace_name = tidb_keyspace::get_keyspace_name_by_settings();
+    let core_fields = if tidb_keyspace::is_keyspace_name_empty(&keyspace_name) {
         Vec::new()
     } else {
         vec![tidb_log::Field::new(

@@ -1,0 +1,14 @@
+[package]
+name = "tidb-fixcontrol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB optimizer fix control: Go pkg/planner/util/fixcontrol (Rust rewrite)."
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }
+
+[lints]
+workspace = true

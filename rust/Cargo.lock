@@ -3794,6 +3794,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl-label",
  "tidb-error",
+ "tidb-fixcontrol",
  "tidb-log",
  "tidb-model",
  "tidb-mysql",
@@ -3951,6 +3952,7 @@ dependencies = [
  "tidb-hack",
  "tidb-hint",
  "tidb-keydecoder",
+ "tidb-keyspace",
  "tidb-kv",
  "tidb-log",
  "tidb-meta",
@@ -4122,6 +4124,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-fixcontrol"
+version = "0.0.0"
+dependencies = [
+ "tidb-error",
+]
+
+[[package]]
 name = "tidb-funcdep"
 version = "0.0.0"
 dependencies = [
@@ -4230,6 +4239,16 @@ dependencies = [
  "tidb-codec",
  "tidb-infoschema",
  "tidb-table",
+]
+
+[[package]]
+name = "tidb-keyspace"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-error",
+ "tidb-log",
+ "tidb-util",
 ]
 
 [[package]]
@@ -4432,6 +4451,7 @@ dependencies = [
  "tidb-driver-error",
  "tidb-error",
  "tidb-expr",
+ "tidb-fixcontrol",
  "tidb-funcdep",
  "tidb-hack",
  "tidb-hash",
@@ -4612,6 +4632,7 @@ dependencies = [
  "tidb-expr",
  "tidb-gcworker",
  "tidb-hack",
+ "tidb-keyspace",
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",
@@ -4713,6 +4734,7 @@ dependencies = [
  "tidb-gcutil",
  "tidb-hack",
  "tidb-hint",
+ "tidb-keyspace",
  "tidb-kv",
  "tidb-lexer",
  "tidb-log",
@@ -4777,6 +4799,7 @@ dependencies = [
  "tidb-driver-error",
  "tidb-error",
  "tidb-expr",
+ "tidb-fixcontrol",
  "tidb-hack",
  "tidb-kv",
  "tidb-model",
@@ -5333,6 +5356,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
+ "tidb-fixcontrol",
  "tidb-hack",
  "tidb-log",
  "tidb-model",

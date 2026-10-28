@@ -685,7 +685,7 @@ impl SessionVars {
         if !name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
             return;
         }
-        let (_, warnings) = tidb_util::fixcontrol::OptimizerFixControl::parse(value)
+        let (_, warnings) = tidb_fixcontrol::OptimizerFixControl::parse(value)
             .expect("the system/global writer validated fix-control before publication");
         for warning in warnings {
             self.append_stmt_plain_warning(VarWarningLevel::Warning, warning);

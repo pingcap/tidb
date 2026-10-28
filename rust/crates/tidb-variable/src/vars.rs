@@ -44,7 +44,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use tidb_util::fixcontrol::OptimizerFixControl;
+use tidb_fixcontrol::OptimizerFixControl;
 
 use crate::sysvar::{alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_SESSION};
 

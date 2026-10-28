@@ -244,7 +244,7 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn enable_no_decorrelate_in_select(&self) -> bool {
         StmtContext::enable_no_decorrelate_in_select(self)
     }
-    fn optimizer_fix_control(&self) -> &tidb_util::fixcontrol::OptimizerFixControl {
+    fn optimizer_fix_control(&self) -> &tidb_fixcontrol::OptimizerFixControl {
         StmtContext::optimizer_fix_control(self)
     }
     fn join_reorder_threshold(&self) -> i32 {

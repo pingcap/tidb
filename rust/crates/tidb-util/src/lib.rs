@@ -52,8 +52,6 @@ pub mod execdetails;
 pub mod extsort;
 pub mod fastrand;
 pub mod filter;
-/// Go `pkg/planner/util/fixcontrol`.
-pub mod fixcontrol;
 pub mod format;
 pub mod generic;
 pub mod globalconn;
@@ -62,7 +60,6 @@ pub mod go_time_layout;
 pub mod intest;
 pub mod intset;
 pub mod israce;
-pub mod keyspace;
 pub mod kvcache;
 pub mod layered_io;
 pub mod logutil;

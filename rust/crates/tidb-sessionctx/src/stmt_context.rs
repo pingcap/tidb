@@ -1105,7 +1105,7 @@ pub struct StmtContextData {
     /// Keeping the parsed map on the context makes planner decisions consume
     /// the same value that the session writer validated, including a
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
-    optimizer_fix_control: tidb_util::fixcontrol::OptimizerFixControl,
+    optimizer_fix_control: tidb_fixcontrol::OptimizerFixControl,
     /// The statement snapshot consumed by Go's
     /// `checkIndexLookUpPushDownSupported` and system-variable policy.
     index_lookup_push_down_session: IndexLookupPushDownSession,
@@ -1897,7 +1897,7 @@ context_configuration! {
     #[must_use]
     pub fn with_optimizer_fix_control(
         mut self,
-        control: tidb_util::fixcontrol::OptimizerFixControl,
+        control: tidb_fixcontrol::OptimizerFixControl,
     ) -> Self {
         self.optimizer_fix_control = control;
         self
@@ -2767,7 +2767,7 @@ impl StmtContext {
             enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
-            optimizer_fix_control: tidb_util::fixcontrol::OptimizerFixControl::default(),
+            optimizer_fix_control: tidb_fixcontrol::OptimizerFixControl::default(),
             index_lookup_push_down_session:
                 IndexLookupPushDownSession::default(),
             latest_info_schema: None,
@@ -3773,7 +3773,7 @@ impl StmtContext {
                 .set_always_warn_skip_cache(self.always_warn_skip_plan_cache);
             state.tracker.set_force_plan_cache(
                 self.optimizer_fix_control
-                    .get_bool_with_default(tidb_util::fixcontrol::FIX_49736, false),
+                    .get_bool_with_default(tidb_fixcontrol::FIX_49736, false),
             );
             state.tracker.enable_plan_cache();
         }
@@ -4018,7 +4018,7 @@ impl StmtContext {
 
     /// The statement's parsed optimizer-fix controls.
     #[must_use]
-    pub fn optimizer_fix_control(&self) -> &tidb_util::fixcontrol::OptimizerFixControl {
+    pub fn optimizer_fix_control(&self) -> &tidb_fixcontrol::OptimizerFixControl {
         &self.optimizer_fix_control
     }
 
@@ -6349,7 +6349,7 @@ mod tests {
     #[test]
     fn range_fallback_honors_force_plan_cache() {
         let (control, _) =
-            tidb_util::fixcontrol::OptimizerFixControl::parse("49736:ON").unwrap();
+            tidb_fixcontrol::OptimizerFixControl::parse("49736:ON").unwrap();
         let context = super::StmtContext::for_query().with_optimizer_fix_control(control);
         context.start_prepared_range_tracking();
         for _ in 0..2 {

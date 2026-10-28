@@ -432,7 +432,7 @@ impl Session {
         // Go `StmtCtx.SQLDigest`: a statement with no normalized text tags
         // no SQL digest.
         let sql_digest = (!normalized.is_empty()).then(|| digest.as_bytes().to_vec());
-        let keyspace_name = tidb_util::keyspace::get_keyspace_name_bytes_by_settings();
+        let keyspace_name = tidb_keyspace::get_keyspace_name_bytes_by_settings();
         // Go `StmtCtx.GetPlanDigest`: empty until the plan is published.
         let plan_digest = move || {
             plan.as_ref().map_or_else(Vec::new, |plan| {
