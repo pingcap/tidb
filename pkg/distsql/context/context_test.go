@@ -51,7 +51,6 @@ func TestContextDetach(t *testing.T) {
 		EnabledRateLimitAction: true,
 		EnableChunkRPC:         true,
 		OriginalSQL:            "a",
-		EnableRedactLog:        "ON",
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},
 		SessionMemTracker:      &memory.Tracker{},

@@ -74,11 +74,12 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 
 	enabledRateLimitAction := dctx.EnabledRateLimitAction
 	originalSQL := dctx.OriginalSQL
-	redactMode := dctx.EnableRedactLog
 	eventCb := func(event trxevents.TransactionEvent) {
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
 			if ce := logutil.Logger(ctx).Check(zap.DebugLevel, "coprocessor encounters lock"); ce != nil {
+				// Use the global mode at logging time for both fields, including delayed callbacks.
+				redactMode := errors.RedactLogEnabled.Load()
 				ce.Write(
 					zap.Uint64("startTS", kvReq.StartTs),
 					zap.Stringer("lock", redact.LockInfoWithMode(copMeetLock.LockInfo, redactMode)),

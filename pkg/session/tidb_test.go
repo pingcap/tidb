@@ -287,29 +287,6 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 	require.True(t, dctx.RUConsumptionReporter == nil)
 }
 
-func TestDistSQLCtxRedactLogMode(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-
-	se, err := createSession(store)
-	require.NoError(t, err)
-	defer se.Close()
-
-	const sql = "SELECT 'context-secret'"
-	for _, mode := range []string{"OFF", "ON", "MARKER"} {
-		t.Run(mode, func(t *testing.T) {
-			// Redaction is internal at session scope, so use the session initialization setter.
-			require.NoError(t, se.sessionVars.SetSystemVarWithRelaxedValidation(vardef.TiDBRedactLog, mode))
-			MustExec(t, se, sql)
-			dctx := se.GetDistSQLCtx()
-			require.Equal(t, mode, dctx.EnableRedactLog)
-			require.Equal(t, sql, dctx.OriginalSQL)
-			require.Same(t, dctx, se.GetDistSQLCtx())
-		})
-	}
-}
-
 func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {
 	originalBudget := vardef.PagingSizeBytes.Load()
 	t.Cleanup(func() { vardef.PagingSizeBytes.Store(originalBudget) })
