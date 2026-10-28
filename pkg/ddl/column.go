@@ -720,9 +720,6 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 // buildCheckConstraintsForNewColumn builds the writable check constraints that reference oldCol
 // against a copy of the table in which oldCol has the type of newCol.
 func buildCheckConstraintsForNewColumn(ctx exprctx.BuildContext, t table.Table, oldCol, newCol *model.ColumnInfo, dbName string) ([]*checkConstraintExpr, error) {
-	if oldCol == nil || newCol == nil {
-		return nil, nil
-	}
 	var (
 		tblInfo *model.TableInfo
 		exprs   []*checkConstraintExpr
