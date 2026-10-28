@@ -167,7 +167,7 @@ pub use tidb_kv::mem_quota;
 mod tests_mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
-pub use tidb_stmtctx::mem_table_retrieval;
+pub mod mem_table_retrieval;
 use tidb_kv::mpp_query;
 #[cfg(test)]
 mod tests_mpp_query;

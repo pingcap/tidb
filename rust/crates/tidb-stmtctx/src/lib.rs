@@ -19,7 +19,6 @@ pub use tidb_variable::used_stats;
 pub mod statement_pushdown;
 pub mod advisory_lock_state;
 pub mod explain_format;
-pub mod mem_table_retrieval;
 pub mod plan_trace;
 pub mod show_retrieval;
 pub mod select_lock;

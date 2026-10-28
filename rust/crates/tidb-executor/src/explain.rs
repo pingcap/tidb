@@ -18,6 +18,7 @@
 //! `EXPLAIN ANALYZE` attaches row counters while draining that executor tree;
 //! plain `EXPLAIN` only renders it and never executes the target statement.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_hack::GoToLower;
@@ -3387,7 +3388,7 @@ pub fn process_plan_info_with_brief(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
         ),
-        plan: Some(crate::StoredPlan(stored)),
+        plan: Some(crate::StoredPlan::new(stored)),
         plan_source,
         ..crate::ProcessPlanInfo::default()
     };

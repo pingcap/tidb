@@ -1140,7 +1140,14 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         };
         let ctx = self.statement_context(false);
         let (columns, rows) = self.with_catalog_mut(|catalog| {
-            crate::explain_connection_plan(&plan.0, catalog, &ctx, explain_format)
+            crate::explain_connection_plan(
+                &plan
+                    .get::<tidb_planner::physical::PhysicalPlan>()
+                    .expect("a stored plan is the planner's"),
+                catalog,
+                &ctx,
+                explain_format,
+            )
         })?;
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }

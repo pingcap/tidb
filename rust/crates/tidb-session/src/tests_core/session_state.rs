@@ -2,6 +2,7 @@
 //! the noop-function gate, `sql_select_limit`, the `SET_VAR` hint, and
 //! prepared-statement parameters -- Go `pkg/sessionctx/variable`.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;

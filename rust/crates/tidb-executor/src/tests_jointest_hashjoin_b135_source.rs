@@ -17,6 +17,7 @@
 //! failpoint, EXPLAIN ANALYZE, runtime-statistics, and worker-lifecycle cases
 //! remain explicit gaps.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;
 

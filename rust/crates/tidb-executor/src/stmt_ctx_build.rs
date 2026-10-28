@@ -21,6 +21,7 @@
 //! channel -- is funnelled through [`Session::statement_context`], so an
 //! expression never reaches back into the session for anything.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtxData as _;
 use std::sync::Arc;
 
 use crate::sessionctx::StatementKind;

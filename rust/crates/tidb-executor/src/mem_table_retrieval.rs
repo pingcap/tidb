@@ -204,3 +204,18 @@ impl MemTableRetrieval {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
+
+/// The statement's memory-table retrievals, in the statement context's slot.
+pub trait StmtMemTableRetrieval {
+    /// Go `MemTableReaderExec`'s retriever state for this statement.
+    fn mem_table_retrieval(&self) -> &MemTableRetrieval;
+}
+
+impl StmtMemTableRetrieval for crate::StmtContext {
+    fn mem_table_retrieval(&self) -> &MemTableRetrieval {
+        self.mem_table_retrieval_slot()
+            .get_or_init(|| Arc::new(MemTableRetrieval::default()))
+            .downcast_ref::<MemTableRetrieval>()
+            .expect("the slot holds the executor's memory-table retrieval")
+    }
+}

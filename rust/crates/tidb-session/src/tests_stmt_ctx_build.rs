@@ -15,6 +15,7 @@
 
 //! Tests of `tidb_executor::stmt_ctx_build` over a session.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use super::*;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 

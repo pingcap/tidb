@@ -20,6 +20,7 @@
 //! The table statistics type itself is `tidb_planner::table_statistics`.
 
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use crate::plan_trace::PSEUDO_ROW_COUNT;
 pub use tidb_planner::table_statistics::TableStatistics;
 

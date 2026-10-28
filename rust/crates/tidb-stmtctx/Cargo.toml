@@ -9,6 +9,7 @@ description = "TiDB statement context: Go pkg/sessionctx/stmtctx (Rust rewrite).
 
 [dependencies]
 tidb-stats-handle = { path = "../tidb-stats-handle" }
+tidb-stats = { path = "../tidb-stats" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-variable = { path = "../tidb-variable" }
@@ -28,7 +29,6 @@ tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-planner = { path = "../tidb-planner" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-txnkv = { path = "../tidb-txnkv" }

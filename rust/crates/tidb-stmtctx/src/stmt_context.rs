@@ -237,10 +237,100 @@ impl RowIdShardGenerator {
 
 pub use tidb_variable::GlobalSysvarAccessor;
 
+/// Go `SessionVars.IndexLookUpPushDownPolicy`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IndexLookupPushDownPolicy {
+    /// Go `IndexLookUpPushDownPolicyHintOnly`.
+    #[default]
+    HintOnly,
+    /// Go `IndexLookUpPushDownPolicyAffinityForce`.
+    AffinityForce,
+    /// Go `IndexLookUpPushDownPolicyForce`.
+    Force,
+}
+
+/// The session/transaction facts read by pinned
+/// `checkIndexLookUpPushDownSupported`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndexLookupPushDownSession {
+    /// Whether the transaction isolation is `REPEATABLE-READ`.
+    pub repeatable_read: bool,
+    /// Whether replica read is exactly leader-only.
+    pub leader_read: bool,
+    /// Go `TxnCtx.IsStaleness`.
+    pub staleness: bool,
+    /// Whether `SnapshotTS != 0`.
+    pub historical_read: bool,
+    /// Go `SessionVars.MaxKeysRead`.
+    pub max_keys_read: u64,
+    /// Go `IndexLookUpPushDownPolicy`.
+    pub policy: IndexLookupPushDownPolicy,
+}
+
+impl Default for IndexLookupPushDownSession {
+    fn default() -> Self {
+        Self {
+            repeatable_read: true,
+            leader_read: true,
+            staleness: false,
+            historical_read: false,
+            max_keys_read: 0,
+            policy: IndexLookupPushDownPolicy::HintOnly,
+        }
+    }
+}
+
+/// The cost environment's session values the statement context reads itself
+/// (Go `SessionVars`' index-lookup, projection and join sizes and the MPP
+/// enforcement), copied from the planner's cost environment when it is
+/// attached. The defaults are the cost environment's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CostSessionValues {
+    /// Go `IndexLookupConcurrency()` before the executor-concurrency fallback.
+    pub index_lookup_concurrency: f64,
+    /// Go `IndexLookupJoinConcurrency()` before the fallback.
+    pub index_lookup_join_concurrency: f64,
+    /// Go `IndexJoinBatchSize`.
+    pub index_join_batch_size: f64,
+    /// Go `IndexLookupSize`.
+    pub index_lookup_size: f64,
+    /// Go `ProjectionConcurrency()` before the fallback.
+    pub projection_concurrency: f64,
+    /// Go `SessionVars.IsMPPEnforced()`.
+    pub mpp_enforced: bool,
+}
+
+impl Default for CostSessionValues {
+    fn default() -> Self {
+        Self {
+            index_lookup_concurrency: 5.0,
+            index_lookup_join_concurrency: 5.0,
+            index_join_batch_size: 25000.0,
+            index_lookup_size: 20000.0,
+            projection_concurrency: 5.0,
+            mpp_enforced: false,
+        }
+    }
+}
+
 /// The physical plan a connection last executed, shared with
-/// `EXPLAIN FOR CONNECTION` (Go's `ProcessInfo.Plan`).
+/// `EXPLAIN FOR CONNECTION` (Go's `ProcessInfo.Plan`, an `any` there too):
+/// the planner's plan, which the statement context does not need to know.
 #[derive(Clone)]
-pub struct StoredPlan(pub Arc<tidb_planner::physical::PhysicalPlan>);
+pub struct StoredPlan(Arc<dyn std::any::Any + Send + Sync>);
+
+impl StoredPlan {
+    /// Stores `plan`.
+    pub fn new<T: std::any::Any + Send + Sync>(plan: Arc<T>) -> Self {
+        Self(plan)
+    }
+
+    /// The stored plan as `T`, when it is one.
+    #[must_use]
+    pub fn get<T: std::any::Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        Arc::clone(&self.0).downcast::<T>().ok()
+    }
+}
 
 impl std::fmt::Debug for StoredPlan {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -583,8 +673,10 @@ pub struct StmtContextData {
     /// Go `SessionVars.PlannerSelectBlockAsName`, set by the plan builder.
     block_as_names: Arc<Mutex<Vec<(String, String)>>>,
     /// The memory-table rows this statement's scans read and the requests
-    /// still waiting for the session to retrieve them.
-    mem_table_retrieval: Arc<crate::mem_table_retrieval::MemTableRetrieval>,
+    /// still waiting for the session to retrieve them: the executor's
+    /// `mem_table_retrieval::MemTableRetrieval` (Go `memTableRetriever` is
+    /// the executor's), created on first use.
+    mem_table_retrieval: Arc<std::sync::OnceLock<Arc<dyn std::any::Any + Send + Sync>>>,
     /// The rows the session fetched for this statement's `PhysicalShow`s.
     show_retrieval: Arc<crate::show_retrieval::ShowRetrieval>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
@@ -953,20 +1045,25 @@ pub struct StmtContextData {
     /// Keeping the parsed map on the context makes planner decisions consume
     /// the same value that the session writer validated, including a
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
-    optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
+    optimizer_fix_control: tidb_util::fixcontrol::OptimizerFixControl,
     /// The statement snapshot consumed by Go's
     /// `checkIndexLookUpPushDownSupported` and system-variable policy.
-    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
+    index_lookup_push_down_session: IndexLookupPushDownSession,
     /// Go `domain.GetDomain(ctx).InfoSchema()` narrowed to the metadata read
     /// by `planner/util/domainmisc.GetLatestIndexInfo`.
-    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    latest_index_schema: Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>>,
     /// Go `SessionVars.HypoIndexes`, which `EXPLAIN` planning and `SHOW
     /// CREATE TABLE` read.
     hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, which `EXPLAIN` planning reads.
     hypo_tiflash_replicas: Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>>,
     /// The statement snapshot of every session value read by cost model v2.
-    optimizer_cost_env: Option<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
+    /// The planner's cost-model-v2 environment (`CostEnv`), which only the
+    /// planner reads; the values this context reads itself are
+    /// [`Self::cost_session`].
+    optimizer_cost_env: Option<Arc<dyn std::any::Any + Send + Sync>>,
+    /// The cost environment's session values the statement context reads.
+    cost_session: CostSessionValues,
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
     /// do not have a more specific concurrency variable, including Sort.
     executor_concurrency: usize,
@@ -1184,7 +1281,7 @@ pub struct StmtContextData {
     /// Go `StmtCtx.TableStats`, populated while predicate columns are
     /// collected so a plan-replayer dump uses the same runtime snapshot.
     table_runtime_statistics:
-        Arc<Mutex<HashMap<i64, Option<Arc<tidb_planner::table_statistics::TableStatistics>>>>>,
+        Arc<Mutex<HashMap<i64, Option<Arc<tidb_stats::table_statistics::TableStatistics>>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
     /// Go `PlanCacheTracker.cacheType`: whether a cached plan for this
@@ -1258,6 +1355,12 @@ pub struct StmtContextData {
 // Define owned and borrowed configuration setters together. Session setup
 // borrows the configuration once; standalone with_* calls retain copy-on-write.
 impl StmtContextData {
+    /// The planner's cost-model-v2 snapshot, when one is attached.
+    #[must_use]
+    pub fn optimizer_cost_env_any(&self) -> Option<&Arc<dyn std::any::Any + Send + Sync>> {
+        self.optimizer_cost_env.as_ref()
+    }
+
     /// The session's `SQLMode` this statement runs under.
     #[must_use]
     pub fn session_sql_mode(&self) -> tidb_mysql::SqlMode {
@@ -1735,7 +1838,7 @@ context_configuration! {
     #[must_use]
     pub fn with_optimizer_fix_control(
         mut self,
-        control: tidb_planner::fix_control::OptimizerFixControl,
+        control: tidb_util::fixcontrol::OptimizerFixControl,
     ) -> Self {
         self.optimizer_fix_control = control;
         self
@@ -1746,7 +1849,7 @@ context_configuration! {
     #[must_use]
     pub fn with_index_lookup_push_down_session(
         mut self,
-        session: tidb_planner::access_path::IndexLookupPushDownSession,
+        session: IndexLookupPushDownSession,
     ) -> Self {
         self.index_lookup_push_down_session = session;
         self
@@ -1756,7 +1859,7 @@ context_configuration! {
     #[must_use]
     pub fn with_latest_index_schema(
         mut self,
-        schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
+        schema: Arc<tidb_infoschema::table_source::LatestIndexSchema>,
     ) -> Self {
         self.latest_index_schema = Some(schema);
         self
@@ -1774,14 +1877,29 @@ context_configuration! {
         self
     }
 
-    /// Attaches the resolved statement snapshot used by cost model v2.
+    /// Attaches the planner's resolved cost-model-v2 snapshot, with the
+    /// session values of it this context reads and the resolved
+    /// `tidb_executor_concurrency` (its union concurrency).
     #[must_use]
-    pub fn with_optimizer_cost_env(
+    pub fn with_optimizer_cost_env_any(
         mut self,
-        env: impl Into<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
+        env: Arc<dyn std::any::Any + Send + Sync>,
+        values: CostSessionValues,
+        union_concurrency: f64,
     ) -> Self {
-        let env = env.into();
-        self.executor_concurrency = env.session.union_concurrency.max(1.0) as usize;
+        self.executor_concurrency = union_concurrency.max(1.0) as usize;
+        self.optimizer_cost_env = Some(env);
+        self.cost_session = values;
+        self
+    }
+
+    /// Replaces the planner's cost-model-v2 snapshot, leaving the values
+    /// this context read from the previous one as they are.
+    #[must_use]
+    pub fn replace_optimizer_cost_env_any(
+        mut self,
+        env: Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Self {
         self.optimizer_cost_env = Some(env);
         self
     }
@@ -1793,16 +1911,14 @@ context_configuration! {
     /// otherwise a serial statement would still be costed as if five final
     /// workers were running and would pick a HashAgg over the StreamAgg Go
     /// chooses.
+    ///
+    /// This sets the context's own counts; the planner's
+    /// `with_hashagg_concurrency` also carries the final count into its cost
+    /// environment.
     #[must_use]
-    pub fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
+    pub fn with_hashagg_concurrency_values(mut self, partial: usize, final_: usize) -> Self {
         self.hashagg_partial_concurrency = partial;
         self.hashagg_final_concurrency = final_;
-        let env = self
-            .optimizer_cost_env
-            .get_or_insert_with(|| Arc::new(Default::default()));
-        if env.session.hashagg_final_concurrency != final_ as f64 {
-            Arc::make_mut(env).session.hashagg_final_concurrency = final_ as f64;
-        }
         self
     }
 
@@ -2592,13 +2708,14 @@ impl StmtContext {
             enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
-            optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
+            optimizer_fix_control: tidb_util::fixcontrol::OptimizerFixControl::default(),
             index_lookup_push_down_session:
-                tidb_planner::access_path::IndexLookupPushDownSession::default(),
+                IndexLookupPushDownSession::default(),
             latest_index_schema: None,
             hypo_indexes: None,
             hypo_tiflash_replicas: None,
             optimizer_cost_env: None,
+            cost_session: CostSessionValues::default(),
             executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             hashagg_final_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
@@ -2651,7 +2768,7 @@ impl StmtContext {
             ddl_reorg_vars: DdlReorgVars::default(),
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
-            selectivity_factor: tidb_planner::selectivity_greedy::DEF_OPT_SELECTIVITY_FACTOR,
+            selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             enable_pseudo_for_outdated_stats: false,
             stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
@@ -2744,10 +2861,11 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = names;
     }
 
-    /// The statement's memory-table retrievals (Go `MemTableReaderExec`'s
-    /// retriever state, answered by the session).
+    /// The slot of the statement's memory-table retrievals (Go
+    /// `MemTableReaderExec`'s retriever state, answered by the session),
+    /// which the executor fills with its own type.
     #[must_use]
-    pub fn mem_table_retrieval(&self) -> &crate::mem_table_retrieval::MemTableRetrieval {
+    pub fn mem_table_retrieval_slot(&self) -> &std::sync::OnceLock<Arc<dyn std::any::Any + Send + Sync>> {
         &self.mem_table_retrieval
     }
 
@@ -3277,20 +3395,6 @@ impl StmtContext {
         self.opt_prefix_index_single_scan
     }
 
-    /// Go `sctx.GetRangerCtx()`'s session switches for this statement: the
-    /// estimator snapshot's, with this statement's prefix-index switch.
-    #[must_use]
-    pub fn ranger_options(&self) -> tidb_planner::ranger::detacher::RangerOptions {
-        tidb_planner::ranger::detacher::RangerOptions {
-            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
-            ..self
-                .optimizer_cost_env()
-                .session
-                .estimator_options
-                .ranger_options()
-        }
-    }
-
     /// Returns `@@tidb_opt_always_keep_join_key`.
     pub fn always_keep_join_key(&self) -> bool {
         self.always_keep_join_key
@@ -3509,7 +3613,7 @@ impl StmtContext {
     pub fn record_table_runtime_statistics(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
-        mut get: impl FnMut(i64) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>>,
+        mut get: impl FnMut(i64) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
     ) {
         if !self.plan_replayer_capture_enabled {
             return;
@@ -3529,7 +3633,7 @@ impl StmtContext {
     #[must_use]
     pub fn table_runtime_statistics(
         &self,
-    ) -> HashMap<i64, Option<Arc<tidb_planner::table_statistics::TableStatistics>>> {
+    ) -> HashMap<i64, Option<Arc<tidb_stats::table_statistics::TableStatistics>>> {
         self.table_runtime_statistics
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3609,7 +3713,7 @@ impl StmtContext {
                 .set_always_warn_skip_cache(self.always_warn_skip_plan_cache);
             state.tracker.set_force_plan_cache(
                 self.optimizer_fix_control
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false),
+                    .get_bool_with_default(tidb_util::fixcontrol::FIX_49736, false),
             );
             state.tracker.enable_plan_cache();
         }
@@ -3846,7 +3950,7 @@ impl StmtContext {
 
     /// The statement's parsed optimizer-fix controls.
     #[must_use]
-    pub fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
+    pub fn optimizer_fix_control(&self) -> &tidb_util::fixcontrol::OptimizerFixControl {
         &self.optimizer_fix_control
     }
 
@@ -3854,7 +3958,7 @@ impl StmtContext {
     #[must_use]
     pub fn index_lookup_push_down_session(
         &self,
-    ) -> tidb_planner::access_path::IndexLookupPushDownSession {
+    ) -> IndexLookupPushDownSession {
         self.index_lookup_push_down_session
     }
 
@@ -3882,21 +3986,8 @@ impl StmtContext {
 
     /// Returns the latest-domain index metadata captured for this statement.
     #[must_use]
-    pub fn latest_index_schema(&self) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+    pub fn latest_index_schema(&self) -> Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>> {
         self.latest_index_schema.clone()
-    }
-
-    /// The statement's cost-model-v2 environment.
-    #[must_use]
-    pub fn optimizer_cost_env(&self) -> &tidb_planner::find_best_task::coster::CostEnv {
-        // Standalone contexts share defaults only if costing is requested;
-        // session contexts attach their resolved snapshot without allocating
-        // and immediately discarding a default environment.
-        static DEFAULT: std::sync::OnceLock<tidb_planner::find_best_task::coster::CostEnv> =
-            std::sync::OnceLock::new();
-        self.optimizer_cost_env.as_deref().unwrap_or_else(|| {
-            DEFAULT.get_or_init(tidb_planner::find_best_task::coster::CostEnv::default)
-        })
     }
 
     /// Resolved `tidb_executor_concurrency` for this statement.
@@ -3909,7 +4000,7 @@ impl StmtContext {
     /// value resolved to `tidb_executor_concurrency` when unset.
     #[must_use]
     pub fn index_lookup_concurrency(&self) -> usize {
-        let resolved = self.optimizer_cost_env().session.index_lookup_concurrency;
+        let resolved = self.cost_session.index_lookup_concurrency;
         if resolved > 0.0 {
             resolved as usize
         } else {
@@ -3921,10 +4012,7 @@ impl StmtContext {
     /// per-operator value resolved to `tidb_executor_concurrency` when unset.
     #[must_use]
     pub fn index_lookup_join_concurrency(&self) -> usize {
-        let resolved = self
-            .optimizer_cost_env()
-            .session
-            .index_lookup_join_concurrency;
+        let resolved = self.cost_session.index_lookup_join_concurrency;
         if resolved > 0.0 {
             resolved as usize
         } else {
@@ -3936,17 +4024,14 @@ impl StmtContext {
     /// by an index-lookup join.
     #[must_use]
     pub fn index_join_batch_size(&self) -> usize {
-        self.optimizer_cost_env()
-            .session
-            .index_join_batch_size
-            .max(1.0) as usize
+        self.cost_session.index_join_batch_size.max(1.0) as usize
     }
 
     /// Go `SessionVars.IndexLookupSize`, the maximum number of handles in one
     /// regular index double-read task.
     #[must_use]
     pub fn index_lookup_size(&self) -> usize {
-        self.optimizer_cost_env().session.index_lookup_size.max(1.0) as usize
+        self.cost_session.index_lookup_size.max(1.0) as usize
     }
 
     /// Go `SessionVars.ProjectionConcurrency()`: `tidb_projection_concurrency`
@@ -3954,7 +4039,7 @@ impl StmtContext {
     /// fallback into the cost environment).
     #[must_use]
     pub fn projection_concurrency(&self) -> usize {
-        let resolved = self.optimizer_cost_env().session.projection_concurrency;
+        let resolved = self.cost_session.projection_concurrency;
         if resolved > 0.0 {
             resolved as usize
         } else {
@@ -4177,6 +4262,18 @@ impl StmtContext {
     #[must_use]
     pub fn cached_plan_digest(&self) -> Option<&std::sync::OnceLock<(String, String)>> {
         self.cached_plan_digest.as_deref()
+    }
+
+    /// The planner's cost-model-v2 snapshot, when one is attached.
+    #[must_use]
+    pub fn optimizer_cost_env_any(&self) -> Option<&Arc<dyn std::any::Any + Send + Sync>> {
+        self.optimizer_cost_env.as_ref()
+    }
+
+    /// The cost environment's session values this context reads.
+    #[must_use]
+    pub fn cost_session(&self) -> CostSessionValues {
+        self.cost_session
     }
 
     /// Whether this statement renders the brief binary plan with its process
@@ -4993,7 +5090,7 @@ impl StmtContext {
     /// enforced MPP statement raises, and EXPLAIN routes to ordinary warnings
     /// while every other statement uses the extra-warning handler.
     pub fn append_mpp_warning(&self, message: &str) {
-        if !self.optimizer_cost_env().session.mpp_enforced {
+        if !self.cost_session.mpp_enforced {
             return;
         }
         if self.in_explain_stmt {
@@ -6177,75 +6274,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn index_lookup_join_concurrency_uses_statement_override_and_fallback() {
-        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
-        env.session.union_concurrency = 9.0;
-        env.session.index_lookup_concurrency = 3.0;
-        env.session.index_lookup_join_concurrency = 2.0;
-        env.session.index_join_batch_size = 17.0;
-        env.session.index_lookup_size = 19.0;
-        let overridden = super::StmtContext::for_query().with_optimizer_cost_env(env);
-        assert_eq!(overridden.executor_concurrency(), 9);
-        assert_eq!(overridden.index_lookup_concurrency(), 3);
-        assert_eq!(overridden.index_lookup_join_concurrency(), 2);
-        assert_eq!(overridden.index_join_batch_size(), 17);
-        assert_eq!(overridden.index_lookup_size(), 19);
 
-        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
-        env.session.union_concurrency = 7.0;
-        env.session.index_lookup_concurrency = -1.0;
-        env.session.index_lookup_join_concurrency = -1.0;
-        env.session.index_join_batch_size = 0.0;
-        env.session.index_lookup_size = 0.0;
-        let fallback = super::StmtContext::for_query().with_optimizer_cost_env(env);
-        assert_eq!(fallback.index_lookup_concurrency(), 7);
-        assert_eq!(fallback.index_lookup_join_concurrency(), 7);
-        assert_eq!(fallback.index_join_batch_size(), 1);
-        assert_eq!(fallback.index_lookup_size(), 1);
-    }
-
-    #[test]
-    fn enforced_mpp_warning_uses_go_explain_and_extra_handlers() {
-        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
-        env.session.mpp_enforced = true;
-
-        let explain = super::StmtContext::for_query()
-            .with_optimizer_cost_env(env.clone())
-            .with_in_explain_stmt(true);
-        explain.append_mpp_warning("explain refusal");
-        assert_eq!(
-            explain.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
-            vec![(
-                tidb_distsql::WarningLevel::Warning,
-                1105,
-                "explain refusal".to_owned()
-            )]
-        );
-        assert!(explain.take_extra_warnings().is_empty());
-
-        let ordinary = super::StmtContext::for_query().with_optimizer_cost_env(env);
-        ordinary.append_mpp_warning("ordinary refusal");
-        assert!(ordinary.take_warnings().is_empty());
-        assert_eq!(
-            ordinary.take_extra_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
-            vec![(
-                tidb_distsql::WarningLevel::Warning,
-                1105,
-                "ordinary refusal".to_owned()
-            )]
-        );
-
-        let unenforced = super::StmtContext::for_query();
-        unenforced.append_mpp_warning("ignored refusal");
-        assert!(unenforced.take_warnings().is_empty());
-        assert!(unenforced.take_extra_warnings().is_empty());
-    }
 
     #[test]
     fn range_fallback_honors_force_plan_cache() {
         let (control, _) =
-            tidb_planner::fix_control::OptimizerFixControl::parse("49736:ON").unwrap();
+            tidb_util::fixcontrol::OptimizerFixControl::parse("49736:ON").unwrap();
         let context = super::StmtContext::for_query().with_optimizer_fix_control(control);
         context.start_prepared_range_tracking();
         for _ in 0..2 {

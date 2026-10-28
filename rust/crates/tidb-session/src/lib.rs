@@ -1485,7 +1485,7 @@ impl Session {
             .process_plan_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        cell.plan.as_ref().map(|plan| std::sync::Arc::clone(&plan.0))
+        cell.plan.as_ref().and_then(tidb_executor::StoredPlan::get)
     }
 
     /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for

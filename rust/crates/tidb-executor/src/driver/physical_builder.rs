@@ -19,6 +19,8 @@
 //! access, aggregation, join, sort, or reader policy; the AST is used only
 //! for client-visible result-column labels.
 
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
+use crate::mem_table_retrieval::StmtMemTableRetrieval as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

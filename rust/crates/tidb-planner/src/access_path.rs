@@ -18,6 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
+pub use tidb_stmtctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use crate::{
     cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
@@ -1155,48 +1156,8 @@ pub enum IndexLookupPushDownBy {
     SysVar,
 }
 
-/// Go `SessionVars.IndexLookUpPushDownPolicy`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum IndexLookupPushDownPolicy {
-    /// Go `IndexLookUpPushDownPolicyHintOnly`.
-    #[default]
-    HintOnly,
-    /// Go `IndexLookUpPushDownPolicyAffinityForce`.
-    AffinityForce,
-    /// Go `IndexLookUpPushDownPolicyForce`.
-    Force,
-}
 
-/// The session/transaction facts read by pinned
-/// `checkIndexLookUpPushDownSupported`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct IndexLookupPushDownSession {
-    /// Whether the transaction isolation is `REPEATABLE-READ`.
-    pub repeatable_read: bool,
-    /// Whether replica read is exactly leader-only.
-    pub leader_read: bool,
-    /// Go `TxnCtx.IsStaleness`.
-    pub staleness: bool,
-    /// Whether `SnapshotTS != 0`.
-    pub historical_read: bool,
-    /// Go `SessionVars.MaxKeysRead`.
-    pub max_keys_read: u64,
-    /// Go `IndexLookUpPushDownPolicy`.
-    pub policy: IndexLookupPushDownPolicy,
-}
 
-impl Default for IndexLookupPushDownSession {
-    fn default() -> Self {
-        Self {
-            repeatable_read: true,
-            leader_read: true,
-            staleness: false,
-            historical_read: false,
-            max_keys_read: 0,
-            policy: IndexLookupPushDownPolicy::HintOnly,
-        }
-    }
-}
 
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
 /// the enumeration Go performs before any hint filtering.

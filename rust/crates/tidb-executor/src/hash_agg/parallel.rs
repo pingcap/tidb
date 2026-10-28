@@ -3036,6 +3036,7 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
 
 #[cfg(test)]
 mod tests {
+    use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
     /// The stack varint the bucket hash reads is byte-for-byte the codec's
     /// (Go `binary.PutVarint`), so an integer group lands in the same final
     /// bucket as its encoded key would.

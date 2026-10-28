@@ -416,7 +416,9 @@ pub trait ExecStmtObservation: tidb_executor::sessionctx::SessionContext {
         };
         let (storage_kv, storage_mpp) = match &plan.plan {
             Some(stored) if !observation.routed => {
-                let (tikv, tiflash) = plan_storage_flags(&stored.0);
+                let (tikv, tiflash) = stored
+                    .get::<tidb_planner::physical::PhysicalPlan>()
+                    .map_or((false, false), |plan| plan_storage_flags(&plan));
                 (tikv, tiflash || plan.is_tiflash)
             }
             _ => (false, false),

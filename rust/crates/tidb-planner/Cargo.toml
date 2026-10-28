@@ -28,6 +28,7 @@ tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
