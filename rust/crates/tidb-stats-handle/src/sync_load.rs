@@ -389,7 +389,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if !self.delay.is_zero() {
@@ -432,7 +432,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
             self.started.send(()).expect("test receives worker start");
             self.release
                 .lock()

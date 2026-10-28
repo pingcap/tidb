@@ -264,7 +264,7 @@ pub fn record_key_ranges(
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
-) -> Result<Option<Vec<(Key, Key)>>, tidb_planner::cardinality::row_count_estimator::EstimationError>
+) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError>
 {
     match record_key_range_value_halves(table, ranges, zone)? {
         Some([signed_half, unsigned_half]) => {
@@ -302,7 +302,7 @@ fn common_handle_record_key_ranges(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Vec<(Key, Key)>, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+) -> Result<Vec<(Key, Key)>, tidb_codec::CodecError> {
     let ids = table.record_physical_ids();
     let mut key_ranges = Vec::with_capacity(ranges.len() * ids.len());
     for id in ids {
@@ -336,7 +336,7 @@ pub fn record_key_range_value_halves(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<
     Option<[Vec<(Key, Key)>; 2]>,
-    tidb_planner::cardinality::row_count_estimator::EstimationError,
+    tidb_codec::CodecError,
 > {
     // DDL does not materialize the clustered PRIMARY as a secondary index.
     // The table path still carries the common-handle column offsets, and Go's

@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 
-use tidb_planner::table_statistics::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 
 /// The domain's canonical Go-compatible statistics, independent of InfoSchema.
 /// Published tables are immutable: loading or evicting a payload publishes a

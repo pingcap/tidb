@@ -58,6 +58,7 @@ pub mod row_sample_collector;
 pub mod sample_bytes;
 pub mod scalar_enum;
 pub mod scalar_geometry;
+pub mod table_statistics;
 pub mod sorted_builder;
 pub mod stats_lock_table;
 pub mod stats_version;

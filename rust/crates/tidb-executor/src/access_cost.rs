@@ -183,6 +183,7 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+    use tidb_planner::table_statistics::TableStatisticsExt as _;
     use tidb_datatype::Datum;
 
 

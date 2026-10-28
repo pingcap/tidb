@@ -69,7 +69,7 @@ use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
 };
-use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+use tidb_stats::table_statistics::{ColumnStats, IndexStats};
 use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
@@ -82,7 +82,7 @@ use tidb_stats::{
 pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
-use tidb_planner::table_statistics::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 use crate::kv_table::KvTable;
 use tidb_hack::GoToLower;
 

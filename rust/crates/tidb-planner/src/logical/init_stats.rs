@@ -15,67 +15,14 @@
 //! from. The statistics object itself is reached through
 //! [`TableStatsSnapshot`], the part of Go's `statistics.Table` this reads.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use super::DataSource;
-use crate::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+pub use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
 use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use crate::stats_info::{HistColl, StatsInfo};
 
-/// The fields of Go's `statistics.Table` (as `GetStatsTable` answers it) that
-/// `initStats` reads. `None` at the call site is a fresh `PseudoTable`.
-pub trait TableStatsSnapshot {
-    /// Go `HistColl.Pseudo` of the table this statement plans from.
-    fn pseudo(&self) -> bool;
-    /// Go `HistColl.RealtimeCount`.
-    fn row_count(&self) -> i64;
-    /// Go `HistColl.ModifyCount`.
-    fn modify_count(&self) -> i64;
-    /// Go `statistics.Table.Version`.
-    fn version(&self) -> u64;
-    /// Go `HistColl.StatsVer`.
-    fn stats_ver(&self) -> i64;
-    /// Go `HistColl.Columns`, by column ID.
-    fn columns(&self) -> &BTreeMap<i64, ColumnStats>;
-    /// Go `HistColl.Indices`, by index ID.
-    fn indexes(&self) -> &BTreeMap<i64, IndexStats>;
-    /// Go `Column.StatsLoadedStatus`, by column ID.
-    fn column_load_status(&self) -> &BTreeMap<i64, tidb_stats::StatsLoadedStatus>;
-    /// Go `Index.StatsLoadedStatus`, by index ID.
-    fn index_load_status(&self) -> &BTreeMap<i64, tidb_stats::StatsLoadedStatus>;
-    /// Go `ColAndIdxExistenceMap`'s index entries: whether the histogram row
-    /// is analyzed.
-    fn index_stats_existence(&self) -> &BTreeMap<i64, bool>;
-    /// The indexes whose Go `Index.Info.MVIndex` is set: their histograms
-    /// count array elements, not rows.
-    fn mv_index_ids(&self) -> &BTreeSet<i64>;
-}
 
-/// Go `HistColl.GetAnalyzeRowCount`: the row count observed by the first
-/// fully loaded analyzed histogram, or `-1` when the table has none.
-#[must_use]
-pub fn analyze_row_count(s: &dyn TableStatsSnapshot) -> f64 {
-    for (id, column) in s.columns() {
-        if s.column_load_status()
-            .get(id)
-            .is_some_and(|status| status.is_full_load())
-        {
-            return column.total_row_count();
-        }
-    }
-    for (id, index) in s.indexes() {
-        if s.mv_index_ids().contains(id) {
-            continue;
-        }
-        if s.index_load_status()
-            .get(id)
-            .is_some_and(|status| status.is_full_load())
-        {
-            return index.total_row_count();
-        }
-    }
-    -1.0
-}
 
 /// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
 ///

@@ -39,9 +39,11 @@
 #[cfg(test)]
 use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
-use tidb_stats::cmsketch::{CmsSketch, TopN};
+#[cfg(test)]
+use tidb_stats::cmsketch::CmsSketch;
+use tidb_stats::cmsketch::TopN;
+pub use tidb_stats::table_statistics::{ColumnStats, IndexStats};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
-use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 
 use super::pseudo::{
     pseudo_equal_count, pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
@@ -55,8 +57,7 @@ use crate::cost_factors::TOLERANCE_FACTOR;
 
 /// Go `statistics.Version1`.
 pub const VERSION1: i64 = 1;
-/// Go `statistics.Version2`.
-pub const VERSION2: i64 = 2;
+pub use tidb_stats::table_statistics::VERSION2;
 
 /// Go `staleLastBucketThreshold`.
 const STALE_LAST_BUCKET_THRESHOLD: f64 = 0.3;
@@ -221,38 +222,7 @@ impl Default for EstimatorOptions {
     }
 }
 
-/// One column's statistics, Go `statistics.Column` reduced to the fields the
-/// estimator reads.
-#[derive(Clone, Debug)]
-pub struct ColumnStats {
-    /// The column histogram.
-    pub histogram: Histogram,
-    /// TopN, present for stats version 2.
-    pub topn: Option<TopN>,
-    /// CMSketch, present for stats version 1.
-    pub cms: Option<CmsSketch>,
-    /// `stats_ver` this column was analyzed at.
-    pub stats_ver: i64,
-    /// Whether the column values are unsigned, for out-of-range scaling.
-    pub unsigned: bool,
-}
 
-/// One index's statistics, Go `statistics.Index` reduced the same way.
-#[derive(Clone, Debug)]
-pub struct IndexStats {
-    /// The index histogram, whose bounds are index-key bytes.
-    pub histogram: Histogram,
-    /// TopN over index-key bytes.
-    pub topn: Option<TopN>,
-    /// CMSketch, present for stats version 1.
-    pub cms: Option<CmsSketch>,
-    /// `stats_ver` this index was analyzed at.
-    pub stats_ver: i64,
-    /// Number of columns the index is declared over.
-    pub num_columns: usize,
-    /// Whether the index is unique.
-    pub unique: bool,
-}
 
 /// One single-column range, Go `ranger.Range` at one column.
 #[derive(Clone, Debug)]
@@ -299,113 +269,8 @@ fn topn_num(topn: Option<&TopN>) -> usize {
     topn.map_or(0, TopN::num)
 }
 
-fn topn_total_count(topn: Option<&TopN>) -> u64 {
-    topn.map_or(0, TopN::total_count)
-}
 
-impl ColumnStats {
-    /// The payload gate from Go ColumnStatsIsInvalid, independent of the
-    /// collection owner's load requests and restricted-SQL policy.
-    #[must_use]
-    pub fn is_valid_for_estimation(&self, pseudo: bool, essential_loaded: bool) -> bool {
-        !pseudo && self.total_row_count() != 0.0 && (essential_loaded || self.histogram.ndv <= 0)
-    }
 
-    /// Go `(*statistics.Column).MemoryUsage` for the payload retained by this
-    /// statistics object.
-    #[must_use]
-    pub fn memory_usage(&self) -> ColumnMemUsage {
-        let histogram_mem_usage = self.histogram.memory_usage();
-        let cmsketch_mem_usage = self.cms.as_ref().map_or(0, |cms| cms.memory_usage() as i64);
-        let topn_mem_usage = self
-            .topn
-            .as_ref()
-            .map_or(0, |topn| topn.memory_usage() as i64);
-        ColumnMemUsage {
-            column_id: self.histogram.id,
-            histogram_mem_usage,
-            cmsketch_mem_usage,
-            fmsketch_mem_usage: 0,
-            topn_mem_usage,
-            total_mem_usage: histogram_mem_usage
-                .wrapping_add(cmsketch_mem_usage)
-                .wrapping_add(topn_mem_usage),
-        }
-    }
-
-    /// Go `Column.TotalRowCount`: version 2 folds TopN back in.
-    #[must_use]
-    pub fn total_row_count(&self) -> f64 {
-        if self.stats_ver >= VERSION2 {
-            self.histogram.total_row_count() + topn_total_count(self.topn.as_ref()) as f64
-        } else {
-            self.histogram.total_row_count()
-        }
-    }
-
-    /// Go `Column.NotNullCount`.
-    #[must_use]
-    pub fn not_null_count(&self) -> f64 {
-        if self.stats_ver >= VERSION2 {
-            self.histogram.not_null_count() + topn_total_count(self.topn.as_ref()) as f64
-        } else {
-            self.histogram.not_null_count()
-        }
-    }
-
-    /// Go `Column.GetIncreaseFactor`.
-    #[must_use]
-    pub fn increase_factor(&self, realtime_row_count: i64) -> f64 {
-        let column_count = self.total_row_count();
-        if column_count == 0.0 {
-            return 1.0;
-        }
-        realtime_row_count as f64 / column_count
-    }
-}
-
-impl IndexStats {
-    /// Go `(*statistics.Index).MemoryUsage` for the payload retained by this
-    /// statistics object.
-    #[must_use]
-    pub fn memory_usage(&self) -> IndexMemUsage {
-        let histogram_mem_usage = self.histogram.memory_usage();
-        let cmsketch_mem_usage = self.cms.as_ref().map_or(0, |cms| cms.memory_usage() as i64);
-        let topn_mem_usage = self
-            .topn
-            .as_ref()
-            .map_or(0, |topn| topn.memory_usage() as i64);
-        IndexMemUsage {
-            index_id: self.histogram.id,
-            histogram_mem_usage,
-            cmsketch_mem_usage,
-            topn_mem_usage,
-            total_mem_usage: histogram_mem_usage
-                .wrapping_add(cmsketch_mem_usage)
-                .wrapping_add(topn_mem_usage),
-        }
-    }
-
-    /// Go `Index.TotalRowCount`.
-    #[must_use]
-    pub fn total_row_count(&self) -> f64 {
-        if self.stats_ver >= VERSION2 {
-            self.histogram.total_row_count() + topn_total_count(self.topn.as_ref()) as f64
-        } else {
-            self.histogram.total_row_count()
-        }
-    }
-
-    /// Go `Index.GetIncreaseFactor`.
-    #[must_use]
-    pub fn increase_factor(&self, realtime_row_count: i64) -> f64 {
-        let column_count = self.total_row_count();
-        if column_count == 0.0 {
-            return 1.0;
-        }
-        realtime_row_count as f64 / column_count
-    }
-}
 
 fn to_planner_est(source: tidb_stats::RowEstimate) -> RowEstimate {
     RowEstimate::new(source.est, source.min_est, source.max_est)

@@ -35,7 +35,7 @@ pub trait StatisticsItemLoader: Send + Sync {
         &self,
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String>;
+    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String>;
 }
 
 #[derive(Default)]
@@ -43,7 +43,7 @@ pub struct StatsHandle {
     /// Go `Handle`'s statistics view over the domain's canonical cache, when
     /// a cluster node installed one; it answers instead of `values`.
     pub view: std::sync::RwLock<Option<Arc<StatisticsView>>>,
-    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_planner::table_statistics::TableStatistics>>>,
+    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_stats::table_statistics::TableStatistics>>>,
     pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
     pub sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
 }
@@ -100,7 +100,7 @@ impl StatsHandle {
     pub fn set_table_statistics(
         &self,
         table_id: i64,
-        statistics: Arc<tidb_planner::table_statistics::TableStatistics>,
+        statistics: Arc<tidb_stats::table_statistics::TableStatistics>,
     ) {
         self.values
             .write()
@@ -146,7 +146,7 @@ impl StatsHandle {
         &self,
         table_id: i64,
         schema: impl FnOnce() -> Option<Arc<StatisticsSchema>>,
-    ) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>> {
+    ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>> {
         let view = self
             .view
             .read()
