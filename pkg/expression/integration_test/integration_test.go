@@ -4354,6 +4354,24 @@ func TestIssue66661(t *testing.T) {
 	}
 }
 
+func TestIssue71996(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, x decimal(10,2), f double, d bigint unsigned)")
+	tk.MustExec("insert into t values (1, 5.64, 5.64, 9223372036854775807), (2, 5.64, 5.64, 9223372036854775808), (3, 5.64, 5.64, 18446744073709551615)")
+
+	// An unsigned D of 2^63 or more keeps every decimal place instead of reading as negative.
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select id, round(x, d), truncate(x, d), round(f, d), truncate(f, d) from t order by id").Check(testkit.Rows(
+			"1 5.64 5.64 5.64 5.64",
+			"2 5.64 5.64 5.64 5.64",
+			"3 5.64 5.64 5.64 5.64",
+		))
+	}
+}
+
 func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

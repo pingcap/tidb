@@ -445,7 +445,16 @@ func (b *builtinRoundWithFracRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return types.Round(val, int(frac)), false, nil
+	return types.Round(val, fracArg(frac, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()))), false, nil
+}
+
+// fracArg converts the D argument of ROUND(X,D) and TRUNCATE(X,D) to an int.
+// An unsigned D of 2^63 or more reads as a negative int64 but asks for that many decimal places.
+func fracArg(d int64, unsigned bool) int {
+	if unsigned && d < 0 {
+		return math.MaxInt
+	}
+	return int(d)
 }
 
 // uint64Pow10 holds 10^i for every power of ten representable as a uint64.
@@ -566,7 +575,7 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(ctx EvalContext, row chunk.Row)
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, min(int(frac), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
+	if err = val.Round(to, min(fracArg(frac, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil
@@ -2168,7 +2177,7 @@ func (b *builtinTruncateDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 	}
 
 	result := new(types.MyDecimal)
-	if err := x.Round(result, min(int(d), b.getRetTp().GetDecimal()), types.ModeTruncate); err != nil {
+	if err := x.Round(result, min(fracArg(d, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())), b.getRetTp().GetDecimal()), types.ModeTruncate); err != nil {
 		return nil, true, err
 	}
 	return result, false, nil
@@ -2200,7 +2209,7 @@ func (b *builtinTruncateRealSig) evalReal(ctx EvalContext, row chunk.Row) (float
 		return 0, isNull, err
 	}
 
-	return types.Truncate(x, int(d)), false, nil
+	return types.Truncate(x, fracArg(d, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()))), false, nil
 }
 
 type builtinTruncateIntSig struct {

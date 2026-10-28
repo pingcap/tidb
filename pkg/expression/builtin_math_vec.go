@@ -547,12 +547,13 @@ func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 
 	x := result.Float64s()
 	d := buf1.Int64s()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	result.MergeNulls(buf1)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
-		x[i] = types.Round(x[i], int(d[i]))
+		x[i] = types.Round(x[i], fracArg(d[i], unsigned))
 	}
 	return nil
 }
@@ -578,11 +579,12 @@ func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 	result.MergeNulls(buf1)
 	x := result.Float64s()
 	d := buf1.Int64s()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
-		x[i] = types.Truncate(x[i], int(d[i]))
+		x[i] = types.Truncate(x[i], fracArg(d[i], unsigned))
 	}
 	return nil
 }
@@ -966,12 +968,13 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 	ds := result.Decimals()
 	i64s := buf.Int64s()
 	ft := b.getRetTp().GetDecimal()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		result := new(types.MyDecimal)
-		if err := ds[i].Round(result, min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
+		if err := ds[i].Round(result, min(fracArg(i64s[i], unsigned), ft), types.ModeTruncate); err != nil {
 			return err
 		}
 		ds[i] = *result
@@ -1001,12 +1004,13 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 	tmp := new(types.MyDecimal)
 	d64s := result.Decimals()
 	i64s := buf.Int64s()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		// TODO: reuse d64[i] and remove the temporary variable tmp.
-		if err := d64s[i].Round(tmp, min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
+		if err := d64s[i].Round(tmp, min(fracArg(i64s[i], unsigned), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *tmp
