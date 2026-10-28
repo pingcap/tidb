@@ -170,6 +170,74 @@ hex(t0.c1)
 57
 674F
 drop table if exists t0;
+drop table if exists t_outer, t_inner;
+create table t_outer (id int);
+insert into t_outer values (1), (2), (3), (4);
+create table t_inner (a blob, b int);
+insert into t_inner values ('x', 1), ('y', 1), ('z', 1);
+select count(*) from t_outer where (0, 1) in (select a, b from t_inner);
+count(*)
+4
+select id from t_outer where (0, 1) in (select a, b from t_inner) order by id;
+id
+1
+2
+3
+4
+select id from t_outer where (id, 0) in (select b, a from t_inner) order by id;
+id
+1
+delete from t_inner;
+insert into t_inner values ('2', 2), ('02', 2);
+select id from t_outer where (id, id) in (select a, b from t_inner) order by id;
+id
+2
+show warnings;
+Level	Code	Message
+Warning	1105	Implicit type or collation conversion on join keys (executor__jointest__join.t_outer.id = executor__jointest__join.t_inner.a) may make indexes unusable
+create view v_in as select id from t_outer where (id, id) in (select a, b from t_inner);
+show warnings;
+Level	Code	Message
+select id from v_in order by id;
+id
+2
+show warnings;
+Level	Code	Message
+Warning	1105	Implicit type or collation conversion on join keys (executor__jointest__join.t_outer.id = executor__jointest__join.t_inner.a) may make indexes unusable
+drop view v_in;
+create table t_coll_outer (s varchar(10) collate utf8mb4_bin);
+insert into t_coll_outer values ('a');
+create table t_coll_inner (a blob, b varchar(10) collate utf8mb4_bin);
+insert into t_coll_inner values ('x', 'A');
+select s from t_coll_outer where (0, s) in (select a, b collate utf8mb4_general_ci from t_coll_inner);
+s
+a
+drop table t_coll_outer, t_coll_inner;
+create table t_plan_outer (id int, y int);
+create table t_plan_inner (pk int primary key, a blob, y int);
+explain format='brief' select * from t_plan_outer where (id, y) in (select pk, y from t_plan_inner);
+id	estRows	task	access object	operator info
+HashJoin	12475.01	root		inner join, equal:[eq(executor__jointest__join.t_plan_outer.id, executor__jointest__join.t_plan_inner.pk) eq(executor__jointest__join.t_plan_outer.y, executor__jointest__join.t_plan_inner.y)]
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(executor__jointest__join.t_plan_outer.id)), not(isnull(executor__jointest__join.t_plan_outer.y))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t_plan_outer	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_plan_inner.y))
+    └─TableFullScan	10000.00	cop[tikv]	table:t_plan_inner	keep order:false, stats:pseudo
+explain format='brief' select * from t_plan_outer where (id, y) in (select a, y from t_plan_inner);
+id	estRows	task	access object	operator info
+HashJoin	9990.00	root		inner join, equal:[eq(Column#10, executor__jointest__join.t_plan_outer.y) eq(Column#9, Column#12)]
+├─HashAgg(Build)	7992.00	root		group by:Column#16, executor__jointest__join.t_plan_inner.y, funcs:firstrow(Column#16)->Column#9, funcs:firstrow(executor__jointest__join.t_plan_inner.y)->Column#10
+│ └─TableReader	7992.00	root		data:HashAgg
+│   └─HashAgg	7992.00	cop[tikv]		group by:cast(executor__jointest__join.t_plan_inner.a, double BINARY), executor__jointest__join.t_plan_inner.y, 
+│     └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_plan_inner.y))
+│       └─TableFullScan	10000.00	cop[tikv]	table:t_plan_inner	keep order:false, stats:pseudo
+└─Projection(Probe)	9990.00	root		executor__jointest__join.t_plan_outer.id, executor__jointest__join.t_plan_outer.y, cast(executor__jointest__join.t_plan_outer.id, double BINARY)->Column#12
+  └─TableReader	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_plan_outer.y))
+      └─TableFullScan	10000.00	cop[tikv]	table:t_plan_outer	keep order:false, stats:pseudo
+drop table t_plan_outer, t_plan_inner;
+drop table if exists t_outer, t_inner;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
 create table t2 (a int, key b (a));
