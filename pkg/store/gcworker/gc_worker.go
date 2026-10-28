@@ -516,7 +516,7 @@ func (w *GCWorker) prepare(ctx context.Context) (bool, uint64, error) {
 }
 
 func (w *GCWorker) checkPrepare(ctx context.Context, se sessionapi.Session) (bool, uint64, error) {
-	enable, err := w.lockAndCheckGCEnable(ctx, se)
+	enable, err := loadBooleanWithDefaultWithSession(ctx, se, gcEnableKey, gcDefaultEnableValue)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -557,35 +557,19 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
-func (w *GCWorker) checkGCEnable() (bool, error) {
-	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
-}
-
-// lockAndCheckGCEnable is like checkGCEnable, but it reads and locks the gcEnable row in the transaction of se.
-func (w *GCWorker) lockAndCheckGCEnable(ctx context.Context, se sessionapi.Session) (bool, error) {
-	str, err := loadValueFromSysTableWithSession(ctx, se, gcEnableKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if str == "" {
-		defaultValueStr := booleanFalse
-		if gcDefaultEnableValue {
-			defaultValueStr = booleanTrue
-		}
-		if err = saveValueToSysTableWithSession(ctx, se, gcEnableKey, defaultValueStr); err != nil {
-			return false, errors.Trace(err)
-		}
-		return gcDefaultEnableValue, nil
-	}
-	return strings.EqualFold(str, booleanTrue), nil
-}
-
 func (w *GCWorker) checkUseAutoConcurrency() (bool, error) {
 	return w.loadBooleanWithDefault(gcAutoConcurrencyKey, gcDefaultAutoConcurrency)
 }
 
 func (w *GCWorker) loadBooleanWithDefault(key string, defaultValue bool) (bool, error) {
-	str, err := w.loadValueFromSysTable(key)
+	se := createSession(w.store)
+	defer se.Close()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+	return loadBooleanWithDefaultWithSession(ctx, se, key, defaultValue)
+}
+
+func loadBooleanWithDefaultWithSession(ctx context.Context, se sessionapi.Session, key string, defaultValue bool) (bool, error) {
+	str, err := loadValueFromSysTableWithSession(ctx, se, key)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -595,7 +579,7 @@ func (w *GCWorker) loadBooleanWithDefault(key string, defaultValue bool) (bool, 
 		if defaultValue {
 			defaultValueStr = booleanTrue
 		}
-		err = w.saveValueToSysTable(key, defaultValueStr)
+		err = saveValueToSysTableWithSession(ctx, se, key, defaultValueStr)
 		if err != nil {
 			return defaultValue, errors.Trace(err)
 		}
