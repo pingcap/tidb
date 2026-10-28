@@ -30,6 +30,12 @@ func RefreshAdvisoryLockName(schemaID, mviewID int64) string {
 	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
 }
 
+// PurgeAdvisoryLockName identifies the lock shared by a log purge and DDL
+// retiring that physical log.
+func PurgeAdvisoryLockName(mlogID int64) string {
+	return fmt.Sprintf("mlog_purge_%d", mlogID)
+}
+
 // CheckMaterializedViewSelect checks the SELECT clauses that are not supported
 // by materialized views. It is called before the planner builds the SELECT so
 // unsupported clauses do not get reported as unrelated planner errors.

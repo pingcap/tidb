@@ -486,6 +486,10 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			continue
 		}
 		switch jobW.Type {
+		case model.ActionMViewRefreshOutOfPlaceCutover:
+			if jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs).OldMLogID != 0 {
+				count++
+			}
 		case model.ActionCreateMaterializedViewLog:
 			args := jobW.JobArgs.(*model.CreateMaterializedViewLogArgs)
 			count += idCountForTable(args.TableInfo)
@@ -527,6 +531,11 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 	alloc := &gidAllocator{ids: ids}
 	for _, jobW := range jobWs {
 		switch jobW.Type {
+		case model.ActionMViewRefreshOutOfPlaceCutover:
+			args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+			if !jobW.IDAllocated && args.OldMLogID != 0 {
+				args.NewMLogID = alloc.next()
+			}
 		case model.ActionCreateMaterializedViewLog:
 			args := jobW.JobArgs.(*model.CreateMaterializedViewLogArgs)
 			if !jobW.IDAllocated {
@@ -793,8 +802,12 @@ func job2TableIDs(jobW *JobWrapper) string {
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 		intest.Assert(args != nil)
-		if args != nil && args.ShadowTableID > 0 {
-			return makeStringForIDs([]int64{jobW.TableID, args.ShadowTableID})
+		if args != nil {
+			ids := append([]int64{jobW.TableID, args.ShadowTableID}, args.InvolvingTableIDs...)
+			if args.OldMLogID != 0 {
+				ids = append(ids, args.OldMLogID, args.NewMLogID)
+			}
+			return makeStringForIDs(ids)
 		}
 		return strconv.FormatInt(jobW.TableID, 10)
 	default:

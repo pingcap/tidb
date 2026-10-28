@@ -322,11 +322,15 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if err != nil {
 			return errors.Trace(err)
 		}
+		oldIDs := []int64{args.OldMViewID}
+		if args.OldMLogID != 0 {
+			oldIDs = append(oldIDs, args.OldMLogID)
+		}
 		return errors.Trace(doBatchDeleteTablesRange(
 			ctx,
 			wrapper,
 			job.ID,
-			[]int64{args.OldMViewID},
+			oldIDs,
 			ea,
 			"refresh materialized view out-of-place cutover: old table ID",
 		))

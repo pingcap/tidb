@@ -101,6 +101,13 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return 0, nil
 	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if args.OldMLogID != 0 {
+			return 2, nil
+		}
 		return 1, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)

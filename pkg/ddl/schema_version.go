@@ -284,6 +284,12 @@ func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCt
 	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 	diff.TableID = args.ShadowTableID
 	diff.OldTableID = args.OldMViewID
+	if args.OldMLogID != 0 {
+		diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+			SchemaID: diff.SchemaID, OldSchemaID: diff.SchemaID,
+			TableID: args.NewMLogID, OldTableID: args.OldMLogID,
+		})
+	}
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.

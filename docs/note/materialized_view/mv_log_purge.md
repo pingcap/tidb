@@ -34,6 +34,28 @@ The source object may also be a ready materialized view. For its MLog, each dire
 Parent refresh changes remain available until the child has consumed them; purging the parent's
 MLog does not advance the child's refresh checkpoint.
 
+After parent OOP replaces the output MLog, consumer enumeration still follows the parent's
+structural `MaterializedViewBase.MViewIDs`, rather than registrations under the new log ID.
+Children that still register the old log therefore continue protecting the new log using their
+existing successful watermarks. A NULL watermark protects from zero; a missing required
+refresh-info row stops purge. Child registrations referencing a retired log survive its GC.
+
+Purge and OOP cutover share an advisory lock identified by the physical MLog ID. Purge acquires
+it before starting its control transaction and returns an error on acquisition timeout, without
+retrying. It releases the advisory lock after its transaction and DELETE work have finished.
+Cutover requests cancellation of running old-log purges through independently committed history
+updates and attempts the same lock with a one-second timeout. On contention it repeats both
+operations, including when a starting purge has not published its running history yet. This
+wait happens before metadata mutations and before taking the shared schema-version mutex; the
+DDL transaction remains optimistic. The DDL scheduler retains the advisory lock across retries
+and releases it when the job finishes, after schema synchronization. A purge holding old MDL
+fails on lock contention rather than waiting for that DDL job.
+
+OOP still deletes the old purge-info in the same DDL transaction as the metadata switch. A
+delayed task resolved to the old MLog fails before any DELETE if its old runtime row is missing.
+New purge runs resolve and lock the new log. History remains attached to the old log ID; its
+finalization does not recreate purge-info.
+
 ## Runtime `NEXT_PURGE_UNIX_SECONDS` Update (Internal SQL Success Path)
 
 - For **internal SQL** triggered purge (identified by `SessionVars.InRestrictedSQL`), after successful purge completion, `mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS` should be updated together with purge success state.

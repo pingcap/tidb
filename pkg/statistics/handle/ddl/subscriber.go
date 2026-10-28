@@ -68,7 +68,12 @@ func (h subscriber) handle(
 		return errors.Trace(h.handleTruncateLikeEvent(ctx, sctx, newTableInfo, droppedTableInfo))
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		newTableInfo, droppedTableInfo := change.GetMViewRefreshOutOfPlaceCutoverInfo()
-		return errors.Trace(h.handleTruncateLikeEvent(ctx, sctx, newTableInfo, droppedTableInfo))
+		if err := h.handleTruncateLikeEvent(ctx, sctx, newTableInfo, droppedTableInfo); err != nil {
+			return errors.Trace(err)
+		}
+		if newMLog, oldMLog := change.GetMViewRefreshOutOfPlaceCutoverMLogInfo(); newMLog != nil {
+			return errors.Trace(h.handleTruncateLikeEvent(ctx, sctx, newMLog, oldMLog))
+		}
 	case model.ActionDropTable:
 		droppedTableInfo := change.GetDropTableInfo()
 		ids, err := getPhysicalIDs(sctx, droppedTableInfo)

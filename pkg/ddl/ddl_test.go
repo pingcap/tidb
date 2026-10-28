@@ -333,7 +333,7 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 		},
 	})
 
-	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+	involving, tableIDs, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 		context.Background(),
 		is,
 		pmodel.NewCIStr("test"),
@@ -341,6 +341,7 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 		shadowID,
 	)
 	require.NoError(t, err)
+	require.Equal(t, []int64{oldMViewID, baseTableID, shadowID}, tableIDs)
 	require.Equal(t, []model.InvolvingSchemaInfo{
 		{
 			Database: "test",
@@ -358,6 +359,32 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 			Mode:     model.ExclusiveInvolving,
 		},
 	}, involving)
+	// A shared child can have another source. The cutover claim includes the
+	// child once and every upstream source/log that the worker can rewrite.
+	old, _ := is.TableByID(context.Background(), oldMViewID)
+	parent := old.Meta().Clone()
+	parent.MaterializedView.BaseTableIDs = []int64{baseTableID, 107}
+	parent.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: 105, MViewIDs: []int64{106}}
+	base, _ := is.TableByID(context.Background(), baseTableID)
+	baseInfo := base.Meta().Clone()
+	baseInfo.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: 104, MViewIDs: []int64{oldMViewID}}
+	shadow, _ := is.TableByID(context.Background(), shadowID)
+	nested := infoschema.MockInfoSchema([]*model.TableInfo{
+		parent, baseInfo, shadow.Meta(),
+		{ID: 104, Name: pmodel.NewCIStr("input_log"), State: model.StatePublic},
+		{ID: 105, Name: pmodel.NewCIStr("output_log"), State: model.StatePublic},
+		{ID: 106, Name: pmodel.NewCIStr("shared_child"), State: model.StatePublic, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{oldMViewID, baseTableID}}},
+		{ID: 107, Name: pmodel.NewCIStr("second_source"), State: model.StatePublic, MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 108}},
+		{ID: 108, Name: pmodel.NewCIStr("second_log"), State: model.StatePublic},
+	})
+	involving, tableIDs, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), nested, pmodel.NewCIStr("test"), oldMViewID, shadowID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{oldMViewID, baseTableID, shadowID, 104, 105, 106, 107, 108}, tableIDs)
+	require.Len(t, involving, 8)
+	for _, info := range involving {
+		require.Equal(t, model.ExclusiveInvolving, info.Mode)
+	}
+
 }
 
 func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
@@ -378,45 +405,6 @@ func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
 				MaterializedView: &model.MaterializedViewInfo{InitBuildState: testCase.buildState},
 			}
 			require.Equal(t, testCase.valid, isValidMaterializedViewLogBaseTable("test", info))
-		})
-	}
-}
-
-func TestValidateMaterializedViewCompleteOutOfPlaceTarget(t *testing.T) {
-	testCases := []struct {
-		name       string
-		baseInfo   *model.MaterializedViewBaseInfo
-		shouldFail bool
-	}{
-		{
-			name: "no dependency metadata",
-		},
-		{
-			name: "materialized view log",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MLogID: 101,
-			},
-			shouldFail: true,
-		},
-		{
-			name: "dependent materialized view",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MViewIDs: []int64{102},
-			},
-			shouldFail: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tblInfo := &model.TableInfo{Name: pmodel.NewCIStr("mv"), MaterializedViewBase: testCase.baseInfo}
-			err := validateMaterializedViewCompleteOutOfPlaceTarget("test", tblInfo)
-			if testCase.shouldFail {
-				require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
-				require.ErrorContains(t, err, "materialized view log or dependent materialized view")
-			} else {
-				require.NoError(t, err)
-			}
 		})
 	}
 }

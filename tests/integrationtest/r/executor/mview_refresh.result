@@ -238,3 +238,74 @@ count(*)
 0
 drop materialized view log on t_mv_source_info;
 drop table t_mv_source_info;
+create table t_oop_log (a int not null, b int not null);
+insert into t_oop_log values (1, 10), (2, 20);
+create materialized view log on t_oop_log (a, b);
+create materialized view mv_oop_log (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_oop_log group by a;
+create materialized view log on mv_oop_log (a, s, cnt);
+create materialized view mv_oop_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from mv_oop_log group by a;
+set @oop_old_mv = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_log');
+set @oop_old_log = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='$mlog$mv_oop_log');
+set @oop_child = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_child');
+set @oop_child_tso = (select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID=@oop_child);
+insert into t_oop_log values (3, 30);
+refresh materialized view mv_oop_log complete out of place;
+set @oop_new_mv = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_log');
+set @oop_new_log = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='$mlog$mv_oop_log');
+select @oop_new_mv <> @oop_old_mv as mv_replaced, @oop_new_log <> @oop_old_log as log_replaced;
+mv_replaced	log_replaced
+1	1
+select * from mv_oop_log order by a;
+a	s	cnt
+1	10	1
+2	20	1
+3	30	1
+select count(*) from `$mlog$mv_oop_log`;
+count(*)
+0
+select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_old_log;
+count(*)
+0
+select LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_new_log;
+LAST_PURGED_TSO is null
+1
+select MLOG_ID=@oop_old_log as old_input_preserved from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=@oop_child;
+old_input_preserved
+1
+select LAST_SUCCESS_READ_TSO=@oop_child_tso as child_watermark_preserved from mysql.tidb_mview_refresh_info where MVIEW_ID=@oop_child;
+child_watermark_preserved
+1
+refresh materialized view mv_oop_child fast;
+Error 1105 (HY000): refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+select * from mv_oop_child order by a;
+a	s	cnt	cnt_s
+1	10	1	1
+2	20	1	1
+insert into t_oop_log values (4, 40);
+refresh materialized view mv_oop_log fast;
+purge materialized view log on mv_oop_log;
+select count(*) > 0 as child_protects_new_log from `$mlog$mv_oop_log`;
+child_protects_new_log
+1
+select LAST_PURGED_TSO=@oop_child_tso as child_watermark_protects_new_log from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_new_log;
+child_watermark_protects_new_log
+1
+refresh materialized view mv_oop_child complete delta apply;
+select MLOG_ID=@oop_new_log as input_recovered from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=@oop_child;
+input_recovered
+1
+insert into t_oop_log values (5, 50);
+refresh materialized view mv_oop_log fast;
+refresh materialized view mv_oop_child fast;
+select * from mv_oop_child order by a;
+a	s	cnt	cnt_s
+1	10	1	1
+2	20	1	1
+3	30	1	1
+4	40	1	1
+5	50	1	1
+drop materialized view mv_oop_child;
+drop materialized view log on mv_oop_log;
+drop materialized view mv_oop_log;
+drop materialized view log on t_oop_log;
+drop table t_oop_log;

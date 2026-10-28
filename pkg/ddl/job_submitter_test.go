@@ -610,9 +610,11 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 			TableID:    oldMViewID,
 		},
 		&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-			OldMViewID:    oldMViewID,
-			ShadowTableID: shadowTblID,
-			BuildReadTSO:  buildReadTSO,
+			OldMViewID:        oldMViewID,
+			ShadowTableID:     shadowTblID,
+			BuildReadTSO:      buildReadTSO,
+			OldMLogID:         900000000000000024,
+			InvolvingTableIDs: []int64{oldMViewID, shadowTblID, 900000000000000024, 900000000000000025},
 		},
 		false,
 	)
@@ -624,11 +626,21 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	require.Len(t, rows, 1)
 
 	tableIDs := strings.Split(rows[0][0].(string), ",")
-	require.Len(t, tableIDs, 2)
+	args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+	require.Positive(t, args.NewMLogID)
+	require.Len(t, tableIDs, 5)
 	require.ElementsMatch(t, []string{
 		strconv.FormatInt(oldMViewID, 10),
 		strconv.FormatInt(shadowTblID, 10),
+		"900000000000000024",
+		"900000000000000025",
+		strconv.FormatInt(args.NewMLogID, 10),
 	}, tableIDs)
+	var persisted model.Job
+	require.NoError(t, persisted.Decode([]byte(fmt.Sprint(tk.MustQuery(fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()[0][0]))))
+	persistedArgs, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(&persisted)
+	require.NoError(t, err)
+	require.Equal(t, args, persistedArgs)
 }
 
 var (
