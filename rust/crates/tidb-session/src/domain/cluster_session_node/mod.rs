@@ -330,6 +330,28 @@ enum StatementRoute {
 
 use crate::stats_statement_service::FlushStatsDeltaTargets;
 
+/// What [`ClusterServerSession::run_statement`] left for its caller.
+enum Executed {
+    /// The statement answered with an OK packet's outcome.
+    Done(WriteOutcome),
+    /// A query compiled; its record set is the caller's to open, inside
+    /// the `session.ExecuteStmt` region still held.
+    Query(tidb_util::tracing::ThreadRegionScope),
+    /// An `ADMIN TRACE` compiled; the wrapped statement is the caller's to run.
+    Trace,
+}
+
+/// The statement an `ADMIN TRACE` plan wraps.
+fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
+    let Stmt::Admin(admin) = stmt else {
+        unreachable!("a TRACE plan compiles from ADMIN TRACE")
+    };
+    let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() else {
+        unreachable!("a TRACE plan compiles from ADMIN TRACE")
+    };
+    trace
+}
+
 /// What [`ClusterServerSession::lower_ddl_exec`] lowered a DDL to.
 enum LoweredDdl {
     /// The job(s) to run in order, stopping at the first failure (Go
@@ -5718,21 +5740,17 @@ impl<'s> ClusterServerSession<'s> {
         // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
         // record set it returned under the same span.
         let mut affected = 0_u64;
-        // A transaction statement runs as the connection runs it.
-        let outcome = if classify_transaction_control_stmt(&inner).is_some() {
-            self.control_transaction_parsed(&inner_sql, &inner)
-                .map(|_| {
-                    Some(WriteOutcome {
-                        affected_rows: 0,
-                        last_insert_id: 0,
-                    })
-                })
-        } else {
-            self.execute_write_parsed(&inner_sql, &inner)
-        };
-        match outcome {
-            Ok(Some(outcome)) => affected = outcome.affected_rows,
-            Ok(None) => match self.reborrow().execute_parsed(&inner_sql, &inner) {
+        match self.run_statement(&inner_sql, &inner, false) {
+            Ok(Executed::Done(outcome)) => affected = outcome.affected_rows,
+            Ok(opened) => match match opened {
+                Executed::Query(execute_stmt) => {
+                    let opened = self.reborrow().open_query(&inner_sql, &inner);
+                    drop(execute_stmt);
+                    opened
+                }
+                Executed::Trace => self.reborrow().execute_trace(trace_of(&inner)),
+                Executed::Done(_) => unreachable!("an OK outcome is matched above"),
+            } {
                 Ok(mut result) => {
                     let mut rows = 0_u64;
                     loop {
@@ -7355,6 +7373,25 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<QueryResult<'s>>, SqlQueryError> {
+        match self.run_statement(sql, stmt, true)? {
+            Executed::Done(_) => Ok(None),
+            Executed::Query(_execute_stmt) => self.open_query(sql, stmt).map(Some),
+            Executed::Trace => self.execute_trace(trace_of(stmt)).map(Some),
+        }
+    }
+
+    /// Go `session.ExecuteStmt` up to its record set: the statement context,
+    /// a LOCAL file request parked, transaction control, `Compile`, and
+    /// `runStmt` for a statement that answers no rows -- what is left for
+    /// the caller is opening a query's (or a TRACE's) record set.
+    /// `record_failure` is Go `TiDBContext.ExecuteStmt` appending the error
+    /// to the statement context, which the wire's connection does.
+    fn run_statement(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+        record_failure: bool,
+    ) -> Result<Executed, SqlQueryError> {
         // Go builds a fresh statement context per statement: the previous
         // statement's counts and any file exchange it left unfinished end here.
         self.node.ok_packet = WriteOutcome::default();
@@ -7369,46 +7406,38 @@ impl<'s> ClusterServerSession<'s> {
                 stmt: stmt.clone(),
                 path,
             });
-            return Ok(None);
+            return Ok(Executed::Done(WriteOutcome::default()));
         }
         // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
         // builds the prepared plan as its body).
         if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
-            return self.execute_stmt(&body_sql, &body);
+            return self.run_statement(&body_sql, &body, record_failure);
         }
         if self.control_transaction_parsed(sql, stmt)?.is_some() {
-            return Ok(None);
+            return Ok(Executed::Done(WriteOutcome::default()));
         }
+        // Go's `session.ExecuteStmt` region covers `Compile` and `runStmt`;
+        // a query's record set is opened inside it and drained outside.
+        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
         self.begin_statement();
         let compiled = match self.compile(sql, stmt) {
-            Ok(CompiledStatement::Query) => {
-                let _execute_stmt =
-                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-                return self.open_query(sql, stmt).map(Some);
-            }
+            Ok(CompiledStatement::Query) => return Ok(Executed::Query(execute_stmt)),
             // Go `TraceExec` runs the statement it wraps and reports its spans.
-            Ok(CompiledStatement::Trace) => {
-                let Stmt::Admin(admin) = stmt else {
-                    unreachable!("a TRACE plan compiles from ADMIN TRACE")
-                };
-                let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() else {
-                    unreachable!("a TRACE plan compiles from ADMIN TRACE")
-                };
-                return self.execute_trace(trace).map(Some);
-            }
+            Ok(CompiledStatement::Trace) => return Ok(Executed::Trace),
             compiled => compiled,
         };
         match compiled.and_then(|compiled| self.run_without_result(compiled, sql, stmt)) {
             Ok(outcome) => {
                 self.node.ok_packet = outcome;
-                Ok(None)
+                Ok(Executed::Done(outcome))
             }
             Err(error) => {
                 // Go `TiDBContext.ExecuteStmt` appends the error to the
                 // statement context; the data-conversion codes a DML filed as
                 // its own warning are not appended twice.
-                if matches!(stmt, Stmt::Ddl(_))
-                    || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406)
+                if record_failure
+                    && (matches!(stmt, Stmt::Ddl(_))
+                        || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406))
                 {
                     self
                         .session
@@ -7418,7 +7447,6 @@ impl<'s> ClusterServerSession<'s> {
             }
         }
     }
-
 
     pub(crate) fn finish_local_infile(&mut self, data: &[u8]) -> Result<(), SqlQueryError> {
         let parked = self.node.parked_local_infile.take().ok_or_else(|| {
@@ -7984,32 +8012,17 @@ impl<'s> ClusterServerSession<'s> {
         Ok(rows)
     }
 
+    /// [`Self::run_statement`] for a caller that runs a statement for its
+    /// OK outcome, opening a query itself when there is none.
     pub(crate) fn execute_write_parsed(
         &mut self,
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
-        // builds the prepared plan as its body). The DDL must take this
-        // node's cluster route; the session would apply it to its own
-        // in-process catalog, where no other statement can see it.
-        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
-            return self.execute_write_parsed(&body_sql, &body);
-        }
-        // A transaction statement an internal session runs as SQL (Go's
-        // `ExecuteInternal("BEGIN")`) takes the same door the wire's does.
-        if classify_transaction_control_stmt(stmt).is_some() {
-            self.control_transaction_parsed(sql, stmt)?;
-            return Ok(Some(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            }));
-        }
-        self.begin_statement();
-        match self.compile(sql, stmt)? {
-            CompiledStatement::Trace | CompiledStatement::Query => Ok(None),
-            compiled => self.run_without_result(compiled, sql, stmt).map(Some),
-        }
+        Ok(match self.run_statement(sql, stmt, false)? {
+            Executed::Done(outcome) => Some(outcome),
+            Executed::Query(_) | Executed::Trace => None,
+        })
     }
 
     /// Go `PrepareTxnCtx` and `ResetContextOfStmt`: once per statement,
@@ -8117,13 +8130,9 @@ impl<'s> ClusterServerSession<'s> {
             }),
             // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
             // commit included.
-            CompiledStatement::Write => {
-                let _execute_stmt =
-                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-                self.observe_routed_write(sql, stmt, |node| {
-                    node.execute_ordinary_write_parsed(sql, stmt)
-                })
-            }
+            CompiledStatement::Write => self.observe_routed_write(sql, stmt, |node| {
+                node.execute_ordinary_write_parsed(sql, stmt)
+            }),
             CompiledStatement::Trace | CompiledStatement::Query => {
                 unreachable!("a result-set plan is opened, not run for an outcome")
             }
@@ -8145,69 +8154,13 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<QueryResult<'s>, SqlQueryError> {
-        // Go `TraceExec` runs the statement it wraps and reports its spans.
-        if let Stmt::Admin(admin) = stmt {
-            if let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() {
-                return self.execute_trace(trace);
-            }
+        match self.run_statement(sql, stmt, false)? {
+            Executed::Done(outcome) => Ok(QueryResult::new(Box::new(
+                crate::domain::pipeline_session::affected_rows_source(outcome.affected_rows),
+            ))),
+            Executed::Query(_execute_stmt) => self.open_query(sql, stmt),
+            Executed::Trace => self.execute_trace(trace_of(stmt)),
         }
-        // See `execute_write_parsed`: a prepared DDL body takes the DDL route.
-        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
-            return self.execute_parsed(&body_sql, &body);
-        }
-        // A transaction statement takes the connection's transaction door,
-        // whichever entry it came through; it answers no rows.
-        if classify_transaction_control_stmt(stmt).is_some() {
-            self.control_transaction_parsed(sql, stmt)?;
-            return Ok(QueryResult::new(Box::new(
-                crate::domain::pipeline_session::affected_rows_source(0),
-            )));
-        }
-        // Go `session.ExecuteStmt`: it returns the opened record set, which
-        // the caller drains outside it.
-        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-        // Go `TxnCtx.StatementCount`: every statement inside an explicit
-        // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.node.txn.explicit.as_ref() {
-            transaction.note_statement();
-        }
-        // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
-        // for every statement no transaction continues into: neither this
-        // node's explicit transaction nor one the session itself opened.
-        if self.node.txn.explicit.is_none() {
-            self.session.start_statement_transaction_scope();
-        }
-        self.session.clear_statement_message();
-        // Refresh before access-shape classification. Waiting until the
-        // statement lifecycle would allow a stale point shape to select MaxTS
-        // before the executor sees the current schema.
-        self.rebuild_catalog_if_stale();
-        // The text protocol reaches DDL through `execute_write`; this covers a
-        // front end that goes straight to the result-set path, so a routed
-        // statement runs exactly once either way.
-        self.session.clear_precompiled_statement();
-        self
-            .session
-            .validate_statement_read_only_in_staleness(stmt)
-            .map_err(map_error)?;
-        self.session.restore_statement_variables();
-        let executor = self
-            .session
-            .compile_statement(stmt)
-            .map_err(map_error)?;
-        if executor == CompiledExecutor::Simple && Session::is_account_statement(stmt) {
-            self.observe_routed_write(sql, stmt, |node| node.run_account_executor(sql, stmt))?;
-            return Ok(QueryResult::new(Box::new(
-                crate::domain::pipeline_session::affected_rows_source(0),
-            )));
-        }
-        let route = self.route_for(stmt, executor)?;
-        if self.run_routed_statement(route, sql, stmt)?.is_some() {
-            return Ok(QueryResult::new(Box::new(
-                crate::domain::pipeline_session::affected_rows_source(0),
-            )));
-        }
-        self.open_query(sql, stmt)
     }
 
     /// Go's `runStmt` for a statement that answers a result set.
