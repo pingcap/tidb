@@ -16,6 +16,7 @@ package mviewdeltamergeagg
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -1999,6 +2000,86 @@ func TestMarkUpdateTouchedRowsByColumnDecimalValueComparison(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, []uint8{0, 0, 0, 0, 1, 0, 1, 1}, updateTouchedBitmap)
+}
+
+func TestMarkUpdateTouchedRowsByColumnFloatValueComparison(t *testing.T) {
+	negativeZero := math.Copysign(0, -1)
+	rows := []struct {
+		oldValue, newValue float64
+		oldNull, newNull   bool
+	}{
+		{oldValue: 0, newValue: negativeZero},
+		{oldValue: 1, newValue: 9},
+		{oldValue: negativeZero, newValue: 0},
+		{oldValue: 2, newValue: 3},
+		{oldValue: 4, newValue: 4},
+		{oldValue: 5, newValue: 5, oldNull: true, newNull: true},
+		{oldValue: 6, newValue: 7, oldNull: true},
+		{oldValue: 7, newValue: 8, newNull: true},
+	}
+	for _, field := range []struct {
+		name string
+		tp   byte
+	}{
+		{name: "float", tp: mysql.TypeFloat},
+		{name: "double", tp: mysql.TypeDouble},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, nullability := range []struct {
+				name    string
+				notNull bool
+			}{
+				{name: "nullable"},
+				{name: "not null", notNull: true},
+			} {
+				t.Run(nullability.name, func(t *testing.T) {
+					ft := types.NewFieldType(field.tp)
+					if nullability.notNull {
+						ft.AddFlag(mysql.NotNullFlag)
+					}
+					chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+					for _, row := range rows {
+						for colIdx, value := range []struct {
+							value  float64
+							isNull bool
+						}{
+							{value: row.oldValue, isNull: row.oldNull},
+							{value: row.newValue, isNull: row.newNull},
+						} {
+							if value.isNull && !nullability.notNull {
+								chk.AppendNull(colIdx)
+							} else if field.tp == mysql.TypeFloat {
+								chk.AppendFloat32(colIdx, float32(value.value))
+							} else {
+								chk.AppendFloat64(colIdx, value.value)
+							}
+						}
+					}
+					for _, layout := range []struct {
+						name     string
+						stride   int
+						bitPos   int
+						expected []uint8
+					}{
+						{name: "one byte", stride: 1, bitPos: 3, expected: []uint8{0x48, 0x40, 0x48, 0x40, 0x40, 0x48}},
+						{name: "two bytes", stride: 2, bitPos: 11, expected: []uint8{0x40, 0x48, 0x40, 0x40, 0x40, 0x48, 0x40, 0x40, 0x40, 0x40, 0x40, 0x48}},
+					} {
+						t.Run(layout.name, func(t *testing.T) {
+							updateRows := []int{7, 0, 3, 2, 5, 6}
+							bitmap := make([]uint8, len(updateRows)*layout.stride)
+							for i := range bitmap {
+								bitmap[i] = 0x40
+							}
+							err := executil.MarkTouchedRowsByColumn(updateRows, bitmap, layout.stride, layout.bitPos,
+								chk.Column(0), chk.Column(1), ft, nullability.notNull, "aggregate change")
+							require.NoError(t, err)
+							require.Equal(t, layout.expected, bitmap)
+						})
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
