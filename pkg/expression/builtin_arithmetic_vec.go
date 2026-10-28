@@ -469,6 +469,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
+	ec := errCtx(ctx)
 	for i := range n {
 		if result.IsNull(i) || buf.IsNull(i) {
 			continue
@@ -480,6 +481,10 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 			}
 			result.SetNull(i, true)
 			continue
+		} else if err == types.ErrTruncated {
+			if err := ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+				return err
+			}
 		} else if err != nil {
 			return err
 		}

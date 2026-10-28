@@ -4354,6 +4354,29 @@ func TestIssue66661(t *testing.T) {
 	}
 }
 
+func TestIssue72394(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a decimal(65,30), b decimal(65,30), c decimal(65,0))")
+	tk.MustExec("insert into t values (0.000000000000000000000000000001, 10000000000000000000000000000000000, 100000000000000000)")
+	tk.MustExec("set @@session.sql_mode=''")
+	// Evaluate MOD in TiDB instead of the coprocessor.
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values ('mod', 'tikv,tiflash,tidb', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+	defer func() {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'mod'")
+		tk.MustExec("admin reload expr_pushdown_blacklist")
+	}()
+
+	// A truncated DECIMAL modulo is a warning outside strict mode, like DECIMAL division.
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select a from t where cast(mod((a/b)/c, (a/b)/c) as char) <> '0'").Check(testkit.Rows())
+		tk.MustQuery("show warnings").CheckContain("Truncated incorrect DECIMAL value")
+	}
+}
+
 func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

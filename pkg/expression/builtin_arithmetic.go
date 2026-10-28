@@ -1122,6 +1122,9 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 	err = types.DecimalMod(a, b, c)
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(ctx)
+	} else if err == types.ErrTruncated {
+		tc := typeCtx(ctx)
+		err = tc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	}
 	return c, err != nil, err
 }
