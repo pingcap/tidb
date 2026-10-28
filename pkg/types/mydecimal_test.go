@@ -1007,6 +1007,9 @@ func TestFromStringMyDecimal(t *testing.T) {
 		{"1.1.1.1.1", "1.1", ErrTruncated},
 		{"1  1", "1", ErrTruncated},
 		{"1  ", "1", nil},
+		{"1 \t\r\n", "1", nil},
+		{"1\u00a0", "1", ErrTruncated},
+		{"1\u3000", "1", ErrTruncated},
 	}
 	dotest(tests)
 

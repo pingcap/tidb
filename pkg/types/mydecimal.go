@@ -524,7 +524,9 @@ func (d *MyDecimal) FromString(str []byte) error {
 				}
 			}
 		} else {
-			trimstr := strings.TrimSpace(string(str[endIdx:]))
+			// Only ASCII whitespace may follow the number, as in TiKV;
+			// strings.TrimSpace would also accept Unicode spaces such as U+00A0.
+			trimstr := strings.Trim(string(str[endIdx:]), " \t\n\f\r")
 			if len(trimstr) != 0 {
 				err = ErrTruncated
 			}
