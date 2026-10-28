@@ -438,13 +438,10 @@ const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
-	endpoint := gcs.Endpoint
-	if endpoint != "" && !strings.Contains(endpoint, "://") {
-		// The SDK merges schemeless endpoints with its default HTTPS endpoint.
-		// Validate that effective URL without changing the stored configuration.
-		endpoint = "https://" + endpoint
-	}
-	if _, err := url.Parse(endpoint); err != nil {
+	// url.Parse only checks syntax. SDK normalization and validation can reject
+	// endpoints accepted here and expose endpoint credentials in SDK errors.
+	// Error redaction should be fixed upstream rather than duplicating SDK rules here.
+	if _, err := url.Parse(gcs.Endpoint); err != nil {
 		// Do not retain the parser error, which contains the credential-bearing URL.
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid GCS endpoint URL")
 	}

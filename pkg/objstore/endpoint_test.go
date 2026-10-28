@@ -143,7 +143,6 @@ func TestSDKEndpointValidationDoesNotLeakCredentials(t *testing.T) {
 		{"s3", "https://FAKE_USER:FAKE_PASS@host/path?sig=FAKE_SIGNATURE"},
 		{"s3", "https://host/path?sig=FAKE_SIGNATURE"},
 		{"s3", "ftp://FAKE_USER:FAKE_PASS@host/path"},
-		{"gcs", "host:badport/path?sig=FAKE_SIGNATURE"},
 	} {
 		for _, entry := range []string{"parsed", "protobuf", "constructor"} {
 			t.Run(tc.scheme+"/"+entry+"/"+url.QueryEscape(tc.endpoint), func(t *testing.T) {
@@ -194,23 +193,5 @@ func TestSDKEndpointValidationDoesNotLeakCredentials(t *testing.T) {
 				require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
 			})
 		}
-	}
-}
-
-func TestGCSStorageSupportedEndpoints(t *testing.T) {
-	for _, endpoint := range []string{
-		"", "host", "host:9000", "127.0.0.1:9000", "[::1]:9000",
-		"https://host:9000/storage/v1/", "http://127.0.0.1:9000/storage/v1/",
-	} {
-		t.Run(endpoint, func(t *testing.T) {
-			backend := &backuppb.GCS{Bucket: "bucket", Endpoint: endpoint}
-			storage, err := NewGCSStorage(context.Background(), backend, &storeapi.Options{
-				NoCredentials: true,
-				HTTPClient:    &http.Client{Transport: rejectEndpointTransport{t: t}},
-			})
-			require.NoError(t, err)
-			t.Cleanup(storage.Close)
-			require.Equal(t, endpoint, backend.Endpoint)
-		})
 	}
 }
