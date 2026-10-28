@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,13 @@ func TestCaptureQuerySource(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(i bigint)")
+	capture := func(se sessionctx.Context, sel string) (*importer.QuerySource, error) {
+		sql := "import into unused_target from " + sel
+		if err := importer.PlanImportQueryForTest(se, sql); err != nil {
+			return nil, err
+		}
+		return importer.CaptureQuerySource(se, sql)
+	}
 	sourceTables := func(q *importer.QuerySource) map[string]importer.SourceTable {
 		is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 		tables := make(map[string]importer.SourceTable, len(q.Tables))
@@ -51,7 +59,7 @@ func TestCaptureQuerySource(t *testing.T) {
 		defer tk.MustExec("set cte_max_recursion_depth = default, tidb_mem_quota_query = default")
 		tk.MustExec("begin")
 		defer tk.MustExec("rollback")
-		q, err := importer.CaptureQuerySource(tk.Session(), "import into unused_target from select i from query_src")
+		q, err := capture(tk.Session(), "select i from query_src")
 		require.NoError(t, err)
 		require.Equal(t, "5", q.SessionStates.SystemVars[vardef.CTEMaxRecursionDepth])
 		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
@@ -61,7 +69,7 @@ func TestCaptureQuerySource(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
-		q, err := importer.CaptureQuerySource(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
+		q, err := capture(tk.Session(), "(select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Equal(t, "rg1", q.SessionStates.ResourceGroupName)
 		tables := sourceTables(q)
@@ -71,21 +79,20 @@ func TestCaptureQuerySource(t *testing.T) {
 		tk.MustExec("create temporary table query_tmp(i int)")
 		tk.MustExec("create global temporary table query_gtmp(i int) on commit delete rows")
 		for _, tbl := range []string{"query_tmp", "query_gtmp"} {
-			_, err = importer.CaptureQuerySource(tk.Session(), "import into unused_target from select * from "+tbl)
+			_, err = capture(tk.Session(), "select * from "+tbl)
 			require.ErrorContains(t, err, "temporary source tables in IMPORT INTO FROM SELECT")
 		}
 		tk.MustExec("create sequence query_seq")
 		for sql, msg := range map[string]string{
 			"select nextval(query_seq)":                                                         "sequences in IMPORT INTO FROM SELECT",
-			"select * from query_seq":                                                           "sequences in IMPORT INTO FROM SELECT",
 			"select table_name from information_schema.tables":                                  "memory source tables in IMPORT INTO FROM SELECT",
-			"select * from performance_schema.session_variables":                                "memory source tables in IMPORT INTO FROM SELECT",
+			"select variable_name from performance_schema.session_variables":                    "memory source tables in IMPORT INTO FROM SELECT",
 			"select i from query_src where i in (select 1 from information_schema.processlist)": "memory source tables in IMPORT INTO FROM SELECT",
 		} {
-			_, err = importer.CaptureQuerySource(tk.Session(), "import into unused_target from "+sql)
+			_, err = capture(tk.Session(), sql)
 			require.ErrorContains(t, err, msg, sql)
 		}
-		_, err = importer.CaptureQuerySource(tk.Session(), "import into unused_target from select ? from query_src")
+		_, err = capture(tk.Session(), "select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
 	})
 	t.Run("views and cached tables", func(t *testing.T) {
@@ -98,7 +105,7 @@ func TestCaptureQuerySource(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create view outer_v as select i from query_view_db.inner_v union all select i from query_cached")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := importer.CaptureQuerySource(tk.Session(), "import into unused_target from select * from outer_v")
+		q, err := capture(tk.Session(), "select * from outer_v")
 		require.NoError(t, err)
 		tables := sourceTables(q)
 		require.Len(t, tables, 4)
@@ -124,6 +131,20 @@ func TestCaptureQuerySource(t *testing.T) {
 		_, err = changed.BuildMinimalInfoSchema(store, parent)
 		require.ErrorContains(t, err, "changed before the import query snapshot")
 	})
+	t.Run("views ignore local temporary tables", func(t *testing.T) {
+		tk.MustExec("create table query_shadowed(i int)")
+		tk.MustExec("create view query_shadowed_v as select i from query_shadowed")
+		tbl, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("query_shadowed"))
+		require.NoError(t, err)
+		tk.MustExec("create temporary table query_shadowed(i int)")
+		defer tk.MustExec("drop temporary table query_shadowed")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q, err := capture(tk.Session(), "select * from query_shadowed_v")
+		require.NoError(t, err)
+		tables := sourceTables(q)
+		require.Len(t, tables, 2)
+		require.Equal(t, tbl.Meta().ID, tables["test.query_shadowed"].ID)
+	})
 	t.Run("capture transaction schema", func(t *testing.T) {
 		ddlTK := testkit.NewTestKit(t, store)
 		ddlTK.MustExec("use test")
@@ -142,14 +163,17 @@ func TestCaptureQuerySource(t *testing.T) {
 		latest, err := queryTK.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("query_capture_schema"))
 		require.NoError(t, err)
 		require.Len(t, latest.Columns, 2)
-		q, err := importer.CaptureQuerySource(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
+		q, err := capture(queryTK.Session(), "select * from query_capture_schema")
 		require.NoError(t, err)
-		require.Equal(t, []importer.SourceTable{{DBID: tbl.Meta().DBID, ID: tbl.Meta().ID, Revision: tbl.Meta().Revision}}, q.Tables)
+		// The planner of the statement locks the table with MDL and takes its
+		// latest definition, which capture takes too.
+		require.Equal(t, []importer.SourceTable{{DBID: tbl.Meta().DBID, ID: tbl.Meta().ID, Revision: latest.Revision}}, q.Tables)
 		require.Less(t, tbl.Meta().Revision, latest.Revision)
 		require.Equal(t, txnIS.SchemaMetaVersion(), q.SchemaVersion)
-		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
 		_, locked := queryTK.Session().GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID)
-		require.False(t, locked)
+		require.True(t, locked)
+		_, err = q.BuildMinimalInfoSchema(store, txnIS)
+		require.NoError(t, err)
 	})
 	t.Run("restore session states", func(t *testing.T) {
 		submitTK := testkit.NewTestKit(t, store)
@@ -158,7 +182,7 @@ func TestCaptureQuerySource(t *testing.T) {
 		submitTK.MustExec("begin")
 		defer submitTK.MustExec("rollback")
 		submitTK.Session().GetSessionVars().StmtCtx.AppendWarning(errors.New("warning of the statement before"))
-		q, err := importer.CaptureQuerySource(submitTK.Session(), "import into unused_target from select i from query_src")
+		q, err := capture(submitTK.Session(), "select i from query_src")
 		require.NoError(t, err)
 
 		workerTK := testkit.NewTestKit(t, store)
