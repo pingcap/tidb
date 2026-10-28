@@ -18,8 +18,6 @@ import (
 	"context"
 	"time"
 
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -28,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
