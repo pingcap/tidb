@@ -2732,3 +2732,16 @@ func TestInSubqueryMatchesEachOuterRowOnceWhenKeysAreConverted(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 Implicit type or collation conversion on join keys (test.t_outer.id = test.t_inner.a) may make indexes unusable"))
 }
+
+func TestInSubqueryKeepsTheExplicitCollationOfAProjectedKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_outer (s varchar(10) collate utf8mb4_bin)")
+	tk.MustExec("insert into t_outer values ('a')")
+	tk.MustExec("create table t_inner (a blob, b varchar(10) collate utf8mb4_bin)")
+	tk.MustExec("insert into t_inner values ('x', 'A')")
+
+	tk.MustQuery("select s from t_outer where (0, s) in (select a, b collate utf8mb4_general_ci from t_inner)").Check(testkit.Rows("a"))
+	tk.MustQuery("select s from t_outer where (0, s) in (select a, b from t_inner)").Check(testkit.Rows())
+}
