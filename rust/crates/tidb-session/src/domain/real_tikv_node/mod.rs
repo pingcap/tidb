@@ -38,13 +38,12 @@ use crate::domain::node_config::NodeConfig;
 use crate::domain::session_api::SqlQueryError;
 
 mod schema_following;
-mod session_time_zone;
 
 pub use schema_following::{
     connect_etcd_client, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
     spawn_sysvar_watch,
 };
-pub use session_time_zone::RealTiKvSessionTimeZone;
+pub use tidb_domain_core::session_time_zone::RealTiKvSessionTimeZone;
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 pub fn apply_account_policies(

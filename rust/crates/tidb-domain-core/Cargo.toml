@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB domain: Go pkg/domain's Domain and the cluster services it owns (Rust rewrite)."
 
 [dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-cluster = { path = "../tidb-cluster" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
@@ -17,8 +19,10 @@ tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-log = { path = "../tidb-log" }
+tidb-meta = { path = "../tidb-meta" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
+tidb-owner = { path = "../tidb-owner" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-privilege = { path = "../tidb-privilege" }
 tidb-proto = { path = "../tidb-proto" }
@@ -28,6 +32,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-variable = { path = "../tidb-variable" }
 tikv-client.workspace = true
 chrono.workspace = true
+rand = "0.10"
 serde_json.workspace = true
 
 [lints]

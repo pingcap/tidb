@@ -22,10 +22,9 @@
 //! `KvTable` would abandon the ids it still held and reserve a fresh range
 //! from the meta key, leaving a `DEFAULT_AUTO_ID_STEP`-sized hole in the ids
 //! every time the schema version moved. This registry is where the allocator
-//! outlives the table objects, and [`Domain`] holds exactly
+//! outlives the table objects, and `Domain` holds exactly
 //! one.
 //!
-//! [`Domain`]: crate::domain::cluster_session_node::Domain
 //! [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
 
 use std::collections::HashMap;
@@ -41,7 +40,7 @@ use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo}
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use crate::domain::cluster_session::{AutoIdKind, TableAutoIds};
+use tidb_cluster::table_from_meta::{AutoIdKind, TableAutoIds};
 
 /// This node's allocators, keyed by table id.
 ///
@@ -356,7 +355,7 @@ mod tests {
     }
     #[test]
     fn auto_id_owner_registry_selects_service_and_keeps_row_random_legacy_counters() {
-        let (_pd, opener) = crate::domain::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
         let service = Arc::new(
             tidb_cluster::auto_id_client::AutoIdClient::new(
                 Arc::new(RefusedLeader),

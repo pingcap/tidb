@@ -23,8 +23,8 @@ use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_cluster::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::cluster_storage::MutationBuffer;
-use crate::binding_cache::SharedBindingCache;
-use crate::GlobalSysvars;
+use tidb_bindinfo::binding_cache::SharedBindingCache;
+use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
@@ -51,7 +51,7 @@ pub trait BindingSessionPool: Send + Sync {
     /// Go's serialized tombstone GC transaction.
     fn gc(&self) -> Result<(), String>;
     /// Persist usage in bounded transactions and acknowledge committed batches.
-    fn write_usage(&self, bindings: &[Arc<crate::binding::Binding>]) -> Result<(), String>;
+    fn write_usage(&self, bindings: &[Arc<tidb_bindinfo::binding::Binding>]) -> Result<(), String>;
 }
 
 /// The node's committed binding image and its storage refresh authority.
@@ -102,7 +102,7 @@ impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
         // Go readBindingsFromStorage runs SELECT through an internal session.
         // bind_info's create_time/update_time are TIMESTAMP(6), so decoding
         // needs that session's timezone rather than the no-TIMESTAMP shortcut.
-        let timezone = crate::domain::real_tikv_node::RealTiKvSessionTimeZone::parse(
+        let timezone = crate::session_time_zone::RealTiKvSessionTimeZone::parse(
             &self
                 .globals
                 .get("time_zone")
@@ -262,7 +262,7 @@ impl BindingReloader {
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel();
         let cleanup = Arc::clone(&target);
-        let worker = crate::domain::session_api::sql_worker_thread("tidb-binding-maintenance")
+        let worker = tidb_util::worker_stack::sql_worker_thread("tidb-binding-maintenance")
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut deadlines = intervals.map(|interval| Instant::now() + interval);
@@ -290,7 +290,7 @@ impl BindingReloader {
                                     if let Err(error) = target.reload() {
                                         logger.error(
                                             "update bindinfo failed",
-                                            &[crate::domain::zap_error(error)],
+                                            &[tidb_util::logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -298,7 +298,7 @@ impl BindingReloader {
                                     if let Err(error) = target.gc() {
                                         logger.error(
                                             "GC bind record failed",
-                                            &[crate::domain::zap_error(error)],
+                                            &[tidb_util::logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -306,7 +306,7 @@ impl BindingReloader {
                                     if let Err(error) = target.write_usage() {
                                         logger.warn(
                                             "BindingHandle.UpdateBindingUsageInfoToStorage",
-                                            &[crate::domain::zap_error(error)],
+                                            &[tidb_util::logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -331,7 +331,7 @@ impl BindingReloader {
                 }));
                 target.close();
                 if let Err(payload) = result {
-                    crate::domain::log_recovered_panic("globalBindHandleWorkerLoop", payload.as_ref());
+                    tidb_util::logutil::log_recovered_panic("globalBindHandleWorkerLoop", payload.as_ref());
                 }
             })
             .map_err(|error| {
@@ -362,11 +362,11 @@ mod tests {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn write_usage(&self, _: &[Arc<crate::binding::Binding>]) -> Result<(), String> {
+            fn write_usage(&self, _: &[Arc<tidb_bindinfo::binding::Binding>]) -> Result<(), String> {
                 unreachable!()
             }
         }
-        let (_pd, opener) = crate::domain::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
         let owner = Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
             "binding-test".to_owned(),
