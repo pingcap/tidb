@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "materialized_view_compare_test.go",
         "materialized_view_infoschema_test.go",
         "materialized_view_refresh_entry_test.go",
         "materialized_view_refresh_operator_test.go",
@@ -13,7 +14,7 @@ go_test(
         "testutil_test.go",
     ],
     flaky = True,
-    shard_count = 47,
+    shard_count = 48,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -29,6 +30,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
