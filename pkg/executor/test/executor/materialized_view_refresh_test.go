@@ -35,6 +35,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -115,6 +116,8 @@ func nextCompareTimestamp(t *testing.T, tk *testkit.TestKit) string {
 	t.Helper()
 
 	mustSetMockGCSafePoint(t, tk, time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC))
+	// AS OF timestamps have no TSO logical component; move past the last commit millisecond.
+	time.Sleep(10 * time.Millisecond)
 	ts := fmt.Sprint(tk.MustQuery("select now(6)").Rows()[0][0])
 	time.Sleep(10 * time.Millisecond)
 	return ts
@@ -4814,6 +4817,81 @@ func TestCompareMaterializedViewUsesDefinitionTimeZone(t *testing.T) {
 	rows := tk.MustQuery(compareSQL).Rows()
 	require.Len(t, rows, 1)
 	require.Contains(t, fmt.Sprint(rows[0][0]), "0 rows")
+}
+
+func TestCompareMaterializedViewOutputTimestampUsesDefinitionTimeZone(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.time_zone = '+08:00'")
+	tk.MustExec("create table t_compare_ts_output (ts timestamp not null, dt datetime not null, v int not null)")
+	tk.MustExec("insert into t_compare_ts_output values ('2026-01-01 08:00:00', '2026-01-01 08:00:00', 10), ('2026-01-02 08:00:00', '2026-01-02 08:00:00', 20)")
+	tk.MustExec("create materialized view log on t_compare_ts_output (ts, dt, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_ts_output (ts, dt, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select ts, dt, sum(v), count(1) from t_compare_ts_output group by ts, dt")
+	origMaintenance := tk.Session().GetSessionVars().InMaterializedViewMaintenance
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = true
+	mustExecInternal(t, tk, "update mv_compare_ts_output set s = 99 where ts = '2026-01-01 08:00:00'")
+	mustExecInternal(t, tk, "delete from mv_compare_ts_output where ts = '2026-01-02 08:00:00'")
+	mustExecInternal(t, tk, "commit")
+	tk.Session().GetSessionVars().InMaterializedViewMaintenance = origMaintenance
+	tk.MustExec("set @@session.time_zone = '+00:00'")
+
+	// Seed enough pooled sessions for COMPARE with a timezone distinct from the MV definition.
+	const poolSessionCount = 16
+	pool := dom.SysSessionPool()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	func() {
+		var releases []func()
+		defer func() {
+			for _, release := range releases {
+				release()
+			}
+		}()
+		for range poolSessionCount {
+			resource, err := pool.Get()
+			require.NoError(t, err)
+			releases = append(releases, func() { pool.Put(resource) })
+			sctx := resource.(sessionctx.Context)
+			for _, sql := range []string{"set @@session.time_zone = '+00:00'", "rollback"} {
+				rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
+				require.NoError(t, err)
+				require.Nil(t, rs)
+			}
+		}
+	}()
+	checkPoolTimeZones := func() {
+		for range poolSessionCount {
+			func() {
+				resource, err := pool.Get()
+				require.NoError(t, err)
+				defer pool.Put(resource)
+				vars := resource.(sessionctx.Context).GetSessionVars()
+				_, sessionOffset := time.Now().In(vars.Location()).Zone()
+				_, stmtOffset := time.Now().In(vars.StmtCtx.TimeZone()).Zone()
+				require.Zero(t, sessionOffset)
+				require.Zero(t, stmtOffset)
+			}()
+		}
+	}
+
+	compareSQL := fmt.Sprintf("compare materialized view test.mv_compare_ts_output as of timestamp '%s'", nextCompareTimestamp(t, tk))
+	tk.MustExec(compareSQL + " output into table test.mv_compare_ts_output_diff")
+	// Both current-MV and recomputed rows must preserve their TIMESTAMP instants.
+	tk.MustQuery("select ts, dt, s, cnt, _Differ_type_ from mv_compare_ts_output_diff order by ts").Check(testkit.Rows(
+		"2026-01-01 00:00:00 2026-01-01 08:00:00 99 1 mview_differ",
+		"2026-01-02 00:00:00 2026-01-02 08:00:00 20 1 mview_vacuum",
+	))
+	checkPoolTimeZones()
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockCompareMaterializedViewOutputFlushError"
+	require.NoError(t, failpoint.Enable(failpointName, `return("mock compare output flush error")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+	err := tk.ExecToErr(compareSQL + " output into table test.mv_compare_ts_output_error")
+	require.ErrorContains(t, err, "mock compare output flush error")
+	tk.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_ts_output_error'").Check(testkit.Rows("0"))
+	checkPoolTimeZones()
 }
 
 func TestCompareMaterializedViewNullableGroupKeyMinMax(t *testing.T) {
