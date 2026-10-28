@@ -23,7 +23,7 @@
 //! (`session_variables`, `events_statements_summary_by_digest`, ...) get
 //! their rows per statement, as the `information_schema` tables do.
 
-use super::catalog::Catalog;
+use crate::Catalog;
 use tidb_hack::GoCaseCompare;
 
 /// The database name Go registers these tables under.
@@ -231,16 +231,16 @@ pub fn is_predefined_table(name: &str) -> bool {
 /// Go `perfschema.Init`: every [`TABLES`] entry built once per process
 /// (`BuildTableInfoFromAST` under its Go id), as catalog entries keyed by
 /// name.
-pub(crate) fn tables(
-) -> std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>> {
+pub fn tables(
+) -> std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>> {
     static TABLES_BUILT: std::sync::OnceLock<
-        std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>>,
+        std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>>,
     > = std::sync::OnceLock::new();
     TABLES_BUILT
         .get_or_init(|| {
             let mut scratch = Catalog::memory_schema_scratch();
             for (_, offset, sql) in TABLES {
-                crate::ddl::run_create_system_table_in(
+                crate::run_create_system_table_in(
                     sql,
                     &mut scratch,
                     PERFORMANCE_SCHEMA,

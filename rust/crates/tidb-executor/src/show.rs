@@ -306,36 +306,7 @@ pub fn fetch_show_collation(ctx: &dyn SessionContext, extractor: Extractor<'_>) 
     rows
 }
 
-/// The rows Go's `ShowExec.fetchAll` produced for each `PhysicalShow` of one
-/// statement, keyed by its plan id. Go's `ShowExec` fetches through its own
-/// session; the fetchers here read the session, which an executor cannot
-/// borrow, so the session supplies them before the executor is built.
-/// Clones of a statement context share it.
-#[derive(Default)]
-pub struct ShowRetrieval {
-    rows: Mutex<HashMap<i32, Arc<Vec<Vec<Datum>>>>>,
-}
-
-impl ShowRetrieval {
-    /// Supplies the rows of the `PhysicalShow` numbered `plan_id`, one value
-    /// per column of its schema.
-    pub fn supply(&self, plan_id: i32, rows: Vec<Vec<Datum>>) {
-        self.rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(plan_id, Arc::new(rows));
-    }
-
-    /// The rows supplied for the `PhysicalShow` numbered `plan_id`.
-    #[must_use]
-    pub fn rows(&self, plan_id: i32) -> Option<Arc<Vec<Vec<Datum>>>> {
-        self.rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&plan_id)
-            .cloned()
-    }
-}
+pub use tidb_stmtctx::show_retrieval::ShowRetrieval;
 
 /// What follows `DEFAULT ` in `SHOW CREATE TABLE`, quoting included.
 ///

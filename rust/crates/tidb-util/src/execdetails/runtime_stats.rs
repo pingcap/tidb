@@ -2027,3 +2027,100 @@ mod tests {
     }
 
 }
+
+/// Go `exec.BaseExecutorV2`'s per-operator runtime-stat handle. The physical
+/// builder installs one handle on each retained operator only when TiDB's
+/// execution-info collector is enabled; the hot `Next` path then updates the
+/// shared atomics directly without looking the plan up in a collector map.
+pub trait ExecutorRuntimeStats: Send + Sync {
+    /// Go `BasicRuntimeStats.RecordOpen`.
+    fn record_open(&self, elapsed: std::time::Duration);
+    /// Go `BasicRuntimeStats.Record`.
+    fn record_next(&self, elapsed: std::time::Duration, rows: i64);
+    /// Go `BasicRuntimeStats.RecordClose`.
+    fn record_close(&self, elapsed: std::time::Duration);
+}
+
+/// Creates the shared runtime-stat handle for one constructed physical
+/// executor, matching Go `RuntimeStatsColl.GetBasicRuntimeStats(id, true)`.
+pub trait ExecutorRuntimeStatsSource: Send + Sync {
+    /// Registers one executor for `plan_id` and returns its shared counters.
+    fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>>;
+
+    /// Go `getRuntimeInfo`'s `GetCopStats(explainID)` arm: the rows and
+    /// `String()` of the coprocessor stats recorded for `plan_id`, `None`
+    /// when no cop task reported for it.
+    fn cop_runtime_info(&self, _plan_id: i64) -> Option<crate::execdetails::CopRuntimeInfo> {
+        None
+    }
+
+    /// Go `RootRuntimeStats.String()` without its basic stats: the group
+    /// stats (a select result's, a join's, ...) registered on `plan_id`,
+    /// joined by `, `. `None` when nothing is registered.
+    fn root_group_runtime_info(&self, _plan_id: i64) -> Option<String> {
+        None
+    }
+
+    /// Go `RootRuntimeStats.String()` of `plan_id`: its basic stats, then
+    /// its group stats. `None` when nothing is registered on it.
+    fn root_runtime_info(&self, _plan_id: i64) -> Option<String> {
+        None
+    }
+
+    /// Go `RuntimeStatsColl.RegisterStats`: an executor's own stats (a
+    /// join's, a reader's, ...), merged into the group of the same kind.
+    fn register_stats(&self, _plan_id: i64, _stats: Box<dyn crate::execdetails::RuntimeStats>) {}
+
+    /// Go `RuntimeStatsColl.GetBasicRuntimeStats(planID, true)` for a plan
+    /// whose basic stats another executor records (an index lookup's
+    /// pushed index plan, `indexScanBasicStats`).
+    fn basic_runtime_stats(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
+        self.for_executor(plan_id)
+    }
+}
+
+impl ExecutorRuntimeStats for BasicRuntimeStats {
+    fn record_open(&self, elapsed: std::time::Duration) {
+        BasicRuntimeStats::record_open(self, elapsed);
+    }
+
+    fn record_next(&self, elapsed: std::time::Duration, rows: i64) {
+        BasicRuntimeStats::record(self, elapsed, rows);
+    }
+
+    fn record_close(&self, elapsed: std::time::Duration) {
+        BasicRuntimeStats::record_close(self, elapsed);
+    }
+}
+
+impl ExecutorRuntimeStatsSource for RuntimeStatsColl {
+    fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
+        self.get_basic_runtime_stats(plan_id, true)
+            .map(|stats| stats as Arc<dyn ExecutorRuntimeStats>)
+    }
+
+    fn register_stats(
+        &self,
+        plan_id: i64,
+        stats: Box<dyn crate::execdetails::RuntimeStats>,
+    ) {
+        RuntimeStatsColl::register_stats(
+            self, plan_id, stats,
+        );
+    }
+
+    fn root_runtime_info(&self, plan_id: i64) -> Option<String> {
+        RuntimeStatsColl::root_runtime_info(self, plan_id)
+    }
+
+    fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
+        RuntimeStatsColl::root_group_runtime_info(
+            self, plan_id,
+        )
+    }
+
+    fn cop_runtime_info(&self, plan_id: i64) -> Option<crate::execdetails::CopRuntimeInfo> {
+        RuntimeStatsColl::cop_runtime_info(self, plan_id)
+    }
+}
+

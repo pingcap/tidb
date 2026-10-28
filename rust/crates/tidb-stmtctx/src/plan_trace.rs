@@ -21,7 +21,7 @@ use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
 
 /// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`).
-pub(crate) const PSEUDO_ROW_COUNT: f64 = 10_000.0;
+pub const PSEUDO_ROW_COUNT: f64 = 10_000.0;
 
 /// Which of Go's two expression renderers a caller needs.
 ///
@@ -34,7 +34,7 @@ pub(crate) const PSEUDO_ROW_COUNT: f64 = 10_000.0;
 /// `TruncatedStringify` bare (`constant.go:181`) -- which is why Go's own q14
 /// recording shows `case(like(test.part.p_type, PROMO%, 92), ..., 0.0000)`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExpressionTextStyle {
+pub enum ExpressionTextStyle {
     /// Go `Expression.ExplainInfo`: string constants are quoted.
     Explain,
     /// Go `Expression.StringWithCtx`: string constants print bare.
@@ -42,7 +42,7 @@ pub(crate) enum ExpressionTextStyle {
 }
 
 /// Renders the physical-expression subset used by physical-plan EXPLAIN.
-pub(crate) fn physical_expression_text_with_columns(
+pub fn physical_expression_text_with_columns(
     ctx: &dyn tidb_expr::Columns,
     expression: &Expression,
     column_names: &[Option<String>],

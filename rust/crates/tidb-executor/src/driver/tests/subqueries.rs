@@ -536,7 +536,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
         .register_view_in(
             "test",
             "inner_v",
-            crate::driver::catalog::ViewDef {
+            tidb_infoschema::ViewDef {
                 name: "inner_v".to_owned(),
                 columns: vec![(
                     "v".to_owned(),
@@ -559,7 +559,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
         .register_view_in(
             "test",
             "revenue_v",
-            crate::driver::catalog::ViewDef {
+            tidb_infoschema::ViewDef {
                 name: "revenue_v".to_owned(),
                 columns: vec![
                     (

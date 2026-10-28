@@ -41,7 +41,7 @@ impl ClusterSessionFactory {
                 &storage,
                 Some(&mut templates),
             );
-            let mut session = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
+            let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog));
             session.set_index_usage_collector(Arc::clone(&index_usage));
             session
         })

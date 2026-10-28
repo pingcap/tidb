@@ -16,7 +16,7 @@
 //! `SessionExtendedInfoSchema` (LOCAL tables shadow the shared image for one
 //! session) and the GLOBAL temporary tables whose rows live in the session.
 
-use super::*;
+use crate::*;
 
 impl Catalog {
     /// Attaches a session's LOCAL temporary tables for the duration of one

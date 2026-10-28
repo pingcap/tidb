@@ -14,20 +14,20 @@
 
 //! Go `keydecoder`'s schema lookups over the image (`TIDB_DECODE_KEY`).
 
-use super::*;
+use crate::*;
 
-impl crate::keydecoder::KeyInfoCatalog for Catalog {
+impl tidb_keydecoder::KeyInfoCatalog for Catalog {
     fn resolve_physical_table(
         &self,
         physical_id: i64,
-    ) -> Option<crate::keydecoder::KeyInfoTableLookup> {
+    ) -> Option<tidb_keydecoder::KeyInfoTableLookup> {
         for database in self.databases.values() {
             for (registered_name, entry) in &database.tables {
                 let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;
                 };
                 if table.table_id == physical_id {
-                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
+                    return Some(tidb_keydecoder::KeyInfoTableLookup::Resolved(
                         key_info_table(database, registered_name, table, 0, String::new()),
                     ));
                 }
@@ -46,7 +46,7 @@ impl crate::keydecoder::KeyInfoCatalog for Catalog {
                     .iter()
                     .find(|definition| definition.id == physical_id)
                 {
-                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
+                    return Some(tidb_keydecoder::KeyInfoTableLookup::Resolved(
                         key_info_table(
                             database,
                             registered_name,
@@ -68,8 +68,8 @@ fn key_info_table(
     table: &KvTable,
     partition_id: i64,
     partition_name: String,
-) -> crate::keydecoder::KeyInfoTable {
-    crate::keydecoder::KeyInfoTable {
+) -> tidb_keydecoder::KeyInfoTable {
+    tidb_keydecoder::KeyInfoTable {
         db_name: database.name.clone(),
         db_id: database.id,
         table_name: if table.name().is_empty() {
@@ -83,7 +83,7 @@ fn key_info_table(
         indexes: table
             .indexes()
             .iter()
-            .map(|index| crate::keydecoder::KeyInfoIndex {
+            .map(|index| tidb_keydecoder::KeyInfoIndex {
                 id: index.id,
                 name: index.name.clone(),
             })

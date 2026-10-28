@@ -374,7 +374,7 @@ pub fn session_with_cluster_storage(
 ) -> (Session, Vec<SkippedTable>) {
     let ClusterSessionCatalog { catalog, skipped } =
         cluster_session_catalog(loaded, storage, stats, auto_ids);
-    let shared: SharedCatalog = Arc::new(Mutex::new(catalog));
+    let shared = SharedCatalog::new(catalog);
     (Session::over_catalog(shared), skipped)
 }
 

@@ -1,0 +1,38 @@
+[package]
+name = "tidb-infoschema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewrite)."
+
+
+[dependencies]
+tidb-keydecoder = { path = "../tidb-keydecoder" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-table = { path = "../tidb-table" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+crossbeam-channel = "0.5"
+serde_json = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-planner = { path = "../tidb-planner" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-util = { path = "../tidb-util" }
+
+
+[lints]
+workspace = true

@@ -7762,7 +7762,7 @@ pub(super) fn open_query(
         super::begin_run_stmt_region();
     }
     prepare_execution_plan(physical, catalog, ctx)?;
-    ctx.publish_physical_process_info(physical, catalog);
+    crate::explain::publish_physical_process_info(ctx, physical, catalog);
     let root = build(physical, catalog, ctx)?;
     let columns = match query {
         tidb_ast::QueryStmt::Select(select) => {

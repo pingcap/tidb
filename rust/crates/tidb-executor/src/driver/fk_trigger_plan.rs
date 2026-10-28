@@ -14,7 +14,7 @@
 //! The in-process catalog as the planner's [`ForeignKeyCatalog`]: Go
 //! `physicalop/foreign_key.go` itself is `tidb_planner::fk_plan`.
 
-use crate::driver::catalog::{Catalog, TableEntry};
+use tidb_infoschema::{Catalog, TableEntry};
 use crate::driver::DriverError;
 use crate::kv_table::{FkAction, KvForeignKey};
 use crate::StmtContext;

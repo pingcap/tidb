@@ -3927,6 +3927,7 @@ dependencies = [
  "tidb-funcdep",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema",
  "tidb-keydecoder",
  "tidb-kv",
  "tidb-metadef",
@@ -4061,6 +4062,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-infoschema"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "serde_json",
+ "tidb-ast",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-driver-error",
+ "tidb-error",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-keydecoder",
+ "tidb-kv",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-planner",
+ "tidb-stats",
+ "tidb-stats-handle-metrics",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-keydecoder"
 version = "0.0.0"
 dependencies = [
@@ -4073,10 +4103,13 @@ name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
  "smallvec",
+ "tidb-chunk",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-distsql",
  "tidb-error",
+ "tidb-expr",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -4828,8 +4861,31 @@ dependencies = [
 name = "tidb-stmtctx"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-distsql",
+ "tidb-driver-error",
  "tidb-error",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-infoschema",
+ "tidb-kv",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-planner",
+ "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
+ "tidb-table",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-vardef",
+ "tidb-variable",
+ "tikv-client",
 ]
 
 [[package]]

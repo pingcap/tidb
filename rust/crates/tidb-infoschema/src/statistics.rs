@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 
-use crate::access_cost::TableStatistics;
+use tidb_planner::table_statistics::TableStatistics;
 
 /// The domain's canonical Go-compatible statistics, independent of InfoSchema.
 /// Published tables are immutable: loading or evicting a payload publishes a
@@ -52,7 +52,7 @@ pub struct PseudoStatsTable {
 
 /// Only the schema metadata used when converting canonical statistics.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct StatisticsSchema {
+pub struct StatisticsSchema {
     pub columns: Vec<(i64, bool)>,
     pub indexes: Vec<(i64, usize, bool)>,
     pub pseudo: PseudoStatsTable,
@@ -88,7 +88,7 @@ impl StatisticsView {
         }
     }
 
-    pub(super) fn table(
+    pub fn table(
         &self,
         physical_id: i64,
         schema: &Arc<StatisticsSchema>,

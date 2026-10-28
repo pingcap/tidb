@@ -31,15 +31,16 @@ const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
-use crate::mem_quota::{OomAction, StatementMemory};
-use tidb_stmtctx::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
-use crate::DriverError;
+use tidb_kv::mem_quota::{OomAction, StatementMemory};
+use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
+use tidb_driver_error::DriverError;
 use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub use tidb_ddl_build::session_context::DdlReorgVars;
+pub use tidb_infoschema::{MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -300,7 +301,7 @@ pub struct ProcessPlanInfo {
     pub previous_explain: bool,
     /// Go `StmtCtx.GetUsedStatsInfo(false)`: the statistics planning used,
     /// keyed by physical table id, for the slow log's `Stats`.
-    pub used_stats: BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
+    pub used_stats: BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>,
     /// Go `StmtCtx.IsSyncStatsFailed`.
     pub is_sync_stats_failed: bool,
     /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
@@ -385,7 +386,7 @@ impl std::ops::DerefMut for StmtContext {
 /// effects not supplied here are initialized by the context constructor.
 pub struct StmtContextSessionState {
     /// The current statement's MPP owner, also retained across execution retries.
-    pub mpp_query_info: Arc<crate::MppQueryInfo>,
+    pub mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     /// Current domain/server-info identity used when building MPP executors.
     pub mpp_server_id: u64,
     /// Go session TiFlashComputeDispatchPolicy, snapshotted per statement.
@@ -404,7 +405,7 @@ pub struct StmtContextSessionState {
     pub current_tso: CurrentTso,
     /// The current transaction's (or, in autocommit, current statement's)
     /// staged-write tracker. See [`StmtContextData::staged_writes`].
-    pub staged_writes: Arc<crate::kv_table::StagedWrites>,
+    pub staged_writes: Arc<tidb_table::kv_table::StagedWrites>,
     /// Retry ID history retained across attempts.
     pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     /// Session row-ID shard generator.
@@ -501,20 +502,6 @@ impl Default for StmtContextSessionState {
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
 
-/// The session's answer to "does this account hold this privilege": `(user,
-/// host, database, table, column, privilege)`, the account matched against the
-/// stored ones by host pattern.
-pub type ViewDefinerPrivilegeCheck =
-    Arc<dyn Fn(&str, &str, &str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
-
-/// The session's answer to "does this session hold this privilege": `(database,
-/// table, column, privilege)` for its own account with its active roles.
-pub type SessionPrivilegeCheck =
-    Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
-
-/// Records one stored table id on the statement's metadata-lock map.
-pub type MdlRelatedTableRecorder = Arc<dyn Fn(i64) + Send + Sync>;
-
 /// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
 /// runs it while evaluating in `StmtContext`: each requested digest's
 /// normalized text (empty when no summary knows it), or the retrieval's
@@ -529,14 +516,14 @@ pub type SqlDigestTextRetrieval = Arc<
 /// cascade sub-statement it builds: `(catalog, schema, table, delete)` checks
 /// the child table as the `DELETE` (`delete`) or `UPDATE` the cascade runs.
 pub type ForeignKeyCascadeLockCheck =
-    Arc<dyn Fn(&crate::Catalog, &str, &str, bool) -> Result<(), crate::DriverError> + Send + Sync>;
+    Arc<dyn Fn(&tidb_infoschema::Catalog, &str, &str, bool) -> Result<(), tidb_driver_error::DriverError> + Send + Sync>;
 
 /// Private configuration payload exposed only as the context's dereference
 /// target. Access and mutation remain on [`StmtContext`].
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
-    mpp_query_info: Arc<crate::MppQueryInfo>,
+    mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     mpp_server_id: u64,
     tiflash_compute_dispatch_policy: String,
     allow_tiflash_fallback: bool,
@@ -561,7 +548,7 @@ pub struct StmtContextData {
     in_explain_stmt: bool,
     /// Go `StmtCtx.ExplainFormat`: `plan_tree` renders columns without their
     /// unique ids ([`Columns::remove_column_numbers`]).
-    explain_format: Option<crate::ExplainFormat>,
+    explain_format: Option<crate::explain_format::ExplainFormat>,
     /// Go `ExtractTableHintsFromStmtNode(e.ExecStmt)` of an EXPLAIN's target,
     /// which `EXPLAIN FORMAT='hint'` appends to the generated hints.
     explain_table_hints: Vec<tidb_ast::Hint>,
@@ -571,7 +558,7 @@ pub struct StmtContextData {
     /// still waiting for the session to retrieve them.
     mem_table_retrieval: Arc<crate::mem_table_retrieval::MemTableRetrieval>,
     /// The rows the session fetched for this statement's `PhysicalShow`s.
-    show_retrieval: Arc<crate::show::ShowRetrieval>,
+    show_retrieval: Arc<crate::show_retrieval::ShowRetrieval>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -588,7 +575,7 @@ pub struct StmtContextData {
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
     /// Go `StatementContext.UsedStatsInfo`, keyed by physical table ID.
-    used_stats_info: Arc<Mutex<BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>>>,
+    used_stats_info: Arc<Mutex<BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>>>,
     /// Shared by every rebuilt executor of one statement attempt. Go emits
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
@@ -641,7 +628,7 @@ pub struct StmtContextData {
     active_roles: Option<Arc<Vec<(String, String)>>>,
     connection_id: Option<u64>,
     /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
-    tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
+    tidb_decode_key_snapshot: Option<Arc<tidb_infoschema::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
@@ -660,7 +647,7 @@ pub struct StmtContextData {
     replica_read: ReplicaReadType,
     read_replica_scope: Option<String>,
     is_staleness: bool,
-    coprocessor_read_policy: crate::remote_scan::CoprocessorReadPolicy,
+    coprocessor_read_policy: tidb_kv::remote_scan::CoprocessorReadPolicy,
     /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
     /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
     /// `ResetContextOfStmt` copies off the AST and
@@ -769,12 +756,12 @@ pub struct StmtContextData {
     /// when an autocommit statement performs its first storage read.
     current_tso: CurrentTso,
     /// Go `txn.GetMemBuffer()`, narrowed to this tier's staged-write tracking
-    /// (see [`crate::kv_table::StagedWrites`]). Shared by every statement of
+    /// (see [`tidb_table::kv_table::StagedWrites`]). Shared by every statement of
     /// the CURRENT transaction (or, in autocommit, just this one statement),
     /// so every write and every dirty-content read sees the same answer
     /// without a catalog-wide walk to reset it: a fresh transaction gets a
     /// fresh, empty handle here, exactly as Go's fresh membuffer is empty.
-    staged_writes: Arc<crate::kv_table::StagedWrites>,
+    staged_writes: Arc<tidb_table::kv_table::StagedWrites>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -852,7 +839,7 @@ pub struct StmtContextData {
     /// The statement continues (or lazily opens) an optimistic transaction,
     /// whose membuffer outlives it: the in-process store keeps its staged
     /// keys in [`Self::staged_writes`] (see
-    /// [`crate::storage::TableStorage::attach_txn_staging`]).
+    /// [`tidb_kv::storage::TableStorage::attach_txn_staging`]).
     optimistic_transaction: bool,
     /// Go DupKeyCheckInPrewrite for an explicit, unrestricted user transaction.
     pessimistic_check_in_prewrite: bool,
@@ -947,9 +934,9 @@ pub struct StmtContextData {
     latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     /// Go `SessionVars.HypoIndexes`, which `EXPLAIN` planning and `SHOW
     /// CREATE TABLE` read.
-    hypo_indexes: Option<Arc<crate::ddl::HypoIndexes>>,
+    hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, which `EXPLAIN` planning reads.
-    hypo_tiflash_replicas: Option<Arc<crate::ddl::HypoTiFlashReplicas>>,
+    hypo_tiflash_replicas: Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>>,
     /// The statement snapshot of every session value read by cost model v2.
     optimizer_cost_env: Option<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
@@ -1088,7 +1075,7 @@ pub struct StmtContextData {
     /// map directly): `None` until the statement touches it, then the
     /// session's map with every write applied, which the session takes back
     /// whether or not the statement then fails.
-    hypo_index_writes: Arc<std::sync::Mutex<Option<crate::ddl::HypoIndexes>>>,
+    hypo_index_writes: Arc<std::sync::Mutex<Option<tidb_table::hypo_index::HypoIndexes>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
@@ -1153,7 +1140,7 @@ pub struct StmtContextData {
     index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
     /// Go `StmtCtx.RuntimeStatsColl`, present only when instance-level
     /// execution-info collection is enabled.
-    executor_runtime_stats_source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+    executor_runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
     table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
@@ -1161,7 +1148,7 @@ pub struct StmtContextData {
     /// Go `StmtCtx.TableStats`, populated while predicate columns are
     /// collected so a plan-replayer dump uses the same runtime snapshot.
     table_runtime_statistics:
-        Arc<Mutex<HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>>>>,
+        Arc<Mutex<HashMap<i64, Option<Arc<tidb_planner::table_statistics::TableStatistics>>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
     /// Go `PlanCacheTracker.cacheType`: whether a cached plan for this
@@ -1523,7 +1510,7 @@ context_configuration! {
     #[must_use]
     pub fn with_executor_runtime_stats_source(
         mut self,
-        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     ) -> Self {
         self.executor_runtime_stats_source = source;
         self
@@ -1743,8 +1730,8 @@ context_configuration! {
     #[must_use]
     pub fn with_hypo_state(
         mut self,
-        indexes: Arc<crate::ddl::HypoIndexes>,
-        tiflash_replicas: Arc<crate::ddl::HypoTiFlashReplicas>,
+        indexes: Arc<tidb_table::hypo_index::HypoIndexes>,
+        tiflash_replicas: Arc<tidb_table::hypo_index::HypoTiFlashReplicas>,
     ) -> Self {
         self.hypo_indexes = (!indexes.is_empty()).then_some(indexes);
         self.hypo_tiflash_replicas = (!tiflash_replicas.is_empty()).then_some(tiflash_replicas);
@@ -2182,7 +2169,7 @@ context_configuration! {
     #[must_use]
     pub fn with_tidb_decode_key_snapshot(
         mut self,
-        snapshot: Arc<crate::TidbDecodeKeySnapshot>,
+        snapshot: Arc<tidb_infoschema::TidbDecodeKeySnapshot>,
     ) -> Self {
         self.tidb_decode_key_snapshot = Some(snapshot);
         self
@@ -2254,7 +2241,7 @@ context_configuration! {
 
     /// Retain the session's coprocessor read policy for this statement.
     #[must_use]
-    pub fn with_coprocessor_read_policy(mut self, policy: crate::remote_scan::CoprocessorReadPolicy) -> Self {
+    pub fn with_coprocessor_read_policy(mut self, policy: tidb_kv::remote_scan::CoprocessorReadPolicy) -> Self {
         self.coprocessor_read_policy = policy;
         self
     }
@@ -2282,7 +2269,7 @@ context_configuration! {
 
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
     #[must_use]
-    pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
+    pub fn with_date_modes(mut self, date_modes: tidb_table::zero_date::DateModes) -> Self {
         use tidb_mysql::consts as m;
         self.set_sql_mode_bits(m::ModeNoZeroDate, date_modes.no_zero_date);
         self.set_sql_mode_bits(m::ModeNoZeroInDate, date_modes.no_zero_in_date);
@@ -2369,7 +2356,7 @@ impl Default for ExecutorChunkSizes {
     }
 }
 
-pub use crate::driver::SequenceSnapshot;
+pub use tidb_infoschema::SequenceSnapshot;
 
 impl StmtContext {
     /// The same owner supplies declared types to planning and values to execution.
@@ -2379,7 +2366,7 @@ impl StmtContext {
 
     /// Statement-owned MPP state, retained by every reader and retry.
     #[must_use]
-    pub fn mpp_query_info(&self) -> Arc<crate::MppQueryInfo> {
+    pub fn mpp_query_info(&self) -> Arc<tidb_kv::mpp_query::MppQueryInfo> {
         Arc::clone(&self.mpp_query_info)
     }
 
@@ -2691,7 +2678,7 @@ impl StmtContext {
 
     /// Records the EXPLAIN statement's format (Go `StmtCtx.ExplainFormat`).
     #[must_use]
-    pub fn with_explain_format(mut self, format: crate::ExplainFormat) -> Self {
+    pub fn with_explain_format(mut self, format: crate::explain_format::ExplainFormat) -> Self {
         self.explain_format = Some(format);
         self
     }
@@ -2722,7 +2709,7 @@ impl StmtContext {
     /// The rows the session fetched for this statement's `PhysicalShow`s
     /// (Go `ShowExec.fetchAll`).
     #[must_use]
-    pub fn show_retrieval(&self) -> &crate::show::ShowRetrieval {
+    pub fn show_retrieval(&self) -> &crate::show_retrieval::ShowRetrieval {
         &self.show_retrieval
     }
 
@@ -2782,7 +2769,7 @@ impl StmtContext {
     /// Go `SessionVars.EnableStrictNotNullCheck`, as
     /// [`Self::with_single_insert_bad_null_policy`] recorded it.
     #[must_use]
-    pub(crate) fn strict_not_null_check(&self) -> bool {
+    pub fn strict_not_null_check(&self) -> bool {
         self.strict_not_null_check
     }
 
@@ -2819,7 +2806,7 @@ impl StmtContext {
 
     /// Records the same physical-reader fact Go records by appending to
     /// `StmtCtx.TableIDs` in `executorBuilder`.
-    pub(crate) fn mark_physical_table_reader(&self) {
+    pub fn mark_physical_table_reader(&self) {
         self.has_physical_table_reader
             .store(true, Ordering::Relaxed);
     }
@@ -3051,7 +3038,7 @@ impl StmtContext {
 
     fn with_hypo_index_writes<T>(
         &self,
-        write: impl FnOnce(&mut crate::ddl::HypoIndexes) -> T,
+        write: impl FnOnce(&mut tidb_table::hypo_index::HypoIndexes) -> T,
     ) -> T {
         let mut writes = self
             .hypo_index_writes
@@ -3068,7 +3055,7 @@ impl StmtContext {
 
     /// `SessionVars.HypoIndexes` as this statement's DDL left it, when the
     /// statement wrote it.
-    pub fn take_hypo_indexes(&self) -> Option<crate::ddl::HypoIndexes> {
+    pub fn take_hypo_indexes(&self) -> Option<tidb_table::hypo_index::HypoIndexes> {
         self.hypo_index_writes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3369,7 +3356,7 @@ impl StmtContext {
     #[must_use]
     pub fn executor_runtime_stats_source(
         &self,
-    ) -> Option<&Arc<dyn crate::executor::ExecutorRuntimeStatsSource>> {
+    ) -> Option<&Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>> {
         self.executor_runtime_stats_source.as_ref()
     }
 
@@ -3390,12 +3377,12 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 physical_table_id,
-                tidb_stmtctx::used_stats::UsedStatsInfoForTable {
+                crate::used_stats::UsedStatsInfoForTable {
                     name,
                     version,
                     realtime_count,
                     modify_count,
-                    ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
+                    ..crate::used_stats::UsedStatsInfoForTable::default()
                 },
             );
     }
@@ -3421,12 +3408,12 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = used_stats.entry(physical_table_id).or_insert_with(|| {
-            tidb_stmtctx::used_stats::UsedStatsInfoForTable {
+            crate::used_stats::UsedStatsInfoForTable {
                 name: table_name.to_owned(),
                 version,
                 realtime_count,
                 modify_count,
-                ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
+                ..crate::used_stats::UsedStatsInfoForTable::default()
             }
         });
         let statuses = if is_index {
@@ -3442,7 +3429,7 @@ impl StmtContext {
     pub fn used_stats_info(
         &self,
         physical_table_id: i64,
-    ) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
+    ) -> Option<crate::used_stats::UsedStatsInfoForTable> {
         self.used_stats_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3477,7 +3464,7 @@ impl StmtContext {
     pub fn record_table_runtime_statistics(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
-        mut get: impl FnMut(i64) -> Option<Arc<crate::access_cost::TableStatistics>>,
+        mut get: impl FnMut(i64) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>>,
     ) {
         if !self.plan_replayer_capture_enabled {
             return;
@@ -3497,16 +3484,16 @@ impl StmtContext {
     #[must_use]
     pub fn table_runtime_statistics(
         &self,
-    ) -> HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>> {
+    ) -> HashMap<i64, Option<Arc<tidb_planner::table_statistics::TableStatistics>>> {
         self.table_runtime_statistics
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
-    pub(crate) fn install_pending_statistics_load(
+    pub fn install_pending_statistics_load(
         &self,
-        receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
+        receivers: Vec<std::sync::mpsc::Receiver<tidb_infoschema::sync_load::SyncLoadOutcome>>,
         items: Vec<tidb_model::StatsLoadItem>,
         timeout: std::time::Duration,
     ) {
@@ -3521,7 +3508,7 @@ impl StmtContext {
         });
     }
 
-    pub(crate) fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
+    pub fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
         self.pending_statistics_load
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3562,7 +3549,7 @@ impl StmtContext {
         self
     }
 
-    pub(crate) fn start_prepared_range_tracking(&self) {
+    pub fn start_prepared_range_tracking(&self) {
         let state = self.statement_range_fallback();
         if !state.cache_started.swap(true, Ordering::AcqRel) {
             state
@@ -3583,7 +3570,7 @@ impl StmtContext {
         }
     }
 
-    pub(crate) fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+    pub fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
         &self.statement_range_fallback().handler
     }
 
@@ -3624,22 +3611,22 @@ impl StmtContext {
     /// sequence (`builtin_info.go:1551/1624/1691`): INSERT for `NEXTVAL` and
     /// `SETVAL`, SELECT for `LASTVAL`.
     /// See [`StmtContextSessionState::fk_cascade_table_lock`].
-    pub(crate) fn fk_cascade_table_lock(&self) -> Option<&ForeignKeyCascadeLockCheck> {
+    pub fn fk_cascade_table_lock(&self) -> Option<&ForeignKeyCascadeLockCheck> {
         self.fk_cascade_table_lock.as_ref()
     }
 
     /// The privilege answer the planner asks for a DEFINER view's definer.
-    pub(crate) fn view_definer_privilege(&self) -> Option<&ViewDefinerPrivilegeCheck> {
+    pub fn view_definer_privilege(&self) -> Option<&ViewDefinerPrivilegeCheck> {
         self.view_definer_privilege.as_ref()
     }
 
     /// The privilege answer the planner asks for the session's own account.
-    pub(crate) fn session_privilege(&self) -> Option<&SessionPrivilegeCheck> {
+    pub fn session_privilege(&self) -> Option<&SessionPrivilegeCheck> {
         self.session_privilege.as_ref()
     }
 
     /// Where the planner records the tables this statement locks.
-    pub(crate) fn mdl_related_table(&self) -> Option<&MdlRelatedTableRecorder> {
+    pub fn mdl_related_table(&self) -> Option<&MdlRelatedTableRecorder> {
         self.mdl_related_table.as_ref()
     }
 
@@ -3689,9 +3676,9 @@ impl StmtContext {
     /// Re-parses this statement's own text under its `sql_mode`. Every entry
     /// point that takes SQL text as a string goes through here, so a scanner
     /// flag cannot be honored by one tier and dropped by the next.
-    pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, crate::DriverError> {
+    pub fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, tidb_driver_error::DriverError> {
         tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode(), self.parser_config)
-            .map_err(|e| crate::DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))
+            .map_err(|e| tidb_driver_error::DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))
     }
 
     /// A context for a query, where Go always warns on a zero divisor and
@@ -3707,9 +3694,9 @@ impl StmtContext {
     /// plans such a table's reads under a `UnionScan`
     /// (`tableHasDirtyContent`), through which alone the buffered rows reach
     /// the statement.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     #[must_use]
-    pub(crate) fn for_query_in_dirty_transaction(table_ids: &[i64]) -> Self {
+    pub fn for_query_in_dirty_transaction(table_ids: &[i64]) -> Self {
         let ctx = Self::for_query().with_optimistic_transaction(true);
         for table_id in table_ids {
             ctx.staged_writes().mark_dirty(*table_id);
@@ -3828,23 +3815,23 @@ impl StmtContext {
 
     /// Go `SessionVars.HypoIndexes`, when the session defined any.
     #[must_use]
-    pub fn hypo_indexes(&self) -> Option<&crate::ddl::HypoIndexes> {
+    pub fn hypo_indexes(&self) -> Option<&tidb_table::hypo_index::HypoIndexes> {
         self.hypo_indexes.as_deref()
     }
 
     /// Go `SessionVars.HypoTiFlashReplicas`, when the session defined any.
     #[must_use]
-    pub fn hypo_tiflash_replicas(&self) -> Option<&crate::ddl::HypoTiFlashReplicas> {
+    pub fn hypo_tiflash_replicas(&self) -> Option<&tidb_table::hypo_index::HypoTiFlashReplicas> {
         self.hypo_tiflash_replicas.as_deref()
     }
 
-    pub(crate) fn hypo_indexes_shared(&self) -> Option<Arc<crate::ddl::HypoIndexes>> {
+    pub fn hypo_indexes_shared(&self) -> Option<Arc<tidb_table::hypo_index::HypoIndexes>> {
         self.hypo_indexes.clone()
     }
 
-    pub(crate) fn hypo_tiflash_replicas_shared(
+    pub fn hypo_tiflash_replicas_shared(
         &self,
-    ) -> Option<Arc<crate::ddl::HypoTiFlashReplicas>> {
+    ) -> Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>> {
         self.hypo_tiflash_replicas.clone()
     }
 
@@ -4060,19 +4047,19 @@ impl StmtContext {
 
     /// Go `StatementContext.SetIndexForce` (`stmtctx.go:1034`): the statement
     /// carries a hint-forced access path somewhere.
-    pub(crate) fn set_index_force(&self) {
+    pub fn set_index_force(&self) {
         self.0.index_force.store(true, Ordering::Release);
     }
 
     /// Go `StatementContext.GetIndexForce` (`stmtctx.go:1011`).
     #[must_use]
-    pub(crate) fn get_index_force(&self) -> bool {
+    pub fn get_index_force(&self) -> bool {
         self.0.index_force.load(Ordering::Acquire)
     }
 
     /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
     /// `openExecutor`. Rebuilt pessimistic executors share the latch.
-    pub(crate) fn notify_before_executor_first_run(&self) {
+    pub fn notify_before_executor_first_run(&self) {
         // A cluster pre-lock may have consumed the breakpoint latch already;
         // statement counters have their own once-only lifecycle.
         if let Some(observer) = &self.statement_phase_observer {
@@ -4099,30 +4086,41 @@ impl StmtContext {
         }
     }
 
-    /// Derives and publishes the process-info fields for `physical`, rendering
-    /// the brief binary plan only when this statement publishes one.
-    pub fn publish_physical_process_info(
+    /// The first half of publishing a statement's process info (Go `optimize`
+    /// returning its plan): closes the optimizer duration, and when this
+    /// statement publishes process info at all, notifies the phase observer and
+    /// returns the instant execution is timed from. `None` when nothing is
+    /// published.
+    pub fn begin_physical_process_info(
         &self,
-        physical: &tidb_planner::physical::PhysicalPlan,
-        catalog: &crate::driver::Catalog,
-    ) {
+    ) -> Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)> {
         // Go `optimize` returns its plan here: `DurationOptimizer.Total`.
         self.phase_durations.finish_optimize();
         if self.process_plan_info.is_none() {
-            return;
+            return None;
         }
         if let Some(observer) = &self.statement_phase_observer {
             observer(StatementPhase::PlanReady);
         }
         // Go records the start before `buildExecutor`, so the timeout covers
         // executor construction and TSO waits but not planning.
-        let execution_started = Some((std::time::Instant::now(), chrono::Utc::now()));
-        let mut plan = crate::explain::process_plan_info_with_brief(
-            self,
-            physical,
-            catalog,
-            self.publish_brief_binary_plan,
-        );
+        Some((std::time::Instant::now(), chrono::Utc::now()))
+    }
+
+    /// Whether this statement renders the brief binary plan with its process
+    /// info.
+    #[must_use]
+    pub fn publishes_brief_binary_plan(&self) -> bool {
+        self.publish_brief_binary_plan
+    }
+
+    /// The second half: stamps the rendered `plan` with the statement's own
+    /// state and publishes it.
+    pub fn finish_physical_process_info(
+        &self,
+        mut plan: ProcessPlanInfo,
+        execution_started: Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)>,
+    ) {
         plan.max_execution_time = self.max_execution_time_ms();
         plan.execution_started = execution_started;
         // Go's slow log reads `StmtCtx.GetUsedStatsInfo(false)` and
@@ -4503,7 +4501,7 @@ impl StmtContext {
 
     /// Settings shared by all coprocessor scans in this statement.
     #[must_use]
-    pub fn coprocessor_read_policy(&self) -> &crate::remote_scan::CoprocessorReadPolicy {
+    pub fn coprocessor_read_policy(&self) -> &tidb_kv::remote_scan::CoprocessorReadPolicy {
         &self.coprocessor_read_policy
     }
 
@@ -4746,11 +4744,11 @@ impl StmtContext {
         self
     }
 
-    /// The SQL mode's temporal bits; see [`crate::zero_date`].
+    /// The SQL mode's temporal bits; see [`tidb_table::zero_date`].
     #[must_use]
-    pub fn date_modes(&self) -> crate::zero_date::DateModes {
+    pub fn date_modes(&self) -> tidb_table::zero_date::DateModes {
         let mode = self.session_sql_mode();
-        crate::zero_date::DateModes {
+        tidb_table::zero_date::DateModes {
             no_zero_date: mode.has_no_zero_date_mode(),
             no_zero_in_date: mode.has_no_zero_in_date_mode(),
             allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
@@ -4932,7 +4930,7 @@ impl StmtContext {
     /// which only the slow log and statement summary read.
     pub fn append_planner_note(&self, message: &str) {
         if self.in_explain_stmt
-            && matches!(self.explain_format, Some(crate::ExplainFormat::Verbose))
+            && matches!(self.explain_format, Some(crate::explain_format::ExplainFormat::Verbose))
         {
             self.append_note_parts(1105, message);
         } else {
@@ -5096,18 +5094,18 @@ impl StmtContext {
     }
 
     /// The current transaction's (or, in autocommit, current statement's)
-    /// staged-write tracker, for [`crate::kv_table::KvTable::has_dirty_content`]
-    /// and [`crate::kv_table::KvTable::record_key_is_staged`].
+    /// staged-write tracker, for [`tidb_table::kv_table::KvTable::has_dirty_content`]
+    /// and [`tidb_table::kv_table::KvTable::record_key_is_staged`].
     #[must_use]
-    pub fn staged_writes(&self) -> &crate::kv_table::StagedWrites {
+    pub fn staged_writes(&self) -> &tidb_table::kv_table::StagedWrites {
         &self.staged_writes
     }
 
     /// The shared handle behind [`Self::staged_writes`], for a coprocessor
-    /// context ([`crate::remote_scan::PushdownStatementContext`]) built once
+    /// context ([`tidb_kv::remote_scan::PushdownStatementContext`]) built once
     /// per statement and carried by executors that outlive this borrow.
     #[must_use]
-    pub fn staged_writes_handle(&self) -> Arc<crate::kv_table::StagedWrites> {
+    pub fn staged_writes_handle(&self) -> Arc<tidb_table::kv_table::StagedWrites> {
         Arc::clone(&self.staged_writes)
     }
 
@@ -5234,7 +5232,7 @@ impl StmtContext {
 
     /// Drains local diagnostics without consuming the shared coprocessor sinks.
     #[must_use]
-    pub(crate) fn take_local_warnings(&self) -> Vec<SqlWarn> {
+    pub fn take_local_warnings(&self) -> Vec<SqlWarn> {
         std::mem::take(
             &mut *self
                 .warnings
@@ -5309,7 +5307,7 @@ impl StmtContext {
     /// a second string beside it, exactly as Go's `dropTableObject` hands
     /// `AppendNote` the very `ErrBadTable` it would otherwise have returned --
     /// so the two can never drift.
-    pub(crate) fn append_suppressed(&self, error: &DriverError) {
+    pub fn append_suppressed(&self, error: &DriverError) {
         self.append_mysql_error(WarningLevel::Note, &error.clone().to_mysql_error());
     }
 
@@ -5331,7 +5329,7 @@ impl StmtContext {
 
     /// A warning known by its code and text only (see
     /// [`SqlWarn::with_code`]).
-    pub(crate) fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+    pub fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
         self.push_warning(SqlWarn::with_code(level, code, message));
     }
 
@@ -5388,11 +5386,11 @@ impl StmtContext {
     }
 }
 
-pub(crate) struct PendingStatisticsLoad {
-    pub(crate) receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
-    pub(crate) items: Vec<tidb_model::StatsLoadItem>,
-    pub(crate) timeout: std::time::Duration,
-    pub(crate) started: std::time::Instant,
+pub struct PendingStatisticsLoad {
+    pub receivers: Vec<std::sync::mpsc::Receiver<tidb_infoschema::sync_load::SyncLoadOutcome>>,
+    pub items: Vec<tidb_model::StatsLoadItem>,
+    pub timeout: std::time::Duration,
+    pub started: std::time::Instant,
 }
 
 /// The open [`StmtContext::enter_cop_eval`] scope. Closing it returns warning
@@ -5588,7 +5586,7 @@ pub fn sql_warn_of(level: WarningLevel, error: &tidb_error::mysql::MysqlError) -
 impl Columns for StmtContext {
     /// Go `shouldRemoveColumnNumbers` (`expression/column.go:456`).
     fn remove_column_numbers(&self) -> bool {
-        self.in_explain_stmt && matches!(self.explain_format, Some(crate::ExplainFormat::PlanTree))
+        self.in_explain_stmt && matches!(self.explain_format, Some(crate::explain_format::ExplainFormat::PlanTree))
     }
 
     fn context_id(&self) -> u64 {
@@ -6222,7 +6220,7 @@ mod tests {
 
     #[test]
     fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
-        let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
+        let session = tidb_kv::mem_quota::SessionMemory::new(-1, tidb_kv::mem_quota::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
         let ctx = StmtContext::for_query_with_memory(session.statement());
@@ -6304,7 +6302,7 @@ mod tests {
             .handle_allowed_packet_overflowed("space")
             .expect_err("a strict write must fail rather than warn");
         let wire =
-            crate::DriverError::Exec(crate::executor::ExecError::Eval(error)).to_mysql_error();
+            tidb_driver_error::DriverError::Exec(tidb_driver_error::ExecError::Eval(error)).to_mysql_error();
         assert_eq!(wire.code, 1301);
         assert_eq!(
             wire.message,
@@ -6449,7 +6447,7 @@ mod tests {
     #[test]
     fn reorg_flags_are_not_ddl_default_admission_flags() {
         let strict =
-            StmtContext::for_dml(true, true, false).with_date_modes(crate::zero_date::DateModes {
+            StmtContext::for_dml(true, true, false).with_date_modes(tidb_table::zero_date::DateModes {
                 no_zero_date: true,
                 no_zero_in_date: true,
                 allow_invalid_dates: false,
@@ -6463,7 +6461,7 @@ mod tests {
         assert_ne!(flags, strict.ddl_default_conversion_flags());
 
         let permissive =
-            StmtContext::for_dml(true, false, false).with_date_modes(crate::zero_date::DateModes {
+            StmtContext::for_dml(true, false, false).with_date_modes(tidb_table::zero_date::DateModes {
                 no_zero_date: true,
                 no_zero_in_date: true,
                 allow_invalid_dates: true,
@@ -6478,7 +6476,7 @@ mod tests {
 
     #[test]
     fn prepared_type_flags_preserve_statement_class_and_policy() {
-        let modes = crate::zero_date::DateModes::TIDB_DEFAULT_SQL_MODE;
+        let modes = tidb_table::zero_date::DateModes::TIDB_DEFAULT_SQL_MODE;
         let query = StmtContext::for_query().with_date_modes(modes);
         assert_eq!(query.type_flags().bits(), 30);
         let base = StmtContext::for_dml(true, true, false).with_date_modes(modes);

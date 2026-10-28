@@ -26,7 +26,7 @@ fn lock_tables_follow_go() {
     update_global(|config| config.enable_table_lock = true);
     let mut s1 = Session::new();
     s1.set_connection_id(1);
-    let mut s2 = Session::with_catalog(std::sync::Arc::clone(&s1.catalog));
+    let mut s2 = Session::with_catalog(crate::SharedCatalog::clone(&s1.catalog));
     s2.set_connection_id(2);
     let run = |session: &mut Session, sql: &str| {
         session

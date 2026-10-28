@@ -5154,7 +5154,7 @@ impl IndexJoinLookupExec {
         object: LookupObject,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
-        let statement = crate::remote_scan::pushdown_statement_context(crate::stmt_context::stmt_context_of(decode_context.expression()));
+        let statement = crate::remote_scan::pushdown_statement_context(tidb_stmtctx::stmt_context_of(decode_context.expression()));
         Self::new_with_statement(meta, table, object, decode_context, statement)
     }
 

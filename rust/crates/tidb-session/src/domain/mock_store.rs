@@ -114,7 +114,7 @@ impl MockStoreDomain {
             .factory
             .create_session_4_test(connection_id)
             .map_err(|error| format!("open session {connection_id}: {}", error.message))?;
-        let mut session = Session::unbootstrapped(Arc::new(Mutex::new(tidb_executor::Catalog::new())));
+        let mut session = Session::unbootstrapped(crate::SharedCatalog::new(tidb_executor::Catalog::new()));
         std::mem::swap(&mut session, connection.driver_session_mut());
         remember_catalog_domain(&session.shared_catalog(), self);
         session.node = Some(Box::new(MockStoreConnection {
@@ -227,7 +227,7 @@ fn remember_catalog_domain(catalog: &crate::SharedCatalog, domain: &Arc<MockStor
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     domains.retain(|(catalog, domain)| catalog.strong_count() > 0 && domain.strong_count() > 0);
-    domains.push((Arc::downgrade(catalog), Arc::downgrade(domain)));
+    domains.push((Arc::downgrade(catalog.inner()), Arc::downgrade(domain)));
 }
 
 /// Which domain keeps its accounts in each account table.
@@ -268,7 +268,7 @@ pub(crate) fn domain_of_catalog(catalog: &crate::SharedCatalog) -> Option<Arc<Mo
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     domains.iter().find_map(|(known, domain)| {
         let known = known.upgrade()?;
-        Arc::ptr_eq(&known, catalog)
+        Arc::ptr_eq(&known, catalog.inner())
             .then(|| domain.upgrade())
             .flatten()
     })

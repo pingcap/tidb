@@ -21,8 +21,7 @@
 use crate::RowDecodeContextExt;
 use std::sync::Arc;
 
-mod request;
-pub use request::*;
+pub use tidb_kv::remote_scan::*;
 
 /// The coprocessor seam of one statement, taken from its context.
 #[must_use]

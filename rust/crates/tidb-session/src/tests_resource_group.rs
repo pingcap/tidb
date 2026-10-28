@@ -144,7 +144,7 @@ fn resource_groups_follow_go() {
         error(&mut session, "create user u2 resource group nosuch"),
         (8249, "Unknown resource group 'nosuch'".to_owned())
     );
-    let mut login = session_as(&privs, std::sync::Arc::clone(&session.catalog), "u1", "%");
+    let mut login = session_as(&privs, crate::SharedCatalog::clone(&session.catalog), "u1", "%");
     assert_eq!(
         row_text(login.run("select current_resource_group()")),
         [["rg1"]]

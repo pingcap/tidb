@@ -27,7 +27,7 @@
 //! site left that could forget to. The rows stay in `tidb-session`, which is
 //! the only tier that can see sessions and privileges.
 
-use super::Catalog;
+use crate::Catalog;
 use tidb_datatype::{FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
 use tidb_hack::GoCaseCompare;
 
@@ -8764,10 +8764,10 @@ fn table_columns(name: &str) -> Option<Vec<&'static InfoColumn>> {
 /// those statements knowing that the rows are computed. This does the same:
 /// the object carries the schema, and the rows still come from
 /// [`table_rows`] at query time.
-pub(crate) fn tables(
-) -> std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>> {
+pub fn tables(
+) -> std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>> {
     static TABLES_BUILT: std::sync::OnceLock<
-        std::collections::HashMap<String, std::sync::Arc<super::catalog::TableEntry>>,
+        std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>>,
     > = std::sync::OnceLock::new();
     TABLES_BUILT
         .get_or_init(|| {
@@ -8803,7 +8803,7 @@ fn register_tables(catalog: &mut Catalog) {
         info.max_index_id = i64::try_from(info.indices.len()).unwrap_or(0);
         let table = tidb_table::table_from_meta::cluster_table(
             &info,
-            &crate::storage::MemTableStorage::new(),
+            &tidb_kv::storage::MemTableStorage::new(),
             &tidb_table::table_from_meta::AutoIdSource::Unavailable,
         )
         .unwrap_or_else(|error| panic!("information_schema.{name} cannot load: {error}"));

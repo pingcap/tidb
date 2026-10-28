@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use super::catalog::{Catalog, TableEntry};
+use crate::{Catalog, TableEntry};
 
 /// The database name Go registers these tables under.
 pub const METRICS_SCHEMA: &str = "metrics_schema";
@@ -53,7 +53,7 @@ fn create_table_sql(name: &str, def: &tidb_metadef::metric_table_def::MetricTabl
 }
 
 /// Every metric table as a catalog entry, keyed by name.
-pub(crate) fn tables() -> HashMap<String, Arc<TableEntry>> {
+pub fn tables() -> HashMap<String, Arc<TableEntry>> {
     static TABLES: OnceLock<HashMap<String, Arc<TableEntry>>> = OnceLock::new();
     TABLES
         .get_or_init(|| {
@@ -65,7 +65,7 @@ pub(crate) fn tables() -> HashMap<String, Arc<TableEntry>> {
                 .collect::<Vec<_>>();
             defs.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (index, (name, def)) in defs.into_iter().enumerate() {
-                crate::ddl::run_create_system_table_in(
+                crate::run_create_system_table_in(
                     &create_table_sql(name, def),
                     &mut scratch,
                     METRICS_SCHEMA,

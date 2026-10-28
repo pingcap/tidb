@@ -3654,7 +3654,7 @@ impl ClusterSessionFactory {
             ),
         };
         statistics_loading.attach(&mut built.catalog);
-        let mut session = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
+        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog));
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
             transactions: Arc::clone(&self.transactions),
             global_vars: self.global_vars.clone(),

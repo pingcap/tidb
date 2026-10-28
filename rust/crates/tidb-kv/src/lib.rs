@@ -17,6 +17,7 @@
 //! transaction's staged writes. The coprocessor request a reader builds is
 //! the executor's (`tidb_executor::remote_scan`).
 pub mod region_map;
+pub mod remote_scan;
 pub mod storage;
 pub mod mem_quota;
 pub mod mpp_query;

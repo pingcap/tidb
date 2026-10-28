@@ -17,7 +17,7 @@ use super::*;
 /// The `KvTable` a test asserts structure against.
 fn kv<'a>(catalog: &'a Catalog, name: &str) -> &'a crate::KvTable {
     match catalog.get_table_for_test(name) {
-        Some(crate::driver::catalog::TableEntry::Kv(kv)) => kv,
+        Some(tidb_infoschema::TableEntry::Kv(kv)) => kv,
         _ => panic!("{name} is not a KV table"),
     }
 }
@@ -153,7 +153,7 @@ fn like_a_view_is_wrong_object() {
         .register_view_in(
             "test",
             "v",
-            crate::driver::catalog::ViewDef {
+            tidb_infoschema::ViewDef {
                 name: "v".to_owned(),
                 columns: vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))],
                 select_sql: "SELECT `a` AS `a` FROM `test`.`t`".to_owned(),

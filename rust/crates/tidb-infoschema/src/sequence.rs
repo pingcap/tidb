@@ -15,7 +15,7 @@
 //! Go `SequenceOperatorProvider`'s schema half: a statement's pinned view of
 //! the sequences and the session's LASTVAL state.
 
-use super::*;
+use crate::*;
 
 /// A statement's infoschema view for sequence lookup and session LASTVAL state.
 /// Sharing the schema map is constant-time; names are resolved only when a
@@ -28,7 +28,7 @@ pub struct SequenceSnapshot {
     local_temporary: Vec<(CatalogTableKey, Arc<TableEntry>)>,
     current_db: String,
     /// Go SessionVars.SequenceState is keyed by sequence ID, not its name.
-    pub(crate) last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
+    pub last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
 }
 
 impl SequenceSnapshot {
@@ -50,7 +50,7 @@ impl SequenceSnapshot {
 
     /// Go `getSchemaAndSequence` with the `CurrentDB` default: the schema and
     /// sequence names as written.
-    pub(crate) fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
+    pub fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
         match path {
             [name] => Some((self.current_db.as_str(), name.as_str())),
             [database, name] => Some((database.as_str(), name.as_str())),
@@ -59,7 +59,7 @@ impl SequenceSnapshot {
     }
 
     /// The `(database, name)` Go's sequence errors name.
-    pub(crate) fn key(&self, path: &[String]) -> (String, String) {
+    pub fn key(&self, path: &[String]) -> (String, String) {
         match path {
             [name] => (self.current_db.to_string(), name.go_to_lower()),
             [database, name] => (database.go_to_lower(), name.go_to_lower()),
@@ -77,7 +77,7 @@ impl SequenceSnapshot {
 
     /// Go GetSequenceByName: look up one table in the statement's schema,
     /// then distinguish an absent table (1146) from a wrong object (1347).
-    pub(crate) fn resolve(&self, path: &[String]) -> Result<&SequenceDef, tidb_expr::EvalError> {
+    pub fn resolve(&self, path: &[String]) -> Result<&SequenceDef, tidb_expr::EvalError> {
         let entry = self.schema_and_name(path).and_then(|(database, name)| {
             let key = CatalogTableKey::new(database, name);
             self.local_temporary

@@ -46,17 +46,18 @@ pub use tidb_planner::plan_builder::field_name::{
 
 pub mod access;
 mod agg_build;
-mod catalog;
+mod catalog_ctx;
+#[cfg(test)]
+mod catalog_planner_view_tests;
+#[cfg(test)]
+mod catalog_statistics_tests;
 mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
-pub(crate) use catalog::sync_load;
+pub(crate) use tidb_infoschema::sync_load;
 mod dml;
 mod from;
 mod index_usage_reporter;
-pub mod infoschema_meta;
 mod multi_dml;
-pub mod metricsschema;
-pub mod perfschema;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
 pub use planner_bridge::{dml_visit_info, query_visit_info};
@@ -77,7 +78,9 @@ pub(crate) mod write_cast;
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
 pub(crate) use access::*;
-pub use catalog::*;
+pub use tidb_infoschema::*;
+pub use catalog_ctx::CatalogStatisticsLoad;
+pub(crate) use catalog_ctx::PlannerCatalogContext;
 pub use dml::*;
 pub(crate) use from::*;
 pub use params::*;

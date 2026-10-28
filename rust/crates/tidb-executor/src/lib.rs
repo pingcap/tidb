@@ -139,7 +139,7 @@ pub use tidb_kv::mem_quota;
 mod tests_mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
-pub mod mem_table_retrieval;
+pub use tidb_stmtctx::mem_table_retrieval;
 use tidb_kv::mpp_query;
 #[cfg(test)]
 mod tests_mpp_query;
@@ -180,14 +180,13 @@ mod tests_required_rows_source;
 mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_table_part2_source;
-mod tidb_decode_key;
 pub mod range_group_merge;
 pub mod union_all;
 pub mod slow_query;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod expand;
 pub mod fts_like_rewrite;
-mod plan_trace;
+pub(crate) use tidb_stmtctx::plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
 mod pushdown_blacklist;
@@ -200,7 +199,6 @@ pub mod sort;
 pub mod sort_partition;
 pub mod sort_util;
 pub mod stats_lock;
-mod stmt_context;
 pub use tidb_kv::storage;
 pub mod table_access;
 pub mod table_dual;
@@ -236,7 +234,7 @@ pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warn
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
-pub use driver::infoschema_meta;
+pub use tidb_infoschema::infoschema_meta;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
@@ -268,10 +266,9 @@ pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanCompari
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use stmt_context::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+pub use tidb_stmtctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
-pub use tidb_decode_key::TidbDecodeKeySnapshot;
 pub use tidb_distsql::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
@@ -338,5 +335,6 @@ pub(crate) mod test_temp_storage {
 }
 
 /// Session-owned reference counts over shared advisory-lock services.
-pub mod advisory_lock_state;
+pub use tidb_stmtctx::advisory_lock_state;
 pub mod metrics;
+pub use tidb_infoschema::TidbDecodeKeySnapshot;

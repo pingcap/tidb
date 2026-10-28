@@ -153,7 +153,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     optimize.end();
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
-        ctx.publish_physical_process_info(plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog);
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution(if insert.replace {
@@ -544,7 +544,7 @@ pub(crate) fn fk_spec_for_insert(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
-    let (database, table) = super::catalog::split_table_path(&insert.table, current_db)?;
+    let (database, table) = tidb_infoschema::split_table_path(&insert.table, current_db)?;
     // An assignment the planner cannot resolve is raised by the statement's
     // own planning; the trigger selection falls back to the names as written.
     let on_duplicate_cols =
@@ -575,7 +575,7 @@ pub(crate) fn fk_spec_for_update(
             "multi-table UPDATE plans are not supported yet",
         ));
     };
-    let (database, table) = super::catalog::split_table_path(&table_ref.name, current_db)?;
+    let (database, table) = tidb_infoschema::split_table_path(&table_ref.name, current_db)?;
     Ok(fk_trigger_plan::FkPlanSpec {
         database: database.to_owned(),
         table: table.to_owned(),
@@ -598,7 +598,7 @@ pub(crate) fn fk_spec_for_delete(
             "multi-table DELETE plans are not supported yet",
         ));
     };
-    let (database, table) = super::catalog::split_table_path(&table_ref.name, current_db)?;
+    let (database, table) = tidb_infoschema::split_table_path(&table_ref.name, current_db)?;
     Ok(fk_trigger_plan::FkPlanSpec {
         database: database.to_owned(),
         table: table.to_owned(),
@@ -2437,7 +2437,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     if let Some(plan) = physical_plan.as_deref_mut() {
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
-        ctx.publish_physical_process_info(plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog);
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
@@ -3786,7 +3786,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     if let Some(plan) = physical_plan.as_deref_mut() {
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
-        ctx.publish_physical_process_info(plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog);
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");

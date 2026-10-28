@@ -412,7 +412,47 @@ impl ResultMaterializationAuthority {
 
 /// A process-wide catalog shared by every session, as Go's domain-owned
 /// `infoschema` is shared by every session of a TiDB instance.
-pub type SharedCatalog = Arc<Mutex<Catalog>>;
+#[derive(Clone)]
+pub struct SharedCatalog {
+    catalog: Arc<Mutex<Catalog>>,
+    /// Go `domain.Domain`'s instance plan cache owner, shared by every
+    /// session opened over this catalog; cluster servers install their own
+    /// on each session instead.
+    plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
+}
+
+impl SharedCatalog {
+    /// A domain over `catalog` with a fresh plan-cache owner.
+    #[must_use]
+    pub fn new(catalog: Catalog) -> Self {
+        Self {
+            catalog: Arc::new(Mutex::new(catalog)),
+            plan_cache_invalidation: Arc::default(),
+        }
+    }
+
+    /// Locks the catalog image.
+    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Catalog>> {
+        self.catalog.lock()
+    }
+
+    /// The plan-cache owner every session over this catalog shares.
+    #[must_use]
+    pub fn plan_cache_invalidation(&self) -> Arc<tidb_executor::PlanCacheInvalidation> {
+        Arc::clone(&self.plan_cache_invalidation)
+    }
+
+    /// The catalog image's own handle, for registries keyed by identity.
+    pub(crate) fn inner(&self) -> &Arc<Mutex<Catalog>> {
+        &self.catalog
+    }
+
+    /// Whether both handles are the same domain.
+    #[must_use]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.catalog, &other.catalog)
+    }
+}
 
 /// Go `domainMap`: one domain-level catalog authority per storage UUID.
 ///
@@ -450,10 +490,10 @@ impl DomainMap {
         let Some(store_uuid) = store_uuid else {
             return domains.values().next().cloned().ok_or(NoAvailableDomain);
         };
-        Ok(Arc::clone(
+        Ok(SharedCatalog::clone(
             domains
                 .entry(store_uuid.to_owned())
-                .or_insert_with(|| Arc::new(Mutex::new(Catalog::new()))),
+                .or_insert_with(|| SharedCatalog::new(Catalog::new())),
         ))
     }
 }
@@ -947,10 +987,7 @@ impl Session {
     /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
     /// session opened on it.
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
-        let plan_cache_invalidation = catalog
-            .lock()
-            .expect("catalog poisoned")
-            .plan_cache_invalidation();
+        let plan_cache_invalidation = catalog.plan_cache_invalidation();
         Session {
             catalog,
             account_sql: None,
@@ -2219,7 +2256,7 @@ impl Session {
     /// schema state.
     #[must_use]
     pub fn shared_catalog(&self) -> SharedCatalog {
-        Arc::clone(&self.catalog)
+        SharedCatalog::clone(&self.catalog)
     }
 
     /// The number of `?` markers a statement carries, which
@@ -3093,7 +3130,7 @@ mod session_source_tests {
 
         let opened = domains.get(Some("store-a")).unwrap();
         let available = domains.get(None).unwrap();
-        assert!(std::sync::Arc::ptr_eq(&opened, &available));
+        assert!(opened.ptr_eq(&available));
     }
 
     // Go pkg/session/session_test.go::TestMemArbitratorSession.

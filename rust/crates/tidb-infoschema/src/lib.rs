@@ -23,8 +23,12 @@
 //! table's scope.
 
 pub use tidb_table::sequence::SequenceDef;
-use super::*;
-use crate::kv_table::TableCharset;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_table::kv_table::KvTable;
+use tidb_driver_error::DriverError;
+use tidb_table::kv_table::TableCharset;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
@@ -44,13 +48,13 @@ fn next_metadata_version() -> u64 {
 /// fields. Construct once when resolving retained plan metadata; raw-name
 /// catalog entrypoints normalize through the same constructor.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CatalogTableKey {
+pub struct CatalogTableKey {
     database: String,
     table: String,
 }
 
 impl CatalogTableKey {
-    pub(crate) fn new(database: &str, table: &str) -> Self {
+    pub fn new(database: &str, table: &str) -> Self {
         Self {
             database: database.go_to_lower(),
             table: table.go_to_lower(),
@@ -58,18 +62,23 @@ impl CatalogTableKey {
     }
 }
 
-pub(crate) mod sync_load;
+pub mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
-mod key_info;
-mod planner_view;
-mod sequence;
+pub mod key_info;
+pub mod infoschema_meta;
+pub mod metricsschema;
+pub mod perfschema;
+pub mod tidb_decode_key;
+pub use tidb_decode_key::TidbDecodeKeySnapshot;
+pub mod planner_view;
+pub mod sequence;
 pub use sequence::SequenceSnapshot;
-pub(crate) use planner_view::{PlannerCatalog, PlannerSchemaView};
-mod statistics;
-mod statistics_access;
-mod temporary;
+pub use planner_view::{PlannerCatalog, PlannerSchemaView, MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
+pub mod statistics;
+pub mod statistics_access;
+pub mod temporary;
 pub use statistics::{PseudoStatsTable, StatisticsSource, StatisticsView};
-pub use statistics_access::StatisticsItemLoader;
+pub use statistics_access::{enqueue_sync_load_failures, StatisticsItemLoader};
 use statistics_access::StatisticsCache;
 
 /// An in-memory table: named, typed columns plus row values.
@@ -94,7 +103,7 @@ pub fn split_table_path_pub<'a>(
 
 /// `current_db` is the session's selected schema (Go `SessionVars.CurrentDB`);
 /// an empty one is Go's `ErrNoDB`.
-pub(crate) fn split_table_path<'a>(
+pub fn split_table_path<'a>(
     path: &'a [String],
     current_db: &'a str,
 ) -> Result<(&'a str, &'a str), DriverError> {
@@ -140,8 +149,6 @@ struct Database {
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct Catalog {
-    /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
-    plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
@@ -196,7 +203,7 @@ pub struct Catalog {
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
     /// Go InfoSchema's table-ID index. Names resolve against this image's
     /// current entries without retaining a second copy of table storage.
-    table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
+    pub table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
     /// Go `SessionExtendedInfoSchema.LocalTemporaryTables`: the LOCAL
     /// temporary tables of the session running a statement, attached for
     /// that statement. A name or an id resolves here before the shared
@@ -262,14 +269,14 @@ impl Catalog {
     /// The memory schemas with none of their tables: the scratch Go's
     /// init-time builders (`infoschema.init`, `perfschema.Init`, the metric
     /// tables) fill once per process.
-    pub(crate) fn memory_schema_scratch() -> Self {
+    pub fn memory_schema_scratch() -> Self {
         Self::virtual_schemas(false)
     }
 
     /// Go `RegisterVirtualTable` for a memory schema whose `tables` its
     /// init-time builder made: the schema joins every infoschema the DDL
     /// reads (`TableByName`), as Go's `initVirtualTables` adds it.
-    pub(crate) fn register_virtual_schema(
+    pub fn register_virtual_schema(
         db_id: i64,
         name: &str,
         tables: &std::collections::HashMap<String, Arc<TableEntry>>,
@@ -297,7 +304,7 @@ impl Catalog {
     }
 
     /// The tables of `database` (a lowercase key), by stored name.
-    pub(crate) fn tables_of(
+    pub fn tables_of(
         &self,
         database: &str,
     ) -> impl Iterator<Item = (&String, &Arc<TableEntry>)> {
@@ -323,7 +330,7 @@ impl Catalog {
                 // every name lookup; each schema's tables are built once per
                 // process, as Go's init does.
                 tables: if with_memory_tables {
-                    super::infoschema_meta::tables()
+                    crate::infoschema_meta::tables()
                 } else {
                     HashMap::new()
                 },
@@ -334,7 +341,7 @@ impl Catalog {
         // storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
         let (metric_tables, performance_tables) = if with_memory_tables {
-            (super::metricsschema::tables(), super::perfschema::tables())
+            (crate::metricsschema::tables(), crate::perfschema::tables())
         } else {
             (HashMap::new(), HashMap::new())
         };
@@ -365,7 +372,6 @@ impl Catalog {
             resource_groups: HashMap::new(),
             version: 0,
             metadata_version: next_metadata_version(),
-            plan_cache_epoch: Arc::default(),
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
@@ -471,8 +477,8 @@ impl TableEntry {
     /// into is excluded once, at the source. Its physical offset is unchanged
     /// by the exclusion because hidden columns are the tail (see
     /// [`crate::expression_index`]).
-    pub(crate) fn columns(&self) -> impl Iterator<Item = (&str, &FieldType)> {
-        let (pairs, kv): (&[(String, FieldType)], &[crate::kv_table::KvColumn]) = match self {
+    pub fn columns(&self) -> impl Iterator<Item = (&str, &FieldType)> {
+        let (pairs, kv): (&[(String, FieldType)], &[tidb_table::kv_table::KvColumn]) = match self {
             TableEntry::Mem(mem) => (&mem.columns, &[]),
             TableEntry::Kv(kv) => (&[], kv.visible_columns()),
             TableEntry::View(view) => (&view.columns, &[]),
@@ -491,7 +497,7 @@ impl TableEntry {
     }
 
     /// An owned schema for consumers that retain or modify column types.
-    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
+    pub fn column_list(&self) -> Vec<(String, FieldType)> {
         self.columns()
             .map(|(name, field_type)| (name.to_owned(), field_type.clone()))
             .collect()
@@ -661,7 +667,7 @@ impl Catalog {
         let database = self.databases.get(&database.go_to_lower())?;
         let is_information_schema = database
             .name
-            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA);
+            .go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA);
         let mut names: Vec<String> = database
             .tables
             .iter()
@@ -672,7 +678,7 @@ impl Catalog {
                 // A memory table carries no name of its own: its key, or the
                 // canonical spelling of an information_schema table.
                 TableEntry::Mem(_) if is_information_schema => Some(
-                    crate::driver::infoschema_meta::canonical_table_name(key)
+                    crate::infoschema_meta::canonical_table_name(key)
                         .map_or_else(|| key.clone(), str::to_owned),
                 ),
                 TableEntry::Mem(_) => Some(key.clone()),
@@ -876,16 +882,16 @@ impl Catalog {
         }
     }
 
-    pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+    pub fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.get_by_key(&CatalogTableKey::new(database, name))
     }
 
-    pub(crate) fn get_by_key(&self, key: &CatalogTableKey) -> Option<&TableEntry> {
+    pub fn get_by_key(&self, key: &CatalogTableKey) -> Option<&TableEntry> {
         self.table_handle_ref(key).map(|entry| &**entry)
     }
 
     /// Retains immutable statement metadata without cloning the table or its store.
-    pub(crate) fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
+    pub fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
         self.table_handle_ref(key).cloned()
     }
 
@@ -916,7 +922,7 @@ impl Catalog {
     /// Borrows current table metadata without copying names or resolving
     /// them through the catalog again. Callers impose ordering only on the
     /// entries they need; hash-map traversal itself is unordered.
-    pub(crate) fn table_entries(&self) -> impl Iterator<Item = (&str, &str, &TableEntry)> {
+    pub fn table_entries(&self) -> impl Iterator<Item = (&str, &str, &TableEntry)> {
         self.databases.values().flat_map(|database| {
             database
                 .tables
@@ -933,7 +939,7 @@ impl Catalog {
     /// foreign key has existed, retaining `true` is safe: it may perform one
     /// extra table-path scan after the constraint is dropped, but never skips
     /// a required referential check.
-    pub(crate) fn has_foreign_keys(&self) -> bool {
+    pub fn has_foreign_keys(&self) -> bool {
         self.foreign_keys_present
     }
 
@@ -1017,7 +1023,7 @@ impl Catalog {
 
     /// A mutable handle for the referential-integrity paths, which reach
     /// tables the statement did not name.
-    pub(crate) fn get_mut_for_foreign_key(
+    pub fn get_mut_for_foreign_key(
         &mut self,
         database: &str,
         name: &str,
@@ -1032,7 +1038,7 @@ impl Catalog {
     /// every write path goes through here, so a statement that ends up
     /// changing nothing still bumps it. That can refuse a commit Go would
     /// allow, never the reverse.
-    pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
+    pub fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.planner_view.take();
         self.get_rows_mut_in(database, name)
     }
@@ -1043,7 +1049,7 @@ impl Catalog {
     /// metadata only -- Go's `InfoSchema` does not move when rows do. A
     /// caller must not change the table's schema through this handle; a
     /// schema change takes [`Catalog::table_mut_in`].
-    pub(crate) fn get_rows_mut_in(
+    pub fn get_rows_mut_in(
         &mut self,
         database: &str,
         name: &str,
@@ -1065,11 +1071,6 @@ impl Catalog {
         self.version
     }
 
-    /// Shared invalidation owner for embedded sessions over this catalog.
-    /// Cluster servers install their domain owner directly on each session.
-    pub fn plan_cache_invalidation(&self) -> Arc<super::plan_cache::PlanCacheInvalidation> {
-        Arc::clone(&self.plan_cache_epoch)
-    }
 
     /// Process-local identity of this schema metadata image. Unlike a local
     /// mutation count, this cannot collide when a cluster catalog is rebuilt
@@ -1162,7 +1163,7 @@ impl Catalog {
     /// the statement's InfoSchema. The cached Rust physical tree owns the
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
-    pub(crate) fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
+    pub fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
         self.kv_table_by_physical_id(table_id)
             .map(|(_, table)| table)
             .filter(|table| table.table_id == table_id)
@@ -1173,7 +1174,7 @@ impl Catalog {
     /// for a partition's id): the session's LOCAL temporary table with that
     /// id, else the shared schema's table owning it, with its folded
     /// database.
-    pub(super) fn kv_table_by_physical_id(
+    pub fn kv_table_by_physical_id(
         &self,
         physical_id: i64,
     ) -> Option<(&str, &Arc<crate::KvTable>)> {
@@ -1234,7 +1235,7 @@ impl Catalog {
     /// no `KvTable` clone at all, so no `staged_record_keys` deep copy
     /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
     /// since restricting reads to one partition needs an independent copy.
-    pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
+    pub fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
         let (_, table) = self.kv_table_by_physical_id(physical_id)?;
         let mut physical = Arc::clone(table);
         if table.table_id != physical_id {
@@ -1244,7 +1245,7 @@ impl Catalog {
     }
 
     /// Resolves a logical or partition table ID to its owning database name.
-    pub(crate) fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
+    pub fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
         let (database, _) = self.kv_table_by_physical_id(physical_id)?;
         Some(self.databases.get(database)?.name.as_str())
     }
@@ -1347,4 +1348,46 @@ impl Catalog {
     pub fn contains(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
+}
+
+/// A memory schema's table built from its `CREATE TABLE` text, as Go's
+/// `perfschema.Init` builds it: `BuildTableInfoFromAST` under
+/// `metabuild.NewNonStrictContext()` (so `DEFAULT '0000-00-00 ...'` is
+/// admitted), the reserved `table_id`, column ids numbered from 1, then
+/// loaded like any table (`TableFromMeta`) and registered in `database`.
+pub fn run_create_system_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    database: &str,
+    table_id: i64,
+) -> Result<(), DriverError> {
+    let stmt = tidb_parser::parse(sql)
+        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
+    let tidb_ast::Stmt::Ddl(ddl) = &stmt else {
+        return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else {
+        return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
+    };
+    let mut info = tidb_ddl_build::table_info_build::build_table_info(
+        create,
+        tidb_mysql::charset::DefaultCharset,
+        "",
+    )
+    .map_err(|error| DriverError::Mysql(error.to_mysql_error()))?;
+    info.id = table_id;
+    for (offset, column) in info.columns.iter_deref().enumerate() {
+        column.write().id = i64::try_from(offset).unwrap_or(0) + 1;
+    }
+    info.db_id = catalog.database_id(database).unwrap_or_default();
+    info.state = tidb_model::SchemaState::PUBLIC;
+    let auto_ids = tidb_ddl_build::table_from_meta::LocalTableAutoIds::default();
+    let table = tidb_ddl_build::table_from_meta::cluster_table(
+        &info,
+        &tidb_kv::storage::MemTableStorage::new(),
+        &tidb_ddl_build::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
+    )
+    .map_err(DriverError::unsupported)?;
+    let name = info.name.original().to_owned();
+    catalog.register_kv_in(database, &name, table)
 }

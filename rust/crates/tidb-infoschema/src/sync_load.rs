@@ -26,7 +26,7 @@ const RETRY_COUNT: usize = 1;
 
 /// Go `GetSyncLoadConcurrencyByCPU`.
 #[must_use]
-pub(crate) fn concurrency_by_cpu() -> usize {
+pub fn concurrency_by_cpu() -> usize {
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
     match cores {
         0..=8 => 5,
@@ -43,7 +43,7 @@ pub(crate) fn concurrency_by_cpu() -> usize {
 /// its optional load error is diagnostic and does not make
 /// `SyncWaitStatsLoad` fail.
 #[derive(Clone, Debug)]
-pub(crate) enum SyncLoadOutcome {
+pub enum SyncLoadOutcome {
     TransportError(String),
     Item {
         item: tidb_model::TableItemID,
@@ -136,7 +136,7 @@ impl Drop for StatisticsLoadWorkers {
     }
 }
 
-pub(crate) struct SyncLoadService {
+pub struct SyncLoadService {
     pool: Arc<StatisticsLoadWorkers>,
     loader: Arc<dyn StatisticsItemLoader>,
     cache: Weak<StatisticsCache>,
@@ -158,7 +158,7 @@ impl SyncLoadService {
         )
     }
 
-    pub(super) fn with_pool(
+    pub fn with_pool(
         loader: Arc<dyn StatisticsItemLoader>,
         cache: Weak<StatisticsCache>,
         pool: Arc<StatisticsLoadWorkers>,
@@ -170,7 +170,7 @@ impl SyncLoadService {
         })
     }
 
-    pub(crate) fn request(
+    pub fn request(
         self: &Arc<Self>,
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
@@ -389,7 +389,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if !self.delay.is_zero() {
@@ -432,7 +432,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String> {
             self.started.send(()).expect("test receives worker start");
             self.release
                 .lock()
