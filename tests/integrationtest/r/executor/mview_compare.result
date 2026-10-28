@@ -10,10 +10,13 @@ insert into t_compare values (null, 10), (1, 20), (1, 30);
 create materialized view log on t_compare (a, b);
 create materialized view mv_compare (_Differ_type_, s, cnt)
 as select a, sum(b), count(*) from t_compare group by a;
-compare materialized view mv_compare as of timestamp now(6);
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+compare materialized view mv_compare as of timestamp @compare_ts;
 compare result
 There are no differences result in 0 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
-compare materialized view mv_compare as of timestamp now(6) output into table mv_compare_output;
+compare materialized view mv_compare as of timestamp @compare_ts output into table mv_compare_output;
 select count(*) from mv_compare_output;
 count(*)
 0
@@ -28,15 +31,23 @@ _Differ_type_1
 show index from mv_compare_output;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 insert into t_compare values (1, 40), (2, 50);
-compare materialized view mv_compare as of timestamp now(6);
+set @compare_ts = now(6);
+do sleep(0.1);
+compare materialized view mv_compare as of timestamp @compare_ts;
 compare result
 There are no differences result in 0 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
 refresh materialized view mv_compare fast;
-compare materialized view mv_compare as of timestamp now(6);
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+compare materialized view mv_compare as of timestamp @compare_ts;
 compare result
 There are no differences result in 0 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
 refresh materialized view mv_compare complete out of place;
-compare materialized view mv_compare as of timestamp now(6);
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+compare materialized view mv_compare as of timestamp @compare_ts;
 compare result
 There are no differences result in 0 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
 compare materialized view mv_compare as of timestamp now(6) output into table mv_compare_output;

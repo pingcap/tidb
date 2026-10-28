@@ -24,8 +24,8 @@ import (
 )
 
 // MarkTouchedRowsByColumn compares old/new values and sets the bit for rows whose value changed.
-// Values are compared using their binary representation; this matches the mlog touched-column
-// contract, which must not apply the session's SQL collation rules.
+// String values use binary equality to preserve the mlog touched-column contract,
+// independent of the session's SQL collation rules.
 func MarkTouchedRowsByColumn(
 	updateRows []int,
 	updateTouchedBitmap []uint8,
@@ -56,6 +56,10 @@ func MarkTouchedRowsByColumn(
 		changed := oldNull != newNull
 		if !changed && !oldNull && !newNull {
 			switch fieldType.GetType() {
+			case mysql.TypeNewDecimal:
+				// Equal DECIMAL values can have different internal representations.
+				changed = !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) &&
+					oldCol.GetDecimal(rowIdx).Compare(newCol.GetDecimal(rowIdx)) != 0
 			case mysql.TypeEnum:
 				changed = oldCol.GetEnum(rowIdx).Name != newCol.GetEnum(rowIdx).Name
 			case mysql.TypeSet:

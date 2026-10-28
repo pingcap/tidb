@@ -1950,6 +1950,57 @@ func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
 	require.Equal(t, []uint8{1, 1, 0, 1}, updateTouchedBitmap)
 }
 
+func TestMarkUpdateTouchedRowsByColumnDecimalValueComparison(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	ft.SetFlen(32)
+	ft.SetDecimal(0)
+
+	// Stored values and aggregate results can use different internal precisions.
+	compact := types.NewDecFromStringForTest("50")
+	encoded, err := compact.ToBin(ft.GetFlen(), ft.GetDecimal())
+	require.NoError(t, err)
+	padded := new(types.MyDecimal)
+	_, err = padded.FromBin(encoded, ft.GetFlen(), ft.GetDecimal())
+	require.NoError(t, err)
+	require.Zero(t, padded.Compare(compact))
+	require.NotEqual(t, padded.GetDigitsInt(), compact.GetDigitsInt())
+
+	rows := [][2]*types.MyDecimal{
+		{padded, compact},
+		{compact, padded},
+		{compact, compact},
+		{padded, padded},
+		{padded, types.NewDecFromStringForTest("51")},
+		{nil, nil},
+		{nil, compact},
+		{compact, nil},
+	}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+	for _, row := range rows {
+		for colIdx, value := range row {
+			if value == nil {
+				chk.AppendNull(colIdx)
+			} else {
+				chk.AppendMyDecimal(colIdx, value)
+			}
+		}
+	}
+	updateTouchedBitmap := make([]uint8, len(rows))
+	err = executil.MarkTouchedRowsByColumn(
+		[]int{0, 1, 2, 3, 4, 5, 6, 7},
+		updateTouchedBitmap,
+		1,
+		0,
+		chk.Column(0),
+		chk.Column(1),
+		ft,
+		false,
+		"aggregate change",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0, 0, 0, 0, 1, 0, 1, 1}, updateTouchedBitmap)
+}
+
 func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
 	enumFT := types.NewFieldType(mysql.TypeEnum)
 	enumFT.SetCharset("utf8mb4")
