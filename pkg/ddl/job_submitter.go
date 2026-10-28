@@ -803,7 +803,13 @@ func job2TableIDs(jobW *JobWrapper) string {
 		args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 		intest.Assert(args != nil)
 		if args != nil {
-			ids := append([]int64{jobW.TableID, args.ShadowTableID}, args.InvolvingTableIDs...)
+			// By design, MDL only waits on the physical MV/MLog objects replaced by
+			// cutover. InvolvingSchemaInfo and InvolvingTableIDs cover the broader
+			// metadata write set for DDL serialization and worker validation.
+			// Upstream objects only change reverse references; children keep their
+			// physical storage, and child refresh reads the parent MV/MLog already
+			// covered by this MDL set.
+			ids := []int64{jobW.TableID, args.ShadowTableID}
 			if args.OldMLogID != 0 {
 				ids = append(ids, args.OldMLogID, args.NewMLogID)
 			}

@@ -365,6 +365,13 @@ Current execution model:
      flow without waiting for children to recover.
 5. On success, finalize history as `success`; on failure, keep the old MV serving path unchanged and do best-effort shadow cleanup.
 
+By design, cutover's MDL wait set (`mysql.tidb_ddl_job.table_ids`) contains only the old MV,
+shadow MV, and optional old/new output MLogs. The DDL scheduling and worker-validation sets
+remain broader. Upstream sources/logs only change reverse references; direct children keep
+their physical storage and row layout, while child refresh reads the parent MV/MLog already
+covered by the MDL set. Adding all these metadata dependencies to `table_ids` would unnecessarily
+make cutover wait for transactions on otherwise unchanged physical objects.
+
 #### Next design evolution: protected shadow table
 
 The current model leaves one known gap: the shadow table is born as a normal physical table,

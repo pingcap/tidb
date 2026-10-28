@@ -599,8 +599,14 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	const (
 		oldMViewID   int64  = 900000000000000020
 		shadowTblID  int64  = 900000000000000022
+		oldMLogID    int64  = 900000000000000024
+		sourceID     int64  = 900000000000000026
+		sourceMLogID int64  = 900000000000000028
+		childMViewID int64  = 900000000000000030
 		buildReadTSO uint64 = 12345
 	)
+	// The metadata write set includes upstream sources/logs and children, but MDL
+	// only waits on the physical MV/MLog instances replaced by cutover.
 	jobW := ddl.NewJobWrapperWithArgs(
 		&model.Job{
 			Version:    model.GetJobVerInUse(),
@@ -610,11 +616,14 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 			TableID:    oldMViewID,
 		},
 		&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-			OldMViewID:        oldMViewID,
-			ShadowTableID:     shadowTblID,
-			BuildReadTSO:      buildReadTSO,
-			OldMLogID:         900000000000000024,
-			InvolvingTableIDs: []int64{oldMViewID, shadowTblID, 900000000000000024, 900000000000000025},
+			OldMViewID:    oldMViewID,
+			ShadowTableID: shadowTblID,
+			BuildReadTSO:  buildReadTSO,
+			OldMLogID:     oldMLogID,
+			InvolvingTableIDs: []int64{
+				oldMViewID, shadowTblID, oldMLogID,
+				sourceID, sourceMLogID, childMViewID,
+			},
 		},
 		false,
 	)
@@ -628,12 +637,11 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	tableIDs := strings.Split(rows[0][0].(string), ",")
 	args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 	require.Positive(t, args.NewMLogID)
-	require.Len(t, tableIDs, 5)
+	require.Len(t, tableIDs, 4)
 	require.ElementsMatch(t, []string{
 		strconv.FormatInt(oldMViewID, 10),
 		strconv.FormatInt(shadowTblID, 10),
-		"900000000000000024",
-		"900000000000000025",
+		strconv.FormatInt(oldMLogID, 10),
 		strconv.FormatInt(args.NewMLogID, 10),
 	}, tableIDs)
 	var persisted model.Job
