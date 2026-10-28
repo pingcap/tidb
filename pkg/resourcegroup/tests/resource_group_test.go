@@ -386,7 +386,6 @@ func TestResourceGroupBasic(t *testing.T) {
 		require.Equal(t, oldPDGroup.GetPriority(), currentPDGroup.GetPriority())
 		require.Equal(t, oldPDGroup.GetRUSettings().GetRU().GetSettings().GetFillRate(), currentPDGroup.GetRUSettings().GetRU().GetSettings().GetFillRate())
 	})
-
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
