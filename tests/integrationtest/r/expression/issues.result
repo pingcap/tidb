@@ -3461,3 +3461,23 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
+create table view_mod_t1(c1 int);
+create table view_mod_t3(c0 int);
+insert into view_mod_t1 values(10);
+insert into view_mod_t3 values(9);
+with view_mod_v as(select(select view_mod_t1.c1 from view_mod_t1 where mod(view_mod_t1.c1,view_mod_t3.c0+1)=0) c1 from view_mod_t3 join view_mod_t1 on true) select c1 from view_mod_v;
+c1
+10
+create view view_mod_v as(select(select view_mod_t1.c1 from view_mod_t1 where mod(view_mod_t1.c1,view_mod_t3.c0+1)=0) c1 from view_mod_t3 join view_mod_t1 on true);
+select c1 from view_mod_v;
+c1
+10
+create view view_mod_arithmetic as select mod(c1,c0+2) as a,-mod(c1,c0+2) as b,mod(c1+2,mod(c0,4)+1) as c,c1%(c0+2) as d from view_mod_t1,view_mod_t3;
+select * from view_mod_arithmetic;
+a	b	c	d
+10	-10	0	10
+select mod(c1,c0+2),-mod(c1,c0+2),mod(c1+2,mod(c0,4)+1),c1%(c0+2) from view_mod_t1,view_mod_t3;
+mod(c1,c0+2)	-mod(c1,c0+2)	mod(c1+2,mod(c0,4)+1)	c1%(c0+2)
+10	-10	0	10
+drop view view_mod_arithmetic,view_mod_v;
+drop table view_mod_t1,view_mod_t3;
