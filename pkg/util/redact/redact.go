@@ -342,7 +342,8 @@ func redactLockInfoKeys(lock *kvrpcpb.LockInfo) {
 }
 
 // RegionError formats a region error without modifying it. When redaction is enabled,
-// keys and free-form messages are masked while internal diagnostic metadata is preserved.
+// keys and the top-level message are masked while internal diagnostic metadata,
+// including nested reasons and messages, is preserved.
 func RegionError(regionErr *errorpb.Error) string {
 	if regionErr == nil || !NeedRedact() {
 		return regionErr.String()
@@ -354,13 +355,9 @@ func RegionError(regionErr *errorpb.Error) string {
 		}
 		return redactedKey
 	}
-	maskText := func(text string) string {
-		if text == "" {
-			return text
-		}
-		return "?"
+	if redacted.Message != "" {
+		redacted.Message = "?"
 	}
-	redacted.Message = maskText(redacted.Message)
 	if e := redacted.KeyNotInRegion; e != nil {
 		e.Key = maskKey(e.Key)
 		e.StartKey = maskKey(e.StartKey)
@@ -382,21 +379,6 @@ func RegionError(regionErr *errorpb.Error) string {
 		for i := range e.Keys {
 			e.Keys[i] = maskKey(e.Keys[i])
 		}
-	}
-	if e := redacted.ServerIsBusy; e != nil {
-		e.Reason = maskText(e.Reason)
-	}
-	if e := redacted.ReadIndexNotReady; e != nil {
-		e.Reason = maskText(e.Reason)
-	}
-	if e := redacted.DiskFull; e != nil {
-		e.Reason = maskText(e.Reason)
-	}
-	if e := redacted.UndeterminedResult; e != nil {
-		e.Message = maskText(e.Message)
-	}
-	if e := redacted.IncompatibleRequest; e != nil {
-		e.Message = maskText(e.Message)
 	}
 	if result := redacted.String(); result != "" {
 		return result
