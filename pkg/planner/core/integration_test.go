@@ -2728,3 +2728,56 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestIssue72090(t *testing.T) {
+	// issue 72090: inet_aton('') evaluates to null, so the outer where clause must
+	// reject the row produced by the scalar aggregate. pushing the predicate below
+	// max(c0) filters all input rows, but the scalar aggregate still returns one
+	// row, causing the outer query to return an incorrect count of 1 instead of 0.
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c0 int)")
+	tk.MustExec("insert into t values (1), (2)")
+
+	tk.MustQuery(`
+		select count(*)
+		from (select max(c0) as m from t) d
+		where inet_aton('')
+	`).Check(testkit.Rows("0"))
+
+	// this basically checks the query plan to ensure that the selection
+	// is NOT pushed below the aggregation, which would cause the query to return 1 instead of 0.
+	failingPlan := fmt.Sprint(tk.MustQuery(`
+		explain format = 'plan_tree'
+		select *
+		from (select max(c0) as m from t) d
+		where inet_aton('')
+	`).Rows())
+
+	failingAggPos := strings.Index(failingPlan, "Agg")
+	failingSelectionPos := strings.Index(failingPlan, "Selection")
+
+	require.NotEqual(t, -1, failingAggPos, failingPlan)
+	require.NotEqual(t, -1, failingSelectionPos, failingPlan)
+	require.Less(t, failingSelectionPos, failingAggPos, failingPlan)
+
+	// this basically checks the query plan to ensure that the selection
+	// is pushed below the aggregation, which is correct for a group by query.
+	groupByPlan := fmt.Sprint(tk.MustQuery(`
+		explain format = 'plan_tree'
+		select c0, count(*) from t
+		group by c0
+		having c0 > 1
+	`).Rows())
+
+	groupByAggPos := strings.Index(groupByPlan, "Agg")
+	groupBySelectionPos := strings.Index(groupByPlan, "Selection")
+
+	require.NotEqual(t, -1, groupByAggPos, groupByPlan)
+	require.NotEqual(t, -1, groupBySelectionPos, groupByPlan)
+	require.Less(t, groupByAggPos, groupBySelectionPos, groupByPlan)
+}
