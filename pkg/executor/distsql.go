@@ -87,6 +87,10 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
+	// adaptiveLimitReservation is the number of admitted handles owned by this
+	// task. It must be completed or aborted, then cleared, on every exit path.
+	adaptiveLimitReservation int
+
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
 	doneCh        chan error
@@ -95,10 +99,8 @@ type lookupTableTask struct {
 	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
+	// Values are []int: one position for normal lookup, all positions for ADMIN CHECK.
 	indexOrder *kv.HandleMap
-	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
-	// the same handle of index has multiple values.
-	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
 	partitionTable table.PhysicalTable
@@ -116,6 +118,14 @@ type lookupTableTask struct {
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
 	memUsage   int64
 	memTracker *memory.Tracker
+}
+
+func (task *lookupTableTask) abortAdaptiveLimitReservation(controller *exec.AdaptiveLimitController) {
+	reservation := task.adaptiveLimitReservation
+	task.adaptiveLimitReservation = 0
+	if controller != nil && reservation > 0 {
+		controller.AbortLookup(reservation)
+	}
 }
 
 func (task *lookupTableTask) Len() int {
@@ -246,6 +256,11 @@ type IndexReaderExecutor struct {
 
 	paging bool
 
+	// rowCountUpperBound is a proven upper bound of the number of rows the ranges can return.
+	// It is only valid when hasRowCountUpperBound is true.
+	rowCountUpperBound    uint64
+	hasRowCountUpperBound bool
+
 	keepOrder bool
 	desc      bool
 	// byItems only for partition table with orderBy + pushedLimit
@@ -326,6 +341,15 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// The bound only matters for a Scan -> Limit DAG with a small limit that is not smaller than the number of
+	// ranges. When partRangeMap is set, e.ranges is not what is sent to each partition, so no bound is derived.
+	e.hasRowCountUpperBound = false
+	if limit, ok := distsql.ScanLimitWithMinimalConcurrency(e.dagPB); ok && uint64(len(e.ranges)) <= limit &&
+		len(e.partRangeMap) == 0 && e.table != nil {
+		e.rowCountUpperBound, e.hasRowCountUpperBound = ranger.RowCountUpperBoundByUniqueKey(
+			e.rctx.TypeCtx, e.table.Meta(), e.idxCols, e.colLens, e.ranges)
+	}
+
 	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
@@ -365,9 +389,13 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
-	builder.SetKeyRanges(r).
-		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+	builder.SetKeyRanges(r)
+	if e.hasRowCountUpperBound {
+		builder.SetDAGRequestWithRowCountUpperBound(e.dagPB, e.rowCountUpperBound)
+	} else {
+		builder.SetDAGRequest(e.dagPB)
+	}
+	builder.SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -513,6 +541,13 @@ type IndexLookUpExecutor struct {
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
+
+	// adaptiveLimitController is shared with the owning LimitExec and is non-nil
+	// only for an eligible reader. The LimitExec controls its lifecycle.
+	adaptiveLimitController *exec.AdaptiveLimitController
+	// Only direct IndexLookUp reports the adaptive snapshot here. IndexJoin
+	// reports the shared snapshot through its own runtime stats.
+	reportAdaptiveLimitStats bool
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -753,6 +788,11 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
 		needSpawn: func(workers, tasks uint32) bool {
+			if e.adaptiveLimitController != nil {
+				// A small admission window may expose only one lookup task. Spawn
+				// its table worker immediately instead of waiting for a second task.
+				return workers < uint32(e.indexLookupConcurrency) && tasks > 0
+			}
 			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
 		},
 	}
@@ -884,8 +924,19 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxBatchSize:    e.indexLookupSize,
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
+			memTracker:      tracker,
 		}
-		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
+		defer worker.releasePendingHandles()
+		if e.indexLookupConcurrency <= 1 {
+			worker.adaptiveLimitController = nil
+		} else {
+			worker.adaptiveLimitController = e.adaptiveLimitController
+		}
+		if worker.adaptiveLimitController != nil {
+			worker.batchSize = worker.adaptiveLimitController.SuggestedBatchSize(worker.maxBatchSize)
+		} else {
+			worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
+		}
 		indexTypes := e.getRetTpsForIndexReader()
 
 		if !needMerge {
@@ -1190,6 +1241,10 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
+			if e.reportAdaptiveLimitStats && e.adaptiveLimitController != nil {
+				snapshot := e.adaptiveLimitController.Snapshot()
+				e.stats.adaptiveLimitSnapshot = &snapshot
+			}
 			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			indexScanCopTasks, _ := e.stmtRuntimeStatsColl.GetCopCountAndRows(e.getIndexPlanRootID())
 			if e.indexLookUpPushDown {
@@ -1264,6 +1319,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			numToAppend := min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
+			e.completeAdaptiveLookupTask(resultTask)
 			if req.IsFull() {
 				return nil
 			}
@@ -1274,6 +1330,9 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
+	}
+	if e.resultCurr != nil && e.adaptiveLimitController != nil {
+		e.completeAdaptiveLookupTask(e.resultCurr)
 	}
 	var (
 		enableStats         = e.stats != nil
@@ -1291,6 +1350,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		indexFetchedInstant = time.Now()
 	}
 	if err := <-task.doneCh; err != nil {
+		task.abortAdaptiveLimitReservation(e.adaptiveLimitController)
 		return nil, err
 	}
 	if enableStats {
@@ -1307,7 +1367,18 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		e.resultCurr.memTracker.Consume(-e.resultCurr.memUsage)
 	}
 	e.resultCurr = task
+	e.completeAdaptiveLookupTask(e.resultCurr)
 	return e.resultCurr, nil
+}
+
+func (e *IndexLookUpExecutor) completeAdaptiveLookupTask(task *lookupTableTask) {
+	// A fully consumed task is the smallest reliable lookup-yield sample. A task
+	// that is only built or fetched may never be observed by the LIMIT consumer.
+	if e.adaptiveLimitController == nil || task == nil || task.adaptiveLimitReservation == 0 || task.cursor < len(task.rows) {
+		return
+	}
+	e.adaptiveLimitController.CompleteLookup(task.adaptiveLimitReservation, len(task.handles), len(task.rows))
+	task.adaptiveLimitReservation = 0
 }
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
@@ -1340,6 +1411,10 @@ type indexWorker struct {
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
 
+	// adaptiveLimitController gates handle extraction into lookup tasks. The
+	// owning LimitExec controls its lifecycle; nil preserves legacy admission.
+	adaptiveLimitController *exec.AdaptiveLimitController
+
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
@@ -1351,6 +1426,16 @@ type indexWorker struct {
 	PushedLimit *physicalop.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
+
+	// pendingHandles keeps handles returned beyond the current adaptive
+	// reservation. DistSQL may return more rows than Chunk.RequiredRows.
+	pendingHandles []kv.Handle
+	// pendingHandlesMemUsage is the number of pending-handle bytes currently
+	// charged to memTracker.
+	pendingHandlesMemUsage int64
+	// memTracker is borrowed from the executor. Pending-handle charges must be
+	// released as handles are consumed or when this worker exits.
+	memTracker *memory.Tracker
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -1431,6 +1516,38 @@ type extractedLookupTaskData struct {
 	handles       []kv.Handle
 	retChunk      *chunk.Chunk
 	exhausted     bool
+
+	// adaptiveLimitReservation is the number of admitted handles owned by this
+	// extraction. Ownership moves to lookupTableTask when the task is dispatched;
+	// every earlier exit must abort it here.
+	adaptiveLimitReservation int
+	// adaptiveLimitStopped reports that admission stopped without an extraction
+	// error, so the fetch loop should finish normally.
+	adaptiveLimitStopped bool
+}
+
+func (data *extractedLookupTaskData) takeAdaptiveLimitReservation() int {
+	reservation := data.adaptiveLimitReservation
+	data.adaptiveLimitReservation = 0
+	return reservation
+}
+
+func (data *extractedLookupTaskData) abortAdaptiveLimitReservation(controller *exec.AdaptiveLimitController) {
+	reservation := data.takeAdaptiveLimitReservation()
+	if controller != nil && reservation > 0 {
+		controller.AbortLookup(reservation)
+	}
+}
+
+func (data *extractedLookupTaskData) trimAdaptiveLimitReservation(
+	controller *exec.AdaptiveLimitController, actualHandles int,
+) {
+	if data.adaptiveLimitReservation <= actualHandles {
+		return
+	}
+	excess := data.adaptiveLimitReservation - actualHandles
+	controller.AbortLookup(excess)
+	data.adaptiveLimitReservation = actualHandles
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -1454,12 +1571,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
-		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+		if w.reachedPushedLimit() {
 			break
 		}
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
 		if err != nil {
 			return err
+		}
+		if data.adaptiveLimitStopped {
+			return nil
 		}
 
 		if data.exhausted {
@@ -1529,12 +1649,15 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := &results[curResultIdx]
-		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+		if w.reachedPushedLimit() {
 			break
 		}
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
 		if err != nil {
 			return err
+		}
+		if data.adaptiveLimitStopped {
+			return nil
 		}
 
 		if data.exhausted {
@@ -1580,6 +1703,23 @@ func (w *indexWorker) extractLookupTaskData(
 	handleOffsets []int,
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
+	if w.adaptiveLimitController != nil {
+		// Reserve before extracting handles so a large DistSQL chunk cannot be
+		// admitted directly into table lookup tasks beyond the physical window.
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		if err != nil {
+			return data, err
+		}
+		if !ok {
+			data.adaptiveLimitStopped = true
+			return data, nil
+		}
+		data.adaptiveLimitReservation = reserved
+		w.batchSize = reserved
+		defer func() {
+			w.batchSize = w.adaptiveLimitController.SuggestedBatchSize(w.maxBatchSize)
+		}()
+	}
 	if w.idxLookup.indexLookUpPushDown {
 		data.completedRows, data.handles, data.exhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, rowIter, handleOffsets)
 	} else {
@@ -1587,11 +1727,16 @@ func (w *indexWorker) extractLookupTaskData(
 		data.exhausted = len(data.handles) == 0
 	}
 	data.finishFetch = time.Now()
+	if err != nil {
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
+	}
+	data.trimAdaptiveLimitReservation(w.adaptiveLimitController, len(data.handles))
 	return data, err
 }
 
 func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData) (stopped bool) {
 	if len(data.handles) == 0 && len(data.completedRows) == 0 {
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return false
 	}
 
@@ -1617,12 +1762,17 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		}
 		*taskID++
 	}
+	if tableLookUpTask == nil {
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
+	}
 
 	finishBuild := time.Now()
 	select {
 	case <-ctx.Done():
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return true
 	case <-w.finished:
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return true
 	default:
 		if completedTask != nil {
@@ -1630,6 +1780,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		}
 
 		if tableLookUpTask != nil {
+			tableLookUpTask.adaptiveLimitReservation = data.takeAdaptiveLimitReservation()
 			e := w.idxLookup
 			e.tblWorkerWg.Add(1)
 			e.pool.submit(func() {
@@ -1732,8 +1883,17 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
+	// A SelectResult may return more rows than requested. Charge excess handles
+	// once per extraction while preserving accounting on every return path.
+	var pendingHandlesMemUsage int64
+	if w.adaptiveLimitController != nil {
+		defer func() {
+			w.consumePendingHandlesMemory(pendingHandlesMemUsage)
+		}()
+	}
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
+	handles = w.takePendingHandles(handles)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
@@ -1775,7 +1935,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			if err != nil {
 				return handles, retChk, err
 			}
-			handles = append(handles, h)
+			var pendingHandleMemUsage int64
+			handles, pendingHandleMemUsage = w.appendExtractedHandle(handles, h)
+			pendingHandlesMemUsage += pendingHandleMemUsage
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
@@ -1791,6 +1953,75 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	return handles, retChk, nil
 }
 
+func (w *indexWorker) takePendingHandles(handles []kv.Handle) []kv.Handle {
+	// A DistSQL chunk can contain more handles than the current reservation.
+	// Retain the excess locally and admit it under later reservations. Retained
+	// handles remain charged to the executor memory tracker.
+	if w.adaptiveLimitController == nil || len(w.pendingHandles) == 0 {
+		return handles
+	}
+	available := w.batchSize - len(handles)
+	if available <= 0 {
+		return handles
+	}
+	count := min(available, len(w.pendingHandles))
+	moved := w.pendingHandles[:count]
+	handles = append(handles, moved...)
+	w.releasePendingHandlesMemory(moved)
+	clear(moved)
+	w.pendingHandles = w.pendingHandles[count:]
+	if len(w.pendingHandles) == 0 {
+		w.pendingHandles = nil
+	}
+	return handles
+}
+
+func (w *indexWorker) reachedPushedLimit() bool {
+	return w.PushedLimit != nil && len(w.pendingHandles) == 0 &&
+		w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset
+}
+
+func (w *indexWorker) appendExtractedHandle(handles []kv.Handle, handle kv.Handle) ([]kv.Handle, int64) {
+	if w.adaptiveLimitController != nil && len(handles) >= w.batchSize {
+		w.pendingHandles = append(w.pendingHandles, handle)
+		if w.memTracker == nil {
+			return handles, 0
+		}
+		return handles, size.SizeOfInterface + int64(handle.MemUsage())
+	}
+	return append(handles, handle), 0
+}
+
+func (w *indexWorker) consumePendingHandlesMemory(usage int64) {
+	if w.memTracker == nil || usage <= 0 {
+		return
+	}
+	w.pendingHandlesMemUsage += usage
+	w.memTracker.Consume(usage)
+}
+
+func (w *indexWorker) releasePendingHandlesMemory(handles []kv.Handle) {
+	if w.memTracker == nil || w.pendingHandlesMemUsage == 0 {
+		return
+	}
+	var usage int64
+	for _, handle := range handles {
+		usage += size.SizeOfInterface + int64(handle.MemUsage())
+	}
+	usage = min(usage, w.pendingHandlesMemUsage)
+	w.pendingHandlesMemUsage -= usage
+	w.memTracker.Consume(-usage)
+}
+
+func (w *indexWorker) releasePendingHandles() {
+	if w.memTracker != nil && w.pendingHandlesMemUsage > 0 {
+		w.memTracker.Consume(-w.pendingHandlesMemUsage)
+	}
+	clear(w.pendingHandles)
+	w.pendingHandles = nil
+	w.pendingHandlesMemUsage = 0
+}
+
 func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
 	task := &lookupTableTask{
 		id:     taskID,
@@ -1803,34 +2034,40 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
-	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			indexOrder.Set(h, i)
+			indexOrder.Set(h, []int{i})
 		}
 	}
 
 	if w.checkIndexValue != nil {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
-		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			if _, ok := indexOrder.Get(h); ok {
-				duplicatedIndexOrder.Set(h, i)
-			} else {
-				indexOrder.Set(h, i)
-			}
+			v, _ := indexOrder.Get(h)
+			offsets, _ := v.([]int)
+			indexOrder.Set(h, append(offsets, i))
+		}
+		// The Region range splitter requires non-overlapping ranges, so deduplicate
+		// handles produced by multi-valued index entries before table lookup.
+		// Deduplicate after building the map above: its offsets must refer to
+		// the original rows in retChk, not positions in the deduplicated handles.
+		if len(handles) > indexOrder.Len() {
+			handles = make([]kv.Handle, 0, indexOrder.Len())
+			indexOrder.Range(func(h kv.Handle, _ any) bool {
+				handles = append(handles, h)
+				return true
+			})
 		}
 	}
 
 	task := &lookupTableTask{
-		id:                   taskID,
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		id:         taskID,
+		handles:    handles,
+		indexOrder: indexOrder,
+		idxRows:    retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -1953,6 +2190,9 @@ type IndexLookUpRunTimeStats struct {
 	NextWaitIndexScan        time.Duration
 	NextWaitTableLookUpBuild time.Duration
 	NextWaitTableLookUpResp  time.Duration
+	// adaptiveLimitSnapshot is the close-time diagnostic snapshot rendered by
+	// EXPLAIN ANALYZE. Runtime-stat merges retain one copy instead of adding it.
+	adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
@@ -1985,12 +2225,29 @@ func (e *IndexLookUpRunTimeStats) String() string {
 				execdetails.FormatDuration(e.NextWaitTableLookUpResp))
 		}
 	}
+	if e.adaptiveLimitSnapshot != nil {
+		separator := ""
+		if buf.Len() > 0 {
+			separator = ", "
+		}
+		snapshot := e.adaptiveLimitSnapshot
+		fmt.Fprintf(&buf, "%sadaptive:{lookup:%d/%d, outstanding:%d, blocked:%s}", separator,
+			snapshot.LookupHandles,
+			snapshot.LookupRows,
+			snapshot.LookupOutstandingAtStop,
+			execdetails.FormatDuration(snapshot.LookupAdmissionBlocked),
+		)
+	}
 	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *IndexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 	newRs := *e
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := *e.adaptiveLimitSnapshot
+		newRs.adaptiveLimitSnapshot = &snapshot
+	}
 	return &newRs
 }
 
@@ -2008,6 +2265,12 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.NextWaitIndexScan += tmp.NextWaitIndexScan
 	e.NextWaitTableLookUpBuild += tmp.NextWaitTableLookUpBuild
 	e.NextWaitTableLookUpResp += tmp.NextWaitTableLookUpResp
+	// The snapshot describes one executor lifecycle, so retain the first copy
+	// instead of accumulating the same statement-local counters during merges.
+	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
+		snapshot := *tmp.adaptiveLimitSnapshot
+		e.adaptiveLimitSnapshot = &snapshot
+	}
 }
 
 // Tp implements the RuntimeStats interface.
@@ -2072,7 +2335,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val any) bool {
-				idxRow := task.idxRows.GetRow(val.(int))
+				idxRow := task.idxRows.GetRow(val.([]int)[0])
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
@@ -2088,43 +2351,42 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			if err != nil {
 				return err
 			}
-			v, ok := task.indexOrder.Get(handle)
-			if !ok {
-				v, _ = task.duplicatedIndexOrder.Get(handle)
-			}
-			offset, _ := v.(int)
+			v, _ := task.indexOrder.Get(handle)
+			offsets := v.([]int)
 			task.indexOrder.Delete(handle)
-			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
-			for i := range vals {
-				col := w.idxTblCols[i]
-				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
-				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
-				if err != nil {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxVal,
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
-				}
-				if cmpRes != 0 {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxRow.GetDatum(i, w.idxColTps[i]),
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
+			for _, offset := range offsets {
+				idxRow := task.idxRows.GetRow(offset)
+				for i := range vals {
+					col := w.idxTblCols[i]
+					idxVal := idxRow.GetDatum(i, w.idxColTps[i])
+					tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+					cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+					if err != nil {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxVal,
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
+					if cmpRes != 0 {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxRow.GetDatum(i, w.idxColTps[i]),
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
 				}
 			}
 		}
@@ -2170,9 +2432,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
 		}
-		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage()
-		}
 		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
@@ -2216,7 +2475,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				return err
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+			task.rowIdx = append(task.rowIdx, rowIdx.([]int)[0])
 		}
 		{
 			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))

@@ -132,7 +132,10 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp,
+			func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose },
+			func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+		), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -171,6 +174,24 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
+}
+
+func TestLogTimeoutAction(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.TimeoutAction)
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = "DISCARD"
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.TimeoutAction)
+
+	conf.Log.TimeoutAction = "invalid"
+	require.EqualError(t, conf.Valid(), "log.timeout-action should be one of [panic, discard]")
 }
 
 func TestErrorMessageExtensionConfig(t *testing.T) {
@@ -960,6 +981,35 @@ engines = ["tikv", "tiflash", "tidb"]
 	require.NoError(t, err)
 }
 
+func TestEnableStorageClassConfig(t *testing.T) {
+	require.False(t, NewConfig().EnableStorageClass)
+	for _, tt := range []struct {
+		name    string
+		content string
+		initial bool
+		want    bool
+	}{
+		{name: "missing"},
+		{name: "enabled", content: "enable-storage-class = true", want: true},
+		{name: "disabled", content: "enable-storage-class = false", initial: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configFile, []byte(tt.content), 0600))
+			conf := NewConfig()
+			conf.EnableStorageClass = tt.initial
+			require.NoError(t, conf.Load(configFile))
+			require.Equal(t, tt.want, conf.EnableStorageClass)
+
+			data, err := json.Marshal(conf)
+			require.NoError(t, err)
+			var settings map[string]any
+			require.NoError(t, json.Unmarshal(data, &settings))
+			require.Equal(t, tt.want, settings["enable-storage-class"])
+		})
+	}
+}
+
 func TestConfig(t *testing.T) {
 	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
 		conf := NewConfig()
@@ -1080,7 +1130,14 @@ ingest-kv-bytes = 3
 			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
 		}
 	})
-	conf := new(Config)
+	require.Equal(t, 15, NewConfig().GracefulCloseConnectionsTimeout)
+	conf := NewConfig()
+	conf.GracefulCloseConnectionsTimeout = 0
+	require.NoError(t, conf.Valid())
+	conf.GracefulCloseConnectionsTimeout = -1
+	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-timeout")
+
+	conf = new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
@@ -1144,6 +1201,7 @@ repair-mode = true
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
+graceful-close-connections-timeout = 120
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
@@ -1232,6 +1290,7 @@ max_connections = 200
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
 	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.Equal(t, 120, conf.GracefulCloseConnectionsTimeout)
 	require.True(t, conf.SkipRegisterToDashboard)
 	require.Equal(t, 3, len(conf.Labels))
 	require.Equal(t, "bar", conf.Labels["foo"])
@@ -1363,7 +1422,10 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false,
+		func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+	), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{

@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/stretchr/testify/require"
 )
@@ -26,4 +28,25 @@ func TestParseExpression(t *testing.T) {
 	node, err := ParseExpression("json_extract(a, '$.a')")
 	require.NoError(t, err)
 	require.Equal(t, "json_extract", node.(*ast.FuncCallExpr).FnName.L)
+}
+
+func TestParseExpressionWithSQLMode(t *testing.T) {
+	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+
+	node, err := ParseExpressionWithSQLMode(`1 || 2`, mysql.ModePipesAsConcat)
+	require.NoError(t, err)
+	require.Equal(t, ast.Concat, node.(*ast.FuncCallExpr).FnName.L)
+
+	node, err = ParseExpressionWithSQLMode(`1 || 2`, defaultSQLMode)
+	require.NoError(t, err)
+	require.Equal(t, opcode.LogicOr, node.(*ast.BinaryOperationExpr).Op)
+
+	node, err = ParseExpressionWithSQLMode(`'\n'`, defaultSQLMode)
+	require.NoError(t, err)
+	require.Equal(t, "\n", node.(ast.ValueExpr).GetString())
+
+	node, err = ParseExpressionWithSQLMode(`'\n'`, mysql.ModeNoBackslashEscapes)
+	require.NoError(t, err)
+	require.Equal(t, `\n`, node.(ast.ValueExpr).GetString())
 }

@@ -43,6 +43,7 @@ func requireStatementRUReportConservation(t *testing.T, finalized statementRUFin
 			engineRU[engine] += result.TotalRU
 		}
 	}
+	engineRU[statementRUTiFlash] *= statementRUTiFlashMultiplier
 	require.Equal(t, finalized.units, total)
 	require.InDelta(t, finalized.engineRU.TiDB, engineRU[statementRUTiDB], 1e-9)
 	require.InDelta(t, finalized.engineRU.TiKV, engineRU[statementRUTiKV], 1e-9)

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -91,7 +91,7 @@ func TestIssue46197(t *testing.T) {
 
 	// clientConn setup
 	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
 	cc := &clientConn{
 		server:     server,
@@ -127,7 +127,7 @@ func TestGetConAttrs(t *testing.T) {
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		attrs: map[string]string{
 			"_client_name": "tidb_test",
 		},
@@ -161,7 +161,7 @@ func TestGetConAttrs(t *testing.T) {
 			server:       server,
 			alloc:        arena.NewAllocator(1024),
 			chunkAlloc:   chunk.NewAllocator(),
-			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 			attrs: map[string]string{
 				tidbGatewayAttrsConnKey: gwConnID,
 			},
