@@ -44,6 +44,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReverseExpressionSortNullableColumn(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table reverse_sort (id int primary key, c double, key i(c))")
+	tk.MustExec("insert into reverse_sort values (1,null),(2,0.3),(3,0.7),(4,0.8)")
+	for _, expr := range []string{"-c", "0-c", "-(c+1)"} {
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s desc,id", expr)).Check(testkit.Rows("2", "3", "4", "1"))
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s,id", expr)).Check(testkit.Rows("1", "4", "3", "2"))
+	}
+	// An even number of reversals preserves both value order and NULL order.
+	tk.MustQuery("select id from reverse_sort order by -(-c) desc,id").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustExec("delete from reverse_sort where c is null")
+	tk.MustExec("alter table reverse_sort modify c double not null")
+	tk.MustQuery("select id from reverse_sort order by -c desc,id").Check(testkit.Rows("2", "3", "4"))
+	plan := tk.MustQuery("explain format='brief' select id from reverse_sort use index(i) order by -c desc,id").Rows()
+	require.NotContains(t, fmt.Sprint(plan), "Sort")
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
