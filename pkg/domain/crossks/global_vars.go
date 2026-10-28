@@ -44,6 +44,11 @@ const globalVarCacheRefreshInterval = 30 * time.Second
 // read, and from then on reloads them in the background periodically and when
 // a TiDB of the keyspace notifies a change, keeping the old values if a reload
 // fails. A runtime that never reads them never queries or watches etcd.
+//
+// It only covers the reads through the GlobalVarsAccessor. A variable with a
+// GetGlobal hook, and the code that reads the instance level value in vardef
+// directly, still see the value of this instance, since they assume that an
+// instance serves only one keyspace.
 type globalVarCache struct {
 	ctx     context.Context
 	ks      string
@@ -67,7 +72,7 @@ func newGlobalVarCache(ctx context.Context, ks string, pool util.SessionPool, et
 }
 
 func (c *globalVarCache) get(name string) (value string, found bool, err error) {
-	global := c.loaded()
+	global := c.cached()
 	if global == nil {
 		if global, err = c.loadIfEmpty(); err != nil {
 			return "", false, err
@@ -78,7 +83,7 @@ func (c *globalVarCache) get(name string) (value string, found bool, err error) 
 	return value, found, nil
 }
 
-func (c *globalVarCache) loaded() map[string]string {
+func (c *globalVarCache) cached() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.global
@@ -89,7 +94,7 @@ func (c *globalVarCache) loaded() map[string]string {
 func (c *globalVarCache) loadIfEmpty() (map[string]string, error) {
 	c.loadMu.Lock()
 	defer c.loadMu.Unlock()
-	if global := c.loaded(); global != nil {
+	if global := c.cached(); global != nil {
 		return global, nil
 	}
 	return c.loadLocked()

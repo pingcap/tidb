@@ -522,6 +522,17 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "10m0s", value)
 		require.ErrorContains(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.CTEMaxRecursionDepth, "8"), "cannot set")
+
+		// A variable with a GetGlobal hook reads the value of this instance.
+		tk.MustExec("set global tidb_enable_check_constraint = on")
+		defer tk.MustExec("set global tidb_enable_check_constraint = default")
+		vardef.EnableCheckConstraint.Store(false)
+		defer vardef.EnableCheckConstraint.Store(vardef.DefTiDBEnableCheckConstraint)
+		notify()
+		requireGlobalVar(vardef.TiDBEnableCheckConstraint, vardef.On)
+		value, err = vars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableCheckConstraint)
+		require.NoError(t, err)
+		require.Equal(t, vardef.Off, value)
 	})
 }
 
