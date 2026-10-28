@@ -331,7 +331,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 			ordinal = append(ordinal, partialOrdinal+1)
 			partialOrdinal++
 		}
-		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+		partialAggDesc, finalDesc := aggDesc.Split(ctx.GetExprCtx().GetEvalCtx(), ordinal)
 		partialAggFunc := aggfuncs.Build(ctx.GetExprCtx(), partialAggDesc, i)
 		finalAggFunc := aggfuncs.Build(ctx.GetExprCtx(), finalDesc, i)
 		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
@@ -400,7 +400,7 @@ func buildDistinctHashAggExecutor(t *testing.T, ctx sessionctx.Context, child ex
 			ordinal = append(ordinal, partialOrdinal+1)
 			partialOrdinal++
 		}
-		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+		partialAggDesc, finalDesc := aggDesc.Split(ctx.GetExprCtx().GetEvalCtx(), ordinal)
 		partialAggFunc := aggfuncs.Build(ctx.GetExprCtx(), partialAggDesc, i)
 		finalAggFunc := aggfuncs.Build(ctx.GetExprCtx(), finalDesc, i)
 		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
