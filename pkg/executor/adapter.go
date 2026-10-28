@@ -2131,8 +2131,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	}
 
 	var unredactedSQL string
-	// Only SELECT is queued. Other statements never touch the cache channel.
-	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQuerySelect() {
+	// Only non-sensitive SELECT statements are queued. Other statements never
+	// touch the cache channel, and SensitiveStmtNode must never retain its
+	// original SQL in memory.
+	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQueryCacheable() {
 		// Capture the original text before it is redacted into the slow log line.
 		// Only this SQL string is retained in memory.
 		unredactedSQL = sessVars.StmtCtx.OriginalSQL
@@ -2548,6 +2550,13 @@ func (a *ExecStmt) isSlowQuerySelect() bool {
 	}
 	sel, ok := a.StmtNode.(*ast.SelectStmt)
 	return ok && sel.Kind == ast.SelectStmtKindSelect
+}
+
+func (a *ExecStmt) isSlowQueryCacheable() bool {
+	if _, sensitive := a.StmtNode.(ast.SensitiveStmtNode); sensitive {
+		return false
+	}
+	return a.isSlowQuerySelect()
 }
 
 func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {

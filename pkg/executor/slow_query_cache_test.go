@@ -59,35 +59,28 @@ func TestSlowQueryCacheDuplicateKeyUsesLatestValue(t *testing.T) {
 	cache.handleRead(result)
 	require.Equal(t, []string{"select 2;"}, result.values)
 	// Both values stay. The index map is not charged.
-	require.Equal(t, slowQueryValueMem(key, "select 1;")+slowQueryValueMem(key, "select 2;"), cache.memoryUsage)
+	require.Equal(t, getSlowQueryValueMemUsage(key, "select 1;")+getSlowQueryValueMemUsage(key, "select 2;"), cache.memoryUsage)
 }
 
-func TestSlowQueryCacheRingUsesFixedGroupCap(t *testing.T) {
+func TestSlowQueryCacheUsesPreallocatedRing(t *testing.T) {
 	cache := newSlowQueryCache()
-	require.NotNil(t, cache.tail)
-	require.Equal(t, cache.tail, cache.head.Next)
-	require.Equal(t, cache.head, cache.tail.Next)
-	require.Zero(t, len(cache.tail.SlowQueries))
-	require.Equal(t, slowQueryGroupCapacity, cap(cache.tail.SlowQueries))
-	require.Nil(t, cache.writePos)
-	for i := 0; i < slowQueryGroupCapacity+1; i++ {
+	require.Zero(t, len(cache.slowQueries))
+	require.Equal(t, slowQueryCacheCapacity, cap(cache.slowQueries))
+	require.Zero(t, cache.writePos)
+	for i := 0; i < slowQueryCacheCapacity; i++ {
 		key := slowQueryKeyOf(uint64(i), 1, strconv.Itoa(i))
 		cache.handleWrite(slowQueryCacheWriteTask{key: key, sql: "x"})
 	}
 
-	require.Equal(t, 0, len(cache.head.SlowQueries))
-	require.Equal(t, 0, cap(cache.head.SlowQueries))
-	first := cache.head.Next
-	second := first.Next
-	require.NotEqual(t, cache.head, first)
-	require.Equal(t, cache.head, second.Next)
-	require.Equal(t, slowQueryGroupCapacity, cap(first.SlowQueries))
-	require.Equal(t, slowQueryGroupCapacity, len(first.SlowQueries))
-	require.Equal(t, slowQueryGroupCapacity, cap(second.SlowQueries))
-	require.Equal(t, 1, len(second.SlowQueries))
+	require.Len(t, cache.slowQueries, slowQueryCacheCapacity)
+	require.Equal(t, 0, cache.writePos)
 	require.Equal(t, "x", lookupSlowQueryCache(cache, slowQueryKeyOf(0, 1, "0"))[0])
-	require.Equal(t, "x", lookupSlowQueryCache(cache, slowQueryKeyOf(slowQueryGroupCapacity, 1, strconv.Itoa(slowQueryGroupCapacity)))[0])
-	require.False(t, cache.capacityFixed)
+
+	newKey := slowQueryKeyOf(slowQueryCacheCapacity, 1, strconv.Itoa(slowQueryCacheCapacity))
+	cache.handleWrite(slowQueryCacheWriteTask{key: newKey, sql: "new"})
+	require.Equal(t, "", lookupSlowQueryCache(cache, slowQueryKeyOf(0, 1, "0"))[0])
+	require.Equal(t, "new", lookupSlowQueryCache(cache, newKey)[0])
+	require.Equal(t, 1, cache.writePos)
 }
 
 func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
@@ -97,42 +90,39 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	droppedKey := slowQueryKeyOf(4, 1, "dropped")
 	firstSQL, secondSQL, thirdSQL := "12345", "12345", "123456"
 	droppedSQL := "123456789012"
-	twoEntries := slowQueryValueMem(first, firstSQL) + slowQueryValueMem(second, secondSQL)
-	afterThird := slowQueryValueMem(second, secondSQL) + slowQueryValueMem(third, thirdSQL)
-	afterDropped := slowQueryValueMem(third, thirdSQL) + slowQueryValueMem(droppedKey, droppedSQL)
+	twoEntries := getSlowQueryValueMemUsage(first, firstSQL) + getSlowQueryValueMemUsage(second, secondSQL)
+	afterThird := getSlowQueryValueMemUsage(second, secondSQL) + getSlowQueryValueMemUsage(third, thirdSQL)
+	afterDropped := getSlowQueryValueMemUsage(third, thirdSQL) + getSlowQueryValueMemUsage(droppedKey, droppedSQL)
 	require.Greater(t, afterDropped, afterThird)
 
-	cache := newSlowQueryCacheWithLimits(4, twoEntries, afterThird, 8)
+	cache := newSlowQueryCacheWithLimits(4, afterThird, 8)
 	cache.handleWrite(slowQueryCacheWriteTask{key: first, sql: firstSQL})
 	cache.handleWrite(slowQueryCacheWriteTask{key: second, sql: secondSQL})
-	require.False(t, cache.capacityFixed)
 	require.Equal(t, twoEntries, cache.memoryUsage)
 
 	cache.handleWrite(slowQueryCacheWriteTask{key: third, sql: thirdSQL})
-	require.True(t, cache.capacityFixed)
 	require.Equal(t, afterThird, cache.memoryUsage)
-	require.Equal(t, 1, countSlowQueryGroups(cache))
-	require.Equal(t, 2, len(cache.head.Next.SlowQueries))
-	require.Equal(t, 4, cap(cache.head.Next.SlowQueries))
+	// The two unused slots are abandoned once the memory budget is reached.
+	require.Len(t, cache.slowQueries, 2)
+	require.Equal(t, 4, cap(cache.slowQueries))
 	require.Equal(t, []string{"", secondSQL, thirdSQL}, lookupSlowQueryCache(cache, first, second, third))
 
 	// Replacing the next slot would pass the frozen ceiling, so the SQL is discarded.
 	before := cache.memoryUsage
-	pos := *cache.writePos
+	pos := cache.writePos
 	cache.handleWrite(slowQueryCacheWriteTask{key: droppedKey, sql: droppedSQL})
 	require.Equal(t, before, cache.memoryUsage)
-	require.Equal(t, pos, *cache.writePos)
+	require.Equal(t, pos, cache.writePos)
 	require.Equal(t, []string{secondSQL}, lookupSlowQueryCache(cache, second))
-	require.Equal(t, 1, countSlowQueryGroups(cache))
 }
 
 func TestSlowQueryCacheDuplicateKeySurvivesEvictionOfOlderCopy(t *testing.T) {
 	key := slowQueryKeyOf(1, 1, "0123456789zzz")
 	other := slowQueryKeyOf(2, 1, "other-digest")
 	olderSQL, latestSQL, otherSQL := "0123456789", "abcdefghij", "12345"
-	twoCopies := slowQueryValueMem(key, olderSQL) + slowQueryValueMem(key, latestSQL)
-	afterOther := slowQueryValueMem(key, latestSQL) + slowQueryValueMem(other, otherSQL)
-	cache := newSlowQueryCacheWithLimits(4, twoCopies, afterOther+twoCopies, 8)
+	twoCopies := getSlowQueryValueMemUsage(key, olderSQL) + getSlowQueryValueMemUsage(key, latestSQL)
+	afterOther := getSlowQueryValueMemUsage(key, latestSQL) + getSlowQueryValueMemUsage(other, otherSQL)
+	cache := newSlowQueryCacheWithLimits(4, twoCopies, 8)
 	cache.handleWrite(slowQueryCacheWriteTask{key: key, sql: olderSQL})
 	cache.handleWrite(slowQueryCacheWriteTask{key: key, sql: latestSQL})
 	cache.handleWrite(slowQueryCacheWriteTask{key: other, sql: otherSQL})
@@ -143,26 +133,26 @@ func TestSlowQueryCacheDuplicateKeySurvivesEvictionOfOlderCopy(t *testing.T) {
 	replacement := slowQueryKeyOf(3, 1, "replacement")
 	cache.handleWrite(slowQueryCacheWriteTask{key: replacement, sql: otherSQL})
 	require.Equal(t, []string{"", otherSQL, otherSQL}, lookupSlowQueryCache(cache, key, other, replacement))
-	require.Equal(t, slowQueryValueMem(other, otherSQL)+slowQueryValueMem(replacement, otherSQL), cache.memoryUsage)
+	require.Equal(t, getSlowQueryValueMemUsage(other, otherSQL)+getSlowQueryValueMemUsage(replacement, otherSQL), cache.memoryUsage)
 }
 
 func TestSlowQueryCacheDropsOversizedAndUnqueuedSQL(t *testing.T) {
 	fitsKey := slowQueryKeyOf(2, 1, "fits")
 	fitsSQL := "12345"
-	fitsMem := slowQueryValueMem(fitsKey, fitsSQL)
+	fitsMem := getSlowQueryValueMemUsage(fitsKey, fitsSQL)
 	hugeKey := slowQueryKeyOf(1, 1, "huge")
 	hugeSQL := strings.Repeat("a", 11)
-	require.Greater(t, slowQueryValueMem(hugeKey, hugeSQL), fitsMem)
+	require.Greater(t, getSlowQueryValueMemUsage(hugeKey, hugeSQL), fitsMem)
 
-	cache := newSlowQueryCacheWithLimits(4, fitsMem, 16, 1)
+	cache := newSlowQueryCacheWithLimits(4, fitsMem, 1)
 	cache.handleWrite(slowQueryCacheWriteTask{key: hugeKey, sql: hugeSQL})
 	require.Zero(t, cache.memoryUsage)
-	require.Nil(t, cache.writePos)
+	require.Zero(t, cache.writePos)
 
 	cache.handleWrite(slowQueryCacheWriteTask{key: fitsKey, sql: fitsSQL})
 	require.Equal(t, fitsMem, cache.memoryUsage)
 
-	// The worker, not the producer, drops SQL larger than fixedMem. Until then
+	// The worker, not the producer, drops SQL larger than maxMem. Until then
 	// the text only occupies the channel and memoryUsage stays unchanged.
 	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(3, 1, "huge"), sql: strings.Repeat("a", 17)}))
 	require.Equal(t, fitsMem, cache.memoryUsage)
@@ -184,9 +174,9 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 	second := slowQueryKeyOf(2, 1, "also-queued")
 	firstSQL := strings.Repeat("a", 10)
 	secondSQL := strings.Repeat("b", 10)
-	firstMem := slowQueryValueMem(first, firstSQL)
-	secondMem := slowQueryValueMem(second, secondSQL)
-	cache := newSlowQueryCacheWithLimits(4, firstMem, secondMem, 8)
+	firstMem := getSlowQueryValueMemUsage(first, firstSQL)
+	secondMem := getSlowQueryValueMemUsage(second, secondSQL)
+	cache := newSlowQueryCacheWithLimits(4, secondMem, 8)
 	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: first, sql: firstSQL}))
 	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: second, sql: secondSQL}))
 	require.Equal(t, 2, len(cache.writeCh))
@@ -203,8 +193,8 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 	// empty and the SlowQuery plus key exceeds maxMem.
 	droppedKey := slowQueryKeyOf(3, 1, "dropped-later")
 	droppedSQL := strings.Repeat("c", 12)
-	require.Greater(t, slowQueryValueMem(droppedKey, droppedSQL), firstMem)
-	dropped := newSlowQueryCacheWithLimits(4, firstMem, 16, 4)
+	require.Greater(t, getSlowQueryValueMemUsage(droppedKey, droppedSQL), firstMem)
+	dropped := newSlowQueryCacheWithLimits(4, firstMem, 4)
 	require.True(t, dropped.tryToCache(slowQueryCacheWriteTask{
 		key: droppedKey,
 		sql: droppedSQL,
@@ -309,15 +299,4 @@ func lookupSlowQueryCache(cache *slowQueryCache, keys ...slowQueryKey) []string 
 	}
 	cache.handleRead(task)
 	return task.values
-}
-
-func countSlowQueryGroups(cache *slowQueryCache) int {
-	count := 0
-	for group := cache.head.Next; group != cache.head; group = group.Next {
-		count++
-		if count > 10 {
-			break
-		}
-	}
-	return count
 }

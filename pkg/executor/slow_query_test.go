@@ -138,9 +138,14 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
 	selectStmt := &ast.SelectStmt{Kind: ast.SelectStmtKindSelect}
 	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQuerySelect())
+	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQueryCacheable())
 	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindTable}}).isSlowQuerySelect())
 	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindValues}}).isSlowQuerySelect())
 	require.False(t, (&ExecStmt{StmtNode: &ast.InsertStmt{}}).isSlowQuerySelect())
+	sensitiveStmt := &ast.SetStmt{}
+	_, ok := any(sensitiveStmt).(ast.SensitiveStmtNode)
+	require.True(t, ok)
+	require.False(t, (&ExecStmt{StmtNode: sensitiveStmt}).isSlowQueryCacheable())
 	require.False(t, (&ExecStmt{StmtNode: &ast.SetOprStmt{}}).isSlowQuerySelect())
 	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQuerySelect())
 	require.False(t, (&ExecStmt{}).isSlowQuerySelect())
@@ -383,7 +388,12 @@ select * from t;
 	retriever, err := newSlowQueryRetriever()
 	require.NoError(t, err)
 	retriever.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(retriever.outputCols))
+	retriever.inMemoryOriginalQueryIndex = -1
 	for idx, col := range retriever.outputCols {
+		if strings.EqualFold(col.Name.O, variable.SlowLogInMemoryOriginalQueryStr) {
+			retriever.inMemoryOriginalQueryIndex = idx
+			continue
+		}
 		factory, err := getColumnValueFactoryByName(col.Name.O, idx)
 		require.NoError(t, err)
 		require.NotNil(t, factory, "column %s should have a factory", col.Name.O)
