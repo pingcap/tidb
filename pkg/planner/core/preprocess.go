@@ -347,6 +347,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.stmtTp = TypeAlter
 	case *ast.PurgeMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
+	case *ast.CompareMaterializedViewStmt:
+		// Resolve the MV and its output table separately from historical data reads.
+		p.flag |= inCreateOrDropTable
 	case *ast.RefreshMaterializedViewStmt:
 		if node.Type == ast.RefreshMaterializedViewTypeComplete &&
 			node.CompleteType == ast.RefreshMaterializedViewCompleteTypeOutOfPlace {
@@ -685,7 +688,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
