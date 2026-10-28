@@ -2748,8 +2748,8 @@ func TestBackendCloseWithoutTiKVClient(t *testing.T) {
 			BackendConfig: BackendConfig{
 				LocalStoreDir: localStoreDir,
 			},
-			bufferPool:     membuf.NewPool(),
-			logger:         log.L(),
+			bufferPool: membuf.NewPool(),
+			logger:     log.L(),
 		},
 		importClientFactory: &mockImportClientFactory{},
 	}
