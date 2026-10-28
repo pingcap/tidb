@@ -750,6 +750,15 @@ func TestBinToUUID(t *testing.T) {
 
 	_, err := funcs[ast.BinToUUID].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+
+	// The text form of a UUID is 36 characters (32 hex digits plus 4 hyphens),
+	// so the flen of BIN_TO_UUID's return type must be 36. An understated flen
+	// made a UNION over BIN_TO_UUID truncate the result, see
+	// https://github.com/pingcap/tidb/issues/72250.
+	f, err := newFunctionForTest(ctx, ast.BinToUUID, primitiveValsToConstants(ctx, []any{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}})...)
+	require.NoError(t, err)
+	require.Equal(t, 36, f.GetType(ctx).GetFlen())
+	require.Equal(t, 0, f.GetType(ctx).GetDecimal())
 }
 
 func TestTidbShard(t *testing.T) {

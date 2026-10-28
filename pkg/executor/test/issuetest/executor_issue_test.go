@@ -793,3 +793,31 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
 }
+
+func TestIssue72250(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists u")
+	tk.MustExec("create table u (a binary(16))")
+	tk.MustExec("insert into u values (UNHEX('7f9d04ae61b34468ac798ffcc984ab68'))")
+
+	// BIN_TO_UUID's flen is 36, while the CASE expression's decimal is
+	// UnspecifiedLength (-1), which used to make the UNION field type
+	// varchar(33) and truncate the UUID to 33 characters.
+	tk.MustQuery("SELECT CASE WHEN a IS NOT NULL THEN BIN_TO_UUID(a) ELSE BIN_TO_UUID(a) END AS uuid FROM u UNION SELECT BIN_TO_UUID(a) AS uuid FROM u").
+		Check(testkit.Rows("7f9d04ae-61b3-4468-ac79-8ffcc984ab68"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("SELECT CASE WHEN a IS NOT NULL THEN BIN_TO_UUID(a) ELSE BIN_TO_UUID(a) END AS uuid FROM u UNION ALL SELECT CASE WHEN a IS NULL THEN BIN_TO_UUID(a) ELSE BIN_TO_UUID(a) END AS uuid FROM u").
+		Check(testkit.Rows("7f9d04ae-61b3-4468-ac79-8ffcc984ab68", "7f9d04ae-61b3-4468-ac79-8ffcc984ab68"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// UNION of two BIN_TO_UUID returns the full UUID as well.
+	tk.MustQuery("SELECT BIN_TO_UUID(a) AS uuid FROM u UNION SELECT BIN_TO_UUID(a) AS uuid FROM u").
+		Check(testkit.Rows("7f9d04ae-61b3-4468-ac79-8ffcc984ab68"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists u")
+}

@@ -2109,11 +2109,13 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
 	}
 	resultTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
-	// `flen - decimal` is the fraction before '.'
+	// `flen - decimal` is the fraction before '.'. The decimal of a string
+	// field can be UnspecifiedLength (-1); treat it as 0, otherwise the
+	// subtraction inflates the merged flen by 1.
 	if a.GetFlen() == -1 || b.GetFlen() == -1 {
 		resultTp.SetFlenUnderLimit(-1)
 	} else {
-		resultTp.SetFlenUnderLimit(max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+		resultTp.SetFlenUnderLimit(max(a.GetFlen()-max(a.GetDecimal(), 0), b.GetFlen()-max(b.GetDecimal(), 0)) + max(resultTp.GetDecimal(), 0))
 	}
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) &&
