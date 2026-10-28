@@ -370,22 +370,23 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 	shadow, _ := is.TableByID(context.Background(), shadowID)
 	nested := infoschema.MockInfoSchema([]*model.TableInfo{
 		parent, baseInfo, shadow.Meta(),
-		{ID: 104, Name: pmodel.NewCIStr("input_log"), State: model.StatePublic},
+		{ID: 104, Name: pmodel.NewCIStr("input_log"), State: model.StatePublic, MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: baseTableID, DependentMViewIDs: []int64{oldMViewID}}},
 		{ID: 105, Name: pmodel.NewCIStr("output_log"), State: model.StatePublic},
 		{ID: 106, Name: pmodel.NewCIStr("shared_child"), State: model.StatePublic, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{oldMViewID, baseTableID}}},
 		{ID: 107, Name: pmodel.NewCIStr("second_source"), State: model.StatePublic, MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 108}},
-		{ID: 108, Name: pmodel.NewCIStr("second_log"), State: model.StatePublic},
+		{ID: 108, Name: pmodel.NewCIStr("second_log"), State: model.StatePublic, MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 107, DependentMViewIDs: []int64{106}}},
 	})
 	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), nested, pmodel.NewCIStr("test"), oldMViewID, shadowID)
 	require.NoError(t, err)
-	require.Len(t, involving, 8)
+	require.Len(t, involving, 7)
 	tableNames := make([]string, 0, len(involving))
 	for _, info := range involving {
 		require.Equal(t, "test", info.Database)
 		require.Equal(t, model.ExclusiveInvolving, info.Mode)
 		tableNames = append(tableNames, info.Table)
 	}
-	require.ElementsMatch(t, []string{"mv_old", "base_tbl", "mv_shadow", "input_log", "output_log", "shared_child", "second_source", "second_log"}, tableNames)
+	// second_log serves another MV, so cutover does not rewrite or claim it.
+	require.ElementsMatch(t, []string{"mv_old", "base_tbl", "mv_shadow", "input_log", "output_log", "shared_child", "second_source"}, tableNames)
 
 }
 

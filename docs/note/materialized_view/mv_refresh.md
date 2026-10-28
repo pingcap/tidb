@@ -345,9 +345,9 @@ Current execution model:
    - build read tso;
    - expected pre-cutover refresh-info watermark / nullness and MV revision;
    - captured input sources, old output log ID, and a new output log ID allocated once at submission;
-   - exclusive DDL scheduling claims for upstream sources and logs, the target/shadow, its output
-     log, and direct children. The worker rereads metadata and checks the expected MV revision
-     before cutover.
+   - exclusive DDL scheduling claims for upstream sources, source logs whose `DependentMViewIDs`
+     contains the old MV ID, the target/shadow, its output log, and direct children. The worker
+     rereads metadata and checks the expected MV revision before cutover.
 4. If the target owns an output MLog, the DDL worker cancels running purges and acquires the
    old log's shared advisory lock before any mutations or schema-version allocation. It retries
    cancellation and lock acquisition on contention, with a five-second lock wait per attempt and

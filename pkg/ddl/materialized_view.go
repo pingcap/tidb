@@ -63,7 +63,8 @@ var errMViewCutoverPurgeLockTimeout = errors.NewNoStackError("refresh materializ
 func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlogID int64) (err error) {
 	timeout := mviewCutoverPurgeLockTimeout
 	failpoint.Inject("mockMViewOutOfPlacePurgeAdvisoryLockTimeout", func(val failpoint.Value) {
-		timeout = time.Duration(val.(int)) * time.Millisecond
+		timeoutMillis := val.(int)
+		timeout = time.Duration(timeoutMillis) * time.Millisecond
 	})
 	ctx, cancel := context.WithTimeoutCause(kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL), timeout, errMViewCutoverPurgeLockTimeout)
 	defer func() {
@@ -1220,6 +1221,17 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 		return nil, err
 	}
 	for _, id := range inputMLogIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				fmt.Sprintf("refresh materialized view complete OUT OF PLACE cutover: table %d not found", id),
+			)
+		}
+		// Cutover only rewrites source logs that list the old MV as a dependent.
+		mlog := tbl.Meta().MaterializedViewLog
+		if mlog == nil || !hasMaterializedViewID(mlog.DependentMViewIDs, oldMViewID) {
+			continue
+		}
 		if _, err := addTable(id); err != nil {
 			return nil, err
 		}
