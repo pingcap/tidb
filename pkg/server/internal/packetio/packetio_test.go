@@ -853,3 +853,15 @@ func benchmarkCompressedWriterFlush(b *testing.B, algorithm int, payload []byte)
 		}
 	}
 }
+
+func TestPooledZstdEncoderHoldsTheTablesOfOneEncoder(t *testing.T) {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(32))
+	pool, err := zstdEncoderPool(zstd.SpeedDefault)
+	require.NoError(t, err)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	encoder := pool.New().(*zstd.Encoder)
+	encoder.EncodeAll(bytes.Repeat([]byte("abc"), 1000), nil)
+	runtime.ReadMemStats(&after)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
+}
