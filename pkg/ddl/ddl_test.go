@@ -387,7 +387,6 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 	}
 	// second_log serves another MV, so cutover does not rewrite or claim it.
 	require.ElementsMatch(t, []string{"mv_old", "base_tbl", "mv_shadow", "input_log", "output_log", "shared_child", "second_source"}, tableNames)
-
 }
 
 func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
