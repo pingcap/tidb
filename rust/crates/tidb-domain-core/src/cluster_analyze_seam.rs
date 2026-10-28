@@ -15,8 +15,8 @@
 //! The route an `ANALYZE TABLE` takes when the statistics live in the
 //! cluster, not in this process.
 //!
-//! This is [`ClusterDdl`]'s shape rather than
-//! [`ClusterAccountWriter`]'s, and the difference says something real. An
+//! This is `ClusterDdl`'s shape rather than
+//! `ClusterAccountWriter`'s, and the difference says something real. An
 //! account statement runs *through the session driver* against a scratch
 //! registry, because the driver is what knows that `GRANT SELECT ON *.*`
 //! means. Nothing in the driver knows what `ANALYZE TABLE` means -- the
@@ -40,11 +40,9 @@
 //! Step 4 is deliberately not a failure of the statement. The rows are
 //! durable; a node that could not refresh its own copy is a node whose next
 //! reload tick finds them, which is precisely how
-//! [`RealClusterDdl::refresh_catalog`] treats the same situation.
+//! `RealClusterDdl::refresh_catalog` treats the same situation.
 //!
-//! [`ClusterDdl`]: crate::domain::cluster_session_node::ClusterDdl
-//! [`ClusterAccountWriter`]: crate::domain::cluster_account_seam::ClusterAccountWriter
-//! [`RealClusterDdl::refresh_catalog`]: crate::domain::cluster_session_node::RealClusterDdl
+//! `RealClusterDdl::refresh_catalog`: crate::domain::cluster_session_node::RealClusterDdl
 //! [`SharedStats`]: tidb_exec::stats_watch::SharedStats
 
 use std::sync::Arc;
@@ -68,7 +66,8 @@ use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_util::sqlkiller::SqlKiller;
 
-use crate::domain::session_api::{cluster_analyze_error, SqlQueryError};
+use crate::errors::cluster_analyze_error;
+use tidb_cluster::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored statistics.
 ///
@@ -316,7 +315,7 @@ where
 fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError {
     match error {
         ClusterLoadStatsCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterLoadStatsCommitError::Commit(error) => crate::domain::session_api::lock_sql_error(&error),
+        ClusterLoadStatsCommitError::Commit(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
         ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }

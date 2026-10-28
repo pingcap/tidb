@@ -22,12 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tidb_ast::Stmt;
-use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
-use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_exec::ResultFieldMetadata;
-use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
 use crate::domain::configured_user_store::AuthenticatedIdentity;
@@ -276,45 +271,10 @@ impl Drop for QueryCancellationLease {
 
 pub use tidb_cluster::sql_query_error::{lock_sql_error, SqlQueryError};
 pub use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
+pub use tidb_domain_core::errors::{cluster_analyze_error, cluster_commit_error, cluster_stats_lock_error};
 
-pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
-    match error {
-        ClusterAnalyzeError::Analyze(error) => {
-            let error = tidb_executor::DriverError::from(error).to_mysql_error();
-            SqlQueryError::from(error)
-        }
-        ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
-        ClusterAnalyzeError::Killed(error) => {
-            SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
-        }
-        ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
-        ClusterAnalyzeError::Mysql(error) => SqlQueryError::from(error),
-    }
-}
 
-pub fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> SqlQueryError {
-    match error {
-        ClusterStatsLockCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterStatsLockCommitError::Commit(error) => lock_sql_error(&error),
-        ClusterStatsLockCommitError::Plan(ClusterStatsLockError::Mysql(error)) => {
-            SqlQueryError::from(error)
-        }
-        ClusterStatsLockCommitError::Plan(error) => SqlQueryError::unknown(error.to_string()),
-        ClusterStatsLockCommitError::Other(detail) => SqlQueryError::unknown(detail),
-    }
-}
 
-/// Returns the client error for a cluster state change that did not commit,
-/// preserving the ambiguous outcome instead of reporting a false failure.
-pub fn cluster_commit_error(
-    outcome: &OptimisticCommitOutcome,
-    _subject: &str,
-) -> Option<SqlQueryError> {
-    commit_outcome_to_sql_error(outcome)
-        .err()
-        .map(|error| lock_sql_error(&error))
-}
 
 /// A lazy query result owned by one worker-local session.
 pub struct QueryResult<'a> {

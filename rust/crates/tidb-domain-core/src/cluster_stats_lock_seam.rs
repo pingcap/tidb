@@ -21,7 +21,8 @@ use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use crate::domain::session_api::{cluster_stats_lock_error, SqlQueryError};
+use crate::errors::cluster_stats_lock_error;
+use tidb_cluster::sql_query_error::SqlQueryError;
 
 /// The one persisted-statistics-lock operation exposed to a cluster session.
 pub trait ClusterStatsLock: Send + Sync {
