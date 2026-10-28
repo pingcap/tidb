@@ -68,9 +68,6 @@ pub trait CompilerSession: crate::admin::AdminExec {
         &self,
     ) -> &std::cell::RefCell<Option<crate::compiler::prepared_ast::PreparedPlanCacheEnvironmentCache>>;
 
-    /// Brings a node session's catalog up to the node's latest schema, as
-    /// every statement through the node does first; a no-op elsewhere.
-    fn refresh_node_catalog(&mut self) -> Result<(), DriverError>;
     /// Effective historical timestamp of the active statement or stale transaction.
     fn historical_read_ts(&self) -> Option<u64>;
     /// Session primitive.

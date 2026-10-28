@@ -399,7 +399,7 @@ fn a_marked_standalone_table_takes_only_rows_of_the_partition() {
     session.run("create table nt (a int, b int)").unwrap();
     session.run("insert into nt values (1, 1)").unwrap();
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let (pt_id, p0_id) = {
                 let Some(tidb_executor::TableEntry::Kv(pt)) = catalog.table_in("test", "pt") else {
                     panic!("pt is not stored as bytes");

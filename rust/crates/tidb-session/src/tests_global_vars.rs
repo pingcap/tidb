@@ -670,7 +670,7 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
 /// integer domain, `1`/`0`, while the stored form stays `ON`/`OFF`.)
 #[test]
 fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
-    let (mut first, mut second, globals) = two_sessions_sharing_globals();
+    let (mut first, mut second, _) = two_sessions_sharing_globals();
 
     assert_eq!(
         second.run("SELECT @@autocommit").unwrap(),
@@ -694,7 +694,6 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     // session default -- the snapshot-at-connect step a new connection to
     // the store performs.
     let mut fresh = Session::with_catalog(first.shared_catalog());
-    fresh.attach_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(
         fresh.run("SELECT @@autocommit").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
@@ -748,7 +747,6 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
 fn show_global_and_session_variables_diverge() {
     let mut session = Session::new();
     session.attach_privileges(privilege::PrivilegeRegistry::default());
-    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
 
     session.run("SET autocommit = OFF").unwrap();
     assert_eq!(
@@ -772,7 +770,6 @@ fn show_global_and_session_variables_diverge() {
 #[test]
 fn set_global_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session.run("SET GLOBAL debug_sync = 'x'").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1228, "{mysql:?}");
@@ -783,7 +780,6 @@ fn set_global_on_a_session_only_variable_is_rejected() {
 #[test]
 fn set_session_on_a_global_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session
         .run("SET default_password_lifetime = 5")
         .unwrap_err();
@@ -796,7 +792,6 @@ fn set_session_on_a_global_only_variable_is_rejected() {
 #[test]
 fn reading_at_global_scope_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = session.run("SELECT @@global.debug_sync").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1238, "{mysql:?}");
@@ -813,7 +808,6 @@ fn set_global_requires_super_or_system_variables_admin() {
     root.run("CREATE USER 'plain'@'%'").unwrap();
 
     let mut plain = session_as(&registry, catalog, "plain", "%");
-    plain.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     let error = plain.run("SET GLOBAL autocommit = OFF").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1227, "{mysql:?}");
@@ -824,7 +818,6 @@ fn set_global_requires_super_or_system_variables_admin() {
     // this connection's identity resolves to (matches how every other
     // privilege check in this tier is exercised after a GRANT).
     let mut plain = session_as(&registry, root.shared_catalog(), "plain", "%");
-    plain.attach_globals(std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::new())).unwrap();
     plain.run("SET GLOBAL autocommit = OFF").unwrap();
 }
 
@@ -1970,7 +1963,7 @@ fn an_accepted_isolation_level_still_stores_and_reads_back() {
 /// that Go's `checkIsolationLevel` appends after the relaxed validation path.
 #[test]
 fn global_isolation_skip_waits_for_the_next_session() {
-    let (mut current, _peer, globals) = two_sessions_sharing_globals();
+    let (mut current, _peer, _) = two_sessions_sharing_globals();
 
     let error = current
         .run("SET SESSION transaction_isolation = 'on'")
@@ -1988,7 +1981,6 @@ fn global_isolation_skip_waits_for_the_next_session() {
     assert_eq!(error.to_mysql_error().code, 8048);
 
     let mut inherited = Session::with_catalog(current.shared_catalog());
-    inherited.attach_globals(std::sync::Arc::new(globals)).unwrap();
     inherited
         .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
         .unwrap();
@@ -2113,8 +2105,6 @@ fn set_global_rebuilds_the_sysvar_cache_from_the_in_process_table() {
         Some("23".to_owned())
     );
     let mut peer = Session::with_catalog(session.shared_catalog());
-    peer.attach_globals(session.vars().global_sysvars())
-        .unwrap();
     assert_eq!(
         scalar_text(&mut peer, "SELECT @@tidb_stmt_summary_history_size"),
         Some("23".to_owned())
@@ -2129,10 +2119,9 @@ fn set_global_rebuilds_the_sysvar_cache_from_the_in_process_table() {
 /// (24), and once read a later `SET GLOBAL` no longer reaches it.
 #[test]
 fn skip_init_globals_are_read_through_once_then_kept() {
-    let (mut setter, mut reader, globals) = two_sessions_sharing_globals();
+    let (mut setter, mut reader, _) = two_sessions_sharing_globals();
     let mut unread = Session::with_catalog(setter.shared_catalog());
     unread.set_user("root@%".to_owned(), "root@%".to_owned());
-    unread.attach_globals(std::sync::Arc::new(globals.clone())).unwrap();
     let read = |session: &mut Session| {
         scalar_text(session, "SELECT @@tidb_opt_tiflash_concurrency_factor")
     };
@@ -2143,7 +2132,6 @@ fn skip_init_globals_are_read_through_once_then_kept() {
     assert_eq!(read(&mut unread), Some("31".to_owned()));
     assert_eq!(read(&mut reader), Some("24".to_owned()));
     let mut fresh = Session::with_catalog(setter.shared_catalog());
-    fresh.attach_globals(std::sync::Arc::new(globals)).unwrap();
     assert_eq!(read(&mut fresh), Some("31".to_owned()));
     setter
         .run("SET GLOBAL tidb_opt_tiflash_concurrency_factor = 32")

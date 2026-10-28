@@ -125,7 +125,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 'abc')").unwrap();
     let (table_id, index_key, db_id) = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let db_id = catalog.database_id("test").expect("the test database");
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
                 panic!("t must be a KV table");

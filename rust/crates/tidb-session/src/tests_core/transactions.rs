@@ -565,6 +565,7 @@ fn as_of_timestamp_reads_the_stores_history() {
 
     let sql = "SELECT count(*) FROM t AS OF TIMESTAMP @last_commit_ts";
     let statement = session.parse_statement(sql).unwrap();
+    session.bind_committed_snapshot().unwrap();
     let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(statement, sql).unwrap()
     else {
         panic!("historical SELECT must retain its executor");
@@ -587,6 +588,7 @@ fn as_of_timestamp_reads_the_stores_history() {
     for cancel in [false, true] {
         let statement = session.parse_statement(sql).unwrap();
         {
+            session.bind_committed_snapshot().unwrap();
             let StatementExecution::Rows(mut result) = session
                 .open_record_set_parsed(statement, sql)
                 .unwrap()
@@ -898,6 +900,7 @@ fn snapshot_provider_batch_result_close_preserves_outer_transaction_and_cursor_p
     session.run("SET tidb_snapshot=987654321").unwrap();
     let sql = "SELECT * FROM sp_close";
     let statement = session.parse_statement(sql).unwrap();
+    session.bind_committed_snapshot().unwrap();
     let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(statement, sql).unwrap()
     else {
         panic!("query")

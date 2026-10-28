@@ -25198,7 +25198,7 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .open_storage_session(141)
         .expect("storage session");
     let has_client = opened
-        .with_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
+        .with_committed_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
             Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
             _ => Ok(false),
         })

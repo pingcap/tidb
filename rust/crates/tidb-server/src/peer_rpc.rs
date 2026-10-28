@@ -203,14 +203,19 @@ impl PeerService {
                     .map(|index| columns[*index].0.clone())
                     .collect();
                 let digest_filter = summary_digest_filter(&conditions, &selected, &columns)?;
+                // The handler reads outside any statement, over a committed
+                // snapshot of its own.
                 let rows = session
-                    .local_cluster_table_rows_for(
-                        table,
-                        Some(&self.processes),
-                        &zone,
-                        Some(&required),
-                        digest_filter.as_ref(),
-                    )
+                    .with_committed_snapshot(|session| {
+                        session.local_cluster_table_rows_for(
+                            table,
+                            Some(&self.processes),
+                            &zone,
+                            Some(&required),
+                            digest_filter.as_ref(),
+                        )
+                    })
+                    .and_then(|rows| rows)
                     .map_err(|error| error.to_string())?;
                 let scan_types: Vec<_> = selected
                     .iter()

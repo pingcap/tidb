@@ -67,7 +67,7 @@ const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAUL
 /// is the routing made visible; see `KvTable::partition_row_counts`.
 fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> {
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(kv)) = catalog.table_mut_in("test", table)
             else {
                 panic!("{table} is not stored as bytes");

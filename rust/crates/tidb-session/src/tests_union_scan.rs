@@ -338,7 +338,7 @@ fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
     session.control_transaction("BEGIN").unwrap();
     let staged_writes = std::sync::Arc::clone(&session.staged_writes);
     let clean = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "us") else {
                 panic!("fixture table exists");
             };
@@ -370,7 +370,7 @@ fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
     let staged_writes = std::sync::Arc::clone(&session.staged_writes);
     assert!(
         session
-            .with_catalog_mut(|catalog| {
+            .with_committed_catalog_mut(|catalog| {
                 let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "us")
                 else {
                     panic!("fixture table exists");

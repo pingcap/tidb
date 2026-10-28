@@ -1040,14 +1040,17 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // Between statements a node session's tables are bound to no
-        // snapshot; a look at them reads the committed rows.
-        if self.node.is_some() {
-            return self
-                .node_conn()
-                .with_read_snapshot(|session| session.with_catalog_scope(true, body))?;
-        }
         self.with_catalog_scope(true, body)
+    }
+
+    /// [`Self::with_catalog_mut`] outside any statement, over a committed
+    /// snapshot: what a test that looks at stored rows directly reads.
+    #[cfg(test)]
+    pub(crate) fn with_committed_catalog_mut<T>(
+        &mut self,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        self.with_committed_snapshot(|session| session.with_catalog_mut(body))?
     }
 
     /// Go's durable DDL executor uses the shared infoschema, without local

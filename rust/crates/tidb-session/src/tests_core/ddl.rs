@@ -2058,6 +2058,7 @@ fn table_cache_state_is_shared_metadata_and_guards_ddl() {
                WHERE table_schema = 'test' AND table_name = 'cached_t'";
     let statement = session.parse_statement(sql).unwrap();
     {
+        session.bind_committed_snapshot().unwrap();
         let StatementExecution::Rows(mut result) = session
             .open_record_set_parsed(statement, sql)
             .unwrap()

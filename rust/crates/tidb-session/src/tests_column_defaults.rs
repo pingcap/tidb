@@ -704,7 +704,7 @@ fn malformed_literal_timestamp_default_has_surface_specific_error_handling() {
         .run("CREATE TABLE bad_ts (ts TIMESTAMP DEFAULT '2020-01-02 00:00:00')")
         .unwrap();
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "bad_ts")
             else {
                 panic!("bad_ts is not storage-backed");

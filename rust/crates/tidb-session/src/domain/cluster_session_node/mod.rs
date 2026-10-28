@@ -3700,8 +3700,49 @@ impl Domain {
                     .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
             ),
         };
-        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog));
-        session.set_stats_handle(statistics_loading.handle());
+        let stats_handle = statistics_loading.handle();
+        // Go `session` owns its store half from birth.
+        let node = Box::new(NodeConn {
+            domain: self
+                .binding_session_factory
+                .upgrade()
+                .expect("a domain opens sessions from behind its shared Arc"),
+            txn: TxnManager::new(
+                Arc::clone(&self.transactions),
+                Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
+                connection_id,
+                buffer.clone(),
+            ),
+            slot: Arc::clone(&slot),
+            follower: catalog_follower::CatalogFollower::new(
+                Arc::clone(&self.catalog),
+                storage.clone(),
+                Arc::clone(&self.auto_ids),
+                statistics_loading,
+                loaded.schema_version,
+                built.skipped,
+            ),
+            commit_hooks: Box::new({
+                let bindings = self.bindings.clone();
+                let schema_validator = self.schema_validator.clone();
+                move |session, schema_version| {
+                    Box::new(NodeCommitHooks {
+                        bindings: bindings.clone(),
+                        schema_validator: schema_validator.clone(),
+                        schema_version,
+                        catalog: session.shared_catalog(),
+                    })
+                }
+            }),
+            activate_statement_txn: false,
+            buffer: buffer.clone(),
+            connection_id: connection_id,
+            ok_packet: WriteOutcome::default(),
+            parked_local_infile: None,
+            store: None,
+        });
+        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog), node);
+        session.set_stats_handle(stats_handle);
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
             transactions: Arc::clone(&self.transactions),
             global_vars: self.global_vars.clone(),
@@ -3903,48 +3944,8 @@ impl Domain {
         }
 
         session
-            .attach_globals(Arc::new(self.global_vars.clone()))
+            .seed_globals(Arc::new(self.global_vars.clone()))
             .map_err(map_error)?;
-
-        session.node = Some(Box::new(NodeConn {
-            domain: self
-                .binding_session_factory
-                .upgrade()
-                .expect("a domain opens sessions from behind its shared Arc"),
-            txn: TxnManager::new(
-                    Arc::clone(&self.transactions),
-                    Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
-                    connection_id,
-                    buffer.clone(),
-                ),
-            slot: slot,
-            follower: catalog_follower::CatalogFollower::new(
-                    Arc::clone(&self.catalog),
-                    storage,
-                    Arc::clone(&self.auto_ids),
-                    statistics_loading,
-                    loaded.schema_version,
-                    built.skipped,
-                ),
-            commit_hooks: Box::new({
-                    let bindings = self.bindings.clone();
-                    let schema_validator = self.schema_validator.clone();
-                    move |session, schema_version| {
-                        Box::new(NodeCommitHooks {
-                            bindings: bindings.clone(),
-                            schema_validator: schema_validator.clone(),
-                            schema_version,
-                            catalog: session.shared_catalog(),
-                        })
-                    }
-                }),
-            activate_statement_txn: false,
-            buffer,
-            connection_id: connection_id,
-            ok_packet: WriteOutcome::default(),
-            parked_local_infile: None,
-            store: None,
-        }));
         Ok(session)
     }
 }

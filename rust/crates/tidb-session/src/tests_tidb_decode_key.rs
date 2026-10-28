@@ -43,7 +43,7 @@ fn wrapped_hex(key: &[u8]) -> String {
 
 fn table_ids(session: &mut Session, name: &str) -> (i64, Vec<i64>) {
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
                 panic!("{name} must be a KV table");
             };
@@ -118,7 +118,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
         .run("INSERT INTO t VALUES ('bbbb', 10, '2020-01-01 00:00:00')")
         .unwrap();
     let key = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
                 panic!("t must be a KV table");
             };
@@ -166,7 +166,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
         .run("INSERT INTO t VALUES ('aaaaa', 100, '2000-01-01 00:00:00')")
         .unwrap();
     let key = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
                 panic!("t must be a KV table");
             };
@@ -198,7 +198,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
         .unwrap();
     session.run("INSERT INTO t VALUES (7, 100)").unwrap();
     let (table_id, indexes, partition_id, record, index) = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
                 panic!("t must be a KV table");
             };

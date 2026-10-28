@@ -617,6 +617,7 @@ fn mpp_retry_scope_keeps_closed_attempts_and_defers_stream_completion() {
     // A successful retry returns an open stream to the outer server runner.
     let sql = "select 1";
     let stmt = session.parse(sql).unwrap();
+    session.bind_committed_snapshot().unwrap();
     let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(stmt, sql).unwrap()
     else {
         panic!("SELECT returns a record set");

@@ -1515,6 +1515,7 @@ fn nonclustered_primary_retains_prepared_point_plan() {
         let execution = session
             .bind_cached_prepared_point_get(&plan, &[Datum::Bytes(key.as_bytes().to_vec())])
             .expect("nonclustered point plan binds its unique index key");
+        session.bind_committed_snapshot().unwrap();
         let opened = session
             .open_prepared_point_get(execution, prepared.statement(), sql)
             .unwrap()
@@ -1566,6 +1567,7 @@ fn nonclustered_point_plan_requires_complete_visible_unique_key() {
         let execution = session
             .bind_cached_prepared_point_get(&plan, &[a, Datum::Int(2)])
             .unwrap();
+        session.bind_committed_snapshot().unwrap();
         let opened = session
             .open_prepared_point_get(execution, prepared.statement(), sql)
             .unwrap()
@@ -1896,6 +1898,7 @@ fn session_plan_cache_eviction_does_not_destroy_an_open_execution() {
     session
         .bind_cached_prepared_select(&other.select_plan().unwrap(), &[Datum::Int(1)])
         .unwrap();
+    session.bind_committed_snapshot().unwrap();
     let output = session
         .execute_prepared_record_set_for(&execution, &prepared)
         .unwrap();
@@ -2022,11 +2025,13 @@ fn instance_cache_bindings_do_not_invalidate_another_sessions_open_execution() {
     let peer_bound = peer
         .bind_cached_prepared_select(&b.select_plan().unwrap(), &[Datum::Int(2)])
         .unwrap();
+    first.bind_committed_snapshot().unwrap();
     let first_rows = crate::tests_support::collect_record_set(
         first
             .execute_prepared_record_set_for(&first_bound, &a)
             .unwrap(),
     );
+    peer.bind_committed_snapshot().unwrap();
     let peer_rows = crate::tests_support::collect_record_set(
         peer.execute_prepared_record_set_for(&peer_bound, &b)
             .unwrap(),
@@ -2839,6 +2844,7 @@ fn result_output_names_carry_each_column_origin() {
     let execution = session
         .bind_cached_prepared_point_get(&plan, &[Datum::Int(1)])
         .unwrap();
+    session.bind_committed_snapshot().unwrap();
     let opened = session
         .open_prepared_point_get(execution, prepared.statement(), sql)
         .unwrap()

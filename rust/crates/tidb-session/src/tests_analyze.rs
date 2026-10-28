@@ -113,7 +113,7 @@ fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
         .unwrap();
     let stats_handle = session.stats_handle();
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(TableEntry::Kv(table)) = catalog.table_in("test", "fresh_stats") else {
                 panic!("fresh_stats is not a stored table");
             };
@@ -1216,7 +1216,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
             // in the node's statistics cache as Go's tests install theirs.
             let mut published = Vec::new();
             session
-                .with_catalog_mut(|catalog| {
+                .with_committed_catalog_mut(|catalog| {
             for (table_name, row_count, requested_ndvs) in [
                 (
                     "customer",

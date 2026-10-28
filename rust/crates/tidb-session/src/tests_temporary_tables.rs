@@ -117,7 +117,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
 
         let stats_handle = session.stats_handle();
     let local_id = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "local_t")
             else {
                 panic!("local_t exists")
@@ -131,7 +131,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
     session.run("analyze table local_t").unwrap();
     let stats_handle = session.stats_handle();
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             assert_eq!(
                 catalog
                     .table_statistics_in(&stats_handle, local_id)
@@ -155,7 +155,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
     );
         let stats_handle = session.stats_handle();
     let global_id = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "global_t")
             else {
                 panic!("global_t exists")
@@ -170,7 +170,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
     session.run("analyze table global_t").unwrap();
     let stats_handle = session.stats_handle();
     session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             assert_eq!(
                 catalog
                     .table_statistics_in(&stats_handle, global_id)
@@ -975,7 +975,7 @@ fn local_create_like_and_truncate_share_global_identity_owner() {
         .unwrap();
     let ids = |session: &mut Session| {
         session
-            .with_catalog_mut(|catalog| {
+            .with_committed_catalog_mut(|catalog| {
                 let id = |name| match catalog.table_in("test", name).unwrap() {
                     tidb_executor::TableEntry::Kv(table) => table.table_id(),
                     _ => unreachable!(),

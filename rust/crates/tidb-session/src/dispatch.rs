@@ -694,7 +694,6 @@ impl Session {
         stmt: Stmt,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(prepared.sql())?;
         let result =
             self.prepare_bound_execution(prepared.sql(), stmt, prepared.privilege_requests());
@@ -712,7 +711,6 @@ impl Session {
         statement: &Stmt,
         sql: &str,
     ) -> Result<Option<crate::OpenedStatement>, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(sql)?;
         self.observe_statement_node(statement, true);
         let result = (|| {
@@ -777,7 +775,6 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         self.execute_prepared_select(execution, prepared.sql(), prepared.privilege_requests())
     }
 
@@ -811,7 +808,6 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         Ok(self
             .open_prepared_record_set_for(execution, prepared)?
             .attach(self))
@@ -823,7 +819,6 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(prepared.sql())?;
         self.observe_statement_node(prepared.statement(), true);
         let result = self.open_cached_prepared_select(execution, prepared)?;
@@ -1284,7 +1279,6 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<crate::OpenedStatement, DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(sql)?;
         self.begin_text_statement_boundary(&stmt);
         let result =

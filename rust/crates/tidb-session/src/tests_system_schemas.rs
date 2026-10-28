@@ -797,6 +797,7 @@ fn tidb_index_usage_sizes_a_prepared_point_read_without_statistics() {
         let execution = session
             .bind_cached_prepared_point_get(&plan, &[tidb_datatype::Datum::Int(5)])
             .expect("the point plan binds its handle");
+        session.bind_committed_snapshot().unwrap();
         let opened = session
             .open_prepared_point_get(execution, prepared.statement(), sql)
             .unwrap()

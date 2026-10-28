@@ -136,7 +136,7 @@ fn check_datetime_default_ddl(
                 panic!("{name} rejected DATETIME DEFAULT '{literal}' in {sql_mode}: {error:?}")
             });
             let stored = session
-                .with_catalog_mut(|catalog| {
+                .with_committed_catalog_mut(|catalog| {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_mut_in("test", "d")
                     else {

@@ -1084,12 +1084,12 @@ impl Session {
         // A session on the store reads its domain's privilege cache, as a Go
         // session does; a private registry would hide every account
         // statement the node persists from this session.
-        let registry = match (&self.node, &self.privileges) {
-            (Some(_), Some(domain)) => {
+        let registry = match &self.privileges {
+            Some(domain) => {
                 drop(registry);
                 domain.clone()
             }
-            _ => registry,
+            None => registry,
         };
         // Go's `Auth` activates the account's DEFAULT roles the moment the
         // connection is authenticated (captured: a fresh session reports its
@@ -1180,17 +1180,10 @@ impl Session {
     /// and snapshots its current overrides into this session's own copy --
     /// see [`vars::SessionVars::seed_from_globals`] for why that snapshot
     /// happens exactly once, here, rather than on every read.
-    pub fn attach_globals(
+    pub(crate) fn seed_globals(
         &mut self,
         globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor>,
     ) -> Result<(), crate::DriverError> {
-        // A session on the store reads its domain's GLOBAL table, as a Go
-        // session reads its domain's (`GlobalVarsAccessor`); a private table
-        // would hide every `SET GLOBAL` the node persists from this session.
-        if self.node.is_some() {
-            drop(globals);
-            return Ok(());
-        }
         self.vars
             .seed_from_globals(globals)
             .map_err(crate::variables::var_error)

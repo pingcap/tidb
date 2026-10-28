@@ -294,9 +294,6 @@ pub trait PreparedAstCompile: super::CompilerSession {
 
     /// Parses and retains the statement under this session's current SQL mode.
     fn prepare_ast(&mut self, sql: &str) -> Result<PreparedAst, DriverError> {
-        // Go `PrepareExec` resolves names against the domain's latest schema;
-        // a node session's catalog is refreshed by its node first.
-        self.refresh_node_catalog()?;
         let statement = self.parse_statement(sql)?;
         self.prepare_ast_parsed(sql, statement)
     }
@@ -477,9 +474,6 @@ pub trait PreparedAstCompile: super::CompilerSession {
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
     ) -> Option<PreparedPointGetExecution> {
-        // Go checks a cached plan against the latest infoschema at EXECUTE;
-        // a node session's catalog catches up with its node first.
-        self.refresh_node_catalog().ok()?;
         self.bind_cached_prepared_point_get_for_binding(plan, values, None)
     }
 

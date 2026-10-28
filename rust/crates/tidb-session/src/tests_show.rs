@@ -2432,7 +2432,7 @@ fn show_column_stats_usage_reads_global_and_partition_ids() {
         )
         .unwrap();
     let (table_id, p0_id, a_id, b_id) = session
-        .with_catalog_mut(|catalog| {
+        .with_committed_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
                 panic!("table exists")
             };

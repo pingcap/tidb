@@ -840,7 +840,10 @@ impl Session {
     /// Builds the Go `createSessionWithOpt` state over an already selected
     /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
     /// session opened on it.
-    fn unbootstrapped(catalog: SharedCatalog) -> Self {
+    fn unbootstrapped(
+        catalog: SharedCatalog,
+        node: Box<crate::domain::cluster_session_node::NodeConn>,
+    ) -> Self {
         let plan_cache_invalidation = catalog.plan_cache_invalidation();
         let stats_handle = catalog.stats_handle();
         Session {
@@ -989,7 +992,7 @@ impl Session {
             sql_cpu_usages: Arc::default(),
             ruv2_pending_session_parser_total: 0,
             binary_prepared_execution: false,
-            node: None,
+            node: Some(node),
         }
     }
 
@@ -1085,9 +1088,7 @@ impl Drop for Session {
         // which owns the transaction, pins and the table locks Go's
         // `session.Close` releases through the DDL (`UnlockTables`); a
         // session without a node cannot have taken one.
-        if self.node.is_some() {
-            self.node_conn().close();
-        }
+        self.node_conn().close();
         self.statement_stats.set_finished();
         if let Some(collector) = &self.session_index_usage_collector {
             collector
@@ -2063,8 +2064,11 @@ impl Session {
     /// A session over `catalog`, a schema the node built: Go
     /// `createSessionWithOpt` over the domain's infoschema. The node's
     /// connection path and internal sessions open theirs here.
-    pub(crate) fn over_catalog(catalog: SharedCatalog) -> Self {
-        Session::unbootstrapped(catalog)
+    pub(crate) fn over_catalog(
+        catalog: SharedCatalog,
+        node: Box<crate::domain::cluster_session_node::NodeConn>,
+    ) -> Self {
+        Session::unbootstrapped(catalog, node)
     }
 
     /// Another connection to the store whose session `catalog` came from, as
@@ -2410,12 +2414,20 @@ impl Session {
         self.node_conn().run_statement_output(sql)
     }
 
-    /// A statement opened directly on a node-backed session (rather than run
-    /// through its connection) reads a committed snapshot bound for it.
-    pub(crate) fn bind_node_snapshot_for_open_statement(&mut self) -> Result<(), DriverError> {
-        if self.node.is_none() {
-            return Ok(());
-        }
+    /// A read outside any statement: `body` runs over this session with a
+    /// fresh committed snapshot bound to its tables (Go's
+    /// `tk.Session().GetStore()` snapshot at the current timestamp).
+    pub fn with_committed_snapshot<R>(
+        &mut self,
+        body: impl FnOnce(&mut Session) -> R,
+    ) -> Result<R, DriverError> {
+        self.node_conn().with_read_snapshot(body)
+    }
+
+    /// Binds a fresh committed snapshot to this session's tables and leaves
+    /// it bound, for a statement opened directly on the session whose record
+    /// set outlives the call; the next statement's own binding replaces it.
+    pub fn bind_committed_snapshot(&mut self) -> Result<(), DriverError> {
         self.node_conn().bind_open_statement_snapshot()
     }
 
@@ -2436,10 +2448,7 @@ impl Session {
     /// On a session with no node, which has no statistics cache.
     #[doc(hidden)]
     pub fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
-        self.node
-            .as_ref()
-            .expect("a session on the store")
-            .update_stats_cache_with(tables);
+        self.node().update_stats_cache_with(tables);
     }
 
     /// [`Session::update_stats_cache_with`] for statistics a test built in
@@ -2477,9 +2486,7 @@ impl Session {
     /// `mysql.column_stats_usage`, where `ANALYZE ... PREDICATE` reads them.
     #[cfg(test)]
     pub(crate) fn dump_col_stats_usage_for_test(&self) {
-        self.node
-            .as_ref()
-            .expect("a session on the store")
+        self.node()
             .dump_col_stats_usage()
             .unwrap_or_else(|error| panic!("dump column stats usage: {error}"));
     }
@@ -2493,9 +2500,7 @@ impl Session {
     /// On a session with no node, or when the events stay pending.
     #[doc(hidden)]
     pub fn handle_ddl_events_for_test(&self) {
-        self.node
-            .as_ref()
-            .expect("a session on the store")
+        self.node()
             .handle_ddl_events()
             .unwrap_or_else(|error| panic!("handle DDL events: {error}"));
     }
@@ -2504,29 +2509,21 @@ impl Session {
     /// on this session's node, without caching a miss's `PseudoTable`.
     #[doc(hidden)]
     pub fn stats_table_for_test(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
-        self.node
-            .as_ref()
-            .and_then(|node| node.stats_table(physical_id))
+        self.node().stats_table(physical_id)
     }
 
     /// Observes the requests this session's store receives (`None` removes
     /// the observer).
     #[cfg(test)]
     pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
-        self.node
-            .as_ref()
-            .expect("a session on the store")
-            .set_store_send_hook(hook);
+        self.node().set_store_send_hook(hook);
     }
 
     /// Commits the delete of one raw key into this session's store, as Go's
     /// corruption tests do through a transaction of their own.
     #[cfg(test)]
     pub(crate) fn delete_store_key_for_test(&self, key: &[u8]) -> Result<(), String> {
-        self.node
-            .as_ref()
-            .expect("a session on the store")
-            .delete_key_for_test(key)
+        self.node().delete_key_for_test(key)
     }
 
     fn run_with_columns_using(
@@ -2956,6 +2953,7 @@ mod session_source_tests {
                 &[tidb_datatype::Datum::Int(1)],
             )
             .unwrap();
+        session.bind_committed_snapshot().unwrap();
         let opened = session
             .open_prepared_point_get(execution, prepared.statement(), sql)
             .unwrap()
