@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -393,6 +394,25 @@ func TestReopenWithNothingLeftToIngest(t *testing.T) {
 	groups := res.Item
 	require.Len(t, groups, 1)
 	require.True(t, groups[0].GroupFinished())
+}
+
+type migrationRefusingStorage struct {
+	storeapi.Storage
+}
+
+func (s migrationRefusingStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if strings.HasPrefix(name, "v1/migrations/") {
+		return errors.New("migration write refused")
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func TestNothingLeftToIngestFailsWhenTheMigrationCannotBeAdded(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	coll.coll.taskStorage = migrationRefusingStorage{Storage: coll.coll.taskStorage}
+	coll.MarkSuccess()
+
+	require.ErrorContains(t, coll.coll.close(), "migration write refused")
 }
 
 func TestConflict(t *testing.T) {
