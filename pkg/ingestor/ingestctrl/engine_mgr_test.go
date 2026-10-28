@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -105,6 +106,10 @@ func TestEngineManager(t *testing.T) {
 	require.NoError(t, em.cleanupEngine(ctx, uuid.New()))
 	require.NoError(t, em.cleanupEngine(ctx, engine1ID))
 	require.Equal(t, 0, syncMapLen(&em.engines))
+
+	local := &Backend{engineMgr: em}
+	err = local.SetTSBeforeImportEngine(ctx, uuid.New(), 1)
+	require.ErrorIs(t, err, errdef.ErrEngineNotFound)
 
 	require.True(t, isEmptyDir(backendConfig.LocalStoreDir))
 	em.close()
