@@ -424,6 +424,27 @@ func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 }
 
 func TestMemtableInfoschemaExtractorPart1(t *testing.T) {
+	t.Run("ID predicate is not rechecked", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("create table test.exact_id_filter (a int)")
+		id := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema='test' and table_name='exact_id_filter'").Rows()[0][0]
+		for _, namePredicate := range []string{"", " and table_name='exact_id_filter'"} {
+			sql := fmt.Sprintf("select table_name from information_schema.tables where tidb_table_id=%v%s", id, namePredicate)
+			tk.MustQuery(sql).Check(testkit.Rows("exact_id_filter"))
+			hasSelection := false
+			for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+				if strings.Contains(fmt.Sprint(row[0]), "Selection") {
+					hasSelection = true
+					if strings.Contains(fmt.Sprint(row[4]), "tidb_table_id") {
+						t.Fatalf("ID predicate is redundantly evaluated by Selection: %v", row)
+					}
+				}
+			}
+			if hasSelection != (namePredicate != "") {
+				t.Fatalf("unexpected residual selection for %s: %v", sql, hasSelection)
+			}
+		}
+	})
 	t.Run("name equality collation", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 		for _, predicate := range []string{
