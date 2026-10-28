@@ -786,3 +786,26 @@ func TestInsertNullIntoNotNullGenerated(t *testing.T) {
 	tk.MustExec(`delete from t3 where c2 = ""`)
 	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
 }
+
+func TestInsertOnDuplicateKeyUpdateValuesOfBit(t *testing.T) {
+	// VALUES(col) of a BIT column wide enough to be exactly 8 bytes was read as a native-endian int64,
+	// so BIT(57)..BIT(64) came back byte-reversed. Narrower BIT columns were already right.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t_bit")
+	defer tk.MustExec("drop table if exists t_bit")
+	tk.MustExec("create table t_bit(id int primary key, b8 bit(8), b32 bit(32), b57 bit(57), b64 bit(64))")
+	tk.MustExec("insert into t_bit values (1, 0, 0, 0, 0)")
+
+	tk.MustExec("insert into t_bit values (1, 129, 2147483649, 72057594037927938, 9223372036854775809) " +
+		"on duplicate key update b8 = values(b8), b32 = values(b32), b57 = values(b57), b64 = values(b64)")
+	tk.MustQuery("select cast(b8 as unsigned), cast(b32 as unsigned), cast(b57 as unsigned), cast(b64 as unsigned) from t_bit where id = 1").
+		Check(testkit.Rows("129 2147483649 72057594037927938 9223372036854775809"))
+
+	// A multi-row statement, and the same value written by a plain insert, agree with it.
+	tk.MustExec("insert into t_bit values (1, 1, 1, 1, 18446744073709551615), (2, 2, 2, 2, 2) " +
+		"on duplicate key update b64 = values(b64)")
+	tk.MustQuery("select id, cast(b64 as unsigned) from t_bit order by id").
+		Check(testkit.Rows("1 18446744073709551615", "2 2"))
+}
