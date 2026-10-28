@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	lightningcommon "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -1730,7 +1731,7 @@ func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
 	// cause long retry loops and block the job from rolling back.
-	return isRetryableError(err, false)
+	return lightningcommon.IsRetryableError(err) || isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
