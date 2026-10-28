@@ -308,9 +308,9 @@ impl BindingCache {
                 self.insert_prepared(Arc::new(binding));
             }
         }
-        crate::metrics::BINDING_CACHE_MEM_USAGE.set(self.mem_usage() as f64);
-        crate::metrics::BINDING_CACHE_MEM_LIMIT.set(self.mem_capacity() as f64);
-        crate::metrics::BINDING_CACHE_NUM_BINDINGS.set(self.get_all_bindings().len() as f64);
+        tidb_metrics::bindinfo::BINDING_CACHE_MEM_USAGE.set(self.mem_usage() as f64);
+        tidb_metrics::bindinfo::BINDING_CACHE_MEM_LIMIT.set(self.mem_capacity() as f64);
+        tidb_metrics::bindinfo::BINDING_CACHE_NUM_BINDINGS.set(self.get_all_bindings().len() as f64);
     }
     /// Install the original Go test observer.
     pub fn set_evict_callback(&self, callback: EvictCallback) {

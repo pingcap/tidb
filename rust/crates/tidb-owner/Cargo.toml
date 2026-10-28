@@ -13,7 +13,6 @@ autotests = false
 workspace = true
 
 [dependencies]
-prometheus = { version = "0.14", default-features = false }
 tidb-pd-client = { path = "../tidb-pd-client" }
 
 [[test]]

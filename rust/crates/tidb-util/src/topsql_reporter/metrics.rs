@@ -17,56 +17,14 @@
 //! The three metric families mirror Go's `pkg/metrics/topsql.go`; the
 //! per-label handles and their startup initialization mirror `metrics.go`.
 
-use prometheus::{Counter, CounterVec, Histogram, HistogramOpts, HistogramVec, Opts};
+use prometheus::{Counter, Histogram};
 use std::sync::LazyLock;
-
-fn register<C: prometheus::core::Collector + Clone + 'static>(
-    collector: prometheus::Result<C>,
-) -> C {
-    let collector = collector.expect("valid TopSQL metric definition");
-    prometheus::default_registry()
-        .register(Box::new(collector.clone()))
-        .expect("TopSQL metric registered once");
-    collector
-}
-
-static TOPSQL_IGNORED_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new(
-            "tidb_topsql_ignored_total",
-            "Counter of ignored top-sql metrics (register-sql, register-plan, collect-data and report-data), normally it should be 0.",
-        ),
-        &["type"],
-    ))
-});
-
-static TOPSQL_REPORT_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_topsql_report_duration_seconds",
-            "Bucket histogram of reporting time (s) to the top-sql agent",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 24).expect("valid buckets")),
-        &["type", "result"],
-    ))
-});
-
-static TOPSQL_REPORT_DATA: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_topsql_report_data_total",
-            "Bucket histogram of reporting records/sql/plan count to the top-sql agent.",
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 20).expect("valid buckets")),
-        &["type"],
-    ))
-});
 
 macro_rules! ignore_counter {
     ($name:ident, $label:literal, $doc:literal) => {
         #[doc = $doc]
         pub static $name: LazyLock<Counter> =
-            LazyLock::new(|| TOPSQL_IGNORED_TOTAL.with_label_values(&[$label]));
+            LazyLock::new(|| tidb_metrics::topsql::TOPSQL_IGNORED_TOTAL.with_label_values(&[$label]));
     };
 }
 
@@ -130,7 +88,7 @@ macro_rules! duration_histogram {
     ($name:ident, $kind:literal, $result:literal, $doc:literal) => {
         #[doc = $doc]
         pub static $name: LazyLock<Histogram> =
-            LazyLock::new(|| TOPSQL_REPORT_DURATION.with_label_values(&[$kind, $result]));
+            LazyLock::new(|| tidb_metrics::topsql::TOPSQL_REPORT_DURATION.with_label_values(&[$kind, $result]));
     };
 }
 
@@ -199,7 +157,7 @@ macro_rules! data_histogram {
     ($name:ident, $kind:literal, $doc:literal) => {
         #[doc = $doc]
         pub static $name: LazyLock<Histogram> =
-            LazyLock::new(|| TOPSQL_REPORT_DATA.with_label_values(&[$kind]));
+            LazyLock::new(|| tidb_metrics::topsql::TOPSQL_REPORT_DATA.with_label_values(&[$kind]));
     };
 }
 

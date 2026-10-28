@@ -541,7 +541,7 @@ impl CopReadTaskRuntime {
             Some(_) => "miss",
             None => "null",
         };
-        crate::metrics::COPR_CLOSEST_READ
+        tidb_metrics::distsql::COPR_CLOSEST_READ
             .with_label_values(&[read_type])
             .inc();
         // Go `pickKeysReadCounter`: a request without the statement's shared

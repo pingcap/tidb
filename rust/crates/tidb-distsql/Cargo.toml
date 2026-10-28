@@ -12,11 +12,11 @@ autotests = false
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+tidb-metrics = { path = "../tidb-metrics" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-ristretto = { path = "../tidb-ristretto" }
-prometheus = { version = "0.14", default-features = false }
 prost.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

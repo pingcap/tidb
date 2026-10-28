@@ -186,7 +186,7 @@ fn check_processes(
                     } else {
                         "general"
                     };
-                    tidb_executor::metrics::ONGOING_TXN_DURATION
+                    tidb_metrics::executor::ONGOING_TXN_DURATION
                         .with_label_values(&[label])
                         .observe(txn_cost_time.as_secs_f64());
                 }

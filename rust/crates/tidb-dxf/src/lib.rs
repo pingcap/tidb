@@ -52,7 +52,6 @@ macro_rules! go_string_type {
     };
 }
 
-pub mod metrics;
 mod modify;
 mod node;
 /// Scheduler status and resource-tuning values from Go

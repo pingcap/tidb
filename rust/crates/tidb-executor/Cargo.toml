@@ -44,7 +44,6 @@ tokio = { workspace = true }
 tonic.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 signal-hook = { workspace = true }
-prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
 stacker = { workspace = true }
 chrono = { workspace = true }

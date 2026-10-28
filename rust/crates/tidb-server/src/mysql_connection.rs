@@ -2342,7 +2342,7 @@ fn run_connection_commands<S: QuerySession>(
                         command_metrics.sql_type = stmt.label();
                         // Go `executor.go`: StmtNodeCounter counts every
                         // executed statement by its executor label.
-                        tidb_executor::metrics::STATEMENT_TOTAL
+                        tidb_metrics::executor::STATEMENT_TOTAL
                             .with_label_values(&["", engine.metrics_resource_group(), stmt.label()])
                             .inc();
                         // Go excludes text DDL from addQueryMetrics.
@@ -2713,7 +2713,7 @@ fn run_connection_commands<S: QuerySession>(
                     // inner statement for the label -- so the binary protocol
                     // feeds `tidb_executor_statement_total` exactly like the
                     // text protocol does.
-                    tidb_executor::metrics::STATEMENT_TOTAL
+                    tidb_metrics::executor::STATEMENT_TOTAL
                         .with_label_values(&["", engine.metrics_resource_group(), statement_label])
                         .inc();
                     let general = prepared_statement.as_ref();

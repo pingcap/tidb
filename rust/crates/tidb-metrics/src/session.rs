@@ -26,9 +26,6 @@
 use prometheus::{Counter, CounterVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
-pub use tidb_bindinfo::metrics::{
-    BINDING_CACHE_MEM_LIMIT, BINDING_CACHE_MEM_USAGE, BINDING_CACHE_NUM_BINDINGS,
-};
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector: prometheus::Result<C>,

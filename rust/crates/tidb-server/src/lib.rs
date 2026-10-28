@@ -246,17 +246,17 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     // each subsystem's startup; the dashboard surface they produce is one
     // boot-time call per Rust crate that owns the families.
     tidb_planner::metrics::init_dashboard_series();
-    tidb_executor::metrics::init_dashboard_series();
-    tidb_session::metrics::init_dashboard_series();
-    tidb_distsql::metrics::init_dashboard_series();
-    tidb_ddl_session::metrics::init_dashboard_series();
-    tidb_domain::metrics::init_dashboard_series();
-    tidb_owner::metrics::init_dashboard_series();
-    tidb_meta::metrics::init_dashboard_series();
-    tidb_util::memory_metrics::init_dashboard_series();
+    tidb_metrics::executor::init_dashboard_series();
+    tidb_metrics::session::init_dashboard_series();
+    tidb_metrics::distsql::init_dashboard_series();
+    tidb_metrics::ddl::init_dashboard_series();
+    tidb_metrics::domain::init_dashboard_series();
+    tidb_metrics::owner::init_dashboard_series();
+    tidb_metrics::meta::init_dashboard_series();
+    tidb_metrics::memory::init_dashboard_series();
     tidb_stats_handle_metrics::init_dashboard_series();
-    tidb_dxf::metrics::init_dashboard_series();
-    tidb_stmtsummary::metrics::init_dashboard_series();
+    tidb_metrics::globalsort::init_dashboard_series();
+    tidb_metrics::stmtsummary::init_dashboard_series();
     tidb_util::topsql_reporter::metrics::init_metrics_vars();
     let _statement_observation_cleanup = start_statement_observation();
     tidb_txnkv::client_go_metrics::init_dashboard_series();

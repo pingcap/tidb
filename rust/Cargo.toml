@@ -29,6 +29,7 @@ members = [
     "crates/tidb-metadef",
     "crates/tidb-sessionstates",
     "crates/tidb-meta",
+    "crates/tidb-metrics",
     "crates/tidb-vardef",
     "crates/tidb-charset",
     "crates/tidb-chunk",

@@ -974,7 +974,7 @@ impl Session {
             return Ok(None);
         };
 
-        crate::metrics::observe_compile_duration(
+        tidb_metrics::session::observe_compile_duration(
             self.observed_compile_duration()
                 .unwrap_or_else(|| started.elapsed())
                 .as_secs_f64(),
@@ -1397,7 +1397,7 @@ impl Session {
             self.cleanup_txn_read_ts();
         }
         if result.is_ok() {
-            crate::metrics::observe_compile_duration(
+            tidb_metrics::session::observe_compile_duration(
                 self.observed_compile_duration()
                     .unwrap_or_else(|| started.elapsed())
                     .as_secs_f64(),

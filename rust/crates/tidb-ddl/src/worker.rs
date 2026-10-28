@@ -2042,7 +2042,7 @@ mod schema_sync_tests {
         // Restore the CHECK intermediate state and force its validator to
         // panic. The worker must discard the incomplete action and persist
         // Go's cancellation outcome under the current limit.
-        let panic_count = tidb_util::panic_metrics::PANIC_TOTAL
+        let panic_count = tidb_metrics::panic::PANIC_TOTAL
             .with_label_values(&["ddl-worker"])
             .get();
         set_limit(0);
@@ -2234,7 +2234,7 @@ mod schema_sync_tests {
             "cancellation must finish metadata rollback"
         );
         assert_eq!(
-            tidb_util::panic_metrics::PANIC_TOTAL
+            tidb_metrics::panic::PANIC_TOTAL
                 .with_label_values(&["ddl-worker"])
                 .get(),
             panic_count + 4,

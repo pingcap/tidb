@@ -1,0 +1,15 @@
+[package]
+name = "tidb-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB metrics: Go pkg/metrics (Rust rewrite)."
+
+[dependencies]
+prometheus = { version = "0.14", default-features = false }
+tidb-error = { path = "../tidb-error" }
+
+[lints]
+workspace = true

@@ -309,12 +309,12 @@ impl StatementLifecycle<'_> {
             tidb_cluster::cluster_table_storage::take_last_pessimistic_lock_observation()
         {
             if observation.lock_keys > 0 {
-                crate::metrics::STATEMENT_LOCK_KEYS_COUNT
+                tidb_metrics::session::STATEMENT_LOCK_KEYS_COUNT
                     .with_label_values(&[] as &[&str])
                     .observe(observation.lock_keys as f64);
             }
             if observation.retries > 0 {
-                crate::metrics::STATEMENT_PESSIMISTIC_RETRY_COUNT
+                tidb_metrics::session::STATEMENT_PESSIMISTIC_RETRY_COUNT
                     .with_label_values(&[] as &[&str])
                     .observe(observation.retries as f64);
             }

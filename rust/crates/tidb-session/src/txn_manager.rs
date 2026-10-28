@@ -503,10 +503,10 @@ impl TxnManager {
         // A pending transaction no statement activated has no commit to
         // observe (`doCommitWithRetry` returns for an invalid transaction).
         if start_ts.is_some() {
-            crate::metrics::TRANSACTION_DURATION
+            tidb_metrics::session::TRANSACTION_DURATION
                 .with_label_values(&[txn_mode, duration_label, "general"])
                 .observe(txn_opened_at.elapsed().as_secs_f64());
-            crate::metrics::STATEMENT_PER_TRANSACTION
+            tidb_metrics::session::STATEMENT_PER_TRANSACTION
                 .with_label_values(&[txn_mode, num_label, "general"])
                 .observe(txn_statement_count);
         }
@@ -556,10 +556,10 @@ impl TxnManager {
                 // A pending transaction no statement activated was never a
                 // transaction to abort.
                 if start_ts.is_some() {
-                    crate::metrics::TRANSACTION_DURATION
+                    tidb_metrics::session::TRANSACTION_DURATION
                         .with_label_values(&[txn_mode, "abort", "general"])
                         .observe(txn_opened_at.elapsed().as_secs_f64());
-                    crate::metrics::STATEMENT_PER_TRANSACTION
+                    tidb_metrics::session::STATEMENT_PER_TRANSACTION
                         .with_label_values(&[txn_mode, "error", "general"])
                         .observe(txn_statement_count);
                 }

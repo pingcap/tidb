@@ -462,9 +462,6 @@ fn is_stmt_summary_setting(name: &str) -> bool {
 }
 
 impl GlobalSysvars {
-    /// A fresh registry with every variable at its default (Go's state on a
-    /// cluster nobody has ever run `SET GLOBAL` against).
-    #[must_use]
     /// This table with `other`'s registered `SetGlobal` hooks: Go's hooks
     /// live in the process-wide variable registry, not in one value table,
     /// so a statement's scratch copy runs the node's hooks.
@@ -484,6 +481,9 @@ impl GlobalSysvars {
             .insert(name.to_ascii_lowercase(), hook);
     }
 
+    /// A fresh registry with every variable at its default (Go's state on a
+    /// cluster nobody has ever run `SET GLOBAL` against).
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

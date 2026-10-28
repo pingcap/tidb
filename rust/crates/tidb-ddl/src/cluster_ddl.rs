@@ -7254,7 +7254,7 @@ fn count_ddl_action_panic(job: &mut Job, load_limit: &dyn Fn() -> i64) {
 // unwind safety for the action's borrowed snapshot/buffer is sound.
 pub(crate) fn recover_ddl_action<T>(action: impl FnOnce() -> T) -> Result<T, ()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).map_err(|panic| {
-        tidb_util::panic_metrics::PANIC_TOTAL
+        tidb_metrics::panic::PANIC_TOTAL
             .with_label_values(&["ddl-worker"])
             .inc();
         let message = panic

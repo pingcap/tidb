@@ -80,7 +80,7 @@ impl tidb_executor::record_set::RecordSetSession for Session {
     }
 
     fn observe_execute_duration(seconds: f64, internal: bool) {
-        crate::metrics::observe_execute_duration(seconds, internal);
+        tidb_metrics::session::observe_execute_duration(seconds, internal);
     }
 }
 

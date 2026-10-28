@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/core/metrics`: the plan cache's prometheus surfaces.
+//! Go `pkg/planner/core/metrics`: the plan cache's prometheus surfaces,
+//! bound from `pkg/metrics` families (`tidb_metrics::server`, `stats`).
 //!
 //! Go binds fifteen children from five `pkg/metrics` families in
 //! `InitMetricsVars` and hands them out through typed accessors. Families,
@@ -37,112 +38,12 @@ const LBL_SESSION_LOOKUP: &str = " session-plan-cache-lookup";
 const LBL_INSTANCE_LOOKUP: &str = " instance-plan-cache-lookup";
 const LBL_CLONE: &str = " instance-plan-cache-clone";
 
-/// Go `metrics.PlanCacheCounter`.
-pub static PLAN_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(
-        CounterVec::new(
-            Opts::new("plan_cache_total", "Counter of query using plan cache.")
-                .namespace("tidb")
-                .subsystem("server"),
-            &[LBL_TYPE],
-        ),
-        "plan cache counter",
-    )
-});
 
-/// Go `metrics.PlanCacheMissCounter`.
-pub static PLAN_CACHE_MISS_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(
-        CounterVec::new(
-            Opts::new("plan_cache_miss_total", "Counter of plan cache miss.")
-                .namespace("tidb")
-                .subsystem("server"),
-            &[LBL_TYPE],
-        ),
-        "plan cache miss counter",
-    )
-});
 
-/// Go `metrics.PlanCacheInstanceMemoryUsage`.
-pub static PLAN_CACHE_INSTANCE_MEMORY_USAGE: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(
-        GaugeVec::new(
-            Opts::new(
-                "plan_cache_instance_memory_usage",
-                "Total plan cache memory usage of all sessions in a instance",
-            )
-            .namespace("tidb")
-            .subsystem("server"),
-            &[LBL_TYPE],
-        ),
-        "plan cache memory gauge",
-    )
-});
 
-/// Registers one collector with the process default registry. Go's
-/// `pkg/metrics.RegisterMetrics` makes every family visible to `/metrics`;
-/// without this the dashboard families below stay invisible even once their
-/// children are materialized.
-fn register<C>(collector: prometheus::Result<C>, what: &'static str) -> C
-where
-    C: prometheus::core::Collector + Clone + 'static,
-{
-    let metric = collector.unwrap_or_else(|error| panic!("{what} is constructible: {error}"));
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .unwrap_or_else(|error| panic!("{what} is registered once: {error}"));
-    metric
-}
 
-/// Go `metrics.PlanCacheInstancePlanNumCounter`.
-pub static PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(
-        GaugeVec::new(
-            Opts::new(
-                "plan_cache_instance_plan_num_total",
-                "Counter of plan of all prepared plan cache in a instance",
-            )
-            .namespace("tidb")
-            .subsystem("server"),
-            &[LBL_TYPE],
-        ),
-        "plan cache plan num gauge",
-    )
-});
 
-/// Go `metrics.PseudoEstimation` (the statistics family this package binds
-/// its two pseudo-estimation children from).
-pub static PSEUDO_ESTIMATION: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(
-        CounterVec::new(
-            Opts::new(
-                "pseudo_estimation_total",
-                "Counter of pseudo estimation caused by outdated stats.",
-            )
-            .namespace("tidb")
-            .subsystem("statistics"),
-            &[LBL_TYPE],
-        ),
-        "pseudo estimation counter",
-    )
-});
 
-/// Go `metrics.PlanCacheProcessDuration` (1ms ~ 1.5days exponential buckets).
-pub static PLAN_CACHE_PROCESS_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(
-        HistogramVec::new(
-            HistogramOpts::new(
-                "plan_cache_process_duration_seconds",
-                "Bucketed histogram of processing time (s) of plan cache operations.",
-            )
-            .namespace("tidb")
-            .subsystem("server")
-            .buckets(exponential_buckets(0.001, 2.0, 28).expect("28 positive buckets")),
-            &[LBL_TYPE],
-        ),
-        "plan cache duration histogram",
-    )
-});
 
 struct Children {
     pseudo_nodata: Counter,
@@ -163,21 +64,21 @@ struct Children {
 }
 
 static CHILDREN: LazyLock<Children> = LazyLock::new(|| Children {
-    pseudo_nodata: PSEUDO_ESTIMATION.with_label_values(&["nodata"]),
-    pseudo_outdate: PSEUDO_ESTIMATION.with_label_values(&["outdate"]),
-    prepared_hit: PLAN_CACHE_COUNTER.with_label_values(&[LBL_PREPARED]),
-    non_prepared_hit: PLAN_CACHE_COUNTER.with_label_values(&[LBL_NON_PREPARED]),
-    prepared_miss: PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_PREPARED]),
-    non_prepared_miss: PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_NON_PREPARED]),
-    non_prepared_unsupported: PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_UNSUPPORTED]),
-    session_plan_num: PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_SESSION]),
-    session_memory: PLAN_CACHE_INSTANCE_MEMORY_USAGE.with_label_values(&[LBL_SESSION]),
-    instance_plan_num: PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_INSTANCE]),
-    instance_memory: PLAN_CACHE_INSTANCE_MEMORY_USAGE.with_label_values(&[LBL_INSTANCE]),
-    instance_evict: PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_LAST_EVICT]),
-    session_lookup: PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_SESSION_LOOKUP]),
-    instance_lookup: PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_INSTANCE_LOOKUP]),
-    instance_clone: PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_CLONE]),
+    pseudo_nodata: tidb_metrics::stats::PSEUDO_ESTIMATION.with_label_values(&["nodata"]),
+    pseudo_outdate: tidb_metrics::stats::PSEUDO_ESTIMATION.with_label_values(&["outdate"]),
+    prepared_hit: tidb_metrics::server::PLAN_CACHE_COUNTER.with_label_values(&[LBL_PREPARED]),
+    non_prepared_hit: tidb_metrics::server::PLAN_CACHE_COUNTER.with_label_values(&[LBL_NON_PREPARED]),
+    prepared_miss: tidb_metrics::server::PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_PREPARED]),
+    non_prepared_miss: tidb_metrics::server::PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_NON_PREPARED]),
+    non_prepared_unsupported: tidb_metrics::server::PLAN_CACHE_MISS_COUNTER.with_label_values(&[LBL_UNSUPPORTED]),
+    session_plan_num: tidb_metrics::server::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_SESSION]),
+    session_memory: tidb_metrics::server::PLAN_CACHE_INSTANCE_MEMORY_USAGE.with_label_values(&[LBL_SESSION]),
+    instance_plan_num: tidb_metrics::server::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_INSTANCE]),
+    instance_memory: tidb_metrics::server::PLAN_CACHE_INSTANCE_MEMORY_USAGE.with_label_values(&[LBL_INSTANCE]),
+    instance_evict: tidb_metrics::server::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.with_label_values(&[LBL_LAST_EVICT]),
+    session_lookup: tidb_metrics::server::PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_SESSION_LOOKUP]),
+    instance_lookup: tidb_metrics::server::PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_INSTANCE_LOOKUP]),
+    instance_clone: tidb_metrics::server::PLAN_CACHE_PROCESS_DURATION.with_label_values(&[LBL_CLONE]),
 });
 
 /// Go `PseudoEstimationNotAvailable`.

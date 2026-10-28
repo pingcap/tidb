@@ -2974,7 +2974,6 @@ mod session_source_tests {
     }
 }
 
-pub mod metrics;
 #[cfg(test)]
 mod tests_admin_check;
 #[cfg(test)]

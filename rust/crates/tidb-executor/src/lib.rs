@@ -367,6 +367,5 @@ pub(crate) mod test_temp_storage {
 
 /// Session-owned reference counts over shared advisory-lock services.
 pub use tidb_sessionctx::advisory_lock_state;
-pub mod metrics;
 pub use tidb_infoschema::TidbDecodeKeySnapshot;
 pub use tidb_infoschema::StatementStage;

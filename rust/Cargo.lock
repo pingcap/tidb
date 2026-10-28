@@ -3434,6 +3434,7 @@ dependencies = [
  "tidb-error",
  "tidb-hack",
  "tidb-hint",
+ "tidb-metrics",
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
@@ -3596,6 +3597,7 @@ dependencies = [
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-owner",
@@ -3759,7 +3761,6 @@ dependencies = [
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
- "prometheus 0.14.0",
  "prost 0.14.4",
  "tidb-chunk",
  "tidb-codec",
@@ -3768,6 +3769,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-kv",
+ "tidb-metrics",
  "tidb-mysql",
  "tidb-proto",
  "tidb-ristretto",
@@ -3881,7 +3883,6 @@ name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "prometheus 0.14.0",
  "rand 0.8.7",
  "serde",
  "serde_json",
@@ -4001,7 +4002,6 @@ dependencies = [
  "futures",
  "hashbrown 0.15.5",
  "hyper-util",
- "prometheus 0.14.0",
  "prost 0.14.4",
  "reqwest 0.13.4",
  "serde",
@@ -4083,6 +4083,7 @@ dependencies = [
  "tidb-config",
  "tidb-executor",
  "tidb-log",
+ "tidb-metrics",
  "tidb-stats-handle-util",
  "tidb-util",
  "tidb-vardef",
@@ -4164,6 +4165,7 @@ dependencies = [
  "tidb-ddl-label",
  "tidb-domain",
  "tidb-log",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-placement",
@@ -4321,7 +4323,6 @@ name = "tidb-meta"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "prometheus 0.14.0",
  "regex",
  "serde",
  "serde_json",
@@ -4348,6 +4349,14 @@ dependencies = [
  "tidb-hack",
  "tidb-model",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+ "tidb-error",
 ]
 
 [[package]]
@@ -4382,7 +4391,6 @@ version = "0.0.0"
 name = "tidb-owner"
 version = "0.0.0"
 dependencies = [
- "prometheus 0.14.0",
  "tidb-pd-client",
 ]
 
@@ -4458,6 +4466,7 @@ dependencies = [
  "tidb-hint",
  "tidb-infoschema",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -4636,6 +4645,7 @@ dependencies = [
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-owner",
@@ -4740,6 +4750,7 @@ dependencies = [
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-naming",
@@ -5098,7 +5109,6 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
- "prometheus 0.14.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -5248,6 +5258,7 @@ dependencies = [
  "tidb-error",
  "tidb-hack",
  "tidb-log",
+ "tidb-metrics",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-util",
@@ -5326,6 +5337,7 @@ dependencies = [
  "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-naming",

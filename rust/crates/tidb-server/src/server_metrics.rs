@@ -29,32 +29,14 @@
 //! [`crate::query_metrics`], which transcribes `clientConn.addQueryMetrics`
 //! together with the dispatch scope guard.
 
+
 use prometheus::{
     Counter, CounterVec, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter,
     IntCounterVec, IntGauge, IntGaugeVec, Opts,
 };
 use std::sync::LazyLock;
 
-/// Go `pkg/metrics` label constants (`session.go:265-303`).
-pub mod labels {
-    pub const TYPE: &str = "type";
-    pub const DB: &str = "db";
-    pub const RESULT: &str = "result";
-    pub const SQL_TYPE: &str = "sql_type";
-    pub const IN_TXN: &str = "in_txn";
-    pub const VERSION: &str = "version";
-    pub const HASH: &str = "hash";
-    pub const ADDRESS: &str = "address";
-    pub const MODULE: &str = "module";
-    pub const RESOURCE_GROUP: &str = "resource_group";
-
-    /// Go `metrics.LblOK`.
-    pub const OK: &str = "ok";
-    /// Go `metrics.LblError`.
-    pub const ERROR: &str = "error";
-    /// Go `pkg/server/metrics`: `DisconnectErrorUndetermined`.
-    pub const UNDETERMINED: &str = "undetermined";
-}
+pub use tidb_metrics::server::*;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector: prometheus::Result<C>,
@@ -74,421 +56,6 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector
 }
 
-/// Go `metrics.PacketIOCounter`.
-pub static PACKET_IO_BYTES: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_packet_io_bytes",
-            "Counters of packet IO bytes.",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.QueryRPCHistogram`.
-pub static QUERY_STATEMENT_RPC_COUNT: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_query_statement_rpc_count",
-            "Bucketed histogram of execution rpc count of handled query statements.",
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 1.5, 23).expect("valid buckets")),
-        &[labels::SQL_TYPE, labels::DB],
-    ))
-});
-
-/// Go `metrics.QueryProcessedKeyHistogram`.
-pub static QUERY_STATEMENT_PROCESSED_KEYS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_query_statement_processed_keys",
-            "Bucketed histogram of processed key count during the scan of handled query statements.",
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 32).expect("valid buckets")),
-        &[labels::SQL_TYPE, labels::DB],
-    ))
-});
-
-/// Go `metrics.IARemoteReadSegmentCount`.
-pub static IA_REMOTE_READ_SEGMENT_COUNT: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_ia_remote_read_segment_count",
-            "Counter of IA remote read segments observed by TiDB.",
-        ),
-        &[labels::SQL_TYPE, labels::DB],
-    ))
-});
-
-/// Go `metrics.IARemoteReadSegmentSize`.
-pub static IA_REMOTE_READ_SEGMENT_SIZE_BYTES: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_ia_remote_read_segment_size_bytes",
-            "Counter of IA remote read segment bytes observed by TiDB.",
-        ),
-        &[labels::SQL_TYPE, labels::DB],
-    ))
-});
-
-/// Go `metrics.IARemoteReadSegmentWaitDuration`.
-pub static IA_REMOTE_READ_SEGMENT_WAIT_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_ia_remote_read_segment_wait_duration_seconds",
-            "Bucketed histogram of IA remote read segment wait time observed by TiDB.",
-        )
-        .buckets(prometheus::exponential_buckets(0.00005, 2.0, 20).expect("valid buckets")),
-        &[labels::SQL_TYPE, labels::DB],
-    ))
-});
-
-/// Go `metrics.ConnGauge`.
-pub static CONN_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new("tidb_server_connections", "Number of connections."),
-        &[labels::RESOURCE_GROUP],
-    ))
-});
-
-/// Go `metrics.DisconnectionCounter`, bound one for one with Go
-/// `pkg/server/metrics` `DisconnectNormal` / `DisconnectByClientWithError` /
-/// `DisconnectErrorUndetermined`.
-pub static DISCONNECTION_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_disconnection_total",
-            "Counter of connections disconnected.",
-        ),
-        &[labels::RESULT],
-    ))
-});
-
-/// Go `metrics.PreparedStmtGauge`.
-pub static PREPARED_STMTS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_prepared_stmts",
-        "number of prepared statements.",
-    ))
-});
-
-/// Go `metrics.ExecuteErrorCounter`.
-pub static EXECUTE_ERROR_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_execute_error_total",
-            "Counter of execute errors.",
-        ),
-        &[labels::TYPE, labels::DB, labels::RESOURCE_GROUP],
-    ))
-});
-
-/// Go `metrics.CriticalErrorCounter`.
-pub static CRITICAL_ERROR_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register(IntCounter::new(
-        "tidb_server_critical_error_total",
-        "Counter of critical errors.",
-    ))
-});
-
-/// Go `metrics.ServerEventCounter`, with Go's event label values
-/// `ServerStart` / `ServerStop` / `EventKill`.
-pub static EVENT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new("tidb_server_event_total", "Counter of tidb-server event."),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.TimeJumpBackCounter`.
-pub static TIME_JUMP_BACK_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register(IntCounter::new(
-        "tidb_monitor_time_jump_back_total",
-        "Counter of system time jumps backward.",
-    ))
-});
-
-/// Go `metrics.ReadFromTableCacheCounter`.
-pub static READ_FROM_TABLECACHE_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register(IntCounter::new(
-        "tidb_server_read_from_tablecache_total",
-        "Counter of query read from table cache.",
-    ))
-});
-
-/// Go `metrics.HandShakeErrorCounter`.
-pub static HANDSHAKE_ERROR_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register(IntCounter::new(
-        "tidb_server_handshake_error_total",
-        "Counter of hand shake error.",
-    ))
-});
-
-/// Go `metrics.GetTokenDurationHistogram`.
-pub static GET_TOKEN_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
-    register(Histogram::with_opts(
-        HistogramOpts::new(
-            "tidb_server_get_token_duration_seconds",
-            "Duration (us) for getting token, it should be small until concurrency limit is reached.",
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 30).expect("valid buckets")),
-    ))
-});
-
-/// Go `metrics.NumOfMultiQueryHistogram`.
-pub static MULTI_QUERY_NUM: LazyLock<Histogram> = LazyLock::new(|| {
-    register(Histogram::with_opts(
-        HistogramOpts::new(
-            "tidb_server_multi_query_num",
-            "The number of queries contained in a multi-query statement.",
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 20).expect("valid buckets")),
-    ))
-});
-
-/// Go `metrics.TotalQueryProcHistogram`.
-pub static SLOW_QUERY_PROCESS_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_slow_query_process_duration_seconds",
-            "Bucketed histogram of processing time (s) of of slow queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
-        &[labels::SQL_TYPE],
-    ))
-});
-
-/// Go `metrics.TotalCopProcHistogram`.
-pub static SLOW_QUERY_COP_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_slow_query_cop_duration_seconds",
-            "Bucketed histogram of all cop processing time (s) of of slow queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
-        &[labels::SQL_TYPE],
-    ))
-});
-
-/// Go `metrics.TotalCopWaitHistogram`.
-pub static SLOW_QUERY_WAIT_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_slow_query_wait_duration_seconds",
-            "Bucketed histogram of all cop waiting time (s) of of slow queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
-        &[labels::SQL_TYPE],
-    ))
-});
-
-/// Go `metrics.CopMVCCRatioHistogram`.
-pub static SLOW_QUERY_COP_MVCC_RATIO: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_slow_query_cop_mvcc_ratio",
-            "Bucketed histogram of all cop total keys / processed keys in slow queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.5, 2.0, 21).expect("valid buckets")),
-        &[labels::SQL_TYPE],
-    ))
-});
-
-/// Go `metrics.SlowQueryCounter`.
-pub static SLOW_QUERY_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new("tidb_server_slow_query_total", "Counter of slow queries."),
-        &[labels::SQL_TYPE],
-    ))
-});
-
-/// Go `metrics.MaxProcs`.
-pub static MAXPROCS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_maxprocs",
-        "The value of GOMAXPROCS.",
-    ))
-});
-
-/// Go `metrics.GOGC`.
-pub static GOGC: LazyLock<IntGauge> =
-    LazyLock::new(|| register(IntGauge::new("tidb_server_gogc", "The value of GOGC")));
-
-/// Go `metrics.ConnIdleDurationHistogram`.
-pub static CONN_IDLE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_conn_idle_duration_seconds",
-            "Bucketed histogram of connection idle time (s).",
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
-        &[labels::IN_TXN],
-    ))
-});
-
-/// Go `metrics.ServerInfo`.
-pub static SERVER_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new(
-            "tidb_server_info",
-            "Indicate the tidb server info, and the value is the start timestamp (s).",
-        ),
-        &[labels::VERSION, labels::HASH],
-    ))
-});
-
-/// Go `metrics.TokenGauge`.
-pub static TOKENS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_tokens",
-        "The number of concurrent executing session",
-    ))
-});
-
-/// Go `metrics.ConfigStatus`.
-pub static CONFIG_STATUS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new(
-            "tidb_config_status",
-            "Status of the TiDB server configurations.",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.TiFlashQueryTotalCounter`.
-pub static TIFLASH_QUERY_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_tiflash_query_total",
-            "Counter of TiFlash queries.",
-        ),
-        &[labels::TYPE, labels::RESULT],
-    ))
-});
-
-/// Go `metrics.TiFlashFailedMPPStoreState`.
-pub static TIFLASH_FAILED_STORE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new(
-            "tidb_server_tiflash_failed_store",
-            "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
-        ),
-        &[labels::ADDRESS],
-    ))
-});
-
-/// Go `metrics.PDAPIExecutionHistogram`.
-pub static PD_API_EXECUTION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_pd_api_execution_duration_seconds",
-            "Bucketed histogram of all pd api execution time (s)",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.PDAPIRequestCounter`.
-pub static PD_API_REQUEST_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_pd_api_request_total",
-            "Counter of the pd http api requests",
-        ),
-        &[labels::TYPE, labels::RESULT],
-    ))
-});
-
-/// Go `metrics.CPUProfileCounter`.
-pub static CPU_PROFILE_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register(IntCounter::new(
-        "tidb_server_cpu_profile_total",
-        "Counter of cpu profile requests.",
-    ))
-});
-
-/// Go `metrics.LoadTableCacheDurationHistogram`.
-pub static LOAD_TABLE_CACHE_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
-    register(Histogram::with_opts(
-        HistogramOpts::new(
-            "tidb_server_load_table_cache_seconds",
-            "Bucketed histogram of loading table cache time (s).",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
-    ))
-});
-
-/// Go `metrics.RCCheckTSWriteConfilictCounter`.
-pub static RC_CHECK_TS_CONFLICT_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_rc_check_ts_conflict_total",
-            "Counter of write conflict error on RC check TS.",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.MemoryLimit`.
-pub static MEMORY_QUOTA_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_memory_quota_bytes",
-        "Memory quota for the server, read from the configuration.",
-    ))
-});
-
-/// Go `metrics.InternalSessions`.
-pub static INTERNAL_SESSIONS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_internal_sessions",
-        "Number of internal sessions.",
-    ))
-});
-
-/// Go `metrics.ActiveUser`.
-pub static ACTIVE_USERS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(IntGauge::new(
-        "tidb_server_active_users",
-        "Number of active users.",
-    ))
-});
-
-/// Go `metrics.TLSVersion`.
-pub static TLS_VERSION: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new("tidb_server_tls_version", "TLS version of the connections."),
-        &["version"],
-    ))
-});
-
-/// Go `metrics.TLSCipher`.
-pub static TLS_CIPHER: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new("tidb_server_tls_cipher", "TLS cipher of the connections."),
-        &["cipher"],
-    ))
-});
-
-/// Go `metrics.PanicCounter` (`pkg/metrics/metrics.go:122`).
-pub use tidb_util::panic_metrics::PANIC_TOTAL;
-
-/// Go `metrics.MemoryUsage` (`pkg/metrics/metrics.go:129`).
-pub static MEMORY_USAGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new("tidb_server_memory_usage", "Memory Usage"),
-        &[labels::MODULE, labels::TYPE],
-    ))
-});
-
-/// Go `ExecuteErrorToLabel` (`pkg/metrics/server.go:483`): the label is the
-/// error's RFC code string (`"<pkg>:<code>"`), or `unknown` for a plain
-/// error. The Go identity travels on the error (`SqlQueryError::identity`).
-pub fn execute_error_to_label(identity: Option<tidb_error::terror::TerrorIdentity>) -> String {
-    identity.map_or_else(|| "unknown".to_owned(), |identity| identity.rfc_code())
-}
-
 /// Go `pkg/server/metrics` disconnect bindings, as label values.
 pub mod disconnect {
     pub const NORMAL: &str = super::labels::OK;
@@ -496,153 +63,11 @@ pub mod disconnect {
     pub const UNDETERMINED: &str = "undetermined";
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard-surface families whose Go homes sit in pkg/metrics/bindinfo.go,
-// resource_group.go, ttl.go, and pkg/timer/metrics. The Rust node has no
-// runaway-watcher, TTL, or timer subsystem yet; binding gauges share the
-// live session owner. The remaining dashboard families
-// register and materialize the same startup series Go writes, so dashboard
-// queries resolve identically.
-
-/// Go `BindingCacheHitCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_BINDING_CACHE_HIT_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new(
-        "tidb_server_binding_cache_hit_total",
-        "Counter of binding cache hit.",
-    ))
-});
-
-/// Go `BindingCacheMemLimit` (`pkg/metrics`).
-pub use tidb_session::metrics::BINDING_CACHE_MEM_LIMIT as TIDB_SERVER_BINDING_CACHE_MEM_LIMIT;
-
-/// Go `BindingCacheMemUsage` (`pkg/metrics`).
-pub use tidb_session::metrics::BINDING_CACHE_MEM_USAGE as TIDB_SERVER_BINDING_CACHE_MEM_USAGE;
-
-/// Go `BindingCacheMissCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_BINDING_CACHE_MISS_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new(
-        "tidb_server_binding_cache_miss_total",
-        "Counter of binding cache miss.",
-    ))
-});
-
-/// Go `BindingCacheNumBindings` (`pkg/metrics`).
-pub use tidb_session::metrics::BINDING_CACHE_NUM_BINDINGS as TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS;
-
-/// Go `RunawayFlusherAddCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new(
-            "tidb_server_runaway_flusher_add_total",
-            "Counter of records added to runaway flusher.",
-        ),
-        &["name"],
-    ))
-});
-
-/// Go `RunawayFlusherCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_RUNAWAY_FLUSHER_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new(
-            "tidb_server_runaway_flusher_total",
-            "Counter of runaway flusher operations.",
-        ),
-        &["name", "result"],
-    ))
-});
-
-/// Go `RunawaySyncerCheckpoint` (`pkg/metrics`).
-pub static TIDB_SERVER_RUNAWAY_SYNCER_CHECKPOINT: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(GaugeVec::new(
-        Opts::new("tidb_server_runaway_syncer_checkpoint", "Current lower-bound checkpoint of runaway syncer: Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done)."),
-        &["type"],
-    ))
-});
-
-/// Go `RunawaySyncerCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_RUNAWAY_SYNCER_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new(
-            "tidb_server_runaway_syncer_total",
-            "Counter of runaway syncer operations.",
-        ),
-        &["result", "type"],
-    ))
-});
-
 /// Go `TimerEventCounter` (`pkg/metrics`).
 pub static TIDB_SERVER_TIMER_EVENT_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
         Opts::new("tidb_server_timer_event_count", "Counter of timer event."),
         &["scope", "type"],
-    ))
-});
-
-/// Go `TTLEventCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_EVENT_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new("tidb_server_ttl_event_count", "Counter of ttl event."),
-        &["type"],
-    ))
-});
-
-/// Go `TTLInsertRowsCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_INSERT_ROWS: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new(
-        "tidb_server_ttl_insert_rows",
-        "The count of TTL rows inserted",
-    ))
-});
-
-/// Go `TTLJobStatus` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_JOB_STATUS: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(GaugeVec::new(
-        Opts::new(
-            "tidb_server_ttl_job_status",
-            "The jobs count in the specified status",
-        ),
-        &["type"],
-    ))
-});
-
-/// Go `TTLPhaseTime` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_PHASE_TIME: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new("tidb_server_ttl_phase_time", "The time spent in each phase"),
-        &["phase", "type"],
-    ))
-});
-
-/// Go `TTLProcessedExpiredRowsCounter` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_PROCESSED_EXPIRED_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
-        Opts::new(
-            "tidb_server_ttl_processed_expired_rows",
-            "The count of expired rows processed in TTL jobs",
-        ),
-        &["result", "sql_type"],
-    ))
-});
-
-/// Go `TTLTaskStatus` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_TASK_STATUS: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(GaugeVec::new(
-        Opts::new(
-            "tidb_server_ttl_task_status",
-            "The tasks count in the specified status",
-        ),
-        &["type"],
-    ))
-});
-
-/// Go `TTLWatermarkDelay` (`pkg/metrics`).
-pub static TIDB_SERVER_TTL_WATERMARK_DELAY: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(GaugeVec::new(
-        Opts::new(
-            "tidb_server_ttl_watermark_delay",
-            "Bucketed delay time in seconds for TTL tables.",
-        ),
-        &["name", "type"],
     ))
 });
 
@@ -655,12 +80,12 @@ pub(crate) fn init_dashboard_series() {
     {
         let registry = prometheus::default_registry();
         for collector in [
-            Box::new(tidb_planner::metrics::PLAN_CACHE_COUNTER.clone())
+            Box::new(tidb_metrics::server::PLAN_CACHE_COUNTER.clone())
                 as Box<dyn prometheus::core::Collector>,
-            Box::new(tidb_planner::metrics::PLAN_CACHE_MISS_COUNTER.clone()),
-            Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE.clone()),
-            Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.clone()),
-            Box::new(tidb_planner::metrics::PSEUDO_ESTIMATION.clone()),
+            Box::new(tidb_metrics::server::PLAN_CACHE_MISS_COUNTER.clone()),
+            Box::new(tidb_metrics::server::PLAN_CACHE_INSTANCE_MEMORY_USAGE.clone()),
+            Box::new(tidb_metrics::server::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.clone()),
+            Box::new(tidb_metrics::stats::PSEUDO_ESTIMATION.clone()),
         ] {
             
             let _ = registry.register(collector);
@@ -674,12 +99,12 @@ pub(crate) fn init_dashboard_series() {
     let _ = EVENT_TOTAL.with_label_values(&["server-start"]);
     let _ = MEMORY_USAGE.with_label_values(&["analyze", "inuse"]);
     let _ = PACKET_IO_BYTES.with_label_values(&["In"]);
-    let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE
+    let _ = tidb_metrics::server::PLAN_CACHE_INSTANCE_MEMORY_USAGE
         .with_label_values(&[" instance-plan-cache"]);
-    let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER
+    let _ = tidb_metrics::server::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER
         .with_label_values(&[" instance-plan-cache"]);
-    let _ = tidb_planner::metrics::PLAN_CACHE_MISS_COUNTER.with_label_values(&["non-prepared"]);
-    let _ = tidb_planner::metrics::PLAN_CACHE_COUNTER.with_label_values(&["non-prepared"]);
+    let _ = tidb_metrics::server::PLAN_CACHE_MISS_COUNTER.with_label_values(&["non-prepared"]);
+    let _ = tidb_metrics::server::PLAN_CACHE_COUNTER.with_label_values(&["non-prepared"]);
     let _ = RC_CHECK_TS_CONFLICT_TOTAL.with_label_values(&["read_check"]);
     let _ = TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL.with_label_values(&["quarantine-record"]);
     let _ = TIDB_SERVER_RUNAWAY_FLUSHER_TOTAL.with_label_values(&["quarantine-record", "error"]);
@@ -697,18 +122,6 @@ pub(crate) fn init_dashboard_series() {
     let _ = TIDB_SERVER_TTL_WATERMARK_DELAY.with_label_values(&["01 hour", "schedule"]);
 }
 
-/// Go `TTLQueryDuration` (`pkg/metrics/ttl.go`).
-pub static TTL_QUERY_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_ttl_query_duration",
-            "Bucketed histogram of processing time (s) of handled TTL queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.01, 2.0, 20).expect("valid buckets")),
-        &["sql_type", "result"],
-    ))
-});
-
 /// Aggregates every histogram-family (fq name, help) definition across the
 /// workspace's metric modules plus the vendored client-go registry. Go's
 /// exposition emits HELP/TYPE for registered-but-childless histogram vecs;
@@ -717,25 +130,25 @@ pub static TTL_QUERY_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// master.
 pub(crate) fn family_catalog() -> Vec<(String, String)> {
     let mut catalog: Vec<(String, String)> = Vec::new();
-    for (fq, help) in tidb_session::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::session::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_distsql::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::distsql::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_ddl_session::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::ddl::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_domain::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::domain::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_executor::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::executor::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_util::memory_metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::memory::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_meta::metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::meta::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
     for (fq, help) in tidb_util::topsql_reporter::metrics::histogram_definitions() {
@@ -813,15 +226,15 @@ mod tests {
         let cache = tidb_session::binding_cache::BindingCache::from_storage_rows(Vec::new(), 4096);
         assert!(std::ptr::eq(
             &*TIDB_SERVER_BINDING_CACHE_MEM_LIMIT,
-            &*tidb_session::metrics::BINDING_CACHE_MEM_LIMIT
+            &*tidb_metrics::bindinfo::BINDING_CACHE_MEM_LIMIT
         ));
         assert!(std::ptr::eq(
             &*TIDB_SERVER_BINDING_CACHE_MEM_USAGE,
-            &*tidb_session::metrics::BINDING_CACHE_MEM_USAGE
+            &*tidb_metrics::bindinfo::BINDING_CACHE_MEM_USAGE
         ));
         assert!(std::ptr::eq(
             &*TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS,
-            &*tidb_session::metrics::BINDING_CACHE_NUM_BINDINGS
+            &*tidb_metrics::bindinfo::BINDING_CACHE_NUM_BINDINGS
         ));
         cache.close();
     }
@@ -893,54 +306,10 @@ mod tests {
     }
 }
 
-/// Forces every definition above to register with the default registry and
-/// its plain gauges/counters to export their zero series, mirroring Go's
-/// `InitServerMetrics` + `RegisterMetrics` running at process init
-/// (`pkg/metrics/metrics.go:100-193`). Vec families gain series on first
-/// labeled use, exactly as Go's do.
+/// Go's process init: `RegisterMetrics` for the server families, then the
+/// dashboard series Go's subsystem startup writes.
 pub fn init() {
-    LazyLock::force(&PACKET_IO_BYTES);
-    LazyLock::force(&QUERY_STATEMENT_RPC_COUNT);
-    LazyLock::force(&QUERY_STATEMENT_PROCESSED_KEYS);
-    LazyLock::force(&IA_REMOTE_READ_SEGMENT_COUNT);
-    LazyLock::force(&IA_REMOTE_READ_SEGMENT_SIZE_BYTES);
-    LazyLock::force(&IA_REMOTE_READ_SEGMENT_WAIT_DURATION);
-    LazyLock::force(&CONN_GAUGE);
-    LazyLock::force(&DISCONNECTION_TOTAL);
-    LazyLock::force(&PREPARED_STMTS);
-    LazyLock::force(&EXECUTE_ERROR_TOTAL);
-    LazyLock::force(&CRITICAL_ERROR_TOTAL);
-    LazyLock::force(&EVENT_TOTAL);
-    LazyLock::force(&TIME_JUMP_BACK_TOTAL);
-    LazyLock::force(&READ_FROM_TABLECACHE_TOTAL);
-    LazyLock::force(&HANDSHAKE_ERROR_TOTAL);
-    LazyLock::force(&GET_TOKEN_DURATION_SECONDS);
-    LazyLock::force(&MULTI_QUERY_NUM);
-    LazyLock::force(&SLOW_QUERY_PROCESS_DURATION);
-    LazyLock::force(&SLOW_QUERY_COP_DURATION);
-    LazyLock::force(&SLOW_QUERY_WAIT_DURATION);
-    LazyLock::force(&SLOW_QUERY_COP_MVCC_RATIO);
-    LazyLock::force(&SLOW_QUERY_TOTAL);
-    LazyLock::force(&MAXPROCS);
-    LazyLock::force(&GOGC);
-    LazyLock::force(&CONN_IDLE_DURATION);
-    LazyLock::force(&SERVER_INFO);
-    LazyLock::force(&TOKENS);
-    LazyLock::force(&CONFIG_STATUS);
-    LazyLock::force(&TIFLASH_QUERY_TOTAL);
-    LazyLock::force(&TIFLASH_FAILED_STORE);
-    LazyLock::force(&PD_API_EXECUTION_DURATION);
-    LazyLock::force(&PD_API_REQUEST_TOTAL);
-    LazyLock::force(&CPU_PROFILE_TOTAL);
-    LazyLock::force(&LOAD_TABLE_CACHE_SECONDS);
-    LazyLock::force(&RC_CHECK_TS_CONFLICT_TOTAL);
-    LazyLock::force(&MEMORY_QUOTA_BYTES);
-    LazyLock::force(&INTERNAL_SESSIONS);
-    LazyLock::force(&ACTIVE_USERS);
-    LazyLock::force(&TLS_VERSION);
-    LazyLock::force(&TLS_CIPHER);
-    LazyLock::force(&PANIC_TOTAL);
-    LazyLock::force(&MEMORY_USAGE);
+    tidb_metrics::server::register_metrics();
     init_dashboard_series();
 }
 

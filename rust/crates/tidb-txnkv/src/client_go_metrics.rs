@@ -29,103 +29,6 @@
 use std::sync::LazyLock;
 
 use prometheus::TextEncoder;
-use prometheus::{Counter, CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts};
-
-// GC-worker families from Go `pkg/metrics/gc_worker.go`, subsystem
-// `tikvclient` like the client-go set.
-
-/// Go `GCHistogram` (`pkg/metrics/gc_worker.go:44-51`): GC duration by
-/// stage, 1s ~ 6days exponential buckets.
-pub static GC_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
-        HistogramOpts::new("gc_seconds", "Bucketed histogram of gc duration.")
-            .namespace("tidb")
-            .subsystem("tikvclient")
-            .buckets(prometheus::exponential_buckets(1.0, 2.0, 20).expect("20 positive buckets")),
-        &["stage"],
-    )
-    .expect("valid gc seconds histogram");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc seconds histogram is registered once");
-    metric
-});
-
-/// Go `GCActionRegionResultCounter` (`pkg/metrics/gc_worker.go:68-73`).
-pub static GC_ACTION_REGION_RESULT: LazyLock<CounterVec> = LazyLock::new(|| {
-    let metric = CounterVec::new(
-        Opts::new(
-            "gc_action_result",
-            "Counter of gc action result on region level.",
-        )
-        .namespace("tidb")
-        .subsystem("tikvclient"),
-        &["type"],
-    )
-    .expect("valid gc action result counter");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc action result counter is registered once");
-    metric
-});
-
-/// Go `GCConfigGauge`.
-pub static GC_CONFIG: LazyLock<GaugeVec> = LazyLock::new(|| {
-    let metric = GaugeVec::new(
-        Opts::new("gc_config", "GC related config.")
-            .namespace("tidb")
-            .subsystem("tikvclient"),
-        &["type"],
-    )
-    .expect("valid gc config metric");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc config metric is registered once");
-    metric
-});
-
-/// Go `GCFailureCounter`.
-pub static GC_FAILURE: LazyLock<CounterVec> = LazyLock::new(|| {
-    let metric = CounterVec::new(
-        Opts::new("gc_failure", "Counter of gc worker failures")
-            .namespace("tidb")
-            .subsystem("tikvclient"),
-        &["type"],
-    )
-    .expect("valid gc failure metric");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc failure metric is registered once");
-    metric
-});
-
-/// Go `GCRegionTooManyLocksCounter`.
-pub static GC_REGION_TOO_MANY_LOCKS: LazyLock<Counter> = LazyLock::new(|| {
-    let metric = Counter::new(
-        "tidb_tikvclient_gc_region_too_many_locks",
-        "Counter of skipping gc when there are too many locks in a region",
-    )
-    .expect("valid gc region too many locks metric");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc region too many locks metric is registered once");
-    metric
-});
-
-/// Go `GCWorkerActionsCounter`.
-pub static GC_WORKER_ACTIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    let metric = CounterVec::new(
-        Opts::new("gc_worker_actions_total", "Counter of gc worker actions.")
-            .namespace("tidb")
-            .subsystem("tikvclient"),
-        &["type"],
-    )
-    .expect("valid gc worker actions metric");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("gc worker actions metric is registered once");
-    metric
-});
 
 /// `tikv-client` pins prometheus 0.13 while this workspace serves 0.14
 /// through the status server, so this module's families live on their own
@@ -206,16 +109,16 @@ fn materialize_dashboard_series() {
     // gc_worker.go families. Go's gc worker materializes the config gauge's
     // two children at boot (`gc_worker.go:307-308` Set(0)) and binds the
     // rest as the worker starts; the dashboard reads every family.
-    LazyLock::force(&GC_CONFIG);
-    LazyLock::force(&GC_FAILURE);
-    LazyLock::force(&GC_SECONDS);
-    LazyLock::force(&GC_ACTION_REGION_RESULT);
-    LazyLock::force(&GC_WORKER_ACTIONS_TOTAL);
-    LazyLock::force(&GC_REGION_TOO_MANY_LOCKS);
-    let _ = GC_CONFIG
+    LazyLock::force(&tidb_metrics::gc_worker::GC_CONFIG);
+    LazyLock::force(&tidb_metrics::gc_worker::GC_FAILURE);
+    LazyLock::force(&tidb_metrics::gc_worker::GC_SECONDS);
+    LazyLock::force(&tidb_metrics::gc_worker::GC_ACTION_REGION_RESULT);
+    LazyLock::force(&tidb_metrics::gc_worker::GC_WORKER_ACTIONS_TOTAL);
+    LazyLock::force(&tidb_metrics::gc_worker::GC_REGION_TOO_MANY_LOCKS);
+    let _ = tidb_metrics::gc_worker::GC_CONFIG
         .with_label_values(&["tikv_gc_run_interval"])
         .set(0.0);
-    let _ = GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
+    let _ = tidb_metrics::gc_worker::GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
     if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
         let _ = counter_vec.with_label_values(&["ok_compatible"]);
     }

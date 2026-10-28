@@ -33,7 +33,6 @@ pub mod domainutil;
 pub mod globalconfigsync;
 pub mod historical_stats;
 pub mod label_manager;
-pub mod metrics;
 pub mod plan_replayer;
 pub mod replayer;
 pub mod resource_manager_client;

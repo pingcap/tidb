@@ -27,6 +27,7 @@ jemalloc = ["tidb-allocator-stats/jemalloc"]
 chrono.workspace = true
 
 [dependencies]
+tidb-metrics = { path = "../tidb-metrics" }
 reqwest = { workspace = true, features = ["blocking"] }
 base64.workspace = true
 crossbeam-channel = "0.5"

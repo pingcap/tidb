@@ -435,6 +435,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
     fn observe_parse_duration(&self, seconds: f64, internal: bool) {
-        crate::metrics::observe_parse_duration(seconds, internal);
+        tidb_metrics::session::observe_parse_duration(seconds, internal);
     }
 }

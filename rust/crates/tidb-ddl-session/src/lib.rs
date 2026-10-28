@@ -476,6 +476,5 @@ impl<C: SessionContext, P: ResourcePool<C>> Pool<C, P> {
     }
 }
 
-pub mod metrics;
 #[cfg(test)]
 mod tests;

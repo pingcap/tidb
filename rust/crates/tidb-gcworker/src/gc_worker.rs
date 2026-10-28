@@ -218,25 +218,25 @@ fn logger() -> tidb_util::logutil::Logger {
 }
 
 fn gc_worker_counter(label: &str) {
-    tidb_txnkv::client_go_metrics::GC_WORKER_ACTIONS_TOTAL
+    tidb_metrics::gc_worker::GC_WORKER_ACTIONS_TOTAL
         .with_label_values(&[label])
         .inc();
 }
 
 fn gc_job_failure_counter(label: &str) {
-    tidb_txnkv::client_go_metrics::GC_FAILURE
+    tidb_metrics::gc_worker::GC_FAILURE
         .with_label_values(&[label])
         .inc();
 }
 
 fn gc_config_gauge(label: &str, value: f64) {
-    tidb_txnkv::client_go_metrics::GC_CONFIG
+    tidb_metrics::gc_worker::GC_CONFIG
         .with_label_values(&[label])
         .set(value);
 }
 
 fn gc_histogram(stage: &str, seconds: f64) {
-    tidb_txnkv::client_go_metrics::GC_SECONDS
+    tidb_metrics::gc_worker::GC_SECONDS
         .with_label_values(&[stage])
         .observe(seconds);
 }
@@ -423,7 +423,7 @@ impl GcWorker {
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "non-string panic".to_owned());
             logger().error("gcWorker", &[str_field("r", message)]);
-            tidb_util::panic_metrics::PANIC_TOTAL
+            tidb_metrics::panic::PANIC_TOTAL
                 .with_label_values(&["gcworker"])
                 .inc();
         }
