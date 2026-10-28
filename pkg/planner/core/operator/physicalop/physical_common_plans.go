@@ -96,6 +96,13 @@ type Insert struct {
 
 	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
+
+	// Returning holds the expressions of the RETURNING clause. The output schema and names
+	// of those expressions are the plan's own schema and output names, set by
+	// PlanBuilder.buildInsert.
+	Returning []expression.Expression
+	// NeedExtraHandleReturning is true when the RETURNING clause refers to _tidb_rowid.
+	NeedExtraHandleReturning bool
 }
 
 // Init initializes Insert.
@@ -110,9 +117,10 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.TableColNames)+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*8 + int64(cap(p.TableColNames)+
 		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.Names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
+		int64(cap(p.Returning))*size.SizeOfInterface +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*5 + size.SizeOfInt
 	if p.TableSchema != nil {
 		sum += p.TableSchema.MemoryUsage()
 	}
@@ -134,6 +142,9 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 	for _, as := range p.OnDuplicate {
 		sum += as.MemoryUsage()
+	}
+	for _, expr := range p.Returning {
+		sum += expr.MemoryUsage()
 	}
 	for _, name := range p.Names4OnDuplicate {
 		sum += name.MemoryUsage()
