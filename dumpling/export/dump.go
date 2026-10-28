@@ -1380,13 +1380,8 @@ func selectTiDBTableSampleKeyFields(tctx *tcontext.Context, conn *BaseConn, meta
 		return nil, nil, errors.Trace(err)
 	}
 	for _, row := range results {
-		var colType string
-		switch tp := strings.ToUpper(row[1]); {
-		case strings.HasPrefix(tp, "ENUM("):
-			colType = "ENUM"
-		case strings.HasPrefix(tp, "SET("):
-			colType = "SET"
-		default:
+		colType := enumOrSetColumnType(row[1])
+		if colType == "" {
 			continue
 		}
 		for i, pkField := range pkFields {
@@ -1396,6 +1391,16 @@ func selectTiDBTableSampleKeyFields(tctx *tcontext.Context, conn *BaseConn, meta
 		}
 	}
 	return pkFields, pkColTypes, nil
+}
+
+func enumOrSetColumnType(showColumnsType string) string {
+	switch tp := strings.ToUpper(showColumnsType); {
+	case strings.HasPrefix(tp, "ENUM("):
+		return "ENUM"
+	case strings.HasPrefix(tp, "SET("):
+		return "SET"
+	}
+	return ""
 }
 
 func checkTiDBTableRegionPkFields(pkFields, pkColTypes []string) (err error) {
