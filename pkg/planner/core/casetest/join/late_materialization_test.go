@@ -268,6 +268,39 @@ func TestLateMaterializationAlternativeRound(t *testing.T) {
 		require.EqualError(t, tk.ExecToErr(scalarSQL), "unexpected alternative logical plan round")
 	})
 
+	t.Run("replay stability", func(t *testing.T) {
+		const hook = coreFailpointPrefix + "lateMaterializationReplayShape"
+		for _, query := range []string{
+			sql,
+			"select o.pad, m.pad from o left join m on o.id = m.k order by o.c, o.id, m.id limit 10 offset 2000",
+			"select x.pad, y.pad from o x join o y on x.id = y.c order by x.c, x.id, y.id limit 10 offset 2000",
+			"select o.pad, u.pad, (select max(v) from h) from o join u on o.id = u.k order by o.c, o.id limit 10 offset 2000",
+		} {
+			expectedByRegion := make(map[int]any)
+			attempts := 0
+			require.NoError(t, failpoint.EnableCall(hook, func(region int, baseline, rebuilt any) {
+				attempts++
+				require.Equal(t, baseline, rebuilt, "replay changed region %d for %s", region, query)
+				if previous, ok := expectedByRegion[region]; ok {
+					require.Equal(t, previous, baseline, query)
+				}
+				expectedByRegion[region] = baseline
+			}))
+			t.Cleanup(func() { _ = failpoint.Disable(hook) })
+			var previous []string
+			for range 3 {
+				before := attempts
+				plan := lateMaterializationPlan(tk, query)
+				require.Greater(t, attempts, before, "query must actually replay a proposal: %s", query)
+				if previous != nil {
+					require.Equal(t, previous, plan, query)
+				}
+				previous = plan
+			}
+			require.NoError(t, failpoint.Disable(hook))
+		}
+	})
+
 	setLateMaterialization(tk, false)
 	basePlan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 	baseWarnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
