@@ -102,22 +102,22 @@ func TestMaxExecutionTime(t *testing.T) {
 }
 
 func TestTiDBMaxKeysRead(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBMaxKeysRead)
+	sv := GetSysVar(TiDBMaxKeysRead)
 	require.NotNil(t, sv)
 	vars := NewSessionVars(nil)
 
 	// Negative values should be clipped to 0.
-	val, err := sv.Validate(vars, "-1", vardef.ScopeSession)
+	val, err := sv.Validate(vars, "-1", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
 
 	// Zero is valid (unlimited).
-	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "0", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
 
 	// Positive values are accepted.
-	val, err = sv.Validate(vars, "1000", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "1000", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "1000", val)
 

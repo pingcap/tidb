@@ -1185,7 +1185,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// here, so doing it here covers both uniformly. Sequential tasks pick up the
 	// updated remaining budget at handleTaskOnce dispatch via keysRead.Load().
 	if it.maxKeysRead > 0 {
-		if resp.detail != nil && resp.detail.ScanDetail != nil {
+		if resp.detail != nil {
 			if pk := resp.detail.ScanDetail.ProcessedKeys; pk > 0 {
 				it.keysRead.Add(uint64(pk))
 			}
