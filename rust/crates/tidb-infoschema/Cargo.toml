@@ -28,7 +28,6 @@ tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-planner = { path = "../tidb-planner" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }

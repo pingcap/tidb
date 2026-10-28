@@ -23,24 +23,8 @@ use std::collections::BTreeMap;
 
 use crate::plan_builder::catalog::SourceIndex;
 
-/// The latest domain infoschema fields read by Go `GetLatestIndexInfo`.
-#[derive(Clone, Debug, Default)]
-pub struct LatestIndexSchema {
-    /// Go `InfoSchema.SchemaMetaVersion()`.
-    pub schema_meta_version: u64,
-    /// Go `InfoSchema.TableByID` followed by `TableInfo.Indices`.
-    pub table_indexes: BTreeMap<i64, Vec<SourceIndex>>,
-}
+pub use tidb_infoschema::table_source::LatestIndexSchema;
 
-/// Go `sctx.GetLatestInfoSchema()` as `metabuild.WithInfoSchema` keeps it
-/// (`pkg/ddl/metabuild.go`): the same latest domain infoschema.
-impl tidb_expr::metabuild::MetaOnlyInfoSchema for LatestIndexSchema {
-    fn schema_meta_version(&self) -> i64 {
-        // Go's `SchemaMetaVersion` is an `int64`; this field holds the same
-        // non-negative version.
-        self.schema_meta_version as i64
-    }
-}
 
 /// Go `domainmisc.GetLatestIndexInfo`.
 ///

@@ -154,7 +154,7 @@ impl Catalog {
     pub fn statistics_demand(
         &self,
         handle: &StatsHandle,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        usage: &tidb_stats::table_statistics::ColumnStatsUsage,
     ) -> HashMap<tidb_model::TableItemID, bool> {
         let mut columns = usage.predicate_columns.clone();
 
@@ -323,7 +323,7 @@ impl Catalog {
     pub fn statistics_load_items(
         &self,
         handle: &StatsHandle,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         _determinate: bool,
     ) -> Vec<tidb_model::StatsLoadItem> {
         let mut items = self.statistics_demand(handle, usage);
@@ -367,7 +367,7 @@ impl Catalog {
         &self,
         handle: &StatsHandle,
         table_id: i64,
-    ) -> Option<Arc<tidb_planner::table_statistics::TableStatistics>> {
+    ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>> {
         handle.table_statistics(table_id, || self.statistics_schema(table_id))
     }
 

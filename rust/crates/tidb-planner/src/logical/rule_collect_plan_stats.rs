@@ -35,21 +35,7 @@ use super::rule::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
 use crate::plan_base::PlanError;
 
-/// Go `CollectColumnStatsUsage`'s statistics-loading result.
-#[derive(Debug, Default)]
-pub struct ColumnStatsUsage {
-    /// Base-table column -> whether its complete histogram is required.
-    pub predicate_columns: HashMap<TableItemID, bool>,
-    /// Logical table IDs visited by data sources.
-    pub visited_logical_table_ids: HashSet<i64>,
-    /// Logical table ID -> physical partition IDs, for static pruning.
-    pub table_partition_ids: HashMap<i64, Vec<i64>>,
-    /// Physical table ID -> index IDs retained by Go's first pruning phase.
-    /// A table is present only when pruning actually removed a path.
-    pub kept_index_ids: HashMap<i64, HashSet<i64>>,
-    /// Number of logical operators visited.
-    pub operator_count: u64,
-}
+pub use tidb_stats::table_statistics::ColumnStatsUsage;
 
 /// The domain statistics handle reached by Go
 /// `CollectPredicateColumnsPoint.Optimize`.

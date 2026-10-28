@@ -39,7 +39,7 @@ pub type MdlRelatedTableRecorder = Arc<dyn Fn(i64) + Send + Sync>;
 pub struct PlannerCatalog {
     current_database: String,
     view: Arc<PlannerSchemaView>,
-    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    latest_index_schema: Option<Arc<crate::table_source::LatestIndexSchema>>,
     /// Go `SessionVars.HypoIndexes`, present only for an `EXPLAIN`.
     hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
@@ -53,14 +53,14 @@ pub struct PlannerCatalog {
     mdl_related_table: Option<MdlRelatedTableRecorder>,
 }
 
-/// [`tidb_planner::plan_builder::visit_info::PrivilegeVerifier`] over the
+/// [`crate::table_source::PrivilegeVerifier`] over the
 /// session's privilege closures.
 pub struct DefinerVerifier {
     definer: ViewDefinerPrivilegeCheck,
     session: Option<SessionPrivilegeCheck>,
 }
 
-impl tidb_planner::plan_builder::visit_info::PrivilegeVerifier for DefinerVerifier {
+impl crate::table_source::PrivilegeVerifier for DefinerVerifier {
     fn verify_with_user(
         &self,
         user: &str,
@@ -144,7 +144,7 @@ impl PlannerCatalog {
 /// on the TiDB store. Only `CLUSTER_SLOW_QUERY` has a primary key, and
 /// because its `time` column is not an integer, Go makes it a COMMON handle.
 fn mark_cluster_table(
-    table: &mut tidb_planner::plan_builder::catalog::SourceTable,
+    table: &mut crate::table_source::SourceTable,
     database: &str,
     name: &str,
 ) {
@@ -171,10 +171,10 @@ fn mark_cluster_table(
     table.handle_col_offsets = vec![offset];
     table.common_handle_col_offsets = vec![offset];
     table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
-    table.indexes = vec![tidb_planner::plan_builder::catalog::SourceIndex {
+    table.indexes = vec![crate::table_source::SourceIndex {
         id: 0,
         name: "primary".to_owned(),
-        columns: vec![tidb_planner::plan_builder::catalog::SourceIndexColumn {
+        columns: vec![crate::table_source::SourceIndexColumn {
             name: table.columns[offset].name.clone(),
             offset,
             length: tidb_datatype::UNSPECIFIED_LENGTH,
@@ -183,7 +183,7 @@ fn mark_cluster_table(
         primary: true,
         is_public: true,
         is_visible: true,
-        ..tidb_planner::plan_builder::catalog::SourceIndex::default()
+        ..crate::table_source::SourceIndex::default()
     }];
 }
 
@@ -203,8 +203,8 @@ pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PlannerSchemaView {
     databases: std::collections::HashSet<String>,
-    pub tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
-    views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
+    pub tables: HashMap<CatalogTableKey, crate::table_source::SourceTable>,
+    views: HashMap<CatalogTableKey, crate::table_source::SourceView>,
     /// The sequences (Go `TableInfo.IsSequence()`), which a FROM reads as a
     /// one-row dual and so carry no planner table.
     sequences: HashMap<CatalogTableKey, String>,
@@ -214,7 +214,7 @@ pub struct PlannerSchemaView {
     detached: Option<Arc<PlannerSchemaView>>,
 }
 
-impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
+impl crate::table_source::TableSource for PlannerCatalog {
     fn current_database(&self) -> &str {
         &self.current_database
     }
@@ -227,7 +227,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         table_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
+    ) -> Option<&crate::table_source::SourceTable> {
         self.view
             .tables
             .get(&CatalogTableKey::new(db_name, table_name))
@@ -237,7 +237,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         self.view.databases.contains(&db_name.go_to_lower())
     }
 
-    fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
+    fn latest_index_schema(&self) -> Option<&crate::table_source::LatestIndexSchema> {
         self.latest_index_schema.as_deref()
     }
 
@@ -245,7 +245,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         table_name: &str,
-    ) -> Vec<tidb_planner::plan_builder::catalog::SourceIndex> {
+    ) -> Vec<crate::table_source::SourceIndex> {
         let (Some(hypo), Some(table)) = (
             self.hypo_indexes.as_deref(),
             self.find_table(db_name, table_name),
@@ -254,7 +254,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         };
         hypo.table_indexes(db_name, table_name)
             .into_iter()
-            .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
+            .map(|index| crate::table_source::SourceIndex {
                 id: index.id,
                 name: index.name.original().to_owned(),
                 // Go resolves each key part by its column's offset in the
@@ -270,7 +270,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
                             .position(|column| {
                                 tidb_mysql::lowercase_equal(&column.name, part.name.original())
                             })?;
-                        Some(tidb_planner::plan_builder::catalog::SourceIndexColumn {
+                        Some(crate::table_source::SourceIndexColumn {
                             name: table.columns[offset].name.clone(),
                             offset,
                             length: part.length,
@@ -300,7 +300,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         table_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
+    ) -> Option<&crate::table_source::SourceTable> {
         self.view
             .detached
             .as_deref()
@@ -313,7 +313,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         view_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
+    ) -> Option<&crate::table_source::SourceView> {
         self.view
             .detached
             .as_deref()
@@ -326,7 +326,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         view_name: &str,
-    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
+    ) -> Option<&crate::table_source::SourceView> {
         self.view
             .views
             .get(&CatalogTableKey::new(db_name, view_name))
@@ -334,10 +334,10 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
 
     fn privilege_verifier(
         &self,
-    ) -> Option<&dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier> {
+    ) -> Option<&dyn crate::table_source::PrivilegeVerifier> {
         self.privilege_verifier
             .as_ref()
-            .map(|verifier| verifier as &dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier)
+            .map(|verifier| verifier as &dyn crate::table_source::PrivilegeVerifier)
     }
 
     fn record_related_table_for_mdl(&self, table_id: i64) {
@@ -361,7 +361,7 @@ impl Catalog {
     pub fn planner_catalog(
         &self,
         current_database: &str,
-        latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+        latest_index_schema: Option<Arc<crate::table_source::LatestIndexSchema>>,
     ) -> PlannerCatalog {
         PlannerCatalog {
             current_database: current_database.to_owned(),
@@ -390,7 +390,7 @@ impl Catalog {
     /// first when `with_local_temporary` (Go's `SessionExtendedInfoSchema`),
     /// or without them (its `DetachLocalTemporaryTableInfoSchema`).
     fn build_planner_schema_view(&self, with_local_temporary: bool) -> PlannerSchemaView {
-        use tidb_planner::plan_builder::catalog::{
+        use crate::table_source::{
             SourceColumn, SourceTable, SourceView,
         };
 
@@ -605,8 +605,8 @@ impl Catalog {
     /// Snapshots the latest-domain metadata read by Go
     /// `planner/util/domainmisc.GetLatestIndexInfo`.
     #[must_use]
-    pub fn latest_index_schema(&self) -> Arc<tidb_planner::domain_misc::LatestIndexSchema> {
-        use tidb_planner::plan_builder::catalog::SourceIndex;
+    pub fn latest_index_schema(&self) -> Arc<crate::table_source::LatestIndexSchema> {
+        use crate::table_source::SourceIndex;
 
         Arc::clone(self.schema.latest_index_schema.get_or_init(|| {
             let mut table_indexes = std::collections::BTreeMap::new();
@@ -629,7 +629,7 @@ impl Catalog {
                     );
                 }
             }
-            Arc::new(tidb_planner::domain_misc::LatestIndexSchema {
+            Arc::new(crate::table_source::LatestIndexSchema {
                 schema_meta_version: self.schema.metadata_version,
                 table_indexes,
             })
@@ -643,8 +643,8 @@ fn kv_source_table(
     table: &crate::KvTable,
     db_name: &str,
     resolve_db_info: tidb_model::GoShared<tidb_model::DBInfo>,
-) -> tidb_planner::plan_builder::catalog::SourceTable {
-    use tidb_planner::plan_builder::catalog::{SourceColumn, SourceIndex, SourceIndexColumn};
+) -> crate::table_source::SourceTable {
+    use crate::table_source::{SourceColumn, SourceIndex, SourceIndexColumn};
 
     let columns = table
         .columns()
@@ -723,7 +723,7 @@ fn kv_source_table(
                 .collect()
         })
         .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
-    let mut source_table = tidb_planner::plan_builder::catalog::SourceTable {
+    let mut source_table = crate::table_source::SourceTable {
         table_id: table.table_id(),
         table_name: table.name().clone(),
         db_name: db_name.to_owned(),
@@ -779,7 +779,7 @@ fn kv_source_table(
             .collect(),
         common_handle_col_offsets: table.common_handle_offsets().to_vec(),
         common_handle_lens,
-        ..tidb_planner::plan_builder::catalog::SourceTable::default()
+        ..crate::table_source::SourceTable::default()
     };
     source_table.attach_resolve_metadata(resolve_db_info, Some(table.meta()));
     source_table

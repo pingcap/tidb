@@ -76,29 +76,4 @@ pub struct VisitInfo {
     pub dynamic_with_grant: bool,
 }
 
-/// Go `privilege.Manager.RequestVerificationWithUser`, which the planner asks
-/// while it expands a `SQL SECURITY DEFINER` view (`pm.RequestVerificationWithUser`).
-pub trait PrivilegeVerifier {
-    /// Whether `user`@`host` -- matched against the stored accounts by host
-    /// pattern -- holds `privilege` on `database`.`table`.
-    fn verify_with_user(
-        &self,
-        user: &str,
-        host: &str,
-        database: &str,
-        table: &str,
-        column: &str,
-        privilege: PrivilegeType,
-    ) -> bool;
-
-    /// Go `privilege.Manager.RequestVerification(activeRoles, ...)`: whether
-    /// the session's own account, with its active roles, holds `privilege`
-    /// on `database`.`table`.
-    fn request_verification(
-        &self,
-        database: &str,
-        table: &str,
-        column: &str,
-        privilege: PrivilegeType,
-    ) -> bool;
-}
+pub use tidb_infoschema::table_source::PrivilegeVerifier;

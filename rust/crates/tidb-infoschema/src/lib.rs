@@ -69,6 +69,7 @@ pub mod perfschema;
 pub mod tidb_decode_key;
 pub use tidb_decode_key::TidbDecodeKeySnapshot;
 pub mod planner_view;
+pub mod table_source;
 pub mod sequence;
 pub use sequence::SequenceSnapshot;
 pub use planner_view::{PlannerCatalog, PlannerSchemaView, MdlRelatedTableRecorder, SessionPrivilegeCheck, ViewDefinerPrivilegeCheck};
@@ -194,7 +195,7 @@ pub struct InfoSchema {
     metadata_version: u64,
     /// The immutable domain index view belongs to this metadata version.
     /// Catalog clones share the view; DDL invalidates only the mutated owner.
-    latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    latest_index_schema: std::sync::OnceLock<Arc<crate::table_source::LatestIndexSchema>>,
     /// Memoized answer of walking EVERY database's table map for GLOBAL
     /// temporary tables, valid as of one `metadata_version`. Without the memo
     /// the walk runs twice per statement (`txn`'s overlay guard swaps global
