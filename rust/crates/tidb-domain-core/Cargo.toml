@@ -13,6 +13,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-ddl = { path = "../tidb-ddl" }
+tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-log = { path = "../tidb-log" }
@@ -23,6 +24,7 @@ tidb-privilege = { path = "../tidb-privilege" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 tidb-variable = { path = "../tidb-variable" }
 tikv-client.workspace = true
 chrono.workspace = true

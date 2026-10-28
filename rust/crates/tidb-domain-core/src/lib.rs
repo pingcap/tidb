@@ -21,5 +21,6 @@ pub mod cluster_account_seam;
 pub mod cluster_analyze_seam;
 pub mod cluster_privileges;
 pub mod cluster_stats_lock_seam;
+pub mod cluster_sysvar_seam;
 pub mod cluster_transactions;
 pub mod errors;

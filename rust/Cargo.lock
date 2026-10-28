@@ -3801,6 +3801,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-ddl",
+ "tidb-domain",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
@@ -3812,6 +3813,7 @@ dependencies = [
  "tidb-proto",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-vardef",
  "tidb-variable",
  "tikv-client",
 ]

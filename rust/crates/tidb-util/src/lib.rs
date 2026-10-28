@@ -138,5 +138,6 @@ pub mod panic_metrics;
 pub mod vitess;
 /// Polling file watcher.
 pub mod watcher;
+pub mod test_isolation;
 pub mod worker_stack;
 pub mod zeropool;
