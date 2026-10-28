@@ -478,10 +478,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 // isAboveRollupAgg reports whether p is built on top of the aggregation fed by expand,
 // rather than on the expand itself (as aggregate arguments are).
 func isAboveRollupAgg(p base.LogicalPlan, expand *logicalop.LogicalExpand) bool {
-	for p != nil {
-		if p == expand {
-			return false
-		}
+	for p != nil && p != expand {
 		if _, ok := p.(*logicalop.LogicalAggregation); ok {
 			return true
 		}
