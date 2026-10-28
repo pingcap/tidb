@@ -811,3 +811,53 @@ func TestNullIntoNotNullBaseColumnOfIndexedVirtualColumn(t *testing.T) {
 		tk.MustQuery("select k, a, g, h from t").Check(testkit.Rows("1 2 2 3"))
 	}
 }
+
+func TestNullIntoNotNullBaseColumnOfSingleIndexedVirtualColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, stmt := range []string{
+		"insert ignore into t(k, a) values (1, 1) on duplicate key update a = null",
+		"update ignore t set a = null",
+	} {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(k int primary key, a int not null, g int as (a + 10) virtual, key ig(g))")
+		tk.MustExec("insert into t(k, a) values (1, 1)")
+		tk.MustExec(stmt)
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+		tk.MustExec("admin check table t")
+		tk.MustQuery("select g from t use index(ig)").Check(testkit.Rows("10"))
+	}
+}
+
+func TestMultiTableUpdateIgnoreZeroesNullBeforeGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(k int primary key, b int)")
+	tk.MustExec("create table t2(k int primary key, a int not null, g int as (a + 10) virtual, key ig(g))")
+	tk.MustExec("insert into t1 values (1, 5)")
+	tk.MustExec("insert into t2(k, a) values (1, 1)")
+
+	tk.MustExec("update ignore t1, t2 set t1.b = 6, t2.a = null where t1.k = t2.k")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.MustExec("admin check table t2")
+	tk.MustQuery("select k, a, g from t2 ignore index(ig)").Check(testkit.Rows("1 0 10"))
+	tk.MustQuery("select g from t2 use index(ig)").Check(testkit.Rows("10"))
+	tk.MustQuery("select k, b from t1").Check(testkit.Rows("1 6"))
+}
+
+func TestUpdateIgnoreNullIntoNotNullColumnWithoutGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(k int primary key, a int not null)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("update ignore t set a = null")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.MustQuery("select k, a from t").Check(testkit.Rows("1 0"))
+}
