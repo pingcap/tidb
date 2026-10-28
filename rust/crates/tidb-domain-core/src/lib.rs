@@ -23,6 +23,7 @@ pub mod cluster_analyze_seam;
 pub mod cluster_auto_id_seam;
 pub mod cluster_binding_seam;
 pub mod cluster_privileges;
+pub mod cluster_session;
 pub mod cluster_stats_lock_seam;
 pub mod cluster_sysvar_seam;
 pub mod cluster_transactions;

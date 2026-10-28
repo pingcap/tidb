@@ -42,7 +42,7 @@ pub use tidb_domain_core::cluster_auto_id_seam;
 pub use tidb_domain_core::cluster_binding_seam;
 pub use tidb_domain_core::cluster_stats_lock_seam;
 pub use tidb_domain_core::cluster_sysvar_seam;
-pub mod cluster_session;
+pub use tidb_domain_core::cluster_session;
 pub mod cluster_session_node;
 pub mod cluster_stack;
 pub mod session_transaction;
