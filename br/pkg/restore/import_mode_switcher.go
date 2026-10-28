@@ -242,14 +242,17 @@ func RestorePostWork(
 	ctx context.Context,
 	switcher *ImportModeSwitcher,
 	restoreSchedulers pdutil.UndoFunc,
+	isOnline bool,
 ) {
 	if ctx.Err() != nil {
 		log.Warn("context canceled, try shutdown")
 		ctx = context.Background()
 	}
 
-	if err := switcher.SwitchToNormalMode(ctx); err != nil {
-		log.Warn("fail to switch to normal mode", zap.Error(err))
+	if !isOnline {
+		if err := switcher.SwitchToNormalMode(ctx); err != nil {
+			log.Warn("fail to switch to normal mode", zap.Error(err))
+		}
 	}
 	if err := restoreSchedulers(ctx); err != nil {
 		log.Warn("failed to restore PD schedulers", zap.Error(err))

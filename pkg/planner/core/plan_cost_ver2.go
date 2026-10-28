@@ -139,6 +139,15 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+
+	// Each range is a separate seek in TiKV; charge it so that many-range scans (typically from
+	// IN-lists) are not costed as if they were one contiguous scan. An IndexJoin inner scan
+	// (RangeInfo set) is skipped: indexJoinSeekingCostVer2 already charges its seeks per build row.
+	if len(p.Ranges) > 1 && p.RangeInfo == "" {
+		seekCost := rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekCost)
+	}
+
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
@@ -196,6 +205,11 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+		// Charge per-range TiKV seeks as for index scans. RowID scans under IndexLookUp and IndexJoin
+		// inner scans (RangeInfo set) are skipped; their seeks are costed by the parent.
+		if p.StoreType == kv.TiKV && len(p.Ranges) > 1 && p.RangeInfo == "" && (len(isChildOfINL) == 0 || !isChildOfINL[0]) {
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor))
+		}
 		if ((len(isChildOfINL) > 0 && !isChildOfINL[0]) || len(isChildOfINL) <= 0) && hasFullRangeScan {
 			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
 				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
@@ -772,7 +786,7 @@ func getPlanCostVer24PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 // getPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
 // build-hash-cost + build-filter-cost +
-// (probe-filter-cost + probe-hash-cost) / concurrency
+// (probe-filter-cost + probe-hash-cost + scan-build-unmatched-cost) / concurrency
 func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -799,6 +813,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
 	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
+	scanBuildSideCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if p.JoinType == base.FullOuterJoin {
+		// Probe tail still needs to scan build-side rows to emit unmatched rows.
+		scanBuildSideCost = costusage.NewCostVer2(option, cpuFactor,
+			buildRows*cpuFactor.Value,
+			func() string { return fmt.Sprintf("scanBuildUnmatched(%v*%v)", buildRows, cpuFactor) })
+	}
 
 	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
 	if err != nil {
@@ -811,13 +832,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
 		p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, probeChildCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost, scanBuildSideCost), mppConcurrency))
 	} else { // TiDB HashJoin
 		startCost := costusage.NewCostVer2(option, cpuFactor,
 			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 		p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost, scanBuildSideCost), tidbConcurrency))
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
@@ -1097,6 +1118,14 @@ func indexJoinSeekingCostVer2(option *costusage.PlanCostOption, buildRows, numRa
 	return costusage.NewCostVer2(option, scanFactor,
 		buildRows*10*math.Log2(8)*numRanges*scanFactor.Value,
 		func() string { return fmt.Sprintf("seeking(%v*%v*10*log2(8)*%v)", buildRows, numRanges, scanFactor) })
+}
+
+func rangeSeekCostVer2(option *costusage.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	// Each seek ≈ scanning 10 rows of 8-byte width (from experiments in #62499).
+	// Same model as indexJoinSeekingCostVer2 but without the buildRows multiplier.
+	return costusage.NewCostVer2(option, scanFactor,
+		numRanges*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("rangeSeek(%v*10*log2(8)*%v)", numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *costusage.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {

@@ -36,15 +36,16 @@ http_archive(
 
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
-versions.check(minimum_bazel_version = "6.0.0")
+# Match the minimum declared by rules_go; CI remains pinned in .bazelversion.
+versions.check(minimum_bazel_version = "6.5.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "86d3dc8f59d253524f933aaf2f3c05896cb0b605fc35b460c0b4b039996124c6",
+    sha256 = "d5c2c953bf24697b209c21f3ff4edf46fedea98514ec358b10c0e78fc35d363e",
+    # v0.64.2 is not available on mirror.bazel.build. Restricted builders must
+    # preseed this checksum-verified archive or allow the official release URL.
     urls = [
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
-        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
-        "https://github.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
+        "https://github.com/bazel-contrib/rules_go/releases/download/v0.64.2/rules_go-v0.64.2.zip",
     ],
 )
 
@@ -53,7 +54,6 @@ http_archive(
     sha256 = "49d9eba309b0b695824ff417d734242824ad9ab5edb56063b9d3400df1a61a56",
     urls = [
         "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.51.3/bazel-gazelle-v0.51.3.tar.gz",
-        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.51.3/bazel-gazelle-v0.51.3.tar.gz",
     ],
 )
 
@@ -72,7 +72,6 @@ http_archive(
     strip_prefix = "rules_python-1.4.1",
     urls = [
         "https://github.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
-        "https://cache.hawkingrei.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
     ],
 )
 
@@ -85,6 +84,8 @@ load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchai
 load("//:DEPS.bzl", "go_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
+# Declare module dependencies before go_rules_dependencies() so the selected
+# x/tools version takes precedence over rules_go's fallback.
 go_deps()
 
 go_rules_dependencies()
@@ -92,11 +93,10 @@ go_rules_dependencies()
 go_download_sdk(
     name = "go_sdk",
     urls = [
-        "https://cache.hawkingrei.com/golang/{}",
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.25.10",
+    version = "1.27.3",
 )
 
 gazelle_dependencies(go_sdk = "go_sdk")
@@ -144,7 +144,6 @@ http_archive(
     strip_prefix = "rules_proto-7.0.2",
     urls = [
         "https://github.com/bazelbuild/rules_proto/releases/download/7.0.2/rules_proto-7.0.2.tar.gz",
-        "https://cache.hawkingrei.com/bazelbuild/rules_proto/releases/download/7.0.2/rules_proto-7.0.2.tar.gz",
     ],
 )
 

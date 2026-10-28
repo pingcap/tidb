@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -155,6 +156,40 @@ func TestDXFAPI(t *testing.T) {
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
+	t.Run("nodes api", func(t *testing.T) {
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
+			return ts.PostStatus("/dxf/nodes", "", bytes.NewBuffer([]byte("")))
+		})
+
+		tm, ctx := setupTaskManager(t)
+		_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
+			require.NoError(t, err)
+			require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+		})
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		require.JSONEq(t, "[]", string(body))
+
+		_, err = tm.ExecuteSQLWithNewSession(ctx, `
+			insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+			values (":4002", "background", 8, -1), (":4001", "", 4, -1)`)
+		require.NoError(t, err)
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		var nodes []map[string]any
+		require.NoError(t, json.Unmarshal(body, &nodes))
+		require.Equal(t, []map[string]any{
+			{"host": ":4001", "role": "", "cpu_count": float64(4)},
+			{"host": ":4002", "role": "background", "cpu_count": float64(8)},
+		}, nodes)
+	})
+
 	t.Run("max concurrent task api", func(t *testing.T) {
 		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
 		defer restore()
@@ -254,6 +289,10 @@ func TestDXFAPI(t *testing.T) {
 	})
 
 	t.Run("task history api", func(t *testing.T) {
+		const (
+			sensitiveHistoryMessage = "sensitive history task failure"
+			historyErrorCode        = "DXF:History:Named"
+		)
 		seedHistoryTasks := func(t *testing.T) []int64 {
 			t.Helper()
 			tm, ctx := setupTaskManager(t)
@@ -266,7 +305,11 @@ func TestDXFAPI(t *testing.T) {
 				{key: "history-key-2", keyspace: "ks2"},
 				{key: "history-key-3", keyspace: "ks1"},
 				{key: "history-key-4", keyspace: "ks3"},
-				{key: "history-key-5", keyspace: "ks1", taskErr: fmt.Errorf("history task failed")},
+				{
+					key:      "history-key-5",
+					keyspace: "ks1",
+					taskErr:  errors.Normalize(sensitiveHistoryMessage, errors.RFCCodeText(historyErrorCode)),
+				},
 			}
 			ids := make([]int64, 0, len(taskSpecs))
 			tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
@@ -279,7 +322,7 @@ func TestDXFAPI(t *testing.T) {
 				if spec.taskErr != nil {
 					require.NoError(t, tm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
 				} else {
-					require.NoError(t, tm.SucceedTask(ctx, id))
+					require.NoError(t, tm.SucceedTask(ctx, task))
 				}
 				task, err = tm.GetTaskByID(ctx, id)
 				require.NoError(t, err)
@@ -296,7 +339,8 @@ func TestDXFAPI(t *testing.T) {
 				Key             string
 				Keyspace        string
 				State           string
-				Error           string
+				ErrorCode       string
+				ErrorCategory   string
 				StartTime       string
 				StateUpdateTime string
 				EndTime         string
@@ -312,7 +356,8 @@ func TestDXFAPI(t *testing.T) {
 					Key             string
 					Keyspace        string
 					State           string
-					Error           string
+					ErrorCode       string
+					ErrorCategory   string
 					StartTime       string
 					StateUpdateTime string
 					EndTime         string
@@ -355,6 +400,8 @@ func TestDXFAPI(t *testing.T) {
 			body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
 				return ts.FetchStatus("/dxf/task/history?page_size=2")
 			})
+			require.NotContains(t, string(body), `"Error":`)
+			require.NotContains(t, string(body), sensitiveHistoryMessage)
 			firstPage := parseTaskHistoryResp(t, body)
 			require.Len(t, firstPage.Items, 2)
 			require.EqualValues(t, 5, firstPage.ApproxTotalCount)
@@ -364,8 +411,10 @@ func TestDXFAPI(t *testing.T) {
 			require.Equal(t, ids[3], firstPage.Items[1].ID)
 			require.Equal(t, "history-key-5", firstPage.Items[0].Key)
 			require.Equal(t, "failed", firstPage.Items[0].State)
-			require.Contains(t, firstPage.Items[0].Error, "history task failed")
-			require.Empty(t, firstPage.Items[1].Error)
+			require.Equal(t, historyErrorCode, firstPage.Items[0].ErrorCode)
+			require.Equal(t, "failed", firstPage.Items[0].ErrorCategory)
+			require.Empty(t, firstPage.Items[1].ErrorCode)
+			require.Empty(t, firstPage.Items[1].ErrorCategory)
 			require.NotEmpty(t, firstPage.Items[0].StartTime)
 			require.NotEmpty(t, firstPage.Items[0].StateUpdateTime)
 			require.NotEmpty(t, firstPage.Items[0].EndTime)
@@ -569,8 +618,8 @@ func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 		userKeyspaceID   = 2
 	)
 	keyspaces := []*keyspacepb.KeyspaceMeta{
-		{Id: systemKeyspaceID, Name: keyspace.System},
-		{Id: userKeyspaceID, Name: "user_keyspace"},
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: systemKeyspaceID}, Name: keyspace.System},
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: userKeyspaceID}, Name: "user_keyspace"},
 	}
 	oldSystemStore := kvstore.GetSystemStorage()
 	systemStore, err := mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, systemKeyspaceID))
@@ -608,6 +657,7 @@ func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 	ts.StatusPort = testutil.GetPortFromTCPAddr(ts.server.StatusListenerAddr())
 
 	for _, path := range []string{
+		"/dxf/nodes",
 		"/dxf/schedule/task_cleanup_batch_size",
 		"/dxf/schedule/max_concurrent_task",
 	} {

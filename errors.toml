@@ -66,6 +66,11 @@ error = '''
 the migration version isn't supported
 '''
 
+["BR:Common:ErrOperationAborted"]
+error = '''
+operation aborted by user
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -339,6 +344,11 @@ stream task already exists
 ["BR:Stream:ErrStreamLogTaskHasNoStorage"]
 error = '''
 stream task has no storage
+'''
+
+["GlobalSort:TooManyDataFiles"]
+error = '''
+cannot merge %d data files with concurrency %d into at most %d target files
 '''
 
 ["Import:ErrCastValue"]
@@ -3409,6 +3419,11 @@ TiFlash server timeout
 ["tikv:9013"]
 error = '''
 TiFlash server is busy
+'''
+
+["tikv:9015"]
+error = '''
+Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s
 '''
 
 ["types:1063"]

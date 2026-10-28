@@ -200,6 +200,39 @@ func TestReorgPartitionFailures(t *testing.T) {
 		"1 1 1", "12 12 21", "13 13 13", "17 17 17", "18 18 18", "2 2 2", "23 23 32", "45 45 54", "5 5 5",
 	)
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	t.Run("notify after finalization retry", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(create)
+		events := dom.StatsHandle().DDLEventCh()
+		for len(events) > 0 {
+			<-events
+		}
+		finalizationAttempts, finalUpdates := 0, 0
+		notifiedBeforeUpdate := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StatePublic {
+				finalizationAttempts++
+				notifiedBeforeUpdate = notifiedBeforeUpdate || len(events) > 0
+			}
+		})
+		// Fail once before publishing the final metadata, then let the job retry.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", "1*return()")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, _ *error) {
+			if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateNone {
+				finalUpdates++
+				notifiedBeforeUpdate = notifiedBeforeUpdate || len(events) > 0
+			}
+		})
+		tk.MustExec(alter)
+		require.Equal(t, 2, finalizationAttempts)
+		require.Equal(t, 1, finalUpdates)
+		require.False(t, notifiedBeforeUpdate, "statistics must not be notified before the final metadata update can fail")
+		require.Len(t, events, 1)
+		require.Equal(t, model.ActionReorganizePartition, (<-events).GetType())
+		tk.MustExec("admin check table t")
+	})
 }
 
 func TestRemovePartitionFailures(t *testing.T) {
@@ -276,6 +309,33 @@ func TestReorganizePartitionListFailures(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	t.Run("stage nonadjacent partitions in table order", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(create)
+		tk.MustExec("insert into t values (1,1,'1'),(4,4,'4'),(9,9,'9')")
+		original := external.GetTableByName(t, tk, "test", "t").Meta().Partition.Clone()
+		var staged *model.PartitionInfo
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly && staged == nil {
+				staged = external.GetTableByName(t, testkit.NewTestKit(t, store), "test", "t").Meta().Partition.Clone()
+			}
+		})
+		// The requested order differs from the table order, and p1 is untouched.
+		tk.MustExec("alter table t reorganize partition p2,p0 into (partition pNone1 values in (1,9), partition pNone2 values in (2,8), partition pNone3 values in (3,7))")
+		require.NotNil(t, staged)
+		require.Equal(t, original.Definitions, staged.Definitions)
+		require.Equal(t, []model.PartitionDefinition{original.Definitions[0], original.Definitions[2]}, staged.DroppingDefinitions)
+		require.Len(t, staged.AddingDefinitions, 3)
+		require.Equal(t, []model.PartitionDefinition{
+			{ID: staged.AddingDefinitions[0].ID, Name: ast.NewCIStr("pNone1"), InValues: [][]string{{"1"}, {"9"}}},
+			{ID: staged.AddingDefinitions[1].ID, Name: ast.NewCIStr("pNone2"), InValues: [][]string{{"2"}, {"8"}}},
+			{ID: staged.AddingDefinitions[2].ID, Name: ast.NewCIStr("pNone3"), InValues: [][]string{{"3"}, {"7"}}},
+		}, staged.AddingDefinitions)
+		tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1 1", "4 4 4", "9 9 9"))
+		tk.MustExec("admin check table t")
+	})
 }
 
 func TestPartitionByListFailures(t *testing.T) {
@@ -1054,6 +1114,48 @@ func TestPartitionIssue56634(t *testing.T) {
 	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")
 }
 
+// TestReorgPartitionPrimaryKeyIndexEntries tests that REORGANIZE PARTITION only
+// backfills a PRIMARY KEY that actually has index entries of its own. A clustered
+// one does not, so backfilling it wrote entries that nothing read and that DML
+// never maintained, see issue #70379.
+func TestReorgPartitionPrimaryKeyIndexEntries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range []struct {
+		tblName       string
+		pkType        string
+		wantPKEntries bool
+	}{
+		{"tClustered", "clustered", false},
+		{"tNonClustered", "nonclustered", true},
+	} {
+		tk.MustExec(fmt.Sprintf(`create table %s (a int, b int, c int, primary key (a,b) %s, key idx_c (c))`+
+			` partition by range (b)`+
+			` (partition p0 values less than (10), partition pMax values less than (MAXVALUE))`,
+			tc.tblName, tc.pkType))
+		tk.MustExec(fmt.Sprintf(`insert into %s values (1,11,1),(2,12,2),(3,13,3),(4,14,4)`, tc.tblName))
+		tk.MustExec(fmt.Sprintf(`alter table %s reorganize partition pMax into`+
+			` (partition p1 values less than (20), partition pMax values less than (MAXVALUE))`, tc.tblName))
+
+		tblInfo := external.GetTableByName(t, tk, "test", tc.tblName).Meta()
+		pid := tblInfo.GetPartitionInfo().GetPartitionIDByName("p1")
+		require.NotEqual(t, int64(-1), pid)
+		pkInfo := tblInfo.FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		idxInfo := tblInfo.FindIndexByName("idx_c")
+		require.NotNil(t, idxInfo)
+
+		require.Equal(t, tc.wantPKEntries, HaveEntriesForTableIndex(t, tk, pid, pkInfo.ID), tc.tblName)
+		require.True(t, HaveEntriesForTableIndex(t, tk, pid, idxInfo.ID), tc.tblName)
+
+		tk.MustExec(`admin check table ` + tc.tblName)
+		tk.MustQuery(fmt.Sprintf(`select a,b,c from %s order by a`, tc.tblName)).
+			Check(testkit.Rows("1 11 1", "2 12 2", "3 13 3", "4 14 4"))
+	}
+}
+
 func TestReorgPartitionFailuresPlacementPolicy(t *testing.T) {
 	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
 		` partition by range (a) ` +
@@ -1194,4 +1296,45 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 	alter := "alter table t partition by range (a) (partition p1 values less than (150), partition pMax values less than (maxvalue) placement policy pp1) update indexes (`primary` local, `c` global)"
 	afterResult := beforeResult
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
+}
+
+func TestReorgPartitionHandleNotExistNoPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartHandleNotExist"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned primary key, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/CheckReorgInfoEmptyErr", "1*return(true)")
+
+	tk.MustExec("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "10", "23", "34", "45", "56"))
+}
+
+func TestReorgPartitionGlobalIndexNonTouchedAfterDropped(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// pMax is a non-touched partition ordered after the reorganized partitions,
+	// so it must also be added to the recreated global index.
+	tk.MustExec(`create table t (a int, b int, unique key idx_b (b) global) partition by range (a) (` +
+		`partition p0 values less than (10),` +
+		`partition p1 values less than (20),` +
+		`partition p2 values less than (30),` +
+		`partition pMax values less than (maxvalue))`)
+	tk.MustExec(`insert into t values (1,10),(12,120),(25,250),(30,300)`)
+	tk.MustExec(`alter table t reorganize partition p1,p2 into (partition p1a values less than (15), partition p1b values less than (30))`)
+	tk.MustExec(`admin check table t`)
+	expected := testkit.Rows("1:10,12:120,25:250,30:300")
+	tk.MustQuery(`select group_concat(concat(a,":",b) order by b) from t use index(idx_b) where b >= 0`).Check(expected)
+	tk.MustQuery(`select group_concat(concat(a,":",b) order by b) from t ignore index(idx_b) where b >= 0`).Check(expected)
+	// A missing global index entry would also stop the unique constraint from being enforced.
+	tk.MustContainErrMsg(`insert into t values (31,300)`, "Duplicate entry")
 }

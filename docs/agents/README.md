@@ -11,9 +11,7 @@ This directory is the single top-level home for agent-facing documentation.
   Current component folders include:
   - `docs/agents/ddl/`
   - `docs/agents/dxf/`
-  - `docs/agents/executor/`
   - `docs/agents/import-into/`
-  - `docs/agents/planner/`
 
 ## Maintenance
 

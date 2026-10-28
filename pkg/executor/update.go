@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"slices"
 
@@ -44,6 +43,9 @@ import (
 type UpdateExec struct {
 	exec.BaseExecutor
 
+	writeStats *execdetails.WriteRuntimeStats
+	writeRows  []int // First matched rows per target-table position, aggregated at Close.
+
 	OrderedList         []*expression.Assignment
 	assignmentsPerTable map[int][]*expression.Assignment
 
@@ -55,6 +57,7 @@ type UpdateExec struct {
 	// The value is cached table row
 	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
+	isMultiTable           bool
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -70,6 +73,7 @@ type UpdateExec struct {
 	stats *updateRuntimeStats
 
 	handles        []kv.Handle
+	rowKeys        []kv.Handle // handles plus the partition ID for nonclustered partitioned tables, or nil if not tracked; see partitionRowKey
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
@@ -87,20 +91,11 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
+	e.rowKeys = e.rowKeys[:0]
 	e.tableUpdatable = e.tableUpdatable[:0]
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
-		// Partitioned tables can have duplicate _tidb_rowid between different partitions
-		// due to EXCHANGE PARTITION, if so, do not optimize skipping rows with multiple changes
-		skipMultipleChangesOnSameRow := true
-		tbl := e.tblID2table[content.TblID]
-		if _, ok := tbl.(table.PartitionedTable); ok {
-			if !tbl.Meta().HasClusteredIndex() {
-				skipMultipleChangesOnSameRow = false
-			}
-		}
-
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
@@ -122,10 +117,20 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
+		rowKey := handle
+		if updatable {
+			rowKey = e.partitionRowKey(content, handle, row)
+		}
+		e.rowKeys = append(e.rowKeys, rowKey)
+		if rowKey == nil {
+			e.changed = append(e.changed, false)
+			e.matches = append(e.matches, true)
+			continue
+		}
 
-		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
+		changed, ok := e.updatedRowKeys[content.Start].Get(rowKey)
 		if ok {
-			e.changed = append(e.changed, changed && skipMultipleChangesOnSameRow)
+			e.changed = append(e.changed, changed)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)
@@ -133,6 +138,28 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		}
 	}
 	return nil
+}
+
+// partitionRowKey adds the partition ID to the handle of a nonclustered partitioned table,
+// since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
+// A single-table UPDATE matches each row once, so it returns nil there to leave the row
+// untracked instead of locating its partition.
+func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) kv.Handle {
+	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
+	if !ok || pt.Meta().HasClusteredIndex() {
+		return handle
+	}
+	if !e.isMultiTable {
+		return nil
+	}
+	// Aliases of a table share this table object, which has only one alias's PARTITION () set,
+	// so locate the row without it.
+	p, err := pt.GetPartitionedTable().GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
+	if err != nil {
+		// Keep the plain handle, updateRecord reports the error where UPDATE IGNORE handles it.
+		return handle
+	}
+	return kv.NewPartitionHandle(p.GetPhysicalID(), handle)
 }
 
 func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
@@ -155,7 +182,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
-		handle := e.handles[i]
+		rowKey := e.rowKeys[i]
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
@@ -164,7 +191,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
+		if v, ok := e.mergedRowData[content.TblID].Get(rowKey); ok {
 			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() {
@@ -181,8 +208,8 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			mergedData = slices.Clone(newTableData)
 		}
 
-		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+		memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 		totalMemDelta += memDelta
 	}
 	e.memTracker.Consume(totalMemDelta)
@@ -212,7 +239,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		// Each matched row is updated once, even if it matches the conditions multiple times.
 		return nil
 	}
-	handle := e.handles[i]
+	rowKey := e.rowKeys[i]
 	flags := e.assignFlag[content.Start:content.End]
 
 	if e.mergedRowData[content.TblID] == nil {
@@ -223,7 +250,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 	newTableData := newData[content.Start:content.End]
 
 	// We don't check the second return value here because we have already called mergeNonGenerated() before.
-	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	mergedData, _ = e.mergedRowData[content.TblID].Get(rowKey)
 	for i, flag := range flags {
 		if !tbl.WritableCols()[i].IsGenerated() {
 			continue
@@ -244,8 +271,8 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		}
 	}
 
-	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 	totalMemDelta += memDelta
 
 	e.memTracker.Consume(totalMemDelta)
@@ -283,6 +310,9 @@ func (e *UpdateExec) exec(
 		if e.matches[i] {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
+			if e.writeStats != nil {
+				e.writeRows[i]++
+			}
 		}
 		tbl := e.tblID2table[content.TblID]
 		handle := e.handles[i]
@@ -323,12 +353,14 @@ func (e *UpdateExec) exec(
 		}
 
 		if err == nil {
-			_, exist := e.updatedRowKeys[content.Start].Get(handle)
-			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
-			if !exist {
-				memDelta += int64(handle.ExtraMemSize())
+			if rowKey := e.rowKeys[i]; rowKey != nil {
+				_, exist := e.updatedRowKeys[content.Start].Get(rowKey)
+				memDelta := e.updatedRowKeys[content.Start].Set(rowKey, changed)
+				if !exist {
+					memDelta += int64(rowKey.ExtraMemSize())
+				}
+				totalMemDelta += memDelta
 			}
-			totalMemDelta += memDelta
 			continue
 		}
 
@@ -365,31 +397,17 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.collectRuntimeStatsEnabled() {
 			ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 		}
-		numRows, rowsColMultiply, err := e.updateRows(ctx)
+		numRows, err := e.updateRows(ctx)
 		if err != nil {
 			return err
 		}
 		e.drained = true
 		e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
-		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	}
 	return nil
 }
 
-func (e *UpdateExec) rowsColMultiplyForPreparedRow() int64 {
-	var columnCount int64
-	for i, content := range e.tblColPosInfos {
-		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] || i >= len(e.changed) || e.changed[i] {
-			continue
-		}
-		if content.End > content.Start {
-			columnCount += int64(content.End - content.Start)
-		}
-	}
-	return columnCount
-}
-
-func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
+func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := exec.RetTypes(e.Children(0))
 	colsInfo := physicalop.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
@@ -406,9 +424,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	var rowsColMultiply int64
 
 	if e.virtualAssignmentsOffset < len(e.OrderedList) {
 		e.assignmentsPerTable = make(map[int][]*expression.Assignment, 0)
@@ -429,7 +446,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 
 		if chk.NumRows() == 0 {
@@ -456,22 +473,16 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
-				return 0, 0, err
-			}
-			rowColMultiply := e.rowsColMultiplyForPreparedRow()
-			if rowsColMultiply > math.MaxInt64-rowColMultiply {
-				rowsColMultiply = math.MaxInt64
-			} else {
-				rowsColMultiply += rowColMultiply
+				return 0, err
 			}
 			// compose non-generated columns
 			newRow, err := composeFunc(globalRowIdx, datumRow, colsInfo)
 			if err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 			// merge non-generated columns
 			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
@@ -481,14 +492,14 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 			if err := e.exec(
 				ctx, e.Children(0).Schema(),
 				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 			globalRowIdx++
 		}
 		totalNumRows += chk.NumRows()
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
-	return totalNumRows, rowsColMultiply, nil
+	return totalNumRows, nil
 }
 
 func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
@@ -573,6 +584,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
+	if e.writeStats != nil {
+		for i, rows := range e.writeRows {
+			recordWriteCPUWork(e.writeStats, e.tblID2table[e.tblColPosInfos[i].TblID], rows)
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.RuntimeStats() != nil && e.stats != nil {
@@ -587,6 +604,12 @@ func (e *UpdateExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
+	e.writeStats = nil
+	e.writeRows = nil
+	if e.RuntimeStats() != nil {
+		e.writeStats = &execdetails.WriteRuntimeStats{}
+		e.writeRows = make([]int, len(e.tblColPosInfos))
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

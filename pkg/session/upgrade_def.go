@@ -21,8 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -485,36 +487,66 @@ const (
 	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
 
-	// version257
-	// Add tidb_enable_no_backslash_escapes_in_like global variable.
-	version257 = 257
+	// ...
+	// [version257, version276] is the version range reserved for release-nextgen-202603.
+	// ...
 
-	// version258
+	// version277
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
+	version277 = 277
+
+	// version278
 	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
 	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
-	version258 = 258
+	version278 = 278
 
-	// version259
+	// version279
 	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
 	// mysql.global_variables was never materialized when the variable was introduced.
 	// Use the current sysvar default when the row is missing.
-	version259 = 259
+	version279 = 279
 
 	// Add mysql.tidb_masking_policy table.
-	version260 = 260
+	version280 = 280
 
-	// version261
+	// version281
 	// Backfill tidb_default_string_match_selectivity for upgraded clusters where the row in
 	// mysql.global_variables was never materialized when the variable was introduced.
-	version261 = 261
+	version281 = 281
 
-	// version262 refreshes mysql.bind_info SQL digests after binding
+	// version282 refreshes mysql.bind_info SQL digests after binding
 	// normalization starts skipping redundant parentheses for
 	// https://github.com/pingcap/tidb/issues/67363.
-	version262 = 262
+	version282 = 282
 
-	// version263 backfills analyze default bucket and TopN global variables.
-	version263 = 263
+	// version283 backfills analyze default bucket and TopN global variables.
+	version283 = 283
+
+	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
+	version284 = 284
+
+	// version285 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
+	version285 = 285
+
+	// ...
+	// [version286, version315] is the version range reserved for release-nextgen-202609.
+	// ...
+
+	// version316 creates materialized view maintenance system tables.
+	version316 = 316
+
+	// version317 adds the OPERATE VIEW static privilege.
+	version317 = 317
+
+	// version318 adds tidb_opt_range_max_count.
+	version318 = 318
+
+	// version319 adds ndv_rate to mysql.analyze_options and keeps sampled NDV
+	// off on upgraded clusters.
+	version319 = 319
+
+	// version320 adds restore name routing identity to mysql.tidb_restore_registry.
+	version320 = 320
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -528,7 +560,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version263
+var currentBootstrapVersion int64 = version320
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -709,13 +741,20 @@ var (
 		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
 		{version: version256, fn: upgradeToVer256},
-		{version: version257, fn: upgradeToVer257},
-		{version: version258, fn: upgradeToVer258},
-		{version: version259, fn: upgradeToVer259},
-		{version: version260, fn: upgradeToVer260},
-		{version: version261, fn: upgradeToVer261},
-		{version: version262, fn: upgradeToVer262},
-		{version: version263, fn: upgradeToVer263},
+		{version: version277, fn: upgradeToVer277},
+		{version: version278, fn: upgradeToVer278},
+		{version: version279, fn: upgradeToVer279},
+		{version: version280, fn: upgradeToVer280},
+		{version: version281, fn: upgradeToVer281},
+		{version: version282, fn: upgradeToVer282},
+		{version: version283, fn: upgradeToVer283},
+		{version: version284, fn: upgradeToVer284},
+		{version: version285, fn: upgradeToVer285},
+		{version: version316, fn: upgradeToVer316},
+		{version: version317, fn: upgradeToVer317},
+		{version: version318, fn: upgradeToVer318},
+		{version: version319, fn: upgradeToVer319},
+		{version: version320, fn: upgradeToVer320},
 	}
 )
 
@@ -2122,12 +2161,12 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
 }
 
-func upgradeToVer257(s sessionapi.Session, _ int64) {
+func upgradeToVer277(s sessionapi.Session, _ int64) {
 	// Keep old behavior for upgraded clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
 }
 
-func upgradeToVer258(s sessionapi.Session, _ int64) {
+func upgradeToVer278(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBDistSQLScanConcurrency)
 	terror.MustNil(err)
@@ -2137,15 +2176,15 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
 }
 
-func upgradeToVer259(s sessionapi.Session, _ int64) {
+func upgradeToVer279(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
 }
 
-func upgradeToVer260(s sessionapi.Session, _ int64) {
+func upgradeToVer280(s sessionapi.Session, _ int64) {
 	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 }
 
-func upgradeToVer261(s sessionapi.Session, _ int64) {
+func upgradeToVer281(s sessionapi.Session, _ int64) {
 	// the prior default behavior is "0.8", keep it for compatibility for old clusters.
 	initGlobalVariableIfNotExists(s, vardef.TiDBDefaultStrMatchSelectivity, "0.8")
 }
@@ -2162,7 +2201,7 @@ type bindingDigestPair struct {
 	planDigest string
 }
 
-func upgradeToVer262(s sessionapi.Session, _ int64) {
+func upgradeToVer282(s sessionapi.Session, _ int64) {
 	// Refresh persisted binding digests after the #67363 normalization change.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	// Duplicate detection keeps the first row scanned for each target digest
@@ -2172,7 +2211,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		WHERE source != 'builtin'
 		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(err))
 	}
 
 	req := rs.NewChunk(nil)
@@ -2183,7 +2222,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -2238,7 +2277,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		req.Reset()
 	}
 	if closeErr := rs.Close(); closeErr != nil {
-		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(closeErr))
+		logutil.BgLogger().Fatal("upgradeToVer282 error", zap.Error(closeErr))
 	}
 
 	// Update rows independently to avoid one large bootstrap transaction.
@@ -2264,9 +2303,91 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	}
 }
 
-func upgradeToVer263(s sessionapi.Session, _ int64) {
+func upgradeToVer283(s sessionapi.Session, _ int64) {
 	// Fresh clusters materialize these rows during bootstrap, but upgraded clusters can miss them.
 	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumBuckets, vardef.DefTiDBAnalyzeDefaultNumBuckets)
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
+}
+
+func upgradeToVer284(s sessionapi.Session, _ int64) {
+	if kerneltype.IsClassic() {
+		return
+	}
+
+	const legacyVariable = "tidb_disable_txn_file"
+	// TODO: Delete the legacy variable after rolling upgrade and downgrade compatibility is no longer required.
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			failpoint.InjectCall("afterUpgradeToVer284Rollback", s)
+			logutil.BgLogger().Fatal("upgradeToVer284 error", zap.Error(err))
+			return
+		}
+		mustExecute(s, "COMMIT")
+		failpoint.InjectCall("afterUpgradeToVer284Commit", s)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%? FOR UPDATE;", mysql.SystemDB, mysql.GlobalVariablesTable, legacyVariable)
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Read", s)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, err = sqlexec.ExecSQL(ctx, s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable,
+		vardef.TiDBEnableTxnFile, variable.BoolToOnOff(!variable.TiDBOptOn(rows[0].GetString(0))))
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Replace", s)
+	failpoint.Inject("mockUpgradeToVer284Error", func() {
+		err = context.Canceled
+	})
+}
+
+func upgradeToVer285(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+}
+
+func upgradeToVer316(s sessionapi.Session, _ int64) {
+	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
+		doReentrantDDL(s, tbl.SQL)
+	}
+}
+
+func upgradeToVer317(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+	// Preserve the old behavior for upgraded clusters that do not have a persisted value.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
+}
+
+func upgradeToVer318(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBOptRangeMaxCount, vardef.DefTiDBOptRangeMaxCount)
+}
+
+func upgradeToVer319(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
+	// Keep sampled NDV off on upgraded clusters: old TiDB cannot read sampled
+	// sketches, so it is turned on only after every node is upgraded.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeSampledNDVThreshold, 0)
+}
+
+func upgradeToVer320(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, `ALTER TABLE mysql.tidb_restore_registry
+		ADD UNIQUE INDEX unique_registration_params_v2 (
+			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -103,6 +104,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			return nil, err
 		}
 	}
+	// CREATE MATERIALIZED VIEW plans its SELECT during DDL build; avoid strict-mode TiFlash removal for that step.
+	if _, ok := stmtNode.(*ast.CreateMaterializedViewStmt); ok {
+		origMVMaintenance := sessVars.InMViewMaintenance
+		sessVars.InMViewMaintenance = true
+		defer func() {
+			sessVars.InMViewMaintenance = origMVMaintenance
+		}()
+	}
 	// Build the final physical plan.
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, nodeW, is)
 	if err != nil {
@@ -166,6 +175,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
+	// Statement RU collection is only supported by the NextGen kernel.
+	if kerneltype.IsNextGen() {
+		installStatementRUOwner(stmt)
+	}
+	failpoint.InjectCall("observeStatementRUOwnerInstallForTest", stmt)
 
 	return stmt, nil
 }

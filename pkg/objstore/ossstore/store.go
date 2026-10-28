@@ -46,12 +46,53 @@ const (
 	// https://github.com/aliyun/aliyun_assist_client/blob/feb283504ee5a11484067af9762f1008baa664b0/common/metaserver/prop.go#L34-L37
 	// and https://www.alibabacloud.com/blog/alibaba-cloud-ecs-metadata-user-data-and-dynamic-data_594351#:~:text=Retrieve%20Region%20Information
 	regionIDMetaURL = "http://100.100.100.200/latest/meta-data/region-id"
+	// ecsMetadataIP is the Aliyun ECS metadata service address. Failing to reach
+	// it is often transient, unlike a missing local credential configuration.
+	ecsMetadataIP = "100.100.100.200"
 )
+
+// IsTransientNoCredentialsError reports whether err is a transient failure to
+// resolve credentials from the default provider chain because the Aliyun ECS
+// metadata service request timed out or hit its deadline. Permanent causes,
+// e.g. missing credential configuration or the metadata service refusing the
+// request, are not reported as retryable.
+//
+// It is exported so callers that run on top of this store, such as IMPORT INTO,
+// can classify a failed store creation as retryable.
+//
+// The reason it is matched this way is that the Aliyun SDK does its own
+// transient-error detection the same way. The OSS SDK's ConnectionErrorRetryable
+// treats a connection error as retryable when net.Error.Timeout() or
+// Temporary() is true (and falls back to a few message substrings), see
+// oss/retry/retryable_error.go in github.com/aliyun/alibabacloud-oss-go-sdk-v2.
+// But by the time the error reaches us it has already been flattened to a
+// string: the credentials SDK wraps the metadata request error with
+// fmt.Errorf("refresh Ecs sts token err: %s", err.Error()) (see ecs_ram_role.go
+// in github.com/aliyun/credentials-go), and the import code reformats it again
+// via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
+// signals as text: the metadata host and the Go HTTP timeout messages that the
+// SDK's type check would have caught.
+func IsTransientNoCredentialsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, ecsMetadataIP) {
+		return false
+	}
+	return strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "i/o timeout")
+}
 
 // OSSStore is the OSS storage implementation.
 type OSSStore struct {
 	*s3like.Storage
 	credRefresher *credentialRefresher
+}
+
+// URI returns oss://<bucket>/<prefix>.
+func (s *OSSStore) URI() string {
+	bucketPrefix := s.GetBucketPrefix()
+	return "oss://" + bucketPrefix.Bucket + "/" + bucketPrefix.PrefixStr()
 }
 
 // Close implements storeapi.Storage.
@@ -79,14 +120,6 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	// TODO changing the input backend is a side effect, it shouldn't be part of
 	// 	the NewXXX, but we have to do it here to keep compatibility now.
-	//
-	// OSS credential through assume role need refresh periodically, if we do
-	// send them out to TiKV, they also need to be refreshed, not sure how this
-	// works for BR now, we can add it later.
-	if opts.SendCredentials {
-		return nil, errors.New("sending OSS credentials to TiKV is not supported")
-	}
-	backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
 
 	logger := log.L().With(
 		zap.String("bucket", qs.GetBucket()),
@@ -116,12 +149,14 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	var (
 		ecsRegionID   string
 		credRefresher *credentialRefresher
+		credProvider  credentials.CredentialsProvider
 	)
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		ossCfg = ossCfg.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken))
+		credProvider = credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken)
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
 	} else {
 		var provider providers.CredentialsProvider = providers.NewDefaultCredentialsProvider()
-		cred, err := provider.GetCredentials()
+		cred, err := fetchCredentials(ctx, provider, logger)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get credentials from default provider")
 		}
@@ -155,7 +190,11 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		if err := credRefresher.refreshOnce(); err != nil {
 			return nil, errors.Annotatef(err, "failed to get initial OSS credentials")
 		}
-		ossCfg = ossCfg.WithCredentialsProvider(credRefresher)
+		credProvider = credRefresher
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
+	}
+	if err := setBackendCredentials(ctx, backend, credProvider, opts.SendCredentials); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if opts.AccessRecording != nil {
@@ -200,6 +239,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	cli := &client{
 		svc:          oss.NewClient(ossCfg, ossOptFns...),
+		presignSvc:   newPresignClient(ossCfg, ossOptFns...),
 		BucketPrefix: bucketPrefix,
 		options:      &qs,
 	}
@@ -219,11 +259,46 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	}, nil
 }
 
+func setBackendCredentials(
+	ctx context.Context,
+	backend *backuppb.S3,
+	provider credentials.CredentialsProvider,
+	sendCredentials bool,
+) error {
+	if !sendCredentials {
+		backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
+		return nil
+	}
+	cred, err := provider.GetCredentials(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get OSS credentials to send to TiKV")
+	}
+	// Credential persistence and lifetime are managed by the caller. In
+	// particular, the caller must ensure forwarded temporary credentials remain
+	// valid for the duration of downstream TiKV operations.
+	backend.AccessKey = cred.AccessKeyID
+	backend.SecretAccessKey = cred.AccessKeySecret
+	backend.SessionToken = cred.SecurityToken
+	return nil
+}
+
+// newPresignClient uses the public endpoint because presigned URLs may be consumed
+// outside the Alibaba Cloud VPC. Explicit custom endpoints are retained because
+// the SDK gives them precedence over endpoint flags. It also disables SDK logging
+// because the presign request pipeline otherwise logs credentials in the raw query.
+func newPresignClient(config *oss.Config, optFns ...func(*oss.Options)) *oss.Client {
+	presignConfig := config.Copy()
+	presignConfig.WithUseInternalEndpoint(false)
+	presignConfig.WithLogLevel(oss.LogOff)
+	return oss.NewClient(&presignConfig, optFns...)
+}
+
 func newOSSStorageForTest(svc API, options *backuppb.S3, accessRec *recording.AccessStats) *s3like.Storage {
 	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return s3like.NewStorage(
 		&client{
 			svc:          svc,
+			presignSvc:   svc,
 			BucketPrefix: bucketPrefix,
 			options:      options,
 		},

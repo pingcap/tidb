@@ -273,6 +273,8 @@ func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.MergeScanDetail(e.stats.SnapshotRuntimeStats.GetScanDetail())
+			sc.MergeReadPoolTaskDetails(e.stats.SnapshotRuntimeStats.GetReadPoolTaskDetails())
 			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
 			if timeDetail != nil {
@@ -436,6 +438,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
+	}
+	// The physical partition ID is not stored in the row value. It can still
+	// be required by SelectLock even when UnionScan has been eliminated.
+	for i, col := range schema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			req.Column(i).Reset(types.ETInt)
+			req.AppendInt64(i, tblID)
+		}
 	}
 
 	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
@@ -759,6 +769,11 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			// Match the new row decoder; PointGet fills this from the row key.
+			chk.AppendNull(i)
+			continue
+		}
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)

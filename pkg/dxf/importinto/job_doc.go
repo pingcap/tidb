@@ -78,26 +78,29 @@ package importinto
 //     running and the caller has privilege.
 //
 //   C1
-//     CANCEL IMPORT JOB runs CancelTaskByKeySession in a SYSTEM-keyspace
-//     transaction. It updates a live DXF task to cancelling only when the
-//     current DXF task state is pending, running, or awaiting-resolution.
-//     The affected row count is not checked, so "no task", "task not
-//     committed yet", "already terminal", and "state not matched" all look
-//     like success to this step.
+//     CANCEL IMPORT JOB checks the live and history task tables by task key in
+//     the SYSTEM keyspace. If the task exists, it opens a transaction and runs
+//     CancelTaskByKeySession. The update changes a live task to cancelling only
+//     when its state is pending, running, or awaiting-resolution. A history
+//     task or a live task outside that predicate still counts as an existing
+//     task; the update's affected row count does not decide whether the import
+//     job is dangling.
 //
 //   C2
 //     CANCEL IMPORT JOB runs WaitTaskDoneByKey. The first lookup checks live
-//     and history task tables by task key. If no task is found, it returns
-//     ErrTaskNotFound. If a task is found, it polls by task ID until the DXF
-//     task is succeed, reverted, or failed. It does not verify that the task
-//     was actually cancelled.
+//     and history task tables by task key. C1 has already found the task in one
+//     of those tables, and transfer from live to history is transactional, so
+//     the task remains visible to this lookup. It then polls by task ID until
+//     the DXF task is succeed, reverted, or failed. It does not verify that the
+//     task was actually cancelled.
 //
 //   C3
-//     If C2 returns ErrTaskNotFound, cancelDanglingImportJob runs
-//     CancelPendingJob in the user keyspace. It directly changes the import
-//     job from pending to cancelled. Unlike most scheduler writes, this path
-//     checks affected rows and returns "job state changed during cancel,
-//     please try again later" if the job is no longer pending.
+//     If C1 does not find a task in the live or history table, CANCEL skips C2
+//     and immediately runs cancelDanglingImportJob. CancelPendingJob directly
+//     changes the import job from pending to cancelled in the user keyspace.
+//     Unlike most scheduler writes, this path checks affected rows and returns
+//     "job state changed during cancel, please try again later" if the job is
+//     no longer pending.
 //
 //   S0
 //     The import scheduler runs checkImportJobNotCancelled. It reads only the
@@ -134,28 +137,25 @@ package importinto
 //      already committed. A later dangling cancel can still cancel the pending
 //      import job.
 //
-//   3. J < C0 < C1(0 rows) < C2(no task) < C3, and T never commits
-//      CancelTaskByKeySession misses the absent DXF task. WaitTaskDoneByKey
-//      also finds no task. cancelDanglingImportJob changes the import job from
-//      pending to cancelled. No DXF task exists.
+//   3. J < C0 < C1(no task) < C3, and T never commits
+//      GetTaskByKey returns ErrTaskNotFound for the absent DXF task. CANCEL
+//      skips WaitTaskDoneByKey, and cancelDanglingImportJob changes the import
+//      job from pending to cancelled. No DXF task exists.
 //
-//   4. J < C0 < C1(0 rows) < C2(no task) < C3 < T
+//   4. J < C0 < C1(no task) < C3 < T
 //      The user sees cancel success because the import job row was directly
 //      marked cancelled. The submitter can still later commit the SYSTEM DXF
 //      task because the submit path does not recheck the job status before T.
 //      The scheduler should then see the cancelled import job at S0 and drive
 //      the DXF task to revert before import work starts.
 //
-//   5. J < C0 < C1(0 rows) < T < C2(found task)
-//      This is the known missed-cancel window. C1 ran before the task was
-//      committed, so no durable cancel marker was recorded in the DXF task
-//      table. C2 then finds the task, so the dangling-job fallback does not
-//      run. The cancel command waits for the task's natural terminal state;
-//      without another cancel, the task can finish or fail normally, and the
-//      command can still return nil because WaitTaskDoneByKey accepts any done
-//      state.
+//   5. J < C0 < C1(no task) < T < C3
+//      C1 observes no task and CANCEL does not run C2, so a task committed
+//      after C1 cannot make the command wait for natural task completion. C3
+//      still races with the task scheduler after T: if C3 marks the job
+//      cancelled first, S0 makes the newly visible task revert.
 //
-//   6. J < C0 < C1(0 rows) < C2(no task) < T < S1 < C3
+//   6. J < C0 < C1(no task) < T < S1 < C3
 //      The dangling fallback races with a newly committed task and scheduler
 //      start. If S1 changes the import job to running first, C3 affects zero
 //      rows and returns "job state changed during cancel, please try again
@@ -170,10 +170,10 @@ package importinto
 //
 //   8. J < T < C1, but the DXF task is already cancelling, reverting,
 //      succeed, failed, reverted, or otherwise outside C1's predicate
-//      C1 affects zero rows and does not report that fact. If C2 finds a live
-//      or history task, the command waits for or observes terminal completion.
-//      This can look like cancel success even though this cancel did not
-//      change the task.
+//      C1 finds the live or history task even though the cancel update affects
+//      zero rows. The job is not treated as dangling. C2 waits for or observes
+//      terminal completion, which can look like cancel success even though
+//      this cancel did not change the task.
 //
 //   9. C0 reads a terminal import job, or the caller lacks privilege
 //      Cancellation stops before touching the DXF task.
@@ -261,22 +261,69 @@ package importinto
 //   - IMPORT INTO ... FROM SELECT returns through the import-from-select path
 //     before submitTask and does not use this import-job/DXF-task table path.
 //
-// Practical risks that need to be fixed later.
+// Practical risks, required invariants, and residual consistency windows.
 //
-//   1. Highest: J < C0 < C1(0 rows) < T < C2(found task). The cancel request
-//      is missed, the dangling fallback is skipped, and the command waits for
-//      natural task completion.
+// Open correctness risks:
+//
+//   1. High: successful lookup-miss cancel can still dispatch import work. In
+//      C1(no task) < T < S0 < C3 < S1, S0 reads the job as pending, C3 marks it
+//      cancelled and returns success, and then S1 affects zero rows. Because
+//      StartJob ignores the affected row count, planning can continue, move the
+//      DXF task to running, and insert import subtasks.
 //
 //   2. High: success hook race. FinishJob can commit before a later cancel
 //      prevents SucceedTask from committing, leaving an import job marked
 //      finished while the DXF task later reverts.
 //
-//   3. Medium: C2(no task) < T < S1 < C3. The dangling fallback loses because
-//      the import job is no longer pending and reports retry-later.
+//   3. Medium: C1(no task) < T < S1 < C3. The lookup-miss fallback loses
+//      because the import job is no longer pending and reports retry-later.
 //
 //   4. Medium: step/status drift. Normal visible-task cancellation does not
 //      mark the import job cancelled until scheduler OnDone, so job status and
 //      step can advance after the user requested cancellation.
+//
+//   5. Admission race: active-job validation is a read before CreateJob. Two
+//      concurrent imports can both pass the validation and create jobs, so the
+//      precheck alone cannot enforce the one-active-job-per-target-table
+//      invariant.
+//
+// Required cancellation and lookup invariants:
+//
+//   1. C1 must remain history-aware. A live-only probe can mistake an archived
+//      terminal task for a job that never had a task, route it through C3, and
+//      either report retry-later or rewrite an inconsistent pending job as
+//      cancelled.
+//
+//   2. C1(no task) is only a snapshot result. T can commit before C3, so code,
+//      logs, and documentation must not treat the lookup miss as proof that no
+//      task exists when C3 executes.
+//
+//   3. A successful C3 return is not a task-completion barrier. It deliberately
+//      skips C2, and T can commit afterward, so callers must not infer that a
+//      late DXF task is already terminal.
+//
+//   4. When C1 finds a task outside the cancellable-state predicate, C2 can
+//      observe its natural terminal state and return even though this CANCEL
+//      did not change the task. Command success therefore does not by itself
+//      prove that this request caused cancellation.
+//
+// Guarded and residual consistency windows:
+//
+//   1. J can commit while T never commits, leaving a pending import job without
+//      a DXF task. C3 makes that state recoverable, but does not make submission
+//      atomic across keyspaces.
+//
+//   2. The batch step-switch path can leave pending subtasks after the task is
+//      cancelling. Safety depends on executors refusing normal work for those
+//      subtasks and on executor managers draining them during revert.
+//
+//   3. FinishJob, FailJob, and CancelJob use first-terminal-writer-wins updates.
+//      A later terminal writer silently no-ops, so the persisted import-job
+//      status does not prove that every later terminal path took effect.
+//
+//   4. Lightning group cancellation acts on a previously read list and can see
+//      jobs change between that read and each per-job cancel. Each cancellation
+//      must revalidate the current job and task state.
 //
 //   5. Observer-only: SHOW IMPORT, SDK, and Lightning can observe mixed
 //      snapshots, but they do not introduce new direct import-job writers.

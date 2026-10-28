@@ -456,8 +456,6 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -707,6 +705,11 @@ func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) b
 	switch aggFunc.Name {
 	case ast.AggFuncMax, ast.AggFuncMin:
 	default:
+		return false
+	}
+	// MIN/MAX return string values for binary literals. Substituting the raw
+	// literal changes numeric coercion in predicates above the aggregation.
+	if expression.IsBinaryLiteral(aggFunc.Args[0]) {
 		return false
 	}
 	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext

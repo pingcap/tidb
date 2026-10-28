@@ -119,11 +119,10 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	rows := map[int64][]types.Datum{}
 	encodedTestKVDatas := make([]*encodedTestKVData, keyNumber)
 	encoder := &rowcodec.Encoder{Enable: true}
-	codecEncoder := codec.NewEncoder(collate.NewCollationEnabled())
 	for i := range keyNumber {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
-		rowEncodedData, err := tablecodec.EncodeRow(codecEncoder, stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
+		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
 		if err != nil {
 			return nil, err
 		}
@@ -637,6 +636,7 @@ func (*mockExchSenderChildExec) getIntermediateFieldTypes() []*types.FieldType {
 func (*mockExchSenderChildExec) takeIntermediateResults() []*chunk.Chunk       { return nil }
 func (*mockExchSenderChildExec) getFieldTypes() []*types.FieldType             { return nil }
 func (*mockExchSenderChildExec) buildSummary() *tipb.ExecutorExecutionSummary  { return nil }
+func (*mockExchSenderChildExec) scanDetail() *kvrpcpb.ScanDetailV2             { return &kvrpcpb.ScanDetailV2{} }
 
 func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

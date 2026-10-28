@@ -243,6 +243,28 @@ func (*sumDistinctInt64) MergePartialResult(_ AggFuncUpdateContext, src, dst Par
 	return memDelta, nil
 }
 
+func (e *sumDistinctInt64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4SumDistinctInt64)(partialResult)
+	resBuf := spillHelper.serializeInt64Set(pr.valSet.M)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *sumDistinctInt64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *sumDistinctInt64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4SumDistinctInt64)(pr)
+	success, dataMemDelta := helper.deserializeInt64Set(func(val int64) int64 {
+		return result.valSet.Insert(val)
+	})
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type sumUint struct {
 	baseSumIntAggFunc
 }
@@ -433,4 +455,26 @@ func (*sumDistinctUint64) MergePartialResult(_ AggFuncUpdateContext, src, dst Pa
 		memDelta += d.valSet.Insert(key)
 	}
 	return memDelta, nil
+}
+
+func (e *sumDistinctUint64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4SumDistinctUint64)(partialResult)
+	resBuf := spillHelper.serializeInt64Set(pr.valSet.M)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *sumDistinctUint64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *sumDistinctUint64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4SumDistinctUint64)(pr)
+	success, dataMemDelta := helper.deserializeInt64Set(func(key int64) int64 {
+		return result.valSet.Insert(key)
+	})
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }

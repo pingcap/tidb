@@ -245,12 +245,12 @@ func GetReadRangeFromProps(
 	return readRangesPerKey, nil
 }
 
-// GetAllFileNames returns files with the same non-partitioned dir.
+// GetAllFileNames returns files with the same non-partitioned dirs.
 //   - for intermediate KV/stat files we store them with a partitioned way to mitigate
 //     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
 //   - for meta files, we store them directly under the non-partitioned dir.
 //
-// for example, if nonPartitionedDir is '30001', the files returned might be
+// for example, if nonPartitionedDirs contains '30001', the files returned might be
 //   - 30001/6/meta.json
 //   - 30001/7/meta.json
 //   - 30001/plan/ingest/1/meta.json
@@ -260,8 +260,16 @@ func GetReadRangeFromProps(
 func GetAllFileNames(
 	ctx context.Context,
 	store storeapi.Storage,
-	nonPartitionedDir string,
+	nonPartitionedDirs ...string,
 ) ([]string, error) {
+	if len(nonPartitionedDirs) == 0 {
+		return nil, nil
+	}
+	nonPartitionedDirSet := make(map[string]struct{}, len(nonPartitionedDirs))
+	for _, dir := range nonPartitionedDirs {
+		nonPartitionedDirSet[dir] = struct{}{}
+	}
+
 	var data []string
 
 	err := store.WalkDir(ctx,
@@ -275,7 +283,7 @@ func GetAllFileNames(
 			}
 
 			firstDir := bs[:firstIdx]
-			if string(firstDir) == nonPartitionedDir {
+			if _, ok := nonPartitionedDirSet[string(firstDir)]; ok {
 				data = append(data, path)
 				return nil
 			}
@@ -289,7 +297,7 @@ func GetAllFileNames(
 			}
 			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
 
-			if secondDir == nonPartitionedDir {
+			if _, ok := nonPartitionedDirSet[secondDir]; ok {
 				data = append(data, path)
 			}
 			return nil

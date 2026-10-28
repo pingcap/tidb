@@ -371,6 +371,9 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (TiDB extension)
+	EmbedText = "embed_text"
+
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"

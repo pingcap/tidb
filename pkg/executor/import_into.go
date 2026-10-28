@@ -79,6 +79,19 @@ func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx s
 	}, nil
 }
 
+func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
+	if parent == nil || child == nil {
+		return
+	}
+	parentVars := parent.GetSessionVars()
+	childVars := child.GetSessionVars()
+	childVars.InMViewMaintenance = parentVars.InMViewMaintenance
+	failpoint.InjectCall(
+		"inheritMViewMaintenanceFlagApplied",
+		childVars.InMViewMaintenance,
+	)
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -126,6 +139,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
 	if useAsyncPrepare {
 		if err2 = e.controller.CheckRequirementsBeforeInitDataFiles(ctx, newSCtx); err2 != nil {
 			return err2
@@ -261,6 +275,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
@@ -268,6 +283,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockImportFromSelectSetupErr", func() {
+		failpoint.Return(errors.New("mock import from select setup error"))
+	})
 
 	importID := uuid.New().String()
 	logutil.Logger(ctx).Info("importing data from select statement",
@@ -403,42 +421,44 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 }
 
 func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
 	taskKey := importinto.TaskKey(jobID)
-	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelTaskByKeySession(ctx, se, taskKey)
-	}); err != nil {
+	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	if err == nil {
+		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return manager.CancelTaskByKeySession(ctx, se, taskKey)
+		}); err != nil {
+			return err
+		}
+		return handle.WaitTaskDoneByKey(ctx, taskKey)
+	}
+	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
 		return err
 	}
-	// TODO: Fix the next-gen race where CancelTaskByKeySession can miss a DXF
-	// task that has not been committed yet. If the task appears before
-	// WaitTaskDoneByKey's initial lookup, this session waits for the task to
-	// finish because the cancel request was not recorded; a later CANCEL IMPORT
-	// JOB can still cancel the now-visible task and unblock the wait.
+	failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
+
+	// In next-gen, the import job and DXF task are created in separate
+	// transactions. The job row can exist before the DXF task row is committed,
+	// or the task submission can fail after the job is created. The task lookup
+	// distinguishes a missing task from one outside the cancel update's
+	// state predicate. If the task row is committed after the lookup, do not wait
+	// for it. The dangling fallback will either cancel the still-pending import
+	// job or report that the scheduler changed the job state first.
 	// see job_doc.go for more detail
-	if err = handle.WaitTaskDoneByKey(ctx, taskKey); goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
-		// In next-gen, the import job and DXF task are created in separate
-		// transactions. The job row can exist before the DXF task row is
-		// committed, or the task submission can fail after the job is created. If
-		// no task row is visible here, cancel the job directly. If the task row is
-		// committed later, the import scheduler checks the job status before
-		// prepare/planning and will stop before doing import work.
-		logutil.Logger(ctx).Info("cancel import job directly because dxf task is not found",
-			zap.Int64("jobID", jobID),
-			zap.String("taskKey", taskKey))
-		failpoint.InjectCall("beforeCancelDanglingImportJob", jobID)
-		return cancelDanglingImportJob(ctx, jobID)
-	}
-	return err
+	logutil.Logger(ctx).Info("cancel import job directly after initial dxf task lookup found no task",
+		zap.Int64("jobID", jobID),
+		zap.String("taskKey", taskKey))
+	failpoint.InjectCall("beforeCancelDanglingImportJob", jobID)
+	return cancelDanglingImportJob(ctx, jobID)
 }
 
-// cancelDanglingImportJob cancels an import job whose DXF task row does not
-// exist, so it will not block another import job for the same table. see
-// job_doc.go for more detail
+// cancelDanglingImportJob cancels a pending import job after cancellation could
+// not find its DXF task, so it will not block another import job for the same
+// table. see job_doc.go for more detail
 func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 	manager, err := dxfstorage.GetTaskManager()
 	if err != nil {

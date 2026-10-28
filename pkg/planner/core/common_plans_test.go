@@ -17,10 +17,234 @@ package core
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+var explainRUForestRowsSink [][]string
+
+func TestMViewRefreshMLogIsEmpty(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := &property.StatsInfo{RowCount: 1}
+	dual := func(rows int) base.PhysicalPlan {
+		return physicalop.PhysicalTableDual{RowCount: rows}.Init(ctx, stats, 0)
+	}
+	projection := func(input base.PhysicalPlan) base.PhysicalPlan {
+		p := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
+		p.SetChildren(input)
+		return p
+	}
+	aggregation := func(input base.PhysicalPlan, grouped, stream bool) base.PhysicalPlan {
+		agg := &physicalop.BasePhysicalAgg{}
+		if grouped {
+			agg.GroupByItems = []expression.Expression{&expression.Column{}}
+		}
+		var p base.PhysicalPlan
+		if stream {
+			p = agg.InitForStream(ctx, stats, 0, expression.NewSchema())
+		} else {
+			p = agg.InitForHash(ctx, stats, 0, expression.NewSchema())
+		}
+		p.SetChildren(input)
+		return p
+	}
+	join := func(left, right base.PhysicalPlan) base.PhysicalPlan {
+		p := physicalop.PhysicalHashJoin{BasePhysicalJoin: physicalop.BasePhysicalJoin{
+			JoinType: base.LeftOuterJoin,
+		}}.Init(ctx, stats, 0)
+		p.SetChildren(left, right)
+		return projection(p)
+	}
+	zeroEstimate := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+	zeroEstimate.SetStats(&property.StatsInfo{RowCount: 0})
+	for _, tc := range []struct {
+		name  string
+		plan  base.PhysicalPlan
+		empty bool
+	}{
+		{"zero-row Dual", dual(0), true},
+		{"one-row Dual", dual(1), false},
+		{"empty grouped mlog", join(aggregation(projection(dual(0)), true, false), dual(1)), true},
+		{"empty stream aggregation", join(aggregation(dual(0), true, true), dual(1)), true},
+		{"empty MV side", join(aggregation(dual(1), true, false), dual(0)), false},
+		{"scalar hash aggregation", join(aggregation(dual(0), false, false), dual(1)), false},
+		{"scalar stream aggregation", join(aggregation(dual(0), false, true), dual(1)), false},
+		{"zero estimate", zeroEstimate, false},
+		{"nil plan", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.empty, mviewRefreshMLogIsEmpty(tc.plan))
+		})
+	}
+}
+
+func TestMViewPhysicalPlanExplainInfo(t *testing.T) {
+	deltaMerge := &MViewDeltaMerge{
+		AggInfos: []mview.AggInfo{{
+			Kind:         mview.AggMax,
+			ArgColName:   "value",
+			MVOffset:     3,
+			Dependencies: []int{2, 5},
+		}},
+		FullUpdateInnerSource: &physicalop.PhysicalTableDual{},
+	}
+	require.Equal(t, "agg_deps:[max(value)@3->[2,5]], full_update:index_lookup", deltaMerge.ExplainInfo())
+
+	completeApply := &MViewCompleteDeltaApply{
+		OpColID:                  1,
+		MarkerMVOffset:           2,
+		GroupKeyMVOffsets:        []int{0, 2},
+		CurrentHandleCols:        plannerutil.NewIntHandleCols(&expression.Column{Index: 7}),
+		CurrentRowInputColIDs:    []int{4, 6, 8},
+		RecomputedRowInputColIDs: []int{5, 9, 10},
+	}
+	require.Equal(t,
+		"op_offset:1, current_marker_offset:8, recomputed_marker_offset:10, current_group_keys_offset:[4,8], recomputed_group_keys_offset:[5,10], current_handle_offset:[7], current_row_offset:[4,6,8], recomputed_row_offset:[5,9,10]",
+		completeApply.ExplainInfo(),
+	)
+}
+
+func TestExplainMViewPhysicalPlanTree(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := &property.StatsInfo{RowCount: 1}
+	left := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	right := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	join := physicalop.PhysicalHashJoin{
+		BasePhysicalJoin: physicalop.BasePhysicalJoin{
+			JoinType: base.InnerJoin,
+		},
+	}.Init(ctx, stats, 0)
+	join.SetChildren(left, right)
+	deltaMerge := (&MViewDeltaMerge{Source: join}).Init(ctx)
+	deltaMerge.SetSchema(join.Schema())
+	savedIgnoreExplainIDSuffix := ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &Explain{
+		TargetPlan: deltaMerge,
+		Format:     types.ExplainFormatBrief,
+	}
+	explain.SetSCtx(ctx)
+	require.NoError(t, explain.RenderResult())
+	require.Len(t, explain.Rows, 4)
+	require.Equal(t, "MViewDeltaMerge", explain.Rows[0][0])
+	require.Equal(t, "└─HashJoin", explain.Rows[1][0])
+	require.Equal(t, "  ├─TableDual(Build)", explain.Rows[2][0])
+	require.Equal(t, "  └─TableDual(Probe)", explain.Rows[3][0])
+}
+
+func TestExplainMViewPhysicalPlanSpecialChildren(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	stats := &property.StatsInfo{RowCount: 1}
+	newDual := func() base.PhysicalPlan {
+		return physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	}
+
+	tests := []struct {
+		name string
+		plan base.Plan
+		rows []string
+	}{
+		{
+			name: "mview delta merge full update",
+			plan: func() base.Plan {
+				plan := (&MViewDeltaMerge{
+					Source:                newDual(),
+					FullUpdateInnerSource: newDual(),
+				}).Init(ctx)
+				plan.SetSchema(plan.Source.Schema())
+				return plan
+			}(),
+			rows: []string{"MViewDeltaMerge", "├─TableDual", "└─TableDual"},
+		},
+		{
+			name: "mview complete delta apply",
+			plan: func() base.Plan {
+				plan := (&MViewCompleteDeltaApply{Source: newDual()}).Init(ctx)
+				plan.SetSchema(plan.Source.Schema())
+				return plan
+			}(),
+			rows: []string{"MViewCompleteDeltaApply", "└─TableDual"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			explain := &Explain{TargetPlan: tt.plan, Format: types.ExplainFormatBrief}
+			explain.SetSCtx(ctx)
+			require.NoError(t, explain.RenderResult())
+			require.Len(t, explain.Rows, len(tt.rows))
+			for i, row := range tt.rows {
+				require.Equal(t, row, explain.Rows[i][0])
+			}
+		})
+	}
+}
+
+func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *ExplainRUResult) {
+	ctx := mock.NewContext()
+	dual := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+	dual.SetID(101)
+	newTree := func(size int) FlatPlanTree {
+		tree := make(FlatPlanTree, size)
+		for i := range tree {
+			tree[i] = &FlatOperator{
+				Origin:         dual,
+				ChildrenEndIdx: size - 1,
+				Depth:          uint32(i),
+				IsRoot:         true,
+				StoreType:      kv.TiDB,
+				IsPhysicalPlan: true,
+			}
+			if i+1 < size {
+				tree[i].ChildrenIdx = []int{i + 1}
+			}
+		}
+		return tree
+	}
+	flat := &FlatPhysicalPlan{
+		Main:             newTree(3),
+		CTEs:             make([]FlatPlanTree, cteCount),
+		ScalarSubQueries: make([]FlatPlanTree, scalarCount),
+	}
+	for i := range flat.CTEs {
+		flat.CTEs[i] = newTree(3)
+	}
+	for i := range flat.ScalarSubQueries {
+		flat.ScalarSubQueries[i] = newTree(3)
+	}
+	result := NewExplainRUResult(flat)
+	fillTree := func(tree []ExplainRUOperatorResult) {
+		for i := range tree {
+			tree[i].SelfRU = 1
+			tree[i].CumRU = float64(len(tree) - i)
+		}
+	}
+	fillTree(result.Main)
+	for i := range result.CTEs {
+		fillTree(result.CTEs[i])
+	}
+	for i := range result.ScalarSubQueries {
+		fillTree(result.ScalarSubQueries[i])
+	}
+	result.TotalRU = float64(3 + 3*cteCount + 3*scalarCount)
+	return flat, result
+}
 
 func TestNewLineFieldsInfo(t *testing.T) {
 	cases := []struct {
@@ -112,5 +336,76 @@ func TestNewLineFieldsInfo(t *testing.T) {
 		ldStmt := stmt.(*ast.LoadDataStmt)
 		lineFieldsInfo := NewLineFieldsInfo(ldStmt.FieldsInfo, ldStmt.LinesInfo)
 		require.Equal(t, c.expected, lineFieldsInfo)
+	}
+}
+
+func TestExplainRUResultOwnershipContract(t *testing.T) {
+	t.Run("setter owns exact forest and clears", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
+		explain := &Explain{}
+		require.Same(t, flat.Main[0], result.Main[0].Operator)
+		explain.SetRUResult(result)
+		require.Same(t, result, explain.ruResult)
+		require.Same(t, flat.CTEs[0][0], explain.ruResult.CTEs[0][0].Operator)
+
+		explain.SetRUResult(nil)
+		require.Nil(t, explain.ruResult)
+		require.True(t, explain.ruResultSet)
+	})
+
+	t.Run("owned result forest renders without target reflatten", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		coll.RegisterStats(101, &execdetails.ExplainRURuntimeStats{SelfRU: 99, CumRU: 99})
+		result.Main[1].SelfRU = 2
+		explain := &Explain{TargetPlan: flat.Main[0].Origin, Format: "ru", RuntimeStatsColl: coll}
+		explain.SetRUResult(result)
+		require.NoError(t, explain.RenderResult())
+		require.Len(t, explain.Rows, 9)
+		require.Equal(t, []string{"1.00", "3.00", "33.33%"}, explain.Rows[0][3:6])
+		require.Equal(t, []string{"2.00", "2.00", "22.22%"}, explain.Rows[1][3:6])
+	})
+
+	t.Run("invalid operator makes the whole result unavailable", func(t *testing.T) {
+		flat, result := newExplainRUForestFixture(1, 1)
+		result.Main[0].Operator = nil
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		coll.RegisterStats(101, &execdetails.ExplainRURuntimeStats{SelfRU: 99, CumRU: 99})
+		explain := &Explain{TargetPlan: flat.Main[0].Origin, Format: "ru", RuntimeStatsColl: coll}
+		explain.SetRUResult(result)
+
+		require.NoError(t, explain.RenderResult())
+		require.Len(t, explain.Rows, 1)
+		require.Empty(t, explain.Rows[0][3])
+		require.Empty(t, explain.Rows[0][4])
+		require.Empty(t, explain.Rows[0][5])
+	})
+}
+
+func BenchmarkExplainRUForestRendering(b *testing.B) {
+	for _, scenario := range []struct {
+		name        string
+		cteCount    int
+		scalarCount int
+	}{
+		{name: "ordinary"},
+		{name: "one-scalar", scalarCount: 1},
+		{name: "one-cte", cteCount: 1},
+		{name: "multiple-cte-scalar", cteCount: 2, scalarCount: 2},
+		{name: "large-forest", cteCount: 8, scalarCount: 8},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			_, result := newExplainRUForestFixture(scenario.cteCount, scenario.scalarCount)
+			rows, ok := explainRUResultInRUFormat(nil, result)
+			require.True(b, ok)
+			require.NotEmpty(b, rows)
+			b.ResetTimer()
+			// This timer covers owned-result EXPLAIN RU row formatting only.
+			// It excludes calculation and SQL execution.
+			b.ReportAllocs()
+			for b.Loop() {
+				explainRUForestRowsSink, _ = explainRUResultInRUFormat(nil, result)
+			}
+		})
 	}
 }

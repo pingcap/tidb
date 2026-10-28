@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -64,9 +65,32 @@ var (
 )
 
 // Setup initializes the GlobalStmtSummary.
-func Setup(cfg *Config) (err error) {
-	GlobalStmtSummary, err = NewStmtSummary(cfg)
-	return
+//
+// If NewStmtSummary fails the cluster config still advertises
+// `tidb_stmt_summary_enable_persistent = true`, while every v2 proxy (Add,
+// Enabled, ...) dereferences GlobalStmtSummary unconditionally on that flag.
+// A boot that "kept going" in that state would crash on the first SQL with a
+// nil pointer dereference: V2-11 traded silent data loss for a hard boot
+// loop. To avoid that half-initialized state Setup explicitly switches
+// persistent mode off on init failure, so the proxies fall back to the
+// always-available in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
+// The error is returned with fallback context so the caller can emit one
+// actionable log entry rather than logging the same failure at every layer.
+func Setup(cfg *Config) error {
+	stmtSummary, err := NewStmtSummary(cfg)
+	if err != nil {
+		// Keep the failed result private and disable persistent mode before
+		// returning so proxies continue through the v1 implementation.
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryEnablePersistent = false
+		})
+		return fmt.Errorf(
+			"stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation: %w",
+			err,
+		)
+	}
+	GlobalStmtSummary = stmtSummary
+	return nil
 }
 
 // Close closes the GlobalStmtSummary.
@@ -100,6 +124,11 @@ type StmtSummary struct {
 	optPersistEvicted      *atomic2.Bool
 	optGroupByUser         *atomic2.Bool
 
+	// Locking invariant:
+	//   - windowLock protects the current window and its LRU membership and order.
+	//   - lockedStmtRecord.Mutex protects the mutable fields of that record.
+	//   - When both are needed, acquire windowLock before the record mutex. Code
+	//     holding only a record mutex must never try to acquire windowLock.
 	window     *stmtWindow
 	windowLock sync.Mutex
 	storage    stmtStorage
@@ -118,6 +147,22 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		return nil, errors.New("stmtsummary: empty filename")
 	}
 
+	// Fail closed: a broken persistent logger makes persistent mode look
+	// enabled while silently dropping every rotated window (V2-11). Construct
+	// the storage before starting any goroutines so there are no background
+	// contexts to clean up on this early error path.
+	storage, err := newStmtLogStorage(&log.Config{
+		File: log.FileLogConfig{
+			Filename:   cfg.Filename,
+			MaxSize:    cfg.FileMaxSize,
+			MaxDays:    cfg.FileMaxDays,
+			MaxBackups: cfg.FileMaxBackups,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &StmtSummary{
 		ctx:    ctx,
@@ -133,15 +178,8 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
 		optPersistEvicted:      atomic2.NewBool(false),
 		optGroupByUser:         atomic2.NewBool(false),
-		storage: newStmtLogStorage(&log.Config{
-			File: log.FileLogConfig{
-				Filename:   cfg.Filename,
-				MaxSize:    cfg.FileMaxSize,
-				MaxDays:    cfg.FileMaxDays,
-				MaxBackups: cfg.FileMaxBackups,
-			},
-		}),
-		evictedCh: make(chan *StmtRecord, evictedLogChanCap),
+		storage:                storage,
+		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
 	}
 	s.window = newStmtWindow(timeNow(), uint(defaultMaxStmtCount), s.onEvict)
 
@@ -354,13 +392,14 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 func (s *StmtSummary) Evicted() []types.Datum {
 	s.windowLock.Lock()
 	count := int64(s.window.evicted.count())
+	begin := s.window.begin
 	s.windowLock.Unlock()
 	if count == 0 {
 		return nil
 	}
-	begin := types.NewTime(types.FromGoTime(s.window.begin), mysql.TypeTimestamp, 0)
+	beginTime := types.NewTime(types.FromGoTime(begin), mysql.TypeTimestamp, 0)
 	end := types.NewTime(types.FromGoTime(timeNow()), mysql.TypeTimestamp, 0)
-	return types.MakeDatums(begin, end, count)
+	return types.MakeDatums(beginTime, end, count)
 }
 
 // Clear clears all data in the current window, and the data that
@@ -377,10 +416,17 @@ func (s *StmtSummary) ClearInternal() {
 	s.windowLock.Lock()
 	defer s.windowLock.Unlock()
 	for _, k := range s.window.lru.Keys() {
-		v, _ := s.window.lru.Get(k)
-		if v.(*lockedStmtRecord).IsInternal {
+		v, ok := s.window.lru.Peek(k)
+		if !ok {
+			continue
+		}
+		record := v.(*lockedStmtRecord)
+		// Protect the record's mutable fields from concurrent Add calls.
+		record.Lock()
+		if record.IsInternal {
 			s.window.lru.Delete(k)
 		}
+		record.Unlock()
 	}
 }
 
@@ -683,6 +729,9 @@ func newEvictedAggregateRecord() *StmtRecord {
 	}
 }
 
+// lockedStmtRecord protects the mutable fields of StmtRecord. Never acquire a
+// StmtSummary windowLock while holding this mutex; see StmtSummary's locking
+// invariant for the global lock order.
 type lockedStmtRecord struct {
 	sync.Mutex
 	*StmtRecord

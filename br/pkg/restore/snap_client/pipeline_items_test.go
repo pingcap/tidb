@@ -31,10 +31,12 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -118,7 +120,18 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 type mockStatsReadWriter struct {
 	statstypes.StatsReadWriter
 
-	rows map[int64]int64
+	rows        map[int64]int64
+	loadedStats []*statsutil.JSONTable
+}
+
+func (m *mockStatsReadWriter) LoadStatsFromJSONNoUpdate(
+	_ context.Context,
+	_ infoschema.InfoSchema,
+	jsonTable *statsutil.JSONTable,
+	_ int,
+) error {
+	m.loadedStats = append(m.loadedStats, jsonTable)
+	return nil
 }
 
 func (m *mockStatsReadWriter) SaveMetaToStorage(_ string, _ bool, metaUpdates ...statstypes.MetaUpdate) (err error) {
@@ -251,6 +264,37 @@ func TestUpdateStatsMeta(t *testing.T) {
 		116: 233,
 		117: 235,
 	}, rows)
+}
+
+func TestLoadInlineStatsUsesTargetNameWithoutMutatingSource(t *testing.T) {
+	ctx := context.Background()
+	dom := domain.NewMockDomain()
+	require.NoError(t, dom.CreateStatsHandle(ctx))
+	defer dom.StatsHandle().Close()
+
+	writer := &mockStatsReadWriter{rows: make(map[int64]int64)}
+	dom.StatsHandle().StatsReadWriter = writer
+	client := snapclient.MockClient(nil)
+	client.SetDomain(dom)
+	builder := &snapclient.PipelineConcurrentBuilder{}
+	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
+
+	sourceStats := &statsutil.JSONTable{DatabaseName: "source_db", TableName: "source_table"}
+	created := &restoreutils.CreatedTable{
+		Table:    &model.TableInfo{ID: 200, Name: ast.NewCIStr("target_table")},
+		TargetDB: ast.NewCIStr("target_db"),
+		OldTable: &metautil.Table{
+			DB:    &model.DBInfo{Name: ast.NewCIStr("source_db")},
+			Info:  &model.TableInfo{ID: 100, Name: ast.NewCIStr("source_table")},
+			Stats: sourceStats,
+		},
+	}
+	require.NoError(t, builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{created}))
+	require.Len(t, writer.loadedStats, 1)
+	require.Equal(t, "target_db", writer.loadedStats[0].DatabaseName)
+	require.Equal(t, "target_table", writer.loadedStats[0].TableName)
+	require.Equal(t, "source_db", sourceStats.DatabaseName)
+	require.Equal(t, "source_table", sourceStats.TableName)
 }
 
 func TestReplaceTables(t *testing.T) {

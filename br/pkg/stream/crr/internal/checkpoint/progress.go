@@ -47,8 +47,10 @@ func newRoundPlan() roundPlan {
 }
 
 func (p *roundPlan) recordLoadedMeta(loadedMeta loadedMetaFile) {
-	p.statistic.UpstreamReadMetaFileCount++
-	p.recordPendingPath(loadedMeta.path)
+	if !loadedMeta.empty {
+		p.statistic.UpstreamReadMetaFileCount++
+		p.recordPendingPath(loadedMeta.path)
+	}
 	for _, logPath := range loadedMeta.dataFilePaths {
 		if p.recordPendingPath(logPath) {
 			p.statistic.EstimatedSyncLogFileCount++
@@ -130,9 +132,12 @@ func (c *Calculator) planRound(ctx context.Context) (roundPlan, error) {
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
 
-			loadedMeta, err := loadMetaFile(egCtx, c.deps.Upstream, metaFile)
+			loadedMeta, ignored, err := loadMetaFile(egCtx, c.deps.Upstream, metaFile)
 			if err != nil {
 				return err
+			}
+			if ignored {
+				return nil
 			}
 
 			planMu.Lock()

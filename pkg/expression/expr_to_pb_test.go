@@ -719,6 +719,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.UnaryMinus, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -1542,6 +1546,22 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
+}
+
+func TestNullEQPushDownToTiFlash(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	function, err := NewFunction(ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), genColumn(mysql.TypeLonglong, 1), genColumn(mysql.TypeLonglong, 2))
+	require.NoError(t, err)
+
+	exprs := []Expression{function}
+	require.True(t, CanExprsPushDown(pushDownCtx, exprs, kv.TiFlash))
+
+	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+	require.Len(t, pushed, 1)
+	require.Len(t, remained, 0)
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {

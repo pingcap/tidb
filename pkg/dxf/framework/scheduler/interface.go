@@ -38,10 +38,14 @@ type TaskManager interface {
 	GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllTasks gets all tasks with basic columns.
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetActiveTaskCountsByKeyspace gets the number of active tasks (i.e. rows
+	// in `mysql.tidb_global_task`) grouped by keyspace.
+	GetActiveTaskCountsByKeyspace(ctx context.Context) (*storage.ActiveTaskSummary, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
 	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
+	storage.TaskCleanupInfoGetter
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -71,8 +75,8 @@ type TaskManager interface {
 	// back to prev-state, if success, it will also update concurrency of all
 	// active subtasks.
 	ModifiedTask(ctx context.Context, task *proto.Task) error
-	// SucceedTask updates a task to success state.
-	SucceedTask(ctx context.Context, taskID int64) error
+	// SucceedTask updates a task to success state and persists its meta.
+	SucceedTask(ctx context.Context, task *proto.Task) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
 	// transaction. It will change task state too if we're switch from InitStep to
 	// next step.
@@ -142,6 +146,14 @@ type Extension interface {
 	// with error.
 	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
+	// OnDone MAY update task.Meta to record a summary collected from the
+	// finished subtasks, for example a workload summary used for resource
+	// accounting. When the task finishes successfully the framework persists the
+	// meta mutated here together with the state transition, so the update is not
+	// lost even after the subtasks are moved to the history tables. The
+	// implementation must not rely on the update being atomic with anything else
+	// it does, and should be idempotent because OnDone can be called again after
+	// a failed state transition.
 	OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
@@ -240,40 +252,84 @@ func ClearSchedulerFactory() {
 	schedulerFactoryMap.m = make(map[proto.TaskType]schedulerFactoryFn)
 }
 
-// CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
-type CleanUpRoutine interface {
-	// CleanUp do the cleanup work.
+// Cleaner performs task cleanup after a task finishes.
+type Cleaner interface {
+	// Clean performs cleanup for one task.
 	// task.Meta can be updated here, such as redacting some sensitive info.
-	CleanUp(ctx context.Context, task *proto.Task) error
+	Clean(ctx context.Context, task *proto.Task) error
 }
-type cleanUpFactoryFn func() CleanUpRoutine
 
-var cleanUpFactoryMap = struct {
+// BatchCleaner optionally extends Cleaner with batched cleanup.
+// For these cleaners, the scheduler calls BatchClean instead of Clean. In
+// each cleanup pass, it calls one cleaner instance with a non-empty group of
+// tasks that all have the same task type. When BatchClean returns nil, the
+// scheduler submits every task in the group together in the subsequent
+// history-table transfer. When it returns an error, no task in the group is
+// transferred in that pass.
+//
+// The scheduler provides no atomicity or rollback across cleanup side effects
+// and the history-table transfer. Implementations must be idempotent and safe
+// to retry after a partial cleanup failure or after cleanup succeeds but the
+// history-table transfer fails.
+type BatchCleaner interface {
+	Cleaner
+	BatchClean(ctx context.Context, tasks []*proto.Task) error
+}
+
+// ExpiredFileCleaner optionally adds owner-side expired-file cleanup to
+// a Cleaner implementation. Implementations must honor ctx promptly;
+// Manager.Stop waits for an active callback to return after ownership is lost.
+type ExpiredFileCleaner interface {
+	Cleaner
+	CleanExpiredFiles(ctx context.Context, taskInfoGetter storage.TaskCleanupInfoGetter, cloudStorageURI string) error
+}
+
+type cleanerFactoryFn func() Cleaner
+
+type registeredCleanerFactory struct {
+	taskType proto.TaskType
+	ctor     cleanerFactoryFn
+}
+
+var cleanerFactoryMap = struct {
 	syncutil.RWMutex
-	m map[proto.TaskType]cleanUpFactoryFn
+	m map[proto.TaskType]cleanerFactoryFn
 }{
-	m: make(map[proto.TaskType]cleanUpFactoryFn),
+	m: make(map[proto.TaskType]cleanerFactoryFn),
 }
 
-// RegisterSchedulerCleanUpFactory is used to register the scheduler clean up factory.
-// normally scheduler cleanup is used in the scheduler_manager gcTaskLoop to do clean up
-// works when tasks are finished.
-func RegisterSchedulerCleanUpFactory(taskType proto.TaskType, ctor cleanUpFactoryFn) {
-	cleanUpFactoryMap.Lock()
-	defer cleanUpFactoryMap.Unlock()
-	cleanUpFactoryMap.m[taskType] = ctor
+// RegisterCleanerFactory registers a cleaner factory for a task type.
+func RegisterCleanerFactory(taskType proto.TaskType, ctor cleanerFactoryFn) {
+	cleanerFactoryMap.Lock()
+	defer cleanerFactoryMap.Unlock()
+	cleanerFactoryMap.m[taskType] = ctor
 }
 
-// getSchedulerCleanUpFactory is used to get the scheduler factory.
-func getSchedulerCleanUpFactory(taskType proto.TaskType) cleanUpFactoryFn {
-	cleanUpFactoryMap.RLock()
-	defer cleanUpFactoryMap.RUnlock()
-	return cleanUpFactoryMap.m[taskType]
+// getCleanerFactory returns the cleaner factory for a task type.
+func getCleanerFactory(taskType proto.TaskType) cleanerFactoryFn {
+	cleanerFactoryMap.RLock()
+	defer cleanerFactoryMap.RUnlock()
+	return cleanerFactoryMap.m[taskType]
 }
 
-// ClearSchedulerCleanUpFactory is only used in test.
-func ClearSchedulerCleanUpFactory() {
-	cleanUpFactoryMap.Lock()
-	defer cleanUpFactoryMap.Unlock()
-	cleanUpFactoryMap.m = make(map[proto.TaskType]cleanUpFactoryFn)
+// getCleanerFactories returns a snapshot of registered cleaner factories.
+func getCleanerFactories() []registeredCleanerFactory {
+	cleanerFactoryMap.RLock()
+	defer cleanerFactoryMap.RUnlock()
+
+	factories := make([]registeredCleanerFactory, 0, len(cleanerFactoryMap.m))
+	for taskType, ctor := range cleanerFactoryMap.m {
+		factories = append(factories, registeredCleanerFactory{
+			taskType: taskType,
+			ctor:     ctor,
+		})
+	}
+	return factories
+}
+
+// ClearCleanerFactory is only used in test.
+func ClearCleanerFactory() {
+	cleanerFactoryMap.Lock()
+	defer cleanerFactoryMap.Unlock()
+	cleanerFactoryMap.m = make(map[proto.TaskType]cleanerFactoryFn)
 }

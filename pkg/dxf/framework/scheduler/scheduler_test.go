@@ -91,7 +91,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
+func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleaner scheduler.Cleaner) (*scheduler.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
@@ -102,9 +102,9 @@ func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext schedu
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
-	if cleanup != nil {
-		scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
-			return cleanup
+	if cleaner != nil {
+		scheduler.RegisterCleanerFactory(proto.TaskTypeExample, func() scheduler.Cleaner {
+			return cleaner
 		})
 	}
 	return sch, mgr
@@ -116,6 +116,7 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 }
 
 func TestTaskFailInManager(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -128,6 +129,7 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
 	schManager, mgr := MockSchedulerManager(store, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := mock.NewMockScheduler(ctrl)
@@ -402,18 +404,10 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	}
 }
 
-func TestIsCancelledErr(t *testing.T) {
-	require.False(t, scheduler.IsCancelledErr(nil))
-	require.False(t, scheduler.IsCancelledErr(errors.New("some err")))
-	require.False(t, scheduler.IsCancelledErr(context.Canceled))
-	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
-}
-
 func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 	mockScheduler := mock.NewMockScheduler(ctrl)
 
 	store := testkit.CreateMockStore(t)

@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -56,6 +57,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extworkload"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -159,6 +162,8 @@ type Domain struct {
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	schemaLease     time.Duration
+
+	serverInfoSyncerOptions []serverinfo.SyncerOption
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
@@ -228,12 +233,17 @@ type Domain struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+	embedFn           atomic.Pointer[inference.EmbedFn]
 
 	statsOwner owner.Manager
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
+
+	// extWorkloadMgr coordinates background workloads such as TTL with the
+	// external workload controller in Starter deployments.
+	extWorkloadMgr extworkload.Manager
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -500,6 +510,7 @@ func (do *Domain) Close() {
 	if do.brOwnerMgr != nil {
 		do.brOwnerMgr.Close()
 	}
+	do.closeInferenceProviders()
 
 	do.runawayManager.Stop()
 
@@ -567,6 +578,7 @@ func NewDomainWithEtcdClient(
 	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 	schemaFilter issyncer.Filter,
+	serverInfoSyncerOptions ...serverinfo.SyncerOption,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	do := &Domain{
@@ -580,6 +592,7 @@ func NewDomainWithEtcdClient(
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
+		serverInfoSyncerOptions:  serverInfoSyncerOptions,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -700,6 +713,7 @@ func (do *Domain) Init(
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do.isSyncer),
 		ddl.WithEventPublishStore(ddlNotifierStore),
+		ddl.WithExternalWorkloadManager(do.extWorkloadMgr),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -721,7 +735,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, do.serverInfoSyncerOptions...)
 	if err != nil {
 		return err
 	}
@@ -866,6 +880,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
 		}, "crossKSSessMgrGCLoop")
 	}
+	do.initInferenceProviders()
 
 	return nil
 }
@@ -935,6 +950,17 @@ func (do *Domain) InitInfo4Test() {
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+// SetExternalWorkloadManager installs the external workload manager used by
+// background components that coordinate work with an external controller.
+func (do *Domain) SetExternalWorkloadManager(manager extworkload.Manager) {
+	do.extWorkloadMgr = manager
+}
+
+// ExternalWorkloadManager returns the external workload manager for this domain.
+func (do *Domain) ExternalWorkloadManager() extworkload.Manager {
+	return do.extWorkloadMgr
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1594,8 +1620,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true, false)
+	err := do.LoadBindingHandle()
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1607,6 +1632,42 @@ func (do *Domain) InitBindingHandle() error {
 		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
+	return nil
+}
+
+// LoadBindingHandle loads existing bindings without starting binding maintenance.
+func (do *Domain) LoadBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	return do.BindingHandle().LoadFromStorageToCache(true, false)
+}
+
+// LoadBindingLoop loads bindings and periodically refreshes the cache. It only
+// starts the LoadFromStorageToCache path; unlike InitBindingHandle, it does not
+// start binding ownership, GC, or usage persistence.
+func (do *Domain) LoadBindingLoop() error {
+	if err := do.LoadBindingHandle(); err != nil {
+		return err
+	}
+	if bindinfo.Lease == 0 {
+		return nil
+	}
+
+	do.wg.Run(func() {
+		defer util.Recover(metrics.LabelDomain, "loadBindingLoop", nil, false)
+		ticker := time.NewTicker(bindinfo.Lease)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				do.BindingHandle().Close()
+				return
+			case <-ticker.C:
+				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
+				}
+			}
+		}
+	}, "loadBindingLoop")
 	return nil
 }
 
@@ -1635,7 +1696,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -1867,7 +1928,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, vardef.GetPlanReplayerFileRetentionTime(), time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
@@ -2873,11 +2934,50 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-// StartTTLJobManager creates and starts the ttl job manager
+// StartTTLJobManager creates and starts the ttl job manager when this domain
+// should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	failpoint.Inject("skipStartTTLJobManager", func() {
+		failpoint.Return()
+	})
+	role, configured := do.ttlExternalWorkloadRole()
+	if !do.shouldStartTTLJobManager() {
+		fields := make([]zap.Field, 0, 1)
+		if configured {
+			fields = append(fields, zap.String("role", string(role)))
+		}
+		logutil.BgLogger().Info("don't run ttl job manager", fields...)
+		return
+	}
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner, ttlworker.WithExternalWorkloadManager(do.extWorkloadMgr))
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
+}
+
+func (do *Domain) ttlExternalWorkloadRole() (config.ExternalWorkloadRole, bool) {
+	if do.extWorkloadMgr != nil {
+		return do.extWorkloadMgr.Role(), true
+	}
+	cfg := config.GetGlobalConfig().ExternalWorkload
+	if !cfg.Enable {
+		return "", false
+	}
+	if cfg.Role == "" {
+		return config.RoleMaster, true
+	}
+	return cfg.Role, true
+}
+
+func (do *Domain) shouldStartTTLJobManager() bool {
+	// Once external workload is configured, TTL jobs must run only on the
+	// dedicated TTL task worker with a live controller manager. Falling back to
+	// local TTL scheduling when controller coordination is unavailable can cause
+	// split-brain ownership with externally assigned TTL tasks.
+	role, configured := do.ttlExternalWorkloadRole()
+	if !configured {
+		return true
+	}
+	return do.extWorkloadMgr != nil && role == config.RoleTTLTaskWorker
 }
 
 // TTLJobManager returns the ttl job manager on this domain

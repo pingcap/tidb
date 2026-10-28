@@ -56,7 +56,7 @@ func startManagerStub(t *testing.T, stub *managerStubServer) (string, func()) {
 }
 
 func TestNewManagerLifecycle(t *testing.T) {
-	meta := &keyspacepb.KeyspaceMeta{Id: 42, Name: "starter-ks"}
+	meta := &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42}, Name: "starter-ks"}
 	cfg := config.ExternalWorkload{
 		Enable:         true,
 		Role:           config.RoleMaster,
@@ -88,7 +88,7 @@ func TestNewManagerPingFailure(t *testing.T) {
 	})
 	defer cleanup()
 
-	mgr, err := NewManager(context.Background(), &keyspacepb.KeyspaceMeta{Id: 1, Name: "ks"}, config.ExternalWorkload{
+	mgr, err := NewManager(context.Background(), &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}, Name: "ks"}, config.ExternalWorkload{
 		Enable:         true,
 		Role:           config.RoleMaster,
 		TidbPool:       "super-vip-tidb-pool",
@@ -231,8 +231,8 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 			},
 		},
 		{
-			name: "RegisterTTLTask",
-			call: func(m *manager) error { return m.RegisterTTLTask(context.Background(), 11, true) },
+			name: "RegisterTTLTableInfo",
+			call: func(m *manager) error { return m.RegisterTTLTableInfo(context.Background(), 11, true) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "RegisterTTLTask", cli.call)
 				require.Equal(t, int64(11), cli.tableID)
@@ -301,7 +301,7 @@ func TestManagerMethodErrorPropagation(t *testing.T) {
 	boom := errors.New("boom")
 	cli := &fakeClient{err: boom}
 	mgr := &manager{cli: cli}
-	require.ErrorIs(t, mgr.RegisterTTLTask(context.Background(), 1, true), boom)
+	require.ErrorIs(t, mgr.RegisterTTLTableInfo(context.Background(), 1, true), boom)
 }
 
 func requireLabels(t *testing.T, cli *fakeClient, workerType, action string) {

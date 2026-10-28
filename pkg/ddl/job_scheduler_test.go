@@ -35,31 +35,52 @@ func reduceIntervals(t testing.TB) {
 
 func TestMustReloadSchemas(t *testing.T) {
 	reduceIntervals(t)
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	loader := mock.NewMockSchemaLoader(ctrl)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sch := &jobScheduler{
-		schCtx:       ctx,
-		schemaLoader: loader,
+	assertReady := func(t *testing.T, ch <-chan struct{}, expected bool) {
+		t.Helper()
+		select {
+		case <-ch:
+			require.True(t, expected)
+		default:
+			require.False(t, expected)
+		}
 	}
-	// directly success
-	loader.EXPECT().Reload().Return(nil)
-	sch.mustReloadSchemas()
-	require.True(t, ctrl.Satisfied())
-	// success after retry
-	loader.EXPECT().Reload().Return(errors.New("mock err"))
-	loader.EXPECT().Reload().Return(nil)
-	sch.mustReloadSchemas()
-	require.True(t, ctrl.Satisfied())
-	// exit on context cancel
-	loader.EXPECT().Reload().Do(func() error {
-		cancel()
-		return errors.New("mock err")
+	newScheduler := func(t *testing.T) (*jobScheduler, *mock.MockSchemaLoader, context.CancelFunc) {
+		ctrl := gomock.NewController(t)
+		loader := mock.NewMockSchemaLoader(ctrl)
+		ctx, cancel := context.WithCancel(context.Background())
+		return &jobScheduler{
+			schCtx:                        ctx,
+			schemaLoader:                  loader,
+			storageClassTransitionReadyCh: make(chan struct{}),
+		}, loader, cancel
+	}
+
+	t.Run("direct success", func(t *testing.T) {
+		sch, loader, cancel := newScheduler(t)
+		defer cancel()
+		loader.EXPECT().Reload().Return(nil)
+		sch.mustReloadSchemas()
+		assertReady(t, sch.storageClassTransitionReadyCh, true)
 	})
-	sch.mustReloadSchemas()
-	require.True(t, ctrl.Satisfied())
+
+	t.Run("success after retry", func(t *testing.T) {
+		sch, loader, cancel := newScheduler(t)
+		defer cancel()
+		loader.EXPECT().Reload().Return(errors.New("mock err"))
+		loader.EXPECT().Reload().Return(nil)
+		sch.mustReloadSchemas()
+		assertReady(t, sch.storageClassTransitionReadyCh, true)
+	})
+
+	t.Run("cancelled reload does not make poller ready", func(t *testing.T) {
+		sch, loader, cancel := newScheduler(t)
+		loader.EXPECT().Reload().DoAndReturn(func() error {
+			cancel()
+			return errors.New("mock err")
+		})
+		sch.mustReloadSchemas()
+		assertReady(t, sch.storageClassTransitionReadyCh, false)
+	})
 }
 
 func TestUnSyncedJobTracker(t *testing.T) {

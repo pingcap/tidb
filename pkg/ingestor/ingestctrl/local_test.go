@@ -1183,6 +1183,17 @@ func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
+type blockingDecRefIngestData struct {
+	mockIngestData
+	allowDecRef <-chan struct{}
+	decRefDone  chan<- struct{}
+}
+
+func (m *blockingDecRefIngestData) DecRef() {
+	<-m.allowDecRef
+	close(m.decRefDone)
+}
+
 var dummyRegionInfo = &split.RegionInfo{
 	Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{Id: 1, StoreId: 1}}},
 	Leader: &metapb.Peer{Id: 1, StoreId: 1},
@@ -1783,21 +1794,22 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 
 	extEngine := globalsort.NewExternalEngine(
 		ctx,
-		memStore,
-		dataFiles,
-		statFiles,
-		[]byte{1},
-		[]byte{10},
-		keys,
-		[][]byte{{1}, {11}},
+		&globalsort.EngineConfig{
+			ExtStore:      memStore,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{10},
+			JobKeys:       keys,
+			SplitKeys:     [][]byte{{1}, {11}},
+			TotalFileSize: 456,
+			TotalKVCount:  789,
+			CheckHotspot:  true,
+			MemCapacity:   16 * units.GiB,
+			OnDup:         engineapi.OnDuplicateKeyIgnore,
+		},
 		10,
 		123,
-		456,
-		789,
-		true,
-		16*units.GiB,
-		engineapi.OnDuplicateKeyIgnore,
-		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2107,6 +2119,279 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+
+	t.Run("worker error cancels other running workers", func(t *testing.T) {
+		const fatalErr = "worker fatal error"
+
+		var workerCount atomic.Int32
+		secondWorkerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				switch workerCount.Add(1) {
+				case 1:
+					<-ctx.Done()
+				case 2:
+					close(secondWorkerStarted)
+				}
+			},
+		)
+
+		regionKeys := [][]byte{{'a'}, {'b'}}
+		jobRange := engineapi.Range{Start: regionKeys[0], End: regionKeys[1]}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+				},
+			},
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(2),
+			},
+		}
+		engine := &Engine{regionSplitKeysCache: regionKeys}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				engine,
+				regionKeys,
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-secondWorkerStarted:
+		case <-time.After(10 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for both region workers to start")
+		}
+
+		select {
+		case err := <-errCh:
+			cancel()
+			require.ErrorContains(t, err, fatalErr)
+		case <-time.After(10 * time.Second):
+			cancel()
+			select {
+			case <-errCh:
+			case <-time.After(10 * time.Second):
+				t.Fatal("doImport remained blocked after canceling its parent context")
+			}
+			t.Fatal("doImport blocked waiting for another worker after a worker error")
+		}
+	})
+
+	t.Run("context canceled before import completes", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		oldJobToWorkerCh := testJobToWorkerCh
+		oldJobWg := testJobWg
+		oldFakeRegionJobs := fakeRegionJobs
+		t.Cleanup(func() {
+			testJobToWorkerCh = oldJobToWorkerCh
+			testJobWg = oldJobWg
+			fakeRegionJobs = oldFakeRegionJobs
+		})
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &Engine{}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+		testJobToWorkerCh = make(chan *regionJob, 1)
+
+		mockEngine := &mockEngineWithData{
+			data:   data,
+			ranges: []engineapi.Range{jobRange},
+		}
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		var job *regionJob
+		select {
+		case job = <-testJobToWorkerCh:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for a dispatched region job")
+		}
+		cancel()
+		job.done(testJobWg)
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+	})
+
+	t.Run("context cancellation waits for running workers", func(t *testing.T) {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
+			"return",
+		)
+		workerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				close(workerStarted)
+				<-ctx.Done()
+			},
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		allowDecRef := make(chan struct{})
+		decRefDone := make(chan struct{})
+		var allowDecRefOnce sync.Once
+		releaseWorker := func() {
+			allowDecRefOnce.Do(func() {
+				close(allowDecRef)
+			})
+		}
+		t.Cleanup(func() {
+			cancel()
+			releaseWorker()
+		})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeReleaseRegionJobWorkerPool",
+			releaseWorker,
+		)
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &blockingDecRefIngestData{
+			mockIngestData: mockIngestData{
+				{[]byte{'a'}, []byte{'a'}},
+			},
+			allowDecRef: allowDecRef,
+			decRefDone:  decRefDone,
+		}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+
+		mockEngine := &mockEngineWithData{
+			data:          data,
+			ranges:        []engineapi.Range{jobRange},
+			waitForCancel: true,
+		}
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-workerStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for region job worker to start")
+		}
+		cancel()
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+		select {
+		case <-decRefDone:
+		default:
+			require.FailNow(t, "doImport returned before its running worker exited")
+		}
+	})
+
+	t.Run("dispatcher propagates context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		dispatcher := &dispatcher{workerCtx: ctx}
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
+
+	t.Run("dispatcher handles error shutdown when result channel closes", func(t *testing.T) {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeWaitForRegionJobWorkerPoolOutcome",
+			cancel,
+		)
+
+		jobFromWorkerCh := make(chan *regionJob)
+		close(jobFromWorkerCh)
+		jobToWorkerCh := make(chan *regionJob)
+		retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &sync.WaitGroup{})
+
+		dispatcher := newDispatcher(workerCtx, jobFromWorkerCh, &sync.WaitGroup{}, retryer)
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
@@ -2334,7 +2619,7 @@ func TestExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
-	externalCfg := &backend.ExternalEngineConfig{
+	externalCfg := &globalsort.EngineConfig{
 		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
@@ -2346,7 +2631,6 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 		MemCapacity:   8 * units.GiB,
 	}
-	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
@@ -2373,14 +2657,10 @@ func TestExternalEngine(t *testing.T) {
 		}
 	}()
 	go func() {
-		err2 := local.CloseEngine(
-			ctx,
-			&backend.EngineConfig{External: externalCfg},
-			engineUUID,
-		)
+		eng := globalsort.NewExternalEngine(ctx, externalCfg, local.GetWorkerConcurrency(), 123)
+		err2 := local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-		require.NoError(t, err2)
+		require.NoError(t, eng.Close())
 		close(done)
 	}()
 
@@ -2468,9 +2748,8 @@ func TestBackendCloseWithoutTiKVClient(t *testing.T) {
 			BackendConfig: BackendConfig{
 				LocalStoreDir: localStoreDir,
 			},
-			externalEngine: map[uuid.UUID]engineapi.Engine{},
-			bufferPool:     membuf.NewPool(),
-			logger:         log.L(),
+			bufferPool: membuf.NewPool(),
+			logger:     log.L(),
 		},
 		importClientFactory: &mockImportClientFactory{},
 	}
@@ -3056,8 +3335,9 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 // mockEngineWithData is a mock engine that implements engineapi.Engine
 type mockEngineWithData struct {
-	data   engineapi.IngestData
-	ranges []engineapi.Range
+	data          engineapi.IngestData
+	ranges        []engineapi.Range
+	waitForCancel bool
 }
 
 func (m *mockEngineWithData) ID() string {
@@ -3072,6 +3352,10 @@ func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- engin
 		Data:         m.data,
 		SortedRanges: m.ranges,
 	}:
+	}
+	if m.waitForCancel {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	// Don't close the channel here - generateAndSendJob will close it
 	return nil

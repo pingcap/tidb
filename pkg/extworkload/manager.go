@@ -169,7 +169,7 @@ func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime time.Duration
 	return m.cli.UpdateGCLifeTime(ctx, int64(gcLifeTime.Seconds()))
 }
 
-func (m *manager) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {
+func (m *manager) RegisterTTLTableInfo(ctx context.Context, tableID int64, ttlJobEnable bool) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleTTLTaskWorker), metrics.WorkerActionRegister)
