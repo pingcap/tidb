@@ -585,3 +585,24 @@ func TestConstantHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, cst1.Equals(cst2))
 }
+
+func TestStringConstantHashCodeTellsApartOnlyExplicitCollations(t *testing.T) {
+	newString := func(collation string, coercibility Coercibility) *Constant {
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetCharset("utf8mb4")
+		tp.SetCollate(collation)
+		c := &Constant{Value: types.NewStringDatum("A"), RetType: tp}
+		c.SetCoercibility(coercibility)
+		return c
+	}
+
+	require.NotEqual(t,
+		newString("utf8mb4_bin", CoercibilityExplicit).HashCode(),
+		newString("utf8mb4_general_ci", CoercibilityExplicit).HashCode())
+	require.Equal(t,
+		newString("utf8mb4_bin", CoercibilityExplicit).HashCode(),
+		newString("utf8mb4_bin", CoercibilityExplicit).HashCode())
+	require.Equal(t,
+		newString("utf8mb4_bin", CoercibilityCoercible).HashCode(),
+		newString("utf8mb4_general_ci", CoercibilityCoercible).HashCode())
+}
