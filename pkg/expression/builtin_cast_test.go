@@ -33,6 +33,17 @@ import (
 
 func TestCastFunctions(t *testing.T) {
 	ctx := createContext(t)
+	for _, tc := range []struct{ sql, expected string }{
+		{"cast(cast(1 as decimal(20,0)) / 3 as char)", "0.3333"},
+		{"cast(cast(-1 as decimal(20,0)) / 7 as char)", "-0.1429"},
+		{"cast(cast(199995 as decimal(20,0)) / 100000 as char)", "2.0000"},
+	} {
+		f, err := ParseSimpleExpr(ctx, tc.sql)
+		require.NoError(t, err)
+		value, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, value.GetString(), tc.sql)
+	}
 
 	sc := ctx.GetSessionVars().StmtCtx
 
