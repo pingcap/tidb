@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
@@ -67,18 +65,9 @@ func validateAffinityCodec(codec tikv.Codec) error {
 		return nil
 	}
 	failpoint.InjectCall("mockAffinityCodec", &codec)
-	const invalidCodec = "affinity requires a valid APIv2 keyspace codec in NextGen"
-	if codec == nil || codec.GetAPIVersion() != kvrpcpb.APIVersion_V2 || codec.GetKeyspaceMeta() == nil {
-		return errors.New(invalidCodec)
-	}
-	// Older PD omits scalar ID 0 on the wire, leaving the keyspace oneof unset.
-	// Match client-go's CodecV2 only when the codec also identifies keyspace 0.
-	if codec.GetKeyspaceMeta().GetKeyspace() == nil && codec.GetKeyspaceID() == 0 {
-		return nil
-	}
-	identity, ok := codec.GetKeyspaceMeta().GetKeyspace().(*keyspacepb.KeyspaceMeta_Id)
-	if !ok || identity == nil || identity.Id > 0xFFFFFF || uint32(codec.GetKeyspaceID()) != identity.Id {
-		return errors.New(invalidCodec)
+	// client-go validates the keyspace identity when constructing CodecV2.
+	if codec == nil || codec.GetKeyspaceMeta() == nil {
+		return errors.New("affinity requires a valid APIv2 keyspace codec in NextGen")
 	}
 	return nil
 }

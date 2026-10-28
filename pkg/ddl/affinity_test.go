@@ -55,14 +55,11 @@ func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
 	return append([]byte("k:"), start...), append([]byte("k:"), end...)
 }
 
-type affinityTestCodec struct {
+type affinityCodecWithoutMetadata struct {
 	tikv.Codec
-	meta *keyspacepb.KeyspaceMeta
-	id   tikv.KeyspaceID
 }
 
-func (c affinityTestCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta { return c.meta }
-func (c affinityTestCodec) GetKeyspaceID() tikv.KeyspaceID            { return c.id }
+func (affinityCodecWithoutMetadata) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta { return nil }
 
 func TestAffinityBuildGroupDefinitionsTable(t *testing.T) {
 	tbl := &model.TableInfo{
@@ -99,12 +96,7 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		}{
 			{"nil", nil},
 			{"APIv1", tikv.NewCodecV1(tikv.ModeTxn)},
-			{"missing metadata", affinityTestCodec{Codec: codec}},
-			{"unset identity with nonzero ID", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{}, id: 42}},
-			{"nil numeric identity", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: (*keyspacepb.KeyspaceMeta_Id)(nil)}}},
-			{"APIv3 identity", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{}}}},
-			{"out of range", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 16777216}}, id: 16777216}},
-			{"mismatched ID", affinityTestCodec{Codec: codec, meta: codec.GetKeyspaceMeta(), id: 43}},
+			{"missing metadata", affinityCodecWithoutMetadata{Codec: codec}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				invalidCodec := tc.codec
