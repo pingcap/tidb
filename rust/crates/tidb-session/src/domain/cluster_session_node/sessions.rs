@@ -438,9 +438,6 @@ impl Domain {
     }
 }
 
-pub(crate) fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError {
-    Box::new(std::io::Error::other(message.into()))
-}
 
 /// Go `GetSnapshotInfoSchema`'s failure as the statement sees it: a meta
 /// read's storage error with a SQL identity (`ErrTxnAbortedByGC` for a
@@ -462,22 +459,6 @@ pub(crate) struct ClusterStatsSessionState {
     registered: std::sync::atomic::AtomicBool,
 }
 
-pub(crate) fn system_process_trackers(
-    processes: ProcessRegistry,
-) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UntrackSysProc) {
-    let tracking = processes.clone();
-    let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
-        let process = (&*process as &dyn std::any::Any)
-            .downcast_ref::<crate::process::SystemProcess>()
-            .ok_or_else(|| stats_session_error("invalid system process owner"))?;
-        tracking
-            .track_system_process(id, process.clone())
-            .map_err(stats_session_error)
-    });
-    let untrack: tidb_sqlexec::UntrackSysProc =
-        Arc::new(move |id| processes.untrack_system_process(id));
-    (track, untrack)
-}
 
 pub(crate) struct SystemSessionExecution<'a, 's> {
     session: &'a mut ClusterServerSession<'s>,
@@ -991,9 +972,6 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     }
 }
 
-pub(crate) fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
-}
 
 pub struct WorkloadRepositorySessionPool {
     factory: std::sync::Weak<Domain>,

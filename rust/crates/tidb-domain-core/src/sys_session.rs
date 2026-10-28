@@ -16,6 +16,8 @@
 //! `Domain.sysSessionPool`'s resources, which the session package creates
 //! (`createSessionFunc`) and the domain only sees as `sessionctx.Context`.
 
+use std::sync::Arc;
+
 use tidb_datatype::Datum;
 
 /// One pooled internal session, as the domain's workers use it: the stats
@@ -47,3 +49,24 @@ pub trait DomainSysSession:
 
 /// Go `Domain.AdvancedSysSessionPool()`.
 pub type DomainSysSessionPool = tidb_syssession::AdvancedSessionPool<dyn DomainSysSession>;
+
+pub fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError {
+    Box::new(std::io::Error::other(message.into()))
+}
+
+pub fn system_process_trackers(
+    processes: tidb_executor::process::ProcessRegistry,
+) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UntrackSysProc) {
+    let tracking = processes.clone();
+    let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
+        let process = (&*process as &dyn std::any::Any)
+            .downcast_ref::<tidb_executor::process::SystemProcess>()
+            .ok_or_else(|| stats_session_error("invalid system process owner"))?;
+        tracking
+            .track_system_process(id, process.clone())
+            .map_err(stats_session_error)
+    });
+    let untrack: tidb_sqlexec::UntrackSysProc =
+        Arc::new(move |id| processes.untrack_system_process(id));
+    (track, untrack)
+}

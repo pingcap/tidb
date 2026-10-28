@@ -232,11 +232,6 @@ use crate::domain::session_api::{
 use tidb_executor::ddl_exec::map_error;
 use crate::domain::wire_status::WireStatus;
 
-fn is_analyze_table_sql(sql: &str) -> bool {
-    tidb_parser::normalize_digest(sql)
-        .0
-        .starts_with("analyze table")
-}
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
@@ -352,6 +347,10 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
 
 mod domain;
 pub use domain::*;
+pub(crate) use tidb_domain_core::cluster_session::detached_storage;
+pub(crate) use tidb_domain_core::session_transaction::global_lock_wait_timeout;
+pub(crate) use tidb_domain_core::sys_session::{stats_session_error, system_process_trackers};
+pub(crate) use tidb_domain_core::util::{is_analyze_table_sql, sql_string_literal};
 mod sessions;
 pub use sessions::*;
 pub use login_policy::DomainLoginPolicy;
@@ -3015,14 +3014,6 @@ impl<'s> ClusterServerSession<'s> {
     }
 }
 
-fn global_lock_wait_timeout(vars: &GlobalSysvars) -> Duration {
-    let seconds = vars
-        .get("innodb_lock_wait_timeout")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT as u64);
-    Duration::from_secs(seconds)
-}
 
 /// The cluster's [`ClusterDdl`] as the session's [`crate::ddl_service::DdlService`]:
 /// the same publish-and-refresh call, with its client error carried across the
@@ -3178,12 +3169,6 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
     }
 }
 
-/// Storage bound to no snapshot, used only to decide which tables a catalog
-/// *could* be built over. Deciding that reads a `TableInfo`, never a row.
-fn detached_storage() -> ClusterTableStorage {
-    let slot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(SwappableSnapshot::new()));
-    ClusterTableStorage::new(MutationBuffer::new(), slot)
-}
 
 /// Go `copr.MPPClient` over the node's `KVStore`.
 #[must_use]

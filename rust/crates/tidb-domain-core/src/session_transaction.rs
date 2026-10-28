@@ -91,3 +91,12 @@ pub fn options_from_values(
         kv_context: None,
     }
 }
+
+pub fn global_lock_wait_timeout(vars: &tidb_domain::global_sysvars::GlobalSysvars) -> std::time::Duration {
+    let seconds = vars
+        .get("innodb_lock_wait_timeout")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT as u64);
+    std::time::Duration::from_secs(seconds)
+}

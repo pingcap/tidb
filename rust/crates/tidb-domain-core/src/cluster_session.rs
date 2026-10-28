@@ -1161,3 +1161,11 @@ use super::*;
         definition
     }
 }
+
+/// Storage bound to no snapshot, used only to decide which tables a catalog
+/// *could* be built over. Deciding that reads a `TableInfo`, never a row.
+pub fn detached_storage() -> ClusterTableStorage {
+    let slot: Arc<Mutex<dyn tidb_kv::cluster_storage::ClusterSnapshot>> =
+        Arc::new(Mutex::new(tidb_kv::cluster_storage::SwappableSnapshot::new()));
+    ClusterTableStorage::new(tidb_kv::cluster_storage::MutationBuffer::new(), slot)
+}
