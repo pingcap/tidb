@@ -861,3 +861,57 @@ func TestUpdateIgnoreNullIntoNotNullColumnWithoutGeneratedColumns(t *testing.T) 
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustQuery("select k, a from t").Check(testkit.Rows("1 0"))
 }
+
+func TestNotNullGeneratedColumnEvaluatedToNullIsZeroedForDependentColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, stmt := range []string{
+		"insert ignore into t(k, a) values (1, 1) on duplicate key update a = null",
+		"update ignore t set a = null",
+	} {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(k int primary key, a int, g int as (a) stored not null, h int as (g + 1) stored, key ih(h))")
+		tk.MustExec("insert into t(k, a) values (1, 1)")
+		tk.MustExec(stmt)
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'g' cannot be null"))
+		tk.MustExec("admin check table t")
+		tk.MustQuery("select k, a, g, h from t").Check(testkit.Rows("1 <nil> 0 1"))
+	}
+}
+
+func TestNullIntoNotNullColumnFailsTheStatementInStrictMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("create table t(k int primary key, a int not null, b int, g int as (b) stored not null)")
+	tk.MustExec("insert into t(k, a, b) values (1, 1, 1)")
+
+	for _, stmt := range []string{
+		"insert into t(k, a, b) values (1, 1, 1) on duplicate key update a = null",
+		"update t set a = null",
+	} {
+		tk.MustGetErrMsg(stmt, "[table:1048]Column 'a' cannot be null")
+	}
+	for _, stmt := range []string{
+		"insert into t(k, a, b) values (1, 1, 1) on duplicate key update b = null",
+		"update t set b = null",
+	} {
+		tk.MustGetErrMsg(stmt, "[table:1048]Column 'g' cannot be null")
+	}
+	tk.MustQuery("select k, a, b, g from t").Check(testkit.Rows("1 1 1 1"))
+}
+
+func TestInsertIgnoreRefusingANullNotNullGeneratedColumnReportsOnlyTheError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(k int primary key, a varchar(16), g varchar(16) as (concat(a, a)) virtual not null, key ig(g))")
+	tk.MustExec("insert into t(k, a) values (1, 'x')")
+	tk.MustExec("insert ignore into t(k, a) values (1, 'y') on duplicate key update a = null")
+
+	tk.MustGetErrMsg("insert ignore into t(k, a) values (1, 'z') on duplicate key update a = 'w'", "[planner:1048]Column 'g' cannot be null")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 1048 Column 'g' cannot be null"))
+}
