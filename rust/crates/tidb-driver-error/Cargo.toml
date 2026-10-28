@@ -13,7 +13,6 @@ tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-table = { path = "../tidb-table" }
 tidb-util = { path = "../tidb-util" }
-tidb-variable = { path = "../tidb-variable" }
 tidb-datatype = { path = "../tidb-datatype" }
 
 [lints]

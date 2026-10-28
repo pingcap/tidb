@@ -12,4 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub use tidb_variable::VarError;
+/// Go's `error` from the variable package (`tidb_variable::VarError`, the
+/// same type).
+pub type VarError = tidb_error::mysql::MysqlError;

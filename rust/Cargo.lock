@@ -3801,7 +3801,6 @@ dependencies = [
  "tidb-kv",
  "tidb-table",
  "tidb-util",
- "tidb-variable",
 ]
 
 [[package]]
