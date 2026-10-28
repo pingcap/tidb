@@ -66,6 +66,23 @@ type schemaTables struct {
 	tables map[string]table.Table
 }
 
+func (s *schemaTables) tableInfos(ctx stdctx.Context) ([]*model.TableInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	infos := make([]*model.TableInfo, 0, len(s.tables))
+	for _, tbl := range s.tables {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		infos = append(infos, tbl.Meta())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return infos, nil
+}
+
 const bucketCount = 512
 
 type infoSchema struct {
@@ -394,11 +411,7 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	if !ok {
 		return nil, nil
 	}
-	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
-	for _, tbl := range schemaTables.tables {
-		tables = append(tables, tbl.Meta())
-	}
-	return tables, nil
+	return schemaTables.tableInfos(ctx)
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.

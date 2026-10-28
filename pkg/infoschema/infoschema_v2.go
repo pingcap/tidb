@@ -1091,11 +1091,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
-			tables := make([]table.Table, 0, len(schTbls.tables))
-			for _, tbl := range schTbls.tables {
-				tables = append(tables, tbl)
-			}
-			return getTableInfoList(tables), nil
+			return schTbls.tableInfos(ctx)
 		}
 		return nil, nil // something wrong?
 	}
