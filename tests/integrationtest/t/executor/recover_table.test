@@ -1,0 +1,18 @@
+CREATE DATABASE recover_limit;
+USE recover_limit;
+SET @old_safe_point = (SELECT variable_value FROM mysql.tidb WHERE variable_name='tikv_gc_safe_point');
+INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point','20200101-00:00:00 +0000 UTC','') ON DUPLICATE KEY UPDATE variable_value=VALUES(variable_value);
+CREATE TABLE t(a INT);
+DROP TABLE t;
+CREATE TABLE marker(a INT);
+--error 1105
+RECOVER TABLE t 1;
+SHOW TABLES LIKE 't';
+RECOVER TABLE t 2;
+SHOW TABLES LIKE 't';
+DROP TABLE t;
+RECOVER TABLE t;
+SHOW TABLES LIKE 't';
+DROP DATABASE recover_limit;
+UPDATE mysql.tidb SET variable_value=@old_safe_point WHERE variable_name='tikv_gc_safe_point' AND @old_safe_point IS NOT NULL;
+DELETE FROM mysql.tidb WHERE variable_name='tikv_gc_safe_point' AND @old_safe_point IS NULL;
