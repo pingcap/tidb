@@ -179,7 +179,11 @@ func convertPointInPlace(sctx *rangerctx.RangerContext, p *point, newTp *types.F
 	case types.KindMaxValue, types.KindMinNotNull:
 		return nil
 	}
-	casted, err := p.value.ConvertTo(sctx.TypeCtx, newTp)
+	casted, valCmpCasted, convertedSetPoint := convertNumericSetPoint(p.value, newTp)
+	var err error
+	if !convertedSetPoint {
+		casted, err = p.value.ConvertTo(sctx.TypeCtx, newTp)
+	}
 	if err != nil {
 		// skip plan cache in this case for safety.
 		sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), p.value))
@@ -217,9 +221,11 @@ func convertPointInPlace(sctx *rangerctx.RangerContext, p *point, newTp *types.F
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := p.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
-	if err != nil {
-		return errors.Trace(err)
+	if !convertedSetPoint {
+		valCmpCasted, err = p.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	p.value = casted
 	if valCmpCasted == 0 {
@@ -251,6 +257,45 @@ func convertPointInPlace(sctx *rangerctx.RangerContext, p *point, newTp *types.F
 		}
 	}
 	return nil
+}
+
+func convertNumericSetPoint(value types.Datum, ft *types.FieldType) (types.Datum, int, bool) {
+	var result types.Datum
+	if ft.GetType() != mysql.TypeSet || !mysql.HasEnumSetAsIntFlag(ft.GetFlag()) {
+		return result, 0, false
+	}
+
+	var numericValue uint64
+	valueCmpConverted := 0
+	switch value.Kind() {
+	case types.KindInt64:
+		intValue := value.GetInt64()
+		if intValue < 0 {
+			valueCmpConverted = -1
+		} else {
+			numericValue = uint64(intValue)
+		}
+	case types.KindUint64:
+		numericValue = value.GetUint64()
+	case types.KindMysqlSet:
+		numericValue = value.GetMysqlSet().Value
+	default:
+		return result, 0, false
+	}
+
+	maxValue := uint64(math.MaxUint64)
+	if len(ft.GetElems()) < 64 {
+		maxValue = uint64(1)<<len(ft.GetElems()) - 1
+	}
+	if numericValue > maxValue {
+		numericValue = maxValue
+		valueCmpConverted = 1
+	}
+	// SET and uint64 use the same comparable key encoding. Keeping the range
+	// point as uint64 also makes sorting exact without changing the ordinary
+	// (display-string) comparison behavior of KindMysqlSet datums.
+	result.SetUint64(numericValue)
+	return result, valueCmpConverted, true
 }
 
 func getRangesTotalDatumSize(ranges Ranges) (sum int64) {
