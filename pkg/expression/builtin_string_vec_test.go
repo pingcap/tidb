@@ -587,6 +587,23 @@ func TestVectorizedLocateCollation(t *testing.T) {
 	}{{"AA", 0}, {"AA䄀", 3}, {"䄀AA", 1}, {"AAAA", 0}} {
 		require.Equal(t, tc.want, locateStringWithCollator(tc.str, "䄀", collate.GetCollator("utf8mb4_general_ci")))
 	}
+	for _, tc := range []struct {
+		substr string
+		str    string
+		want   int64
+	}{
+		{"⁄", "¼\x00⁄", 3},
+		{"⁄", "¼\x00\x00⁄", 4},
+		{"⁄", "\x00⁄", 2},
+		{"B", "A\x00B", 3},
+		{"⁄", "¼\x00", 0},
+		{"\x00⁄", "¼\x00⁄", 2},
+		{"\x00⁄", "\x00⁄", 1},
+		{"", "¼\x00⁄", 1},
+		{"", "", 1},
+	} {
+		require.Equalf(t, tc.want, locateStringWithCollator(tc.str, tc.substr, collate.GetCollator("utf8mb4_0900_ai_ci")), "%q in %q", tc.substr, tc.str)
+	}
 	for _, collation := range []string{"utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin", "utf8mb4_0900_bin"} {
 		for _, withPos := range []bool{false, true} {
 			ctx := createContext(t)
@@ -602,7 +619,7 @@ func TestVectorizedLocateCollation(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, f.vectorized() && f.isChildrenVectorized())
 			input := chunk.NewChunkWithCapacity([]*types.FieldType{strType, strType, intType}, 64)
-			for _, pair := range [][2]string{{"e", "é"}, {"e", "CAFÉ"}, {"e", "xéx"}, {"a", "Ａ"}, {"ss", "Straße"}, {"", "abc"}, {"z", "abc"}, {"䄀", "AA"}, {"䄀", "AA䄀"}, {"䄀", "䄀AA"}, {"䄀", "AAAA"}} {
+			for _, pair := range [][2]string{{"e", "é"}, {"e", "CAFÉ"}, {"e", "xéx"}, {"a", "Ａ"}, {"ss", "Straße"}, {"", "abc"}, {"z", "abc"}, {"䄀", "AA"}, {"䄀", "AA䄀"}, {"䄀", "䄀AA"}, {"䄀", "AAAA"}, {"⁄", "¼\x00⁄"}, {"⁄", "¼\x00\x00⁄"}, {"⁄", "\x00⁄"}, {"B", "A\x00B"}, {"\x00⁄", "¼\x00⁄"}} {
 				for _, pos := range []int64{-1, 0, 1, 2, 4, 100} {
 					input.AppendString(0, pair[0])
 					input.AppendString(1, pair[1])
