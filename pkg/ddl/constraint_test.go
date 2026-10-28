@@ -245,3 +245,44 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk.MustExec("alter table t alter constraint c1 enforced")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 }
+
+func TestModifyColumnRejectsRewrittenRowsThatViolateCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+
+	tk.MustExec("create table t (a decimal(10,2), b int, constraint cb check (b < 10), constraint ca check (a > 0))")
+	tk.MustExec("insert into t values (1.2, 1), (0.4, 2)")
+	tk.MustGetErrMsg("alter table t modify a int", "[table:3819]Check constraint 'ca' is violated.")
+	tk.MustQuery("select a, b from t order by b").Check(testkit.Rows("1.20 1", "0.40 2"))
+
+	tk.MustExec("create table t2 (a decimal(10,2), b int, constraint ab check (a < b))")
+	tk.MustExec("insert into t2 values (1.4, 2), (1.6, 2)")
+	tk.MustGetErrMsg("alter table t2 modify a int", "[table:3819]Check constraint 'ab' is violated.")
+	tk.MustQuery("select a, b from t2 order by a").Check(testkit.Rows("1.40 2", "1.60 2"))
+}
+
+func TestModifyColumnKeepsRewrittenRowsThatSatisfyCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+
+	tk.MustExec("create table t (a decimal(10,2), b int, constraint cb check (b < 10), constraint ca check (a > 0))")
+	tk.MustExec("insert into t values (0.6, 1), (1.2, 2), (null, 3)")
+	tk.MustExec("alter table t modify a int")
+	tk.MustQuery("select a, b from t order by b").Check(testkit.Rows("1 1", "1 2", "<nil> 3"))
+}
+
+func TestModifyColumnFailsWhenCheckConstraintCannotBeEvaluated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+
+	tk.MustExec("create table t (a decimal(20,0), constraint c check (a + 9223372036854775807 > 0))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustContainErrMsg("alter table t modify a bigint", "BIGINT value is out of range")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+}
