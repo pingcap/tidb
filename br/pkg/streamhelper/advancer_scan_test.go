@@ -14,6 +14,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -98,7 +99,123 @@ func newConnectionTestEnv(t *testing.T, service *subscriptionConnectionServer) (
 	return ctx, CliEnv(manager, nil, nil).(clusterEnv), store
 }
 
-func receiveConnectionTestCheckpoint(t *testing.T, ctx context.Context, subscriber *FlushSubscriber, checkpoint uint64) {
+func TestReplacingSubscriberReleasesConnections(t *testing.T) {
+	ctx, env, _ := newConnectionTestEnv(t, &subscriptionConnectionServer{})
+	c := NewCheckpointAdvancer(env)
+	c.checkpoints = spans.NewFullWith(spans.Full(), 0)
+	c.SpawnSubscriptionHandler(ctx)
+	t.Cleanup(c.stopSubscriber)
+	previous := c.subscriber
+	require.NoError(t, previous.UpdateStoreTopology(ctx))
+	var previousConn *grpc.ClientConn
+	require.NoError(t, previous.dialer.(clusterEnv).clis.WithConn(ctx, 1, func(conn *grpc.ClientConn) {
+		previousConn = conn
+	}))
+
+	c.SpawnSubscriptionHandler(ctx)
+	require.NotSame(t, previous, c.subscriber)
+	require.Equal(t, connectivity.Shutdown, previousConn.GetState())
+	require.NoError(t, c.subscriber.UpdateStoreTopology(ctx))
+	var replacementConn *grpc.ClientConn
+	require.NoError(t, c.subscriber.dialer.(clusterEnv).clis.WithConn(ctx, 1, func(conn *grpc.ClientConn) {
+		replacementConn = conn
+	}))
+	require.NotSame(t, previousConn, replacementConn)
+	require.NotEqual(t, connectivity.Shutdown, replacementConn.GetState())
+}
+
+type ownerConnectionTestEnv struct{ clusterEnv }
+
+func (ownerConnectionTestEnv) GetLogBackupFlushInterval(context.Context) (time.Duration, error) {
+	return 20 * time.Second, nil
+}
+
+type blockingOwnerCheckpointStorage struct {
+	storage.ExternalStorage
+	closing chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingOwnerCheckpointStorage) Close() {
+	close(s.closing)
+	<-s.release
+}
+
+func TestOwnerWaitsForPreviousCleanup(t *testing.T) {
+	ctx, env, _ := newConnectionTestEnv(t, &subscriptionConnectionServer{})
+	c := NewCheckpointAdvancer(ownerConnectionTestEnv{env})
+	c.checkpoints = spans.NewFullWith(spans.Full(), 0)
+	firstCtx, cancelFirst := context.WithCancel(ctx)
+	secondCtx, cancelSecond := context.WithCancel(ctx)
+	checkpointStorage := &blockingOwnerCheckpointStorage{closing: make(chan struct{}), release: make(chan struct{})}
+	releaseCleanup := func() {
+		select {
+		case <-checkpointStorage.release:
+		default:
+			close(checkpointStorage.release)
+		}
+	}
+	t.Cleanup(func() {
+		releaseCleanup()
+		cancelFirst()
+		cancelSecond()
+		c.ownerWG.Wait()
+	})
+	c.OnBecomeOwner(firstCtx)
+	previous := c.subscriber
+	require.NoError(t, previous.UpdateStoreTopology(ctx))
+	var previousConn *grpc.ClientConn
+	require.NoError(t, previous.dialer.(clusterEnv).clis.WithConn(ctx, 1, func(conn *grpc.ClientConn) {
+		previousConn = conn
+	}))
+	c.checkpointStorage = checkpointStorage
+	c.lastExternalStorageCheckpoint = 123
+
+	// Hold the old owner's cleanup inside storage.Close while it still owns
+	// the subscriber. The next owner must wait before replacing any resources.
+	cancelFirst()
+	select {
+	case <-checkpointStorage.closing:
+	case <-ctx.Done():
+		t.Fatal("previous owner did not begin cleanup:", ctx.Err())
+	}
+	starting, started := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(starting)
+		c.OnBecomeOwner(secondCtx)
+		close(started)
+	}()
+	<-starting
+	select {
+	case <-started:
+		t.Fatal("new owner started before previous cleanup completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	releaseCleanup()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("new owner did not start after previous cleanup:", ctx.Err())
+	}
+	require.Equal(t, connectivity.Shutdown, previousConn.GetState())
+	require.NotNil(t, c.subscriber)
+	require.NotSame(t, previous, c.subscriber)
+	require.Nil(t, c.checkpointStorage)
+	require.Zero(t, c.lastExternalStorageCheckpoint)
+
+	// The new term must also be joined when its context is canceled.
+	require.NoError(t, c.subscriber.UpdateStoreTopology(ctx))
+	var replacementConn *grpc.ClientConn
+	require.NoError(t, c.subscriber.dialer.(clusterEnv).clis.WithConn(ctx, 1, func(conn *grpc.ClientConn) {
+		replacementConn = conn
+	}))
+	cancelSecond()
+	c.ownerWG.Wait()
+	require.Nil(t, c.subscriber)
+	require.Equal(t, connectivity.Shutdown, replacementConn.GetState())
+}
+
+func receiveConnectionTestCheckpoint(ctx context.Context, t *testing.T, subscriber *FlushSubscriber, checkpoint uint64) {
 	t.Helper()
 	select {
 	case batch := <-subscriber.Events():
@@ -118,7 +235,7 @@ func TestSubscriptionConnectionLifecycle(t *testing.T) {
 			subscriber := NewSubscriber(env, env, WithMasterContext(ctx))
 			t.Cleanup(subscriber.Drop)
 			require.NoError(t, subscriber.UpdateStoreTopology(ctx))
-			receiveConnectionTestCheckpoint(t, ctx, subscriber, 1)
+			receiveConnectionTestCheckpoint(ctx, t, subscriber, 1)
 			var oldConn *grpc.ClientConn
 			require.NoError(t, subscriber.dialer.(clusterEnv).clis.WithConn(ctx, 1, func(conn *grpc.ClientConn) { oldConn = conn }))
 			checkpoint := uint64(1)
@@ -141,7 +258,7 @@ func TestSubscriptionConnectionLifecycle(t *testing.T) {
 			require.Equal(t, connectivity.Shutdown, oldConn.GetState())
 			require.NotEqual(t, connectivity.Shutdown, pollingConn.GetState())
 			require.NoError(t, subscriber.UpdateStoreTopology(ctx))
-			receiveConnectionTestCheckpoint(t, ctx, subscriber, checkpoint)
+			receiveConnectionTestCheckpoint(ctx, t, subscriber, checkpoint)
 			require.NoError(t, subscriber.PendingErrors())
 		})
 	}

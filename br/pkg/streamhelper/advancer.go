@@ -67,6 +67,9 @@ var createGlobalCheckpointStorage = storage.New
 type CheckpointAdvancer struct {
 	env Env
 
+	// Wait for the previous owner's cleanup before starting a new owner term.
+	ownerWG sync.WaitGroup
+
 	// The concurrency accessed task:
 	// both by the task listener and ticking.
 	task                          *backuppb.StreamBackupTaskInfo
@@ -690,6 +693,9 @@ func (c *CheckpointAdvancer) stopSubscriber() {
 func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
+	if c.subscriber != nil {
+		c.subscriber.Drop()
+	}
 	c.subscriber = NewSubscriber(c.env, c.env, WithMasterContext(ctx))
 	es := c.subscriber.Events()
 	log.Info("Subscription handler spawned.", zap.String("category", "log backup subscription manager"))

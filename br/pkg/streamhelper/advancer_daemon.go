@@ -33,10 +33,14 @@ func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 
 // OnBecomeOwner implements daemon.Interface. If the tidb-server become owner, this function will be called.
 func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
+	// OwnerDaemon calls this serially, after canceling the previous owner context.
+	c.ownerWG.Wait()
 	metrics.AdvancerOwner.Set(1.0)
 	c.SpawnSubscriptionHandler(ctx)
 	c.spawnLogBackupConfigUpdater(ctx)
+	c.ownerWG.Add(1)
 	go func() {
+		defer c.ownerWG.Done()
 		<-ctx.Done()
 		c.OnStop()
 	}()
