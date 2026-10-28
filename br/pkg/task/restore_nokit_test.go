@@ -19,10 +19,12 @@ import (
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -168,4 +170,22 @@ func TestCheckSnapshotRestoreMode(t *testing.T) {
 		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
 		require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
 	})
+}
+
+func TestRestoreFailsWhenClosingItsClientFails(t *testing.T) {
+	restoreErr := errors.New("restore failed")
+	closeErr := errors.New("commit to log backup failed")
+	closeFails := func() error { return closeErr }
+
+	summary.SetSuccessStatus(true)
+	require.NoError(t, closeRestoreClient(func() error { return nil }, nil))
+	require.True(t, summary.Succeed())
+
+	require.Same(t, restoreErr, closeRestoreClient(closeFails, restoreErr))
+	require.True(t, summary.Succeed())
+
+	err := closeRestoreClient(closeFails, nil)
+	require.ErrorIs(t, err, closeErr)
+	require.ErrorContains(t, err, "failed to close the restore client")
+	require.False(t, summary.Succeed())
 }

@@ -1398,6 +1398,16 @@ func isRestoreSysTablesPhysically(cfg *SnapshotRestoreConfig) (loadSysTablePhysi
 	return
 }
 
+// closeRestoreClient closes the restore client, which commits the restored SSTs to
+// the running log backup, so the restore isn't successful if that fails.
+func closeRestoreClient(closeClient func() error, restoreErr error) error {
+	if err := closeClient(); err != nil && restoreErr == nil {
+		summary.SetSuccessStatus(false)
+		return errors.Annotate(err, "failed to close the restore client")
+	}
+	return restoreErr
+}
+
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) (retErr error) {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -1523,12 +1533,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	defer func() {
-		// closing the client commits the restored SSTs to the running log backup,
-		// the restore isn't successful if that fails.
-		if err := client.Close(); err != nil && retErr == nil {
-			summary.SetSuccessStatus(false)
-			retErr = errors.Annotate(err, "failed to close the restore client")
-		}
+		retErr = closeRestoreClient(client.Close, retErr)
 	}()
 
 	// set to cfg so that restoreStream can use it.
