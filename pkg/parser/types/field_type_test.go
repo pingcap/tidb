@@ -15,11 +15,13 @@ package types_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	// import parser_driver
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
@@ -116,6 +118,20 @@ func TestFieldType(t *testing.T) {
 	ft.SetElems([]string{"a\nb", "a'\t\r\nb", "a\rb"})
 	require.Equal(t, "enum('a\\nb','a''	\\r\\nb','a\\rb')", ft.String())
 	require.True(t, HasCharset(ft))
+
+	ft = NewFieldType(mysql.TypeEnum)
+	ft.SetElems([]string{`h\i`, `\N`, "a\nb"})
+	require.Equal(t, `enum('h\\i','\\N','a\nb')`, ft.String())
+	var sb strings.Builder
+	require.NoError(t, ft.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)))
+	require.Equal(t, "ENUM('h\\\\i','\\\\N','a\nb')", sb.String())
+
+	ft = NewFieldType(mysql.TypeSet)
+	ft.SetElems([]string{"a", `i\j`})
+	require.Equal(t, `set('a','i\\j')`, ft.String())
+	sb.Reset()
+	require.NoError(t, ft.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)))
+	require.Equal(t, `SET('a','i\\j')`, sb.String())
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.SetElems([]string{"a", "b"})

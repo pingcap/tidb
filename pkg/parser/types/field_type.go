@@ -476,7 +476,8 @@ func (ft *FieldType) CompactStr() string {
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.elems))
 		for _, e := range ft.elems {
-			e = format.OutputFormat(e)
+			// Escape '\' first: OutputFormat adds backslashes of its own.
+			e = format.OutputFormat(strings.ReplaceAll(e, `\`, `\\`))
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
@@ -576,7 +577,8 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteString(e)
+			// Escape '\' regardless of sql_mode NO_BACKSLASH_ESCAPES, as for string literals.
+			ctx.WriteString(strings.ReplaceAll(e, `\`, `\\`))
 		}
 		ctx.WritePlain(")")
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
