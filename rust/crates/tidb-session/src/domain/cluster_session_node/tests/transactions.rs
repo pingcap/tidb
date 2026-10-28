@@ -35,10 +35,15 @@ fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {
         for limit in [0, 2] {
             let (mut session, cluster) = open_session();
             session
+                .node_conn()
                 .execute_write("INSERT INTO t VALUES (1, 10)")
                 .unwrap();
-            session.control_transaction("BEGIN PESSIMISTIC").unwrap();
             session
+                .node_conn()
+                .control_transaction("BEGIN PESSIMISTIC")
+                .unwrap();
+            session
+                .node_conn()
                 .execute_write("INSERT INTO t VALUES (2, 20)")
                 .unwrap();
             update_global(|config| config.pessimistic_txn.max_retry_count = limit);
@@ -48,11 +53,12 @@ fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {
                 .store(limit + 1, Ordering::Release);
 
             let error = session
+                .node_conn()
                 .execute_write(sql)
                 .expect_err("configured budget is exhausted");
             assert_query_error_packet(&error, 1105, "pessimistic lock retry limit reached");
             assert_eq!(cluster.lock_waits.lock().unwrap().len(), limit + 1);
-            assert!(session.session.in_transaction());
+            assert!(session.in_transaction());
             assert_eq!(
                 rows(&mut session, "SELECT id, v FROM t ORDER BY id"),
                 vec![
@@ -67,8 +73,8 @@ fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {
             cluster
                 .retry_pessimistic_locks
                 .store(limit, Ordering::Release);
-            session.execute_write(sql).unwrap();
-            session.control_transaction("COMMIT").unwrap();
+            session.node_conn().execute_write(sql).unwrap();
+            session.node_conn().control_transaction("COMMIT").unwrap();
             let second_value = if sql.contains("WHERE") { 20 } else { 21 };
             assert_eq!(
                 rows(&mut session, "SELECT id, v FROM t ORDER BY id"),
@@ -106,7 +112,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
             &tidb_executor::cluster_storage::MutationBuffer::new(),
             |read_ts| {
                 read_timestamps.push(read_ts);
-                session.domain.transactions.open_snapshot("")
+                session.node().domain.transactions.open_snapshot("")
             },
             |keys, _, _| {
                 calls += 1;
@@ -159,15 +165,21 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
 fn changing_session_lock_wait_reaches_an_open_transaction() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .unwrap();
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     for seconds in [7, 13] {
         session
+            .node_conn()
             .execute_write(&format!("SET SESSION innodb_lock_wait_timeout = {seconds}"))
             .unwrap();
         cluster.lock_waits.lock().unwrap().clear();
         session
+            .node_conn()
             .execute_write(&format!("UPDATE t SET v = {seconds} WHERE id = 1"))
             .unwrap();
         let waits = cluster.lock_waits.lock().unwrap();
@@ -175,7 +187,7 @@ fn changing_session_lock_wait_reaches_an_open_transaction() {
         assert!(waits.iter().all(|wait| *wait
             == tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(seconds))));
     }
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// Go `pkg/executor/executor_failpoint_test.go::TestTxnWriteThroughputSLI`.
@@ -190,16 +202,18 @@ fn txn_write_throughput_sli_matches_source() {
         }
     }
 
-    fn finish(session: &mut ClusterServerSession, affected_rows: u64) {
-        let in_txn = session.session.in_transaction();
-        session
-            .session
-            .txn_write_throughput_sli()
-            .finish_execute_stmt(1_000_000_000, affected_rows, in_txn);
+    fn finish(session: &mut Session, affected_rows: u64) {
+        let in_txn = session.in_transaction();
+        session.txn_write_throughput_sli().finish_execute_stmt(
+            1_000_000_000,
+            affected_rows,
+            in_txn,
+        );
     }
 
-    fn write(session: &mut ClusterServerSession, sql: &str) {
+    fn write(session: &mut Session, sql: &str) {
         let affected_rows = session
+            .node_conn()
             .execute_write(sql)
             .expect("statement succeeds")
             .expect("write statement")
@@ -207,19 +221,20 @@ fn txn_write_throughput_sli_matches_source() {
         finish(session, affected_rows);
     }
 
-    fn control(session: &mut ClusterServerSession, sql: &str) {
+    fn control(session: &mut Session, sql: &str) {
         session
+            .node_conn()
             .control_transaction(sql)
             .expect("statement succeeds");
         finish(session, 0);
     }
 
-    fn reset(session: &mut ClusterServerSession) {
-        session.session.txn_write_throughput_sli().reset();
+    fn reset(session: &mut Session) {
+        session.txn_write_throughput_sli().reset();
     }
 
-    fn state(session: &mut ClusterServerSession) -> String {
-        session.session.txn_write_throughput_sli().to_string()
+    fn state(session: &mut Session) -> String {
+        session.txn_write_throughput_sli().to_string()
     }
 
     fail::cfg(FAILPOINT, "return").expect("enable failpoint");
@@ -227,8 +242,8 @@ fn txn_write_throughput_sli_matches_source() {
     let (mut session, _) = open_session();
 
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
-    assert!(!session.session.txn_write_throughput_sli().is_invalid());
-    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(!session.txn_write_throughput_sli().is_invalid());
+    assert!(session.txn_write_throughput_sli().is_small_txn());
     assert_eq!(
         state(&mut session),
         "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s"
@@ -236,8 +251,8 @@ fn txn_write_throughput_sli_matches_source() {
     reset(&mut session);
 
     write(&mut session, "INSERT INTO t SELECT v, id FROM t");
-    assert!(session.session.txn_write_throughput_sli().is_invalid());
-    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(session.txn_write_throughput_sli().is_invalid());
+    assert!(session.txn_write_throughput_sli().is_small_txn());
     assert_eq!(
         state(&mut session),
         "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s"
@@ -257,16 +272,16 @@ fn txn_write_throughput_sli_matches_source() {
             &mut session,
             &format!("INSERT INTO t (id, v) VALUES ({value}, {value})"),
         );
-        assert!(session.session.txn_write_throughput_sli().is_small_txn());
+        assert!(session.txn_write_throughput_sli().is_small_txn());
     }
     let _ = rows(&mut session, "SELECT COUNT(*) FROM t");
     finish(&mut session, 0);
     let _ = rows(&mut session, "SELECT * FROM t");
     finish(&mut session, 0);
     write(&mut session, "INSERT INTO t (id, v) VALUES (20, 20)");
-    assert!(!session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(!session.txn_write_throughput_sli().is_small_txn());
     control(&mut session, "COMMIT");
-    assert!(!session.session.txn_write_throughput_sli().is_invalid());
+    assert!(!session.txn_write_throughput_sli().is_invalid());
     assert_eq!(
         state(&mut session),
         "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s"
@@ -279,7 +294,7 @@ fn txn_write_throughput_sli_matches_source() {
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
     write(&mut session, "REPLACE INTO t SELECT v, id FROM t");
     control(&mut session, "COMMIT");
-    assert!(session.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.txn_write_throughput_sli().is_invalid());
     assert_eq!(
         state(&mut session),
         "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s"
@@ -289,7 +304,7 @@ fn txn_write_throughput_sli_matches_source() {
     fail::remove(FAILPOINT);
     control(&mut session, "BEGIN");
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
-    assert!(session.control_transaction("COMMIT").is_err());
+    assert!(session.node_conn().control_transaction("COMMIT").is_err());
     finish(&mut session, 0);
     assert_eq!(
         state(&mut session),
@@ -338,6 +353,7 @@ fn an_undetermined_cluster_commit_reaches_the_connection_fatal_identity() {
 fn autocommit_publishes_each_statement_and_takes_a_fresh_snapshot() {
     let (mut session, cluster) = open_session();
     let outcome = session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
         .expect("insert")
         .expect("a write answers with an OK packet");
@@ -348,6 +364,7 @@ fn autocommit_publishes_each_statement_and_takes_a_fresh_snapshot() {
     // The next statement reads the published rows through a NEW snapshot.
     let opened_before = cluster.opened.load(Ordering::Acquire);
     let mut result = session
+        .node_conn()
         .execute("SELECT id, v FROM t ORDER BY id DESC")
         .unwrap();
     let source = result.source();
@@ -372,7 +389,7 @@ fn autocommit_publishes_each_statement_and_takes_a_fresh_snapshot() {
     source.close().unwrap();
     drop(result);
     // The same result owner closes its snapshot if the client abandons rows.
-    let mut result = session.execute("SELECT id FROM t").unwrap();
+    let mut result = session.node_conn().execute("SELECT id FROM t").unwrap();
     let mut chunk = result.source().new_chunk().unwrap();
     result.source().next_chunk(&mut chunk).unwrap();
     assert_eq!(cluster.live.load(Ordering::Acquire), 1);
@@ -392,11 +409,16 @@ fn autocommit_publishes_each_statement_and_takes_a_fresh_snapshot() {
 #[test]
 fn an_explicit_transaction_publishes_once_at_commit() {
     let (mut session, cluster) = open_session();
-    assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+    assert_eq!(
+        session.node_conn().control_transaction("BEGIN").unwrap(),
+        Some(true)
+    );
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("first insert");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("second insert");
     // Staged, not published: the cluster still holds nothing.
@@ -406,7 +428,10 @@ fn an_explicit_transaction_publishes_once_at_commit() {
     // through the buffer in front of the snapshot.
     assert_eq!(rows(&mut session, "SELECT id FROM t").len(), 2);
 
-    assert_eq!(session.control_transaction("COMMIT").unwrap(), Some(false));
+    assert_eq!(
+        session.node_conn().control_transaction("COMMIT").unwrap(),
+        Some(false)
+    );
     assert_eq!(cluster.rows(), 2);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
@@ -431,20 +456,30 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
         .expect("app.t exists")
         .id;
 
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("first insert");
     session
+        .node_conn()
         .control_transaction("SAVEPOINT before_second")
         .expect("savepoint");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("second insert");
     session
+        .node_conn()
         .control_transaction("ROLLBACK TO SAVEPOINT before_second")
         .expect("rollback to savepoint");
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 
     let committed = usage
         .session_stats_list()
@@ -455,11 +490,18 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
     assert_eq!(committed.count, 1);
 
     usage.session_stats_list().session_table_delta().reset();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("insert before rollback");
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert!(usage
         .session_stats_list()
         .begin_table_delta_dump()
@@ -473,15 +515,20 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
 fn an_explicit_transaction_holds_one_transaction_for_every_statement() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let autocommit_snapshots = cluster.opened.load(Ordering::Acquire);
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(cluster.begun.load(Ordering::Acquire), 1);
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
     session
+        .node_conn()
         .execute_write("UPDATE t SET v = 11 WHERE id = 1")
         .expect("update");
     // Not one of those statements opened a transaction of its own.
@@ -491,7 +538,10 @@ fn an_explicit_transaction_holds_one_transaction_for_every_statement() {
         autocommit_snapshots,
         "a statement inside BEGIN must not take a timestamp of its own"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
 }
 
@@ -503,6 +553,7 @@ fn an_explicit_transaction_holds_one_transaction_for_every_statement() {
 fn current_tso_follows_the_cluster_transaction_lifecycle() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -525,19 +576,26 @@ fn current_tso_follows_the_cluster_transaction_lifecycle() {
         "an autocommit statement does not retain its completed transaction"
     );
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     let first = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
     let second = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
     assert_eq!(first, second, "one explicit transaction keeps one TSO");
     assert!(matches!(first[0][0], Datum::Int(value) if value > 0));
 
     session
+        .node_conn()
         .control_transaction("BEGIN")
         .expect("a second begin implicitly commits and starts anew");
     let replacement = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
     assert_ne!(replacement, first, "a new transaction takes a new TSO");
 
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT TIDB_CURRENT_TSO()"),
         vec![vec![Datum::Int(0)]]
@@ -559,11 +617,17 @@ fn show_master_status_reports_the_activated_start_ts() {
     assert!(position > 0, "the statement activates its transaction");
     assert_eq!(position as u64, cluster.clock.load(Ordering::Acquire));
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     let current = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
     let status = rows(&mut session, "SHOW MASTER STATUS");
     assert_eq!(status[0][1], current[0][0]);
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 }
 
 /// Repeatable read, which holding one transaction is what buys: a statement
@@ -573,10 +637,14 @@ fn show_master_status_reports_the_activated_start_ts() {
 fn a_statement_inside_begin_does_not_see_a_commit_made_after_it() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
-    reader.control_transaction("BEGIN").expect("begin");
+    reader
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(
         rows(&mut reader, "SELECT v FROM t WHERE id = 1"),
         vec![vec![Datum::Int(10)]]
@@ -584,6 +652,7 @@ fn a_statement_inside_begin_does_not_see_a_commit_made_after_it() {
 
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits");
     assert_eq!(
@@ -597,7 +666,10 @@ fn a_statement_inside_begin_does_not_see_a_commit_made_after_it() {
         vec![vec![Datum::Int(10)]],
         "a repeatable read must not see a commit made after BEGIN"
     );
-    reader.control_transaction("ROLLBACK").expect("rollback");
+    reader
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     // And once the transaction is over, the session is back at the newest
     // committed state.
     assert_eq!(
@@ -614,13 +686,18 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
     let (mut loser, cluster) = open_session();
     // A commit-time write conflict is an optimistic transaction contract.
     loser
+        .node_conn()
         .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
         .expect("select optimistic conflict semantics");
     loser
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
-    loser.control_transaction("BEGIN").expect("begin");
+    loser
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(
         rows(&mut loser, "SELECT v FROM t WHERE id = 1"),
         vec![vec![Datum::Int(10)]]
@@ -628,13 +705,16 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
 
     let mut winner = open_session_on(&cluster);
     winner
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the racing writer commits first");
 
     loser
+        .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("the statement itself succeeds; nothing is published yet");
     let error = loser
+        .node_conn()
         .control_transaction("COMMIT")
         .expect_err("a prewrite at the BEGIN timestamp must lose to a newer commit");
     // The code, not just the text: the client is told 9007, which is the
@@ -682,7 +762,7 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
 
 /// The `Error` row `SHOW WARNINGS` / `SHOW ERRORS` report after a failure,
 /// followed by the counts `@@warning_count` / `@@error_count` read back.
-fn assert_failure_filed(session: &mut ClusterServerSession, error: &SqlQueryError) {
+fn assert_failure_filed(session: &mut Session, error: &SqlQueryError) {
     // Go `buildShowWarningsSchema`: `Code` is an UNSIGNED column.
     let row = vec![
         Datum::new_string("Error"),
@@ -715,20 +795,28 @@ fn assert_failure_filed(session: &mut ClusterServerSession, error: &SqlQueryErro
 fn a_failed_commit_files_its_error_in_the_warning_buffer() {
     let (mut loser, cluster) = open_session();
     loser
+        .node_conn()
         .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
         .expect("select optimistic conflict semantics");
     loser
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
-    loser.control_transaction("BEGIN").expect("begin");
     loser
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    loser
+        .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("staged");
     open_session_on(&cluster)
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the racing writer commits first");
 
     let error = loser
+        .node_conn()
         .control_transaction("COMMIT")
         .expect_err("the prewrite loses to the newer commit");
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
@@ -765,11 +853,15 @@ fn a_failed_locking_read_files_its_error_in_the_warning_buffer() {
     ] {
         let (mut session, cluster) = open_session();
         session
+            .node_conn()
             .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
             .expect("seed");
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
         *cluster.fail_next_lock.lock().unwrap() = Some(failure);
-        let error = match session.execute(sql) {
+        let error = match session.node_conn().execute(sql) {
             Ok(_) => panic!("{sql}: the lock is refused"),
             Err(error) => error,
         };
@@ -783,8 +875,14 @@ fn a_failed_locking_read_files_its_error_in_the_warning_buffer() {
 #[test]
 fn a_locking_read_error_the_session_filed_is_not_filed_twice() {
     let (mut session, _cluster) = open_session();
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-    let error = match session.execute("SELECT v FROM nosuch WHERE id = 1 FOR UPDATE") {
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
+    let error = match session
+        .node_conn()
+        .execute("SELECT v FROM nosuch WHERE id = 1 FOR UPDATE")
+    {
         Ok(_) => panic!("the table does not exist"),
         Err(error) => error,
     };
@@ -799,13 +897,16 @@ fn a_locking_read_error_the_session_filed_is_not_filed_twice() {
 fn autocommit_takes_a_fresh_timestamp_and_does_not_conflict() {
     let (mut first, cluster) = open_session();
     first
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let mut second = open_session_on(&cluster);
     second
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("second writer");
     first
+        .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("an autocommit write reads and publishes at fresh timestamps");
     assert_eq!(
@@ -818,12 +919,16 @@ fn autocommit_takes_a_fresh_timestamp_and_does_not_conflict() {
 #[test]
 fn rollback_discards_the_transactions_writes() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
     assert_eq!(
-        session.control_transaction("ROLLBACK").unwrap(),
+        session.node_conn().control_transaction("ROLLBACK").unwrap(),
         Some(false)
     );
     assert_eq!(cluster.rows(), 0);
@@ -838,19 +943,28 @@ fn rollback_discards_the_transactions_writes() {
 #[test]
 fn a_failed_statement_keeps_the_transactions_earlier_writes() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("first insert");
     // A write naming a column the table does not have: the statement fails
     // after the session has already opened its snapshot.
     assert!(session
+        .node_conn()
         .execute_write("INSERT INTO t (id, nosuch) VALUES (2, 20)")
         .is_err());
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("third insert");
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 
     let published = rows(&mut session, "SELECT id FROM t ORDER BY id");
     assert_eq!(published, vec![vec![Datum::Int(1)], vec![Datum::Int(3)]]);
@@ -865,6 +979,7 @@ fn a_failed_statement_keeps_the_transactions_earlier_writes() {
 fn a_failed_autocommit_statement_publishes_nothing() {
     let (mut session, cluster) = open_session();
     assert!(session
+        .node_conn()
         .execute_write("INSERT INTO t (id, nosuch) VALUES (2, 20)")
         .is_err());
     assert_eq!(cluster.rows(), 0);
@@ -872,6 +987,7 @@ fn a_failed_autocommit_statement_publishes_nothing() {
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
     // The connection is still usable, with an empty buffer.
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (7, 70)")
         .expect("the next statement still runs");
     assert_eq!(cluster.rows(), 1);
@@ -879,8 +995,9 @@ fn a_failed_autocommit_statement_publishes_nothing() {
 
 /// The staged record handles of one table, in key order: the row handles
 /// this session would publish if it committed right now.
-fn staged_handles(session: &ClusterServerSession, table_id: i64) -> Vec<i64> {
+fn staged_handles(session: &Session, table_id: i64) -> Vec<i64> {
     session
+        .node()
         .buffer
         .snapshot()
         .into_iter()
@@ -906,7 +1023,7 @@ fn staged_handles(session: &ClusterServerSession, table_id: i64) -> Vec<i64> {
 /// `TableStorage::clone_box` clones `Arc` HANDLES, so the catalog image
 /// the session restores on a failed statement cannot take back a staged
 /// row -- the image and the original write into the SAME buffer. What
-/// takes the row back is [`ClusterServerSession::with_statement`]'s
+/// takes the row back is [`Session::with_statement`]'s
 /// savepoint, and this is the test that fails when it is removed.
 ///
 /// The failure shape is the load-bearing part: `VALUES (1,10),(2,20),
@@ -917,21 +1034,29 @@ fn staged_handles(session: &ClusterServerSession, table_id: i64) -> Vec<i64> {
 #[test]
 fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("first insert");
-    let staged_before = session.buffer.snapshot();
+    let staged_before = session.node().buffer.snapshot();
     assert_eq!(staged_handles(&session, 101), vec![3]);
 
     assert!(session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 99)")
         .is_err());
     // Not merely "no new rows are visible": the staged bytes ARE the ones
     // the failing statement started from.
-    assert_eq!(session.buffer.snapshot(), staged_before);
+    assert_eq!(session.node().buffer.snapshot(), staged_before);
 
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(cluster.rows(), 1);
     assert_eq!(
         rows(&mut session, "SELECT id FROM t"),
@@ -955,8 +1080,12 @@ fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
 #[test]
 fn a_failed_statement_burns_the_row_handles_it_consumed() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO hnd (v) VALUES (10)")
         .expect("first insert");
     assert_eq!(staged_handles(&session, 105), vec![1]);
@@ -964,17 +1093,22 @@ fn a_failed_statement_burns_the_row_handles_it_consumed() {
     // Row `20` stages at handle 2 and row `10` takes handle 3 before it
     // duplicates the unique index and ends the statement.
     assert!(session
+        .node_conn()
         .execute_write("INSERT INTO hnd (v) VALUES (20), (10)")
         .is_err());
     assert_eq!(staged_handles(&session, 105), vec![1]);
 
     session
+        .node_conn()
         .execute_write("INSERT INTO hnd (v) VALUES (30)")
         .expect("third insert");
     // Handle 4: the two the failed statement consumed are gone for good.
     assert_eq!(staged_handles(&session, 105), vec![1, 4]);
 
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT v FROM hnd ORDER BY v"),
         vec![vec![Datum::Int(10)], vec![Datum::Int(30)]]
@@ -993,34 +1127,49 @@ fn a_failed_statement_burns_the_row_handles_it_consumed() {
 #[test]
 fn rollback_to_a_savepoint_restores_the_buffer_and_keeps_the_transaction_open() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("first insert");
     assert_eq!(
-        session.control_transaction("SAVEPOINT s1").unwrap(),
+        session
+            .node_conn()
+            .control_transaction("SAVEPOINT s1")
+            .unwrap(),
         Some(true)
     );
-    let staged_at_savepoint = session.buffer.snapshot();
+    let staged_at_savepoint = session.node().buffer.snapshot();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("second insert");
 
     // ROLLBACK TO reports the transaction still open, and the buffer holds
     // the savepoint's bytes -- not merely "row 2 is invisible".
     assert_eq!(
-        session.control_transaction("ROLLBACK TO s1").unwrap(),
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK TO s1")
+            .unwrap(),
         Some(true)
     );
-    assert_eq!(session.buffer.snapshot(), staged_at_savepoint);
+    assert_eq!(session.node().buffer.snapshot(), staged_at_savepoint);
     assert_eq!(staged_handles(&session, 101), vec![1]);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
 
     // The transaction is still running, so this statement joins it.
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("third insert");
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT id FROM t ORDER BY id"),
         vec![vec![Datum::Int(1)], vec![Datum::Int(3)]]
@@ -1034,20 +1183,31 @@ fn rollback_to_a_savepoint_restores_the_buffer_and_keeps_the_transaction_open() 
 #[test]
 fn the_savepoint_stack_follows_the_same_rules_on_the_cluster_path() {
     let (mut session, _cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
-    session.control_transaction("SAVEPOINT s1").expect("s1");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT s1")
+        .expect("s1");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
-    session.control_transaction("SAVEPOINT s2").expect("s2");
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT s2")
+        .expect("s2");
 
     // Releasing s1 drops s2 with it and keeps row 1 staged.
     session
+        .node_conn()
         .control_transaction("RELEASE SAVEPOINT s1")
         .expect("release");
     assert_eq!(staged_handles(&session, 101), vec![1]);
     for sql in ["ROLLBACK TO s1", "ROLLBACK TO s2"] {
-        let reported = session.control_transaction(sql).unwrap_err();
+        let reported = session.node_conn().control_transaction(sql).unwrap_err();
         assert!(
             format!("{reported:?}").contains("1305"),
             "{sql} did not report 1305: {reported:?}"
@@ -1056,18 +1216,25 @@ fn the_savepoint_stack_follows_the_same_rules_on_the_cluster_path() {
 
     // A fresh savepoint, rolled back to twice: it survives its own
     // rollback, matched case-insensitively.
-    session.control_transaction("SAVEPOINT S3").expect("s3");
     session
+        .node_conn()
+        .control_transaction("SAVEPOINT S3")
+        .expect("s3");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("insert");
     session
+        .node_conn()
         .control_transaction("ROLLBACK TO s3")
         .expect("first");
     assert_eq!(staged_handles(&session, 101), vec![1]);
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("insert");
     session
+        .node_conn()
         .control_transaction("ROLLBACK TO s3")
         .expect("second");
     assert_eq!(staged_handles(&session, 101), vec![1]);
@@ -1080,17 +1247,32 @@ fn the_savepoint_stack_follows_the_same_rules_on_the_cluster_path() {
 fn ending_the_transaction_clears_the_cluster_savepoint_stack() {
     for ending in ["ROLLBACK", "COMMIT"] {
         let (mut session, _cluster) = open_session();
-        session.control_transaction("BEGIN").expect("begin");
-        session.control_transaction("SAVEPOINT s1").expect("s1");
-        session.control_transaction(ending).expect("ending");
+        session
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin");
+        session
+            .node_conn()
+            .control_transaction("SAVEPOINT s1")
+            .expect("s1");
+        session
+            .node_conn()
+            .control_transaction(ending)
+            .expect("ending");
         // The stack is the transaction's `TxnCtx.Savepoints`, which ends with it.
         assert!(
-            !session.session.in_transaction(),
+            !session.in_transaction(),
             "{ending} kept the transaction context"
         );
-        session.control_transaction("BEGIN").expect("begin");
+        session
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin");
         assert!(
-            session.control_transaction("ROLLBACK TO s1").is_err(),
+            session
+                .node_conn()
+                .control_transaction("ROLLBACK TO s1")
+                .is_err(),
             "{ending} left a savepoint reachable"
         );
     }
@@ -1103,12 +1285,14 @@ fn a_refused_publication_drops_the_staged_writes() {
     let (mut session, cluster) = open_session();
     cluster.fail_commit.store(true, Ordering::Release);
     assert!(session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .is_err());
     assert_eq!(cluster.rows(), 0);
 
     cluster.fail_commit.store(false, Ordering::Release);
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("the next statement publishes only its own row");
     assert_eq!(cluster.rows(), 1);
@@ -1154,6 +1338,7 @@ fn a_statement_that_reads_no_cluster_row_opens_no_snapshot() {
 fn every_read_of_one_statement_shares_the_transaction_the_first_read_opened() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
         .expect("seed");
 
@@ -1180,12 +1365,17 @@ fn deferral_does_not_reach_a_statement_inside_a_transaction() {
     let (mut session, cluster) = open_session();
     let mut writer = open_session_on(&cluster);
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
     writer
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("a racing commit lands after BEGIN");
     // Counted after the writer's own autocommit statement, so what follows
@@ -1198,7 +1388,10 @@ fn deferral_does_not_reach_a_statement_inside_a_transaction() {
         autocommit_snapshots,
         "a statement inside BEGIN opened an autocommit snapshot of its own"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     // Outside the transaction the same connection sees the racing row.
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 2);
 }
@@ -1211,28 +1404,42 @@ fn deferral_does_not_reach_a_statement_inside_a_transaction() {
 fn completion_types_end_both_halves_like_a_plain_commit() {
     let (mut session, cluster) = open_session();
 
-    assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+    assert_eq!(
+        session.node_conn().control_transaction("BEGIN").unwrap(),
+        Some(true)
+    );
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
     assert_eq!(cluster.rows(), 0, "the write is staged, not published");
     assert_eq!(
-        session.control_transaction("COMMIT AND CHAIN").unwrap(),
+        session
+            .node_conn()
+            .control_transaction("COMMIT AND CHAIN")
+            .unwrap(),
         Some(false)
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.in_transaction());
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 
-    assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+    assert_eq!(
+        session.node_conn().control_transaction("BEGIN").unwrap(),
+        Some(true)
+    );
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("insert");
     assert_eq!(
-        session.control_transaction("ROLLBACK RELEASE").unwrap(),
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK RELEASE")
+            .unwrap(),
         Some(false)
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.in_transaction());
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 }
@@ -1245,17 +1452,19 @@ fn missing_historical_storage_opens_no_half_transaction() {
     let (mut session, cluster) = open_session();
     let opened_before = cluster.opened.load(Ordering::Acquire);
     let error = session
+        .node_conn()
         .control_transaction("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .expect_err("a historical read this node cannot serve is refused");
     assert!(
         format!("{error:?}").contains("historical snapshots are unavailable"),
         "got {error:?}"
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.in_transaction());
     assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before);
 
     // The session still works as an autocommit one: the write publishes.
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert")
         .expect("a write answers with an OK packet");
@@ -1275,6 +1484,7 @@ fn missing_historical_storage_opens_no_half_transaction() {
 fn tidb_current_ts_reports_the_open_transactions_timestamp() {
     let (mut session, _cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -1284,7 +1494,10 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
         "no transaction is open outside one"
     );
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     let read = rows(&mut session, "SELECT count(*) FROM t");
     assert_eq!(read, vec![vec![Datum::Int(1)]]);
     let inside = rows(&mut session, "SELECT @@tidb_current_ts");
@@ -1300,7 +1513,10 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
         "the variable and the builtin read the same published timestamp"
     );
 
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_current_ts"),
         vec![vec![Datum::new_string("0")]],
@@ -1319,13 +1535,14 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
         for fail_commit in [false, true] {
             let (mut session, cluster) = open_session();
             session
+                .node_conn()
                 .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
                 .unwrap();
             RECORDER.resize(0);
             RECORDER.resize(32);
             let sql = "UPDATE t SET v = v + ? WHERE id = ?";
             let prepared = binary.then(|| session.prepare_general(sql).unwrap());
-            session.control_transaction("BEGIN").unwrap();
+            session.node_conn().control_transaction("BEGIN").unwrap();
             let executed = if let Some(prepared) = &prepared {
                 session
                     .execute_general(
@@ -1339,11 +1556,14 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
                 sql
             } else {
                 let text = "UPDATE t SET v = v + 1 WHERE id = 1";
-                session.execute_write(text).unwrap();
+                session.node_conn().execute_write(text).unwrap();
                 text
             };
             cluster.fail_commit.store(fail_commit, Ordering::Release);
-            assert_eq!(session.control_transaction("COMMIT").is_err(), fail_commit);
+            assert_eq!(
+                session.node_conn().control_transaction("COMMIT").is_err(),
+                fail_commit
+            );
             let expected = ["BEGIN", executed, "COMMIT"]
                 .map(|sql| tidb_parser::normalize_digest(sql).1.to_string());
             let expected = serde_json::to_string(&expected).unwrap();
@@ -1386,11 +1606,16 @@ fn a_failed_locking_read_records_its_go_class_in_last_query_info() {
     ] {
         let (mut session, cluster) = open_session();
         session
+            .node_conn()
             .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
             .expect("seed");
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
         *cluster.fail_next_lock.lock().unwrap() = Some(failure);
         assert!(session
+            .node_conn()
             .execute("SELECT v FROM t WHERE id = 1 FOR UPDATE")
             .is_err());
         let info = match &rows(&mut session, "SELECT @@tidb_last_query_info")[0][0] {

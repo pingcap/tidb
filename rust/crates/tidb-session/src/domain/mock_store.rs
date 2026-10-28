@@ -24,12 +24,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use crate::domain::cluster_session_node::ClusterServerSession;
+use crate::domain::cluster_session_node::NodeConn;
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::unistore_node::{
     unistore_cluster_session_stack_from, BootstrapImage, UnistoreClusterStack,
 };
-use crate::{Session, StmtOutput};
+use crate::Session;
 
 /// Go `mockstore.NewMockStore` + `session.BootstrapSession`: one embedded
 /// store and the domain booted over it.
@@ -116,18 +116,13 @@ impl MockStoreDomain {
     /// Go `testkit.NewSession`: a fresh session over this domain.
     pub fn new_session(self: &Arc<Self>) -> Result<Session, String> {
         let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
-        let mut connection = self
+        let mut session = self
             .stack
             .factory
             .create_session_4_test(connection_id)
             .map_err(|error| format!("open session {connection_id}: {}", error.message))?;
-        let mut session = Session::unbootstrapped(crate::SharedCatalog::new(tidb_executor::Catalog::new()));
-        std::mem::swap(&mut session, connection.driver_session_mut());
+        session.node.as_mut().expect("a session on the store").store = Some(Arc::clone(self));
         remember_catalog_domain(&session.shared_catalog(), self);
-        session.node = Some(Box::new(MockStoreConnection {
-            connection,
-            domain: Arc::clone(self),
-        }));
         Ok(session)
     }
 }
@@ -281,117 +276,23 @@ pub(crate) fn domain_of_catalog(catalog: &crate::SharedCatalog) -> Option<Arc<Mo
     })
 }
 
-/// A session's node connection while the session itself is outside it.
-///
-/// Between statements the [`Session`] holds its own state and this holds a
-/// placeholder in its place; a statement swaps the session in, runs through
-/// the connection, and swaps it back out.
-pub struct MockStoreConnection {
-    connection: ClusterServerSession,
-    domain: Arc<MockStoreDomain>,
-}
-
-impl MockStoreConnection {
-    /// Runs `sql` through the node connection with `session` inside it.
-    pub(crate) fn run(
-        &mut self,
-        session: &mut Session,
-        sql: &str,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.run_statement_output(sql);
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
+/// The testkit's view of a session's store half: the mock store it keeps.
+impl NodeConn {
+    fn mock_store(&self) -> &Arc<MockStoreDomain> {
+        self.store.as_ref().expect("a session on a mock store")
     }
-
-    /// Applies a transaction-control statement through the node connection
-    /// with `session` inside it; see
-    /// [`ClusterServerSession::run_transaction_control`].
-    pub(crate) fn control_transaction(
-        &mut self,
-        session: &mut Session,
-        sql: &str,
-    ) -> Result<Option<bool>, tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.run_transaction_control(sql);
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
-    }
-
-    /// Runs an already-parsed `stmt` through the node connection with
-    /// `session` inside it; see
-    /// [`ClusterServerSession::run_parsed_statement_output`].
-    pub(crate) fn run_parsed(
-        &mut self,
-        session: &mut Session,
-        sql: &str,
-        stmt: tidb_ast::Stmt,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.run_parsed_statement_output(sql, stmt);
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
-    }
-
-    /// Runs `body` over `session` inside the connection with a committed
-    /// snapshot bound; see [`ClusterServerSession::with_read_snapshot`].
-    pub(crate) fn with_read_snapshot<R>(
-        &mut self,
-        session: &mut Session,
-        body: impl FnOnce(&mut Session) -> R,
-    ) -> Result<R, tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.with_read_snapshot(body);
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
-    }
-
-    /// Binds a committed snapshot for a statement opened directly on
-    /// `session`; see [`ClusterServerSession::bind_open_statement_snapshot`].
-    pub(crate) fn bind_open_statement_snapshot(
-        &mut self,
-        session: &mut Session,
-    ) -> Result<(), tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.bind_open_statement_snapshot();
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
-    }
-
-    /// Runs a bound prepared write through the node connection with
-    /// `session` inside it; see [`ClusterServerSession::run_bound_prepared_write`].
-    pub(crate) fn run_bound_prepared_write(
-        &mut self,
-        session: &mut Session,
-        bound: tidb_ast::Stmt,
-        prepared: &crate::PreparedAst,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.run_bound_prepared_write(bound, prepared);
-        std::mem::swap(session, self.connection.driver_session_mut());
-        result
-    }
-
-    /// See [`ClusterServerSession::update_stats_cache`].
-    pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
-        self.connection.update_stats_cache()
-    }
-
-    /// See [`ClusterServerSession::update_stats_cache_with`].
-    pub(crate) fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
-        self.connection.update_stats_cache_with(tables);
-    }
-
-    /// Go `statstestutil.HandleNextDDLEventWithTxn`: runs the node's DDL
-    /// notifier until the statistics subscriber has committed every pending
     /// event (its bit in `mysql.tidb_ddl_notifier.processed_by_flag`).
     pub(crate) fn handle_ddl_events(&self) -> Result<(), String> {
-        let notifier = self.domain.stack.factory.owned_ddl_notifier_for_test();
+        let notifier = self
+            .mock_store()
+            .stack
+            .factory
+            .owned_ddl_notifier_for_test();
         let stats_bit = 1_u64 << tidb_ddl_notifier::STATS_META_HANDLER_ID.0;
         let pending_sql = format!(
             "SELECT count(*) FROM mysql.tidb_ddl_notifier WHERE processed_by_flag & {stats_bit} = 0"
         );
-        let mut probe = self.domain.new_session()?;
+        let mut probe = self.mock_store().new_session()?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let result = loop {
             let pending = match probe.run(&pending_sql) {
@@ -415,44 +316,28 @@ impl MockStoreConnection {
         result
     }
 
-    /// Go `h.DumpColStatsUsageToKV()`: the node persists the predicate
     /// columns its sessions recorded into `mysql.column_stats_usage`.
     #[cfg(test)]
     pub(crate) fn dump_col_stats_usage(&self) -> Result<(), String> {
-        self.domain
+        self.mock_store()
             .stack
             .factory
             .dump_col_stats_usage_to_kv("default")
     }
 
-    /// See [`ClusterServerSession::stats_table`].
-    pub(crate) fn stats_table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
-        self.connection.stats_table(physical_id)
-    }
-
-    /// Rebuilds `session`'s catalog from the node when its schema is stale.
-    pub(crate) fn refresh_catalog(&mut self, session: &mut Session) {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        self.connection.refresh_catalog();
-        std::mem::swap(session, self.connection.driver_session_mut());
-    }
-
-    /// Observes every request the node sends its embedded store (`None`
     /// removes the observer).
     #[cfg(test)]
     pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
-        self.domain.stack.rpc.set_send_hook(hook);
+        self.mock_store().stack.rpc.set_send_hook(hook);
     }
 
-    /// Go's corruption tests delete one of a table's keys in a committed
-    /// transaction of their own (`indexOpr.Delete` + `txn.Commit`): this
     /// commits the delete of `key` straight into the embedded store.
     #[cfg(test)]
     pub(crate) fn delete_key_for_test(&self, key: &[u8]) -> Result<(), String> {
         use tidb_proto::{KvrpcMutation, KvrpcOp};
-        let start = self.connection.fresh_timestamp_for_test()?;
-        let commit = self.connection.fresh_timestamp_for_test()?;
-        let handler = self.domain.stack.rpc.handler();
+        let start = self.fresh_timestamp_for_test()?;
+        let commit = self.fresh_timestamp_for_test()?;
+        let handler = self.mock_store().stack.rpc.handler();
         let mut handler = handler
             .lock()
             .map_err(|_| "kv handler poisoned".to_owned())?;
@@ -476,22 +361,4 @@ impl MockStoreConnection {
             .map_err(|error| format!("commit: {error:?}"))
     }
 
-    /// Runs the domain binding owner's GC; see
-    /// [`ClusterServerSession::gc_global_bindings`].
-    pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {
-        self.connection.gc_global_bindings()
-    }
-
-    /// Puts `session` back inside the connection, which then closes with it
-    /// (Go `session.Close`: roll back, release table locks and pins).
-    pub(crate) fn close(mut self, session: &mut Session) {
-        std::mem::swap(session, self.connection.driver_session_mut());
-        drop(self.connection);
-    }
-
-    /// The domain this connection is on.
-    #[must_use]
-    pub fn domain(&self) -> &Arc<MockStoreDomain> {
-        &self.domain
-    }
 }

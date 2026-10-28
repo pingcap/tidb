@@ -107,8 +107,8 @@ use tidb_cluster::pessimistic_lock_error::{ERR_REGION_UNAVAILABLE, ERR_WRITE_CON
 /// (`DefTiDBRetryLimit = 10`), which `autocommit_retry_budget` reads.
 const AUTOCOMMIT_RETRY_LIMIT: u32 = tidb_vardef::defaults::DEF_TIDB_RETRY_LIMIT as u32;
 
-fn set(session: &mut ClusterServerSession, sql: &str) {
-    session.execute_write(sql).expect("SET");
+fn set(session: &mut Session, sql: &str) {
+    session.node_conn().execute_write(sql).expect("SET");
 }
 
 /// Go capture `== A ==`: the value read before and after another session's
@@ -117,6 +117,7 @@ fn set(session: &mut ClusterServerSession, sql: &str) {
 fn autocommit_off_holds_one_snapshot_for_every_statement() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -134,6 +135,7 @@ fn autocommit_off_holds_one_snapshot_for_every_statement() {
 
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits");
 
@@ -143,7 +145,10 @@ fn autocommit_off_holds_one_snapshot_for_every_statement() {
         "a statement under autocommit = 0 must not see a commit made after the \
          transaction started"
     );
-    reader.control_transaction("COMMIT").expect("commit");
+    reader
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         rows(&mut reader, "SELECT v FROM t WHERE id = 1"),
         vec![vec![Datum::Int(99)]],
@@ -158,6 +163,7 @@ fn autocommit_off_holds_one_snapshot_for_every_statement() {
 fn autocommit_on_statements_do_not_share_a_snapshot() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -167,6 +173,7 @@ fn autocommit_on_statements_do_not_share_a_snapshot() {
     );
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits");
     assert_eq!(
@@ -189,9 +196,11 @@ fn a_transaction_under_autocommit_off_that_lost_the_race_fails_at_commit() {
     let (mut loser, cluster) = open_session();
     // A commit-time write conflict is an optimistic transaction contract.
     loser
+        .node_conn()
         .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
         .expect("select optimistic conflict semantics");
     loser
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -203,13 +212,16 @@ fn a_transaction_under_autocommit_off_that_lost_the_race_fails_at_commit() {
 
     let mut winner = open_session_on(&cluster);
     winner
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the racing writer commits first");
 
     loser
+        .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("the statement itself succeeds; nothing is published yet");
     let error = loser
+        .node_conn()
         .control_transaction("COMMIT")
         .expect_err("a prewrite at the transaction's timestamp must lose to a newer commit");
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
@@ -229,6 +241,7 @@ fn a_rollback_under_autocommit_off_discards_the_transactions_writes() {
     let (mut session, cluster) = open_session();
     set(&mut session, "SET autocommit = 0");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (9, 90)")
         .expect("insert");
     assert_eq!(
@@ -236,7 +249,10 @@ fn a_rollback_under_autocommit_off_discards_the_transactions_writes() {
         vec![vec![Datum::Int(90)]],
         "the transaction reads its own write"
     );
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert_eq!(
         cluster.rows(),
         0,
@@ -255,6 +271,7 @@ fn setting_autocommit_back_on_commits_the_open_transaction() {
     let (mut session, cluster) = open_session();
     set(&mut session, "SET autocommit = 0");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (8, 80)")
         .expect("insert");
     assert_eq!(cluster.rows(), 0, "staged, not published");
@@ -266,7 +283,10 @@ fn setting_autocommit_back_on_commits_the_open_transaction() {
         "SET autocommit = 1 performs Go's implicit commit"
     );
 
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert_eq!(
         rows(&mut session, "SELECT v FROM t WHERE id = 8"),
         vec![vec![Datum::Int(80)]],
@@ -281,8 +301,12 @@ fn setting_autocommit_back_on_commits_the_open_transaction() {
 #[test]
 fn setting_autocommit_off_inside_a_transaction_leaves_it_running() {
     let (mut session, cluster) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (7, 70)")
         .expect("insert");
     set(&mut session, "SET autocommit = 0");
@@ -292,17 +316,24 @@ fn setting_autocommit_off_inside_a_transaction_leaves_it_running() {
         "the BEGIN's transaction is still staging"
     );
 
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert_eq!(cluster.rows(), 0, "and a ROLLBACK still discards it");
 
     // `== G ==`: the same again with the transaction opened by the SET itself,
     // so the redundant assignment is a no-op rather than a commit.
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (6, 60)")
         .expect("insert");
     set(&mut session, "SET autocommit = 0");
     assert_eq!(cluster.rows(), 0, "staged, not published");
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert_eq!(cluster.rows(), 0);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
 }
@@ -317,9 +348,11 @@ fn a_savepoint_under_autocommit_off_opens_the_transaction_it_marks() {
     let (mut session, cluster) = open_session();
     set(&mut session, "SET autocommit = 0");
     session
+        .node_conn()
         .control_transaction("SAVEPOINT sp")
         .expect("savepoint");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
     assert_eq!(
@@ -328,13 +361,17 @@ fn a_savepoint_under_autocommit_off_opens_the_transaction_it_marks() {
     );
 
     session
+        .node_conn()
         .control_transaction("ROLLBACK TO sp")
         .expect("rollback to savepoint");
     assert!(
         rows(&mut session, "SELECT v FROM t WHERE id = 1").is_empty(),
         "the row staged after the savepoint is gone"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(
         cluster.rows(),
         0,
@@ -348,6 +385,7 @@ fn a_savepoint_under_autocommit_off_opens_the_transaction_it_marks() {
 fn a_savepoint_under_autocommit_on_records_nothing() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .control_transaction("SAVEPOINT sp2")
         .expect("a savepoint in autocommit succeeds");
     assert_eq!(
@@ -356,6 +394,7 @@ fn a_savepoint_under_autocommit_on_records_nothing() {
         "and opens no transaction"
     );
     let error = session
+        .node_conn()
         .control_transaction("ROLLBACK TO sp2")
         .expect_err("the name was never recorded");
     assert_eq!(error.code, 1305, "{}", error.message);
@@ -394,6 +433,7 @@ fn a_savepoint_under_autocommit_on_records_nothing() {
 fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let opened_before = cluster.opened.load(Ordering::Acquire);
@@ -401,6 +441,7 @@ fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
 
     cluster.race_next_read.store(true, Ordering::Release);
     session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
         .expect("a conflicted autocommit statement is retried, not refused");
 
@@ -428,22 +469,39 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
     let unavailable =
         SqlQueryError::new(ERR_REGION_UNAVAILABLE, *b"HY000", "Region is unavailable");
 
-    assert!(session.may_retry_autocommit_statement(&conflict, 0));
-    assert!(!session.may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT));
-    assert!(!session.may_retry_autocommit_statement(&unavailable, 0));
+    assert!(session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 0));
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT));
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&unavailable, 0));
 
     // Go `isOptimisticTxnRetryable` (`optimistic.go:82-84`): a zero
     // `@@tidb_retry_limit` disables the replay, and any other value is the
     // budget `doCommitWithRetry` hands `s.retry`.
     set(&mut session, "SET tidb_retry_limit = 0");
-    assert!(!session.may_retry_autocommit_statement(&conflict, 0));
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 0));
     set(&mut session, "SET tidb_retry_limit = 3");
-    assert!(session.may_retry_autocommit_statement(&conflict, 2));
-    assert!(!session.may_retry_autocommit_statement(&conflict, 3));
+    assert!(session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 2));
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 3));
     set(&mut session, "SET tidb_retry_limit = 10");
 
-    session.control_transaction("BEGIN").expect("begin");
-    assert!(!session.may_retry_autocommit_statement(&conflict, 0));
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 0));
 }
 
 /// `pkg/kv.IsTxnRetryableError` deliberately excludes TiKV's explicit 9005.
@@ -454,6 +512,7 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
 fn a_region_unavailable_commit_is_reported_without_replaying_the_statement() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let opened_before = cluster.opened.load(Ordering::Acquire);
@@ -463,6 +522,7 @@ fn a_region_unavailable_commit_is_reported_without_replaying_the_statement() {
         .fail_next_region_commit
         .store(true, Ordering::Release);
     let error = session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
         .expect_err("9005 must reach the client instead of being replayed");
 
@@ -492,6 +552,7 @@ fn a_region_unavailable_commit_is_reported_without_replaying_the_statement() {
 fn a_generic_region_commit_keeps_its_detail_and_is_not_replayed() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let opened_before = cluster.opened.load(Ordering::Acquire);
@@ -501,6 +562,7 @@ fn a_generic_region_commit_keeps_its_detail_and_is_not_replayed() {
         .fail_next_generic_region_commit
         .store(true, Ordering::Release);
     let error = session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
         .expect_err("the terminal region diagnostic must reach the client");
 
@@ -537,12 +599,14 @@ fn a_generic_region_commit_keeps_its_detail_and_is_not_replayed() {
 fn a_race_that_never_clears_exhausts_the_budget_and_reports_the_conflict() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let opened_before = cluster.opened.load(Ordering::Acquire);
 
     cluster.race_every_read.store(true, Ordering::Release);
     let error = session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
         .expect_err("a conflict the budget cannot outlast must reach the client");
     cluster.race_every_read.store(false, Ordering::Release);
@@ -572,9 +636,11 @@ fn a_race_that_never_clears_exhausts_the_budget_and_reports_the_conflict() {
 fn an_autocommit_update_with_no_race_still_publishes() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
         .expect("an uncontended update publishes");
     assert_eq!(
@@ -599,6 +665,7 @@ fn an_autocommit_update_with_no_race_still_publishes() {
 fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -607,6 +674,7 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
     // rather than publish over the race.
     cluster.race_next_read.store(true, Ordering::Release);
     session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
         .expect("the ranged shape is retried like the point one");
     assert_eq!(
@@ -616,6 +684,7 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
 
     cluster.race_every_read.store(true, Ordering::Release);
     let error = session
+        .node_conn()
         .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
         .expect_err("the ranged shape must not publish over a race it cannot outlast either");
     cluster.race_every_read.store(false, Ordering::Release);
@@ -628,10 +697,12 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
 fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("SET tidb_txn_mode = 'optimistic', tidb_constraint_check_in_place = ON")
         .expect("enable in-place duplicate checks");
     let opened_before = cluster.opened.load(Ordering::Acquire);
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("an uncontended insert publishes");
     assert_eq!(
@@ -693,6 +764,7 @@ fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
 fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
     let (mut session, cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO ai (v) VALUES (10)")
         .expect("seed takes id 1");
 
@@ -703,6 +775,7 @@ fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
     // batch of known and new keys -- a client actually writes.
     cluster.race_next_read.store(true, Ordering::Release);
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO ai (id, v) VALUES (1, 11), (NULL, 20) \
              ON DUPLICATE KEY UPDATE v = 11",
@@ -735,9 +808,11 @@ fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
 fn an_uncontended_insert_still_advances_the_auto_increment() {
     let (mut session, _cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO ai (v) VALUES (10)")
         .expect("first");
     session
+        .node_conn()
         .execute_write("INSERT INTO ai (v) VALUES (20)")
         .expect("second");
     assert_eq!(
@@ -801,6 +876,7 @@ fn an_uncontended_insert_still_advances_the_auto_increment() {
 fn a_prepare_under_autocommit_off_opens_no_transaction() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -817,6 +893,7 @@ fn a_prepare_under_autocommit_off_opens_no_transaction() {
 
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits after the PREPARE");
 
@@ -902,6 +979,7 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
     use tidb_protocol::PreparedValue;
     let (mut session, _cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -949,6 +1027,7 @@ fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
     // lock entry point rejects calls instead of silently accepting them.
     let (mut session, _cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id,v) VALUES (1,10)")
         .unwrap();
     let update = session
@@ -976,7 +1055,7 @@ fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
 }
 
 /// The `start_ts` a session's `tidb_last_query_info` reports.
-fn last_query_start_ts(session: &mut ClusterServerSession) -> u64 {
+fn last_query_start_ts(session: &mut Session) -> u64 {
     let info = rows(session, "SELECT @@tidb_last_query_info");
     let Some(Datum::String(info)) = info.first().and_then(|row| row.first()) else {
         panic!("tidb_last_query_info is a string: {info:?}");
@@ -996,10 +1075,12 @@ fn last_query_start_ts(session: &mut ClusterServerSession) -> u64 {
 fn a_failed_autocommit_point_insert_reports_its_transaction_start_ts() {
     let (mut session, _cluster) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES ('a', 1)")
         .expect_err("a string that is not an integer fails under strict sql_mode");
     assert_ne!(last_query_start_ts(&mut session), 0);
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (5000000000000000000000, 1)")
         .expect_err("an out-of-range id fails under strict sql_mode");
     assert_ne!(last_query_start_ts(&mut session), 0);

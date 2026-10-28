@@ -33,11 +33,11 @@ fn driver_error(error: SqlQueryError) -> DriverError {
     )
 }
 
-impl ClusterServerSession {
-    pub(super) fn run_non_transactional_dml<'a>(
-        &'a mut self,
+impl<'s> ClusterServerSession<'s> {
+    pub(super) fn run_non_transactional_dml(
+        mut self,
         batch: &tidb_ast::BatchDmlStmt,
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
+    ) -> Result<QueryResult<'s>, SqlQueryError> {
         let mut dml = self.session.begin_non_transactional_dml(batch);
         let mut input = NonTransactionalInput::Start;
         let outcome = loop {

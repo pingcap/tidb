@@ -35,7 +35,6 @@ use difftest_result_tests::replay::{run_topic, ReplayBackend, ReplaySession};
 use tidb_executor::{DriverError, MysqlError};
 use tidb_session::StmtOutput;
 
-use tidb_session::domain::cluster_session_node::ClusterServerSession;
 use crate::domain_test_support::{
     scramble, session_context, session_context_with_identity, ABC_HASH, SALT,
 };
@@ -50,7 +49,7 @@ const DEFAULT_CONNECTION: &str = "default";
 /// One connection: a production session and the output names of its last
 /// result, which the comparison reads after the statement.
 struct UnistoreSession {
-    session: ClusterServerSession,
+    session: tidb_session::Session,
     output_names: Vec<tidb_datatype::FieldNameMetadata>,
     /// The connection's cancellation, which the connection loop installs the
     /// session's query cancellation into for every command: the kill target
@@ -75,8 +74,7 @@ impl ReplaySession for UnistoreSession {
         sql: &str,
         client_multi_statements: bool,
     ) -> Result<Vec<String>, DriverError> {
-        self.session
-            .migration_session()
+        QuerySession::migration_session(&mut self.session)
             .expect("a cluster session owns its SQL session")
             .split_statements(sql, client_multi_statements)
     }
@@ -88,15 +86,12 @@ impl ReplaySession for UnistoreSession {
         self.output_names.clear();
         // `mysql_connection` installs the session's query cancellation for
         // the whole command, so a kill or `max_execution_time` interrupts it.
-        let _query_cancellation = self
-            .session
-            .query_cancellation()
+        let _query_cancellation = QuerySession::query_cancellation(&self.session)
             .map(|active| self.cancellation.install(active));
-        let stmt = match self.session.parse_statement(sql) {
+        let stmt = match QuerySession::parse_statement(&mut self.session, sql) {
             Ok(stmt) => stmt,
             Err(error) => {
-                self.session
-                    .record_parse_failure(&error);
+                QuerySession::record_parse_failure(&mut self.session, &error);
                 return Err(driver_error(error));
             }
         };
@@ -104,9 +99,7 @@ impl ReplaySession for UnistoreSession {
         // reads are the server's result-set packets, so the comparison reads
         // exactly those: the connection's own writer frames the result and it
         // is decoded as mysql-tester decodes it.
-        let response = match self
-            .session
-            .execute_stmt(sql, &stmt)
+        let response = match QuerySession::execute_stmt(&mut self.session, sql, &stmt)
             .map_err(driver_error)?
         {
             Some(mut result) => Some(
@@ -123,7 +116,7 @@ impl ReplaySession for UnistoreSession {
             // LOAD STATS parks a file request the connection answers with the
             // client's file, which mysql-tester reads relative to
             // `tests/integrationtest`.
-            if let Some(path) = self.session.take_local_infile_request() {
+            if let Some(path) = QuerySession::take_local_infile_request(&mut self.session) {
                 let data =
                     std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
                         .map_err(|error| {
@@ -131,13 +124,14 @@ impl ReplaySession for UnistoreSession {
                                 "client file `{path}`: {error}"
                             )))
                         })?;
-                self.session
-                    .finish_local_infile(&data)
+                QuerySession::finish_local_infile(&mut self.session, &data)
                     .map_err(driver_error)?;
             }
-            return Ok(StmtOutput::Affected(self.session.affected_rows()));
+            return Ok(StmtOutput::Affected(QuerySession::affected_rows(
+                &self.session,
+            )));
         };
-        if let Some(session) = self.session.migration_session() {
+        if let Some(session) = QuerySession::migration_session(&mut self.session) {
             self.output_names = session.last_result_output_names().0.to_vec();
         }
         decode_text_result_set(&response.framed)

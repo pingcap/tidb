@@ -296,7 +296,13 @@ impl std::ops::Deref for MockNode {
 
 impl MockNode {
     pub(super) fn start() -> Self {
-        let catalog = Arc::new(SharedClusterCatalog::new(loaded_catalog()));
+        Self::over(loaded_catalog())
+    }
+
+    /// A node whose published catalog is `loaded`, as the store's meta
+    /// holds it.
+    pub(super) fn over(loaded: ClusterCatalog) -> Self {
+        let catalog = Arc::new(SharedClusterCatalog::new(loaded));
         Self {
             cluster: Arc::new(MockCluster::default()),
             ddl: Arc::new(MockDdl::new(Arc::clone(&catalog))),
@@ -310,7 +316,7 @@ impl MockNode {
 
 /// One authenticated connection over a fresh mock node, plus the node the
 /// test inspects.
-pub(super) fn open_session() -> (ClusterServerSession, MockNode) {
+pub(super) fn open_session() -> (Session, MockNode) {
     let node = MockNode::start();
     let session = open_session_on(&node);
     (session, node)
@@ -319,7 +325,7 @@ pub(super) fn open_session() -> (ClusterServerSession, MockNode) {
 /// A second connection to the same mock node, which is what makes a racing
 /// writer -- or a peer that must notice a DDL -- expressible in SQL rather
 /// than in raw keys.
-pub(super) fn open_session_on(node: &MockNode) -> ClusterServerSession {
+pub(super) fn open_session_on(node: &MockNode) -> Session {
     open_session_on_with_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -334,10 +340,7 @@ pub(super) fn open_session_on(node: &MockNode) -> ClusterServerSession {
 /// verdict. Privilege tests use this to distinguish a normal low-privilege
 /// identity from one admitted by skip-grant-table without bypassing the
 /// factory that carries that verdict into `Session`.
-pub(super) fn open_session_on_with_context(
-    node: &MockNode,
-    context: SessionContext,
-) -> ClusterServerSession {
+pub(super) fn open_session_on_with_context(node: &MockNode, context: SessionContext) -> Session {
     open_session_on_with_context_and_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -351,10 +354,7 @@ pub(super) fn open_session_on_with_context(
 
 /// Opens a connection with an injected catalog writer, so error-path tests can
 /// drive the same DDL route without constructing a real TiKV authority.
-pub(super) fn open_session_on_with_ddl(
-    node: &MockNode,
-    ddl: Arc<dyn ClusterDdl>,
-) -> ClusterServerSession {
+pub(super) fn open_session_on_with_ddl(node: &MockNode, ddl: Arc<dyn ClusterDdl>) -> Session {
     open_session_on_with_seams(
         node,
         ddl,
@@ -368,7 +368,7 @@ pub(super) fn open_session_on_with_ddl(
 pub(super) fn open_session_on_with_sysvars(
     node: &MockNode,
     sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
-) -> ClusterServerSession {
+) -> Session {
     open_session_on_with_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -382,7 +382,7 @@ pub(super) fn open_session_on_with_sysvars(
 pub(super) fn open_session_on_with_analyze(
     node: &MockNode,
     analyze: Arc<dyn ClusterAnalyze>,
-) -> ClusterServerSession {
+) -> Session {
     open_session_on_with_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -396,7 +396,7 @@ pub(super) fn open_session_on_with_analyze(
 pub(super) fn open_session_on_with_stats_lock(
     node: &MockNode,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-) -> ClusterServerSession {
+) -> Session {
     open_session_on_with_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -414,7 +414,7 @@ fn open_session_on_with_seams(
     sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-) -> ClusterServerSession {
+) -> Session {
     let mut session = open_session_on_with_context_and_seams(
         node,
         ddl,
@@ -426,7 +426,10 @@ fn open_session_on_with_seams(
     );
     // The catalog is loaded, not created here: `USE` is how a connection
     // reaches it, exactly as it does over the wire.
-    session.execute_write("USE app").expect("USE app");
+    session
+        .node_conn()
+        .execute_write("USE app")
+        .expect("USE app");
     session
 }
 
@@ -438,7 +441,7 @@ fn open_session_on_with_context_and_seams(
     analyze: Arc<dyn ClusterAnalyze>,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
-) -> ClusterServerSession {
+) -> Session {
     open_session_on_with_context_and_seams_and_usage(
         node, ddl, accounts, sysvars, analyze, stats_lock, context,
     )
@@ -447,10 +450,7 @@ fn open_session_on_with_context_and_seams(
 
 pub(super) fn open_session_on_with_usage(
     node: &MockNode,
-) -> (
-    ClusterServerSession,
-    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
-) {
+) -> (Session, Arc<tidb_stats_handle_usage::StatsUsageHandle>) {
     let (mut session, usage) = open_session_on_with_context_and_seams_and_usage(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
@@ -460,7 +460,10 @@ pub(super) fn open_session_on_with_usage(
         Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
         session_context(1),
     );
-    session.execute_write("USE app").expect("USE app");
+    session
+        .node_conn()
+        .execute_write("USE app")
+        .expect("USE app");
     (session, usage)
 }
 
@@ -472,10 +475,7 @@ fn open_session_on_with_context_and_seams_and_usage(
     analyze: Arc<dyn ClusterAnalyze>,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
-) -> (
-    ClusterServerSession,
-    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
-) {
+) -> (Session, Arc<tidb_stats_handle_usage::StatsUsageHandle>) {
     let cluster = Arc::clone(&node.cluster);
     let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
@@ -530,8 +530,8 @@ pub(super) fn session_context_with_identity(
     }
 }
 
-pub(super) fn rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
-    let mut result = session.execute(sql).expect("the query runs");
+pub(super) fn rows(session: &mut Session, sql: &str) -> Vec<Vec<Datum>> {
+    let mut result = session.node_conn().execute(sql).expect("the query runs");
     let source = result.source();
     let mut rows = Vec::new();
     loop {

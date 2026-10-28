@@ -60,20 +60,17 @@ impl Domain {
     /// `SessionVars.User` stays nil and every privilege request passes; the
     /// session still enters the process list, as testkit registers it with
     /// its mock session manager.
-    pub fn create_session_4_test(
-        &self,
-        connection_id: u64,
-    ) -> Result<ClusterServerSession, SqlQueryError> {
+    pub fn create_session_4_test(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
         let mut opened = self.open_storage_session(connection_id)?;
-        opened.session.set_restricted_sql(false);
+        opened.set_restricted_sql(false);
         let guard = self.processes.register(
             connection_id,
             String::new(),
             String::new(),
-            opened.session.current_database().to_owned(),
+            opened.current_database().to_owned(),
             None,
         );
-        self.attach_connection(&mut opened.session, connection_id, guard);
+        self.attach_connection(&mut opened, connection_id, guard);
         Ok(opened)
     }
 }
@@ -91,12 +88,7 @@ impl Domain {
     }
 }
 
-impl ClusterServerSession {
-    /// The SQL session this connection drives.
-    pub(crate) fn driver_session_mut(&mut self) -> &mut Session {
-        &mut self.session
-    }
-
+impl<'s> ClusterServerSession<'s> {
     /// Runs `body` over the driver session with a fresh committed snapshot
     /// bound to its tables, over the current schema: what a test that looks
     /// at the stored rows directly reads (Go's `tk.Session().GetStore()`
@@ -107,16 +99,17 @@ impl ClusterServerSession {
     ) -> Result<R, tidb_executor::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
+            .node
             .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_executor::DriverError::unsupported)?;
         let previous =
-            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, snapshot);
+            crate::statement_lifecycle::bind_snapshot(&self.node.slot, &self.session, snapshot);
         let result = body(&mut self.session);
-        let _ = crate::statement_lifecycle::finish_snapshot(&self.slot);
+        let _ = crate::statement_lifecycle::finish_snapshot(&self.node.slot);
         if let Some(previous) = previous {
-            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, previous);
+            crate::statement_lifecycle::bind_snapshot(&self.node.slot, &self.session, previous);
         }
         Ok(result)
     }
@@ -129,12 +122,13 @@ impl ClusterServerSession {
     pub(crate) fn bind_open_statement_snapshot(&mut self) -> Result<(), tidb_executor::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
+            .node
             .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_executor::DriverError::unsupported)?;
         let _previous =
-            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, snapshot);
+            crate::statement_lifecycle::bind_snapshot(&self.node.slot, &self.session, snapshot);
         Ok(())
     }
 
@@ -155,10 +149,10 @@ impl ClusterServerSession {
         &mut self,
         sql: &str,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        let stmt = match self.parse_statement(sql) {
+        let stmt = match QuerySession::parse_statement(&mut *self.session, sql) {
             Ok(stmt) => stmt,
             Err(error) => {
-                self.record_parse_failure(&error);
+                QuerySession::record_parse_failure(&mut *self.session, &error);
                 return Err(driver_error(error));
             }
         };
@@ -179,13 +173,13 @@ impl ClusterServerSession {
         self.session
             .begin_prepared_routed_statement_observation(prepared.sql(), &bound);
         self.session.set_binary_prepared_execution(true);
-        self.activate_statement_txn = self.activates_txn_at_build(&bound);
+        self.node.activate_statement_txn = self.activates_txn_at_build(&bound);
         let attempt = self.with_prelocked_statement(shape, &resource_group, true, |session| {
             session
                 .run_parsed_bound_owned_for(bound.clone(), prepared)
                 .map_err(super::map_error)
         });
-        self.activate_statement_txn = false;
+        self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         let affected_rows = match &attempt {
             Ok(StmtOutput::Affected(count)) => *count,
@@ -216,9 +210,65 @@ impl ClusterServerSession {
             .clone();
         services.analyze = factory.analyze_service_over(Arc::clone(&analyze));
         self.session.install_domain_services(services);
-        self.domain.set_analyze(analyze);
+        self.node.domain.set_analyze(analyze);
     }
 
+    /// Rebuilds the session's catalog when the node's schema moved on.
+    pub(crate) fn refresh_catalog(&mut self) {
+        self.rebuild_catalog_if_stale();
+    }
+
+    /// [`Self::run_statement_output`] over a statement the caller already
+    /// parsed and bound (a parameterized statement's markers replaced by its
+    /// values), which re-parsing `sql` would lose.
+    pub(crate) fn run_parsed_statement_output(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+        if let Some(mut result) = self
+            .reborrow()
+            .execute_stmt(sql, &stmt)
+            .map_err(driver_error)?
+        {
+            return drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql);
+        }
+        // Go `clientConn.handleQuery`: a LOAD DATA LOCAL or LOAD STATS parks
+        // its file request, and the connection answers it with the client's
+        // file -- here the session's installed client-file reader.
+        let parked = self
+            .node
+            .parked_local_infile
+            .as_ref()
+            .map(|parked| parked.path.clone());
+        if let Some(path) = parked {
+            let data = self.session.read_client_local_file(&path)?;
+            self.finish_local_infile(&data).map_err(driver_error)?;
+        }
+        // The outputs the session's own DDL arms give: CREATE TABLE reports
+        // whether it created the table (an IF NOT EXISTS that found it leaves
+        // the 1050 note), placement-policy DDL reports nothing created, and
+        // the rest report the affected rows.
+        Ok(match &stmt {
+            Stmt::Ddl(ddl) => match &**ddl {
+                tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
+                    !self
+                        .session
+                        .warnings()
+                        .iter()
+                        .any(|warning| warning.code() == 1050),
+                ),
+                tidb_ast::DdlStmt::CreatePlacementPolicy(_)
+                | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
+                | tidb_ast::DdlStmt::DropPlacementPolicy(_) => StmtOutput::Done(false),
+                _ => StmtOutput::Affected(self.node.ok_packet.affected_rows),
+            },
+            _ => StmtOutput::Affected(self.node.ok_packet.affected_rows),
+        })
+    }
+}
+
+impl super::NodeConn {
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
     pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
@@ -253,11 +303,6 @@ impl ClusterServerSession {
         self.domain.transactions.fresh_timestamp()
     }
 
-    /// Rebuilds the session's catalog when the node's schema moved on.
-    pub(crate) fn refresh_catalog(&mut self) {
-        self.rebuild_catalog_if_stale();
-    }
-
     /// Go `Domain.globalBindHandleWorkerLoop`'s GC tick: the binding owner
     /// deletes aged `deleted` tombstones through its internal session, on
     /// the internal session's own clock.
@@ -268,46 +313,6 @@ impl ClusterServerSession {
                 .map_err(tidb_executor::DriverError::unsupported),
             None => Ok(()),
         }
-    }
-
-    /// [`Self::run_statement_output`] over a statement the caller already
-    /// parsed and bound (a parameterized statement's markers replaced by its
-    /// values), which re-parsing `sql` would lose.
-    pub(crate) fn run_parsed_statement_output(
-        &mut self,
-        sql: &str,
-        stmt: Stmt,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        if let Some(mut result) = self.execute_stmt(sql, &stmt).map_err(driver_error)? {
-            return drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql);
-        }
-        // Go `clientConn.handleQuery`: a LOAD DATA LOCAL or LOAD STATS parks
-        // its file request, and the connection answers it with the client's
-        // file -- here the session's installed client-file reader.
-        if let Some(path) = self.take_local_infile_request() {
-            let data = self.session.read_client_local_file(&path)?;
-            self.finish_local_infile(&data).map_err(driver_error)?;
-        }
-        // The outputs the session's own DDL arms give: CREATE TABLE reports
-        // whether it created the table (an IF NOT EXISTS that found it leaves
-        // the 1050 note), placement-policy DDL reports nothing created, and
-        // the rest report the affected rows.
-        Ok(match &stmt {
-            Stmt::Ddl(ddl) => match &**ddl {
-                tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
-                    !self
-                        .session
-                        .warnings()
-                        .iter()
-                        .any(|warning| warning.code() == 1050),
-                ),
-                tidb_ast::DdlStmt::CreatePlacementPolicy(_)
-                | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
-                | tidb_ast::DdlStmt::DropPlacementPolicy(_) => StmtOutput::Done(false),
-                _ => StmtOutput::Affected(self.affected_rows()),
-            },
-            _ => StmtOutput::Affected(self.affected_rows()),
-        })
     }
 }
 

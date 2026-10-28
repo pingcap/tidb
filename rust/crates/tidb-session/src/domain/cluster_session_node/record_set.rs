@@ -22,7 +22,7 @@ use crate::{OpenedStatement, StatementRecordSet};
 /// The connection lends itself to the result until Close. Executor Finish
 /// precedes snapshot teardown; statement Close follows transaction completion.
 struct ClusterRecordSet<'a> {
-    owner: &'a mut ClusterServerSession,
+    owner: ClusterServerSession<'a>,
     state: StatementRecordSet,
     field_types: Vec<FieldType>,
     snapshot: Option<ReadStatement>,
@@ -32,16 +32,16 @@ struct ClusterRecordSet<'a> {
 }
 
 
-impl ClusterServerSession {
+impl<'s> ClusterServerSession<'s> {
 
 
 
-    pub(super) fn open_statement_result<'a>(
-        &'a mut self,
+    pub(super) fn open_statement_result(
+        mut self,
         shape: StatementReadShape,
         resource_group: &str,
         mut run: impl FnMut(&mut Session) -> Result<OpenedStatement, SqlQueryError>,
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
+    ) -> Result<QueryResult<'s>, SqlQueryError> {
         // Only a replayable locking/write statement drains before returning.
         // Its retained chunks escape after the existing lock/retry loop succeeds.
         // Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`)
@@ -56,7 +56,9 @@ impl ClusterServerSession {
         .map_err(|error| self.record_statement_failure(error))?;
         let buffers_rows = shape == StatementReadShape::LockingRead
             && self
-                .txn.explicit
+                .node
+                .txn
+                .explicit
                 .as_ref()
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
@@ -104,7 +106,7 @@ impl ClusterServerSession {
                             )
                             .with_identity_opt(error.identity),
                         ));
-                        let _ = state.close(&mut self.session);
+                        let _ = state.close(&mut *self.session);
                     }
                     return Err(self.record_statement_failure(error));
                 }
@@ -189,7 +191,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         &self.field_types
     }
     fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
-        let result = self.state.next(&mut self.owner.session, chunk);
+        let result = self.state.next(&mut *self.owner.session, chunk);
         self.failed |= result.is_err();
         result.map_err(|error| error.to_mysql_error())
     }
@@ -217,12 +219,12 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         // The result set's field origins, as the in-process collect records
         // them for the statement that produced them.
         let (names, current_db) = self.state.output_names();
-        let session = &mut self.owner.session;
+        let session = &mut *self.owner.session;
         session.last_result_output_names = names.to_vec();
         current_db.clone_into(&mut session.last_result_current_db);
         let result = self
             .state
-            .finish(&mut self.owner.session)
+            .finish(&mut *self.owner.session)
             .map_err(|error| error.to_mysql_error());
         self.failed |= result.is_err();
         let ended = self.snapshot.take().map_or(Ok(()), |snapshot| {
@@ -246,7 +248,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         let finished = self.finish();
         let closed = self
             .state
-            .close(&mut self.owner.session)
+            .close(&mut *self.owner.session)
             .map_err(|error| error.to_mysql_error());
         finished.and(closed)
     }

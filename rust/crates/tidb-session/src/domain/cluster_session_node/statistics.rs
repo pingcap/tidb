@@ -208,7 +208,7 @@ fn log_update_analyze_job_failed(
     );
 }
 
-impl ClusterServerSession {
+impl<'s> ClusterServerSession<'s> {
     /// Runs Go `AutoAnalyze` through the same routed physical ANALYZE path as
     /// a client statement while retaining its analyze-job identity.
     pub(super) fn run_auto_analyze_sql(

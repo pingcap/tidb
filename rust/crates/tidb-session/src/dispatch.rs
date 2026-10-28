@@ -698,9 +698,8 @@ impl Session {
         // `ExecutePreparedStmt` does on its store; privileges are checked
         // there against the schema the bound statement resolves to now.
         if !matches!(stmt, Stmt::Query(_)) {
-            if let Some(mut node) = self.node.take() {
-                let output = node.run_bound_prepared_write(self, stmt, prepared);
-                self.node = Some(node);
+            if self.node.is_some() {
+                let output = self.node_conn().run_bound_prepared_write(stmt, prepared);
                 return Ok(crate::StatementExecution::Complete(output?));
             }
         }

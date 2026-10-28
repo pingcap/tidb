@@ -44,7 +44,7 @@ fn observation_batch_text_and_binary_writes_publish_after_commit_verdict() {
         cluster.fail_commit.store(true, Ordering::Release);
         let failed = match &prepared {
             Some(prepared) => session.execute_general(prepared, &[]).map(|_| ()),
-            None => session.execute_write(sql).map(|_| ()),
+            None => session.node_conn().execute_write(sql).map(|_| ()),
         };
         assert!(failed.is_err());
         assert_eq!(cluster.rows(), 0);
@@ -59,7 +59,7 @@ fn observation_batch_text_and_binary_writes_publish_after_commit_verdict() {
                 session.execute_general(prepared, &[]).unwrap();
             }
             None => {
-                session.execute_write(sql).unwrap();
+                session.node_conn().execute_write(sql).unwrap();
             }
         }
         assert_eq!(cluster.rows(), 1);

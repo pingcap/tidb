@@ -831,7 +831,7 @@ pub struct Session {
     /// The node connection a session built over a booted domain runs its
     /// statements through (Go testkit's session on `CreateMockStore`'s
     /// domain); `None` for a session that IS the node connection's own.
-    pub(crate) node: Option<Box<crate::domain::mock_store::MockStoreConnection>>,
+    pub(crate) node: Option<Box<crate::domain::cluster_session_node::NodeConn>>,
 }
 
 use tidb_executor::process::normalize_statement_digest;
@@ -1085,8 +1085,8 @@ impl Drop for Session {
         // which owns the transaction, pins and the table locks Go's
         // `session.Close` releases through the DDL (`UnlockTables`); a
         // session without a node cannot have taken one.
-        if let Some(node) = self.node.take() {
-            node.close(self);
+        if self.node.is_some() {
+            self.node_conn().close();
         }
         self.statement_stats.set_finished();
         if let Some(collector) = &self.session_index_usage_collector {
@@ -2329,10 +2329,8 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        if let Some(mut node) = self.node.take() {
-            let result = node.run_parsed(self, sql, stmt);
-            self.node = Some(node);
-            return result;
+        if self.node.is_some() {
+            return self.node_conn().run_parsed_statement_output(sql, stmt);
         }
         self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_owned(stmt, sql)
@@ -2494,12 +2492,10 @@ impl Session {
     /// A statement opened directly on a node-backed session (rather than run
     /// through its connection) reads a committed snapshot bound for it.
     pub(crate) fn bind_node_snapshot_for_open_statement(&mut self) -> Result<(), DriverError> {
-        let Some(mut node) = self.node.take() else {
+        if self.node.is_none() {
             return Ok(());
-        };
-        let result = node.bind_open_statement_snapshot(self);
-        self.node = Some(node);
-        result
+        }
+        self.node_conn().bind_open_statement_snapshot()
     }
 
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)` for a session on a
@@ -2619,20 +2615,15 @@ impl Session {
     /// Brings a node session's catalog up to the node's latest schema, as
     /// every statement through the node does first; a no-op elsewhere.
     pub(crate) fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {
-        let Some(mut node) = self.node.take() else {
-            return Ok(());
-        };
-        node.refresh_catalog(self);
-        self.node = Some(node);
+        if self.node.is_some() {
+            self.node_conn().refresh_catalog();
+        }
         Ok(())
     }
 
     /// One statement through this session's node connection.
     fn run_on_node(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        let mut node = self.node.take().expect("a node-backed session");
-        let result = node.run(self, sql);
-        self.node = Some(node);
-        result
+        self.node_conn().run_statement_output(sql)
     }
 
     fn run_with_columns_internal(

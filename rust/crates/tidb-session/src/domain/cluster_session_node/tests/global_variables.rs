@@ -142,6 +142,7 @@ fn global_sysvar_commit_keeps_an_undetermined_verdict_connection_fatal() {
     let writer = Arc::new(UndeterminedSysvarWriter(node.sysvars.stored.clone()));
     let mut session = open_session_on_with_sysvars(&node, writer);
     let query_error = session
+        .node_conn()
         .execute_write("SET GLOBAL autocommit = OFF")
         .expect_err("SET GLOBAL cannot answer success after losing its commit response");
     assert_undetermined_closes_without_packet(&query_error);
@@ -155,6 +156,7 @@ fn global_sysvar_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     let writer = Arc::new(BackoffSysvarWriter(node.sysvars.stored.clone()));
     let mut session = open_session_on_with_sysvars(&node, writer);
     let query_error = session
+        .node_conn()
         .execute_write("SET GLOBAL autocommit = OFF")
         .expect_err("SET GLOBAL cannot answer success after a rolled-back commit");
     assert_eq!(
@@ -209,12 +211,16 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
     let mut peer = factory.open_session(session_context(62)).unwrap();
     let mut other = other_factory.open_session(session_context(63)).unwrap();
     for session in [&mut first, &mut peer, &mut other] {
-        session.select_database("app").unwrap();
+        QuerySession::select_database(session, "app").unwrap();
     }
-    first.execute_write("INSERT INTO t VALUES (1,10)").unwrap();
+    first
+        .node_conn()
+        .execute_write("INSERT INTO t VALUES (1,10)")
+        .unwrap();
     for session in [&mut first, &mut peer, &mut other] {
-        session.execute_write("SET @id=1").unwrap();
+        session.node_conn().execute_write("SET @id=1").unwrap();
         session
+            .node_conn()
             .execute_write("PREPARE p FROM 'SELECT v FROM t WHERE id=?'")
             .unwrap();
         assert_eq!(
@@ -235,6 +241,7 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
         );
     }
     first
+        .node_conn()
         .execute_write("ADMIN FLUSH INSTANCE PLAN_CACHE")
         .unwrap()
         .expect("flush answers with an OK packet");
@@ -261,9 +268,13 @@ fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
     let mut first = factory.open_session(session_context(61)).unwrap();
     let mut second = factory.open_session(session_context(62)).unwrap();
     first
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_top_sql=1")
         .unwrap();
-    second.execute_write("SET GLOBAL tidb_source_id=2").unwrap();
+    second
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_source_id=2")
+        .unwrap();
     assert!(syncer.notify(GlobalConfigItem {
         name: "barrier".into(),
         ..Default::default()
@@ -298,16 +309,18 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
     let mut first = factory.open_session(session_context(71)).unwrap();
     let mut peer = factory.open_session(session_context(72)).unwrap();
     for session in [&mut first, &mut peer] {
-        session.select_database("app").unwrap();
+        QuerySession::select_database(session, "app").unwrap();
     }
     first
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (1,10),(2,20)")
         .unwrap();
     for session in [&mut first, &mut peer] {
         session
+            .node_conn()
             .execute_write("PREPARE p FROM 'SELECT v FROM t WHERE id=?'")
             .unwrap();
-        session.execute_write("SET @id=1").unwrap();
+        session.node_conn().execute_write("SET @id=1").unwrap();
     }
     assert_eq!(
         rows(&mut first, "EXECUTE p USING @id"),
@@ -317,7 +330,7 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
         rows(&mut first, "SELECT @@last_plan_from_cache"),
         vec![vec![Datum::Int(0)]]
     );
-    peer.execute_write("SET @id=2").unwrap();
+    peer.node_conn().execute_write("SET @id=2").unwrap();
     assert_eq!(
         rows(&mut peer, "EXECUTE p USING @id"),
         vec![vec![Datum::Int(20)]]
@@ -327,6 +340,7 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
         vec![vec![Datum::Int(1)]]
     );
     first
+        .node_conn()
         .execute_write("ADMIN FLUSH INSTANCE PLAN_CACHE")
         .unwrap();
     assert_eq!(

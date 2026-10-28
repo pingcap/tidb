@@ -25,7 +25,6 @@ use tidb_ddl_notifier::{
 };
 
 use super::{table_and_partition_ids, ClusterServerSession, ClusterStatsSessionContext, Domain};
-use crate::domain::session_api::QuerySession;
 
 fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
     NotifierError::Message(error.to_string())
@@ -64,7 +63,7 @@ impl ClusterNotifierSession {
         self.with_server(|session| {
             session
                 .execute_internal(sql)
-                .map(|_| QuerySession::affected_rows(session))
+                .map(|_| session.node.ok_packet.affected_rows)
                 .map_err(|error| NotifierError::Message(error.message))
         })
     }

@@ -14,7 +14,8 @@
 
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
-use super::{ClusterServerSession, Domain, InternalBindingWriter, QuerySession};
+use super::{Domain, InternalBindingWriter, QuerySession};
+use crate::Session;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Weak,
@@ -44,7 +45,7 @@ impl BindingSessions {
         let mut session = factory
             .open_storage_session(self.next_id.fetch_add(2, Ordering::Relaxed))
             .map_err(|e| e.message)?;
-        session.session.enable_privilege_bypass();
+        session.enable_privilege_bypass();
         Ok(BindingRunner { session })
     }
 }
@@ -100,7 +101,7 @@ impl crate::domain::cluster_binding_seam::BindingSessionPool for BindingSessions
     }
 }
 struct BindingRunner {
-    session: ClusterServerSession,
+    session: Session,
 }
 fn driver_error(error: crate::domain::session_api::SqlQueryError) -> DriverError {
     DriverError::Mysql(
@@ -117,13 +118,13 @@ impl BindingRunner {
         )
     }
     fn rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        self.session.execute_internal(sql).map_err(driver_error)
+        self.session.node_conn().execute_internal(sql).map_err(driver_error)
     }
 }
 impl InternalSqlRunner for BindingRunner {
     fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
         let sql = self.render(sql, args)?;
-        self.session.execute_internal(&sql).map_err(driver_error)?;
+        self.session.node_conn().execute_internal(&sql).map_err(driver_error)?;
         Ok(QuerySession::affected_rows(&self.session))
     }
     fn exec_rows(&mut self, sql: &str, args: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {

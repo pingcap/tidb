@@ -664,14 +664,12 @@ impl Session {
     /// anything else, so a caller can answer with an OK packet carrying the
     /// right status flag without re-parsing.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
-        let Some(mut node) = self.node.take() else {
+        if self.node.is_none() {
             return Err(DriverError::unsupported(
                 "transaction statements run on the store session",
             ));
-        };
-        let result = node.control_transaction(self, sql);
-        self.node = Some(node);
-        result
+        }
+        self.node_conn().run_transaction_control(sql)
     }
 
     /// The `SimpleExec` transaction statements (`pkg/executor/simple.go`):
@@ -1050,12 +1048,9 @@ impl Session {
         // Between statements a node session's tables are bound to no
         // snapshot; a look at them reads the committed rows.
         if self.node.is_some() {
-            let mut node = self.node.take().expect("a node-backed session");
-            let result = node.with_read_snapshot(self, |session| {
-                session.with_catalog_scope(true, body)
-            });
-            self.node = Some(node);
-            return result?;
+            return self
+                .node_conn()
+                .with_read_snapshot(|session| session.with_catalog_scope(true, body))?;
         }
         self.with_catalog_scope(true, body)
     }

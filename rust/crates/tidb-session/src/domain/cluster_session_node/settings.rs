@@ -18,32 +18,19 @@
 use super::*;
 
 impl Domain {
-    /// Fresh metadata and the existing usage collector for a peer's internal
-    /// session, without retaining a client connection or transaction.
-    pub fn peer_session_builder(self: &Arc<Self>) -> Arc<dyn Fn() -> Session + Send + Sync> {
-        let catalog = Arc::clone(&self.catalog);
-        let statistics_view = Arc::clone(&self.statistics_view);
-        let auto_ids = Arc::clone(&self.auto_ids);
-        let index_usage = self.stats_usage.index_usage_collector();
-        let templates = Arc::clone(&self.session_kv_cache);
+    /// Go `rpcServer.createSession`: a session on this node's store for
+    /// each peer coprocessor request, holding no client connection.
+    pub fn peer_session_builder(
+        self: &Arc<Self>,
+    ) -> Arc<dyn Fn() -> Result<Session, String> + Send + Sync> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_PEER_CONNECTION_ID: AtomicU64 = AtomicU64::new(3_u64 << 61);
+        let domain = Arc::downgrade(self);
         Arc::new(move || {
-            let loaded = catalog.load();
-            let storage = detached_storage();
-            let mut templates = templates
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            templates.reuse(&loaded);
-            let built = cluster_session_catalog_with_templates(
-                &loaded,
-                &storage,
-                Some(Arc::clone(&statistics_view)),
-                auto_ids.as_ref(),
-                &storage,
-                Some(&mut templates),
-            );
-            let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog));
-            session.set_index_usage_collector(Arc::clone(&index_usage));
-            session
+            let domain = domain.upgrade().ok_or("the node's domain is stopped")?;
+            domain
+                .open_storage_session(NEXT_PEER_CONNECTION_ID.fetch_add(1, Ordering::Relaxed))
+                .map_err(|error| error.message)
         })
     }
 
@@ -86,7 +73,7 @@ impl Domain {
                             tidb_syssession::SysSessionError::new("broadcast session is closed")
                         })?;
                         let result = (|| -> Result<(), String> {
-                            let mut result = session.execute(query).map_err(|e| e.message)?;
+                            let mut result = session.node_conn().execute(query).map_err(|e| e.message)?;
                             let source = result.source();
                             source.finish().map_err(|e| e.to_string())?;
                             source.close().map_err(|e| e.to_string())?;
@@ -139,6 +126,7 @@ impl Domain {
                             })?;
                             let result = (|| -> Result<(), String> {
                                 let mut result = session
+                                    .node_conn()
                                     .execute(&format!("SET GLOBAL {name} = '{value}'"))
                                     .map_err(|e| e.message)?;
                                 let source = result.source();

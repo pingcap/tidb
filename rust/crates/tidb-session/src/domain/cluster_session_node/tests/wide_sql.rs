@@ -10,7 +10,7 @@ use tidb_datatype::Datum;
 use tidb_protocol::PreparedValue;
 
 fn execute_prepared_rows(
-    session: &mut ClusterServerSession,
+    session: &mut Session,
     statement: &PreparedGeneral,
     values: &[PreparedValue],
 ) -> Vec<Vec<Datum>> {
@@ -53,6 +53,7 @@ fn statement_resource_group_reaches_snapshot_and_open_transaction_requests() {
     );
 
     session
+        .node_conn()
         .execute_write("SET RESOURCE GROUP batch")
         .expect("select persistent resource group");
     let _ = rows(&mut session, "SELECT id FROM t WHERE id = 1");
@@ -66,7 +67,10 @@ fn statement_resource_group_reaches_snapshot_and_open_transaction_requests() {
         Some("batch")
     );
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     let _ = rows(
         &mut session,
         "SELECT /*+ RESOURCE_GROUP(interactive) */ id FROM t WHERE id = 1",
@@ -80,7 +84,10 @@ fn statement_resource_group_reaches_snapshot_and_open_transaction_requests() {
             .map(String::as_str),
         Some("interactive")
     );
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
 }
 
 /// Go retains `PlanCacheStmt.PreparedAst`, so changing `sql_mode` after
@@ -98,6 +105,7 @@ fn statement_resource_group_reaches_snapshot_and_open_transaction_requests() {
 fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("SET sql_mode = ''")
         .expect("default quote mode");
     let statement = session
@@ -105,6 +113,7 @@ fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
         .expect("prepare");
 
     session
+        .node_conn()
         .execute_write("SET sql_mode = 'ANSI_QUOTES'")
         .expect("change scanner mode after prepare");
 
@@ -125,15 +134,11 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
     let mut second = open_session_on(&node);
 
     assert_eq!(
-        first
-            .session
-            .run("SELECT GET_LOCK('cluster-lock', 0)")
-            .unwrap(),
+        first.run("SELECT GET_LOCK('cluster-lock', 0)").unwrap(),
         crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
     assert_eq!(
         second
-            .session
             .run("SELECT IS_USED_LOCK('CLUSTER-LOCK'), GET_LOCK('cluster-lock', 0)")
             .unwrap(),
         crate::StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
@@ -141,10 +146,7 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
 
     drop(first);
     assert_eq!(
-        second
-            .session
-            .run("SELECT GET_LOCK('cluster-lock', 0)")
-            .unwrap(),
+        second.run("SELECT GET_LOCK('cluster-lock', 0)").unwrap(),
         crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
 }
@@ -205,7 +207,7 @@ fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
 #[test]
 fn an_unservable_table_is_refused_by_name() {
     let (session, _) = open_session();
-    let skipped = session.skipped_tables();
+    let skipped = session.node().skipped_tables();
     assert_eq!(skipped.len(), 1);
     assert_eq!(skipped[0].name, "app.t_pending");
     assert_eq!(
@@ -221,9 +223,11 @@ fn an_unservable_table_is_refused_by_name() {
 fn wide_sql_runs_over_cluster_storage() {
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
         .expect("seed t");
     session
+        .node_conn()
         .execute_write("INSERT INTO g (id, grp) VALUES (1, 100), (2, 100), (3, 200)")
         .expect("seed g");
 
@@ -263,9 +267,11 @@ fn wide_sql_runs_over_cluster_storage() {
 fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
         .expect("seed t");
     session
+        .node_conn()
         .execute_write("INSERT INTO g (id, grp) VALUES (1, 100), (2, 100), (3, 200)")
         .expect("seed g");
 
@@ -310,9 +316,11 @@ fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     // primary key away — the pruned cop scan must not shift the aggregate's
     // input columns.
     session
+        .node_conn()
         .execute_write("CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)")
         .expect("create");
     session
+        .node_conn()
         .execute_write("INSERT INTO p33 VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)")
         .expect("seed");
     let pruned = rows(

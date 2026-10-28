@@ -80,7 +80,7 @@ fn insert_values_subqueries_run_while_the_insert_is_planned() {
         "INSERT INTO test.sq VALUES (12, EXISTS (SELECT id FROM test.sq), 1)",
         "INSERT INTO test.sq VALUES (14, EXISTS (SELECT id FROM test.sq WHERE id < 3), 1)",
     ] {
-        session.execute_write(sql).unwrap();
+        session.node_conn().execute_write(sql).unwrap();
     }
     assert_eq!(
         displayed(rows(
@@ -93,7 +93,7 @@ fn insert_values_subqueries_run_while_the_insert_is_planned() {
         "INSERT INTO test.sq VALUES (11, 1 IN (SELECT id FROM test.sq), 1)",
         "INSERT INTO test.sq VALUES (13, 2 > ANY (SELECT id FROM test.sq), 1)",
     ] {
-        let error = session.execute_write(sql).expect_err(sql);
+        let error = session.node_conn().execute_write(sql).expect_err(sql);
         assert_eq!(
             (error.code, error.message.as_str()),
             (
@@ -170,13 +170,13 @@ fn union_scan_merges_the_snapshot_reader_with_the_membuffer() {
     ] {
         rows(&mut session, sql);
     }
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     for sql in [
         "INSERT INTO test.us VALUES (7, 7, 1)",
         "UPDATE test.us SET v = 20 WHERE id = 2",
         "DELETE FROM test.us WHERE id = 3",
     ] {
-        session.execute_write(sql).unwrap();
+        session.node_conn().execute_write(sql).unwrap();
     }
     let tree = tidb_trace_tree(
         &mut session,
@@ -233,7 +233,7 @@ fn union_scan_merges_the_snapshot_reader_with_the_membuffer() {
         )),
         [["1"], ["2"], ["7"]]
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// Go plans an index merge over a table the open transaction wrote under a
@@ -254,8 +254,9 @@ fn index_merge_over_a_global_index_sees_the_snapshot_and_the_membuffer() {
     ] {
         rows(&mut session, sql);
     }
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.tpk2 VALUES (2, 4, 2, 2)")
         .unwrap();
     for (sql, expected) in [
@@ -287,5 +288,5 @@ fn index_merge_over_a_global_index_sees_the_snapshot_and_the_membuffer() {
     ] {
         assert_eq!(displayed(rows(&mut session, sql)), expected, "{sql}");
     }
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }

@@ -27,7 +27,7 @@ pub(crate) type BroadcastQueryRunner = Arc<dyn Fn(&str) -> Result<(), String> + 
 /// Borrows the node's process and privilege owners; never redispatches to peers.
 #[derive(Clone)]
 pub struct PeerService {
-    session_factory: Arc<dyn Fn() -> Session + Send + Sync>,
+    session_factory: Arc<dyn Fn() -> Result<Session, String> + Send + Sync>,
     processes: ProcessRegistry,
     privileges: PrivilegeRegistry,
     cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
@@ -39,7 +39,7 @@ impl PeerService {
     /// `session_factory` opens a session on the node's store for each
     /// request, as Go's `rpcServer.createSession` does.
     pub(crate) fn new(
-        session_factory: Arc<dyn Fn() -> Session + Send + Sync>,
+        session_factory: Arc<dyn Fn() -> Result<Session, String> + Send + Sync>,
         processes: ProcessRegistry,
         privileges: PrivilegeRegistry,
         server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
@@ -143,7 +143,7 @@ impl PeerService {
         };
         // Go `rpcServer.handleCopRequest` serves every request on a fresh
         // session over the node's store (`createSession`).
-        let mut session = (self.session_factory)();
+        let mut session = (self.session_factory)()?;
         if let Some(user) = &dag.user {
             let name = user.user_name.as_deref().unwrap_or("");
             let host = user.user_host.as_deref().unwrap_or("");
@@ -747,9 +747,11 @@ fn error_response(error: String) -> coprocessor::Response {
 /// Go `rpcServer.createSession` in Go's tests: every request opens a fresh
 /// session on `store`'s domain.
 #[cfg(test)]
-pub(crate) fn store_sessions(store: &Session) -> Arc<dyn Fn() -> Session + Send + Sync> {
+pub(crate) fn store_sessions(
+    store: &Session,
+) -> Arc<dyn Fn() -> Result<Session, String> + Send + Sync> {
     let catalog = store.shared_catalog();
-    Arc::new(move || Session::with_catalog(catalog.clone()))
+    Arc::new(move || Ok(Session::with_catalog(catalog.clone())))
 }
 
 #[tonic::async_trait]
@@ -1080,7 +1082,7 @@ mod tests {
                     let service = PeerService::new(
                         Arc::new(move || {
                             observed.fetch_add(1, Ordering::SeqCst);
-                            Session::with_catalog(catalog.clone())
+                            Ok(Session::with_catalog(catalog.clone()))
                         }),
                         ProcessRegistry::default(),
                         PrivilegeRegistry::default(),
@@ -1774,7 +1776,7 @@ mod tests {
             Arc::new(move || {
                 let mut session = Session::with_catalog(metadata.clone());
                 session.set_index_usage_collector(counters.clone());
-                session
+                Ok(session)
             }),
             processes.clone(),
             privileges,

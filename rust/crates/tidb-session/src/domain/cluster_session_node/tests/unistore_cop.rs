@@ -35,8 +35,7 @@ use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
 use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
-    partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
-    ClusterServerSession, Domain,
+    partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, Domain, Session,
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
@@ -208,6 +207,7 @@ fn session_activation_preserves_assertion_level_until_transaction_end() {
             &format!("SET tidb_txn_assertion_level = '{level}'"),
         );
         session
+            .node_conn()
             .control_transaction(&format!("BEGIN {mode}"))
             .unwrap();
         // A later SET must not change this transaction's commit assertion level.
@@ -216,6 +216,7 @@ fn session_activation_preserves_assertion_level_until_transaction_end() {
             &format!("SET tidb_txn_assertion_level = '{later}'"),
         );
         session
+            .node()
             .buffer
             .stage_owned_batch([(
                 tidb_txnkv::Key::from_bytes(format!("activation_assertion_{attempt}").into_bytes()),
@@ -224,7 +225,7 @@ fn session_activation_preserves_assertion_level_until_transaction_end() {
                 tidb_txnkv::AssertionOp::AssertExist,
             )])
             .unwrap();
-        let result = session.control_transaction("COMMIT");
+        let result = session.node_conn().control_transaction("COMMIT");
         if fails {
             assert_eq!(
                 result
@@ -273,6 +274,7 @@ fn session_activation_controls_the_native_commit_protocol() {
             match path {
                 "insert" => {
                     session
+                        .node_conn()
                         .execute_write("INSERT INTO test.activation_protocol VALUES (2, 20)")
                         .unwrap();
                 }
@@ -284,14 +286,17 @@ fn session_activation_controls_the_native_commit_protocol() {
                 }
                 "fallback" => {
                     session
+                        .node_conn()
                         .execute_write("UPDATE test.activation_protocol SET v=v+1 WHERE id=1")
                         .unwrap();
                 }
                 mode => {
                     session
+                        .node_conn()
                         .control_transaction(&format!("BEGIN {mode}"))
                         .unwrap();
                     session
+                        .node_conn()
                         .execute_write("UPDATE test.activation_protocol SET v=v+1 WHERE id=1")
                         .unwrap();
                     // SET cannot change the options of the active transaction.
@@ -303,7 +308,7 @@ fn session_activation_controls_the_native_commit_protocol() {
                             u8::from(!one_pc)
                         ),
                     );
-                    session.control_transaction("COMMIT").unwrap();
+                    session.node_conn().control_transaction("COMMIT").unwrap();
                 }
             }
             let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
@@ -321,6 +326,7 @@ fn session_activation_controls_the_native_commit_protocol() {
             );
             if path == "insert" {
                 session
+                    .node_conn()
                     .execute_write("DELETE FROM test.activation_protocol WHERE id=2")
                     .unwrap();
             }
@@ -356,11 +362,13 @@ fn a_modify_column_checks_or_rewrites_rows_as_go_does() {
         "ALTER TABLE test.mc MODIFY COLUMN d CHAR(5)",
     ] {
         session
+            .node_conn()
             .execute_write(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
     }
     // Go `checkForNullValue`: a NULL row refuses NOT NULL.
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.mc MODIFY COLUMN c INT NOT NULL")
         .unwrap_err();
     assert_eq!(
@@ -376,10 +384,12 @@ fn a_modify_column_checks_or_rewrites_rows_as_go_does() {
     );
     rows(&mut session, "UPDATE test.mc SET c = 0 WHERE c IS NULL");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.mc MODIFY COLUMN c INT NOT NULL DEFAULT 7 COMMENT 'cc'")
         .unwrap();
     // Go `checkModifyColumnData`: the first row the new length cannot hold.
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.mc MODIFY COLUMN b VARCHAR(1)")
         .unwrap_err();
     assert_eq!(
@@ -387,6 +397,7 @@ fn a_modify_column_checks_or_rewrites_rows_as_go_does() {
         (1265, "Data truncated for column 'b', value is 'yy'")
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.mc CHANGE COLUMN a aa BIGINT FIRST")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.mc"));
@@ -429,10 +440,10 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     let violation = "Cannot add or update a child row: a foreign key constraint fails \
                      (`test`.`child`, CONSTRAINT `fk_2` FOREIGN KEY (`cc`) REFERENCES \
                      `parent` (`c`))";
-    let error = session.execute_write(add).unwrap_err();
+    let error = session.node_conn().execute_write(add).unwrap_err();
     assert_eq!((error.code, error.message.as_str()), (1452, violation));
     rows(&mut session, "DELETE FROM test.child WHERE id = 2");
-    session.execute_write(add).unwrap();
+    session.node_conn().execute_write(add).unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.child"));
     assert!(
         created[0][1].contains(
@@ -443,22 +454,24 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
         created[0][1]
     );
     let error = session
+        .node_conn()
         .execute_write("INSERT INTO test.child VALUES (3, 9)")
         .unwrap_err();
     assert_eq!((error.code, error.message.as_str()), (1452, violation));
-    let error = session.execute_write(add).unwrap_err();
+    let error = session.node_conn().execute_write(add).unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (1826, "Duplicate foreign key constraint name 'fk_2'")
     );
     let drop = "ALTER TABLE test.child DROP FOREIGN KEY fk_2";
-    session.execute_write(drop).unwrap();
-    let error = session.execute_write(drop).unwrap_err();
+    session.node_conn().execute_write(drop).unwrap();
+    let error = session.node_conn().execute_write(drop).unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (1091, "Can't DROP 'fk_2'; check that column/key exists")
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.child ADD FOREIGN KEY (cc) REFERENCES test.parent (c)")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.child"));
@@ -488,7 +501,10 @@ fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
         "CREATE TABLE test.c1 (a INT PRIMARY KEY, b INT, KEY ib (b))",
     );
     rows(&mut session, "INSERT INTO test.c1 VALUES (1, 1), (2, 2)");
-    session.execute_write("ALTER TABLE test.c1 CACHE").unwrap();
+    session
+        .node_conn()
+        .execute_write("ALTER TABLE test.c1 CACHE")
+        .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c1"));
     assert!(
         created[0][1].ends_with(" /* CACHED ON */"),
@@ -518,7 +534,7 @@ fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
         ("RENAME TABLE test.c1 TO test.c2", "Rename Table"),
         ("DROP TABLE test.c1", "Drop Table"),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (
@@ -528,13 +544,18 @@ fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
             "{sql}"
         );
     }
-    session.execute_write("ALTER TABLE test.c1 CACHE").unwrap();
     session
+        .node_conn()
+        .execute_write("ALTER TABLE test.c1 CACHE")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("ALTER TABLE test.c1 NOCACHE")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c1"));
     assert!(!created[0][1].contains("CACHED ON"), "{}", created[0][1]);
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.c1 ADD COLUMN c INT")
         .unwrap();
     rows(
@@ -553,7 +574,7 @@ fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
             "ALTER table cache for tables in system database is currently unsupported",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -602,6 +623,7 @@ fn expression_defaults_and_the_clustered_mode_follow_go() {
         "ALTER TABLE test.t ADD COLUMN c7 DATE DEFAULT (CURRENT_DATE)",
     ] {
         session
+            .node_conn()
             .execute_write(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
     }
@@ -624,7 +646,7 @@ fn expression_defaults_and_the_clustered_mode_follow_go() {
             "Invalid default value for 'c1'",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
     }
     assert_eq!(
@@ -673,6 +695,7 @@ fn an_added_not_null_column_reads_gos_zero_value_on_existing_rows() {
     ] {
         let sql = format!("ALTER TABLE test.t ADD COLUMN {column} NOT NULL");
         session
+            .node_conn()
             .execute_write(&sql)
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
     }
@@ -693,6 +716,7 @@ fn an_added_not_null_column_reads_gos_zero_value_on_existing_rows() {
     ));
     assert_eq!(read, [zero, zero]);
     let error = session
+        .node_conn()
         .execute_write("INSERT INTO test.t (id) VALUES (3)")
         .unwrap_err();
     assert_eq!(
@@ -738,6 +762,7 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
     // cancels the job (Go `checkAndBuildIndexInfo`'s refusal), as the Go
     // oracle answers on the embedded store.
     let error = session
+        .node_conn()
         .execute_write("CREATE INDEX ib ON test.t (b) WHERE a < 5")
         .unwrap_err();
     assert_eq!(
@@ -799,7 +824,7 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
             "Unsupported add partial index: partial index is not supported on partitioned table",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -811,6 +836,7 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
         "CREATE TABLE test.tr (a INT PRIMARY KEY, b INT) PARTITION BY HASH (a) PARTITIONS 2",
     );
     let error = session
+        .node_conn()
         .execute_write("CREATE INDEX ir ON test.tr (b) WHERE b > 1")
         .unwrap_err();
     assert_eq!(
@@ -821,9 +847,11 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
         )
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t DROP INDEX ia")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t MODIFY COLUMN a BIGINT")
         .unwrap();
 }
@@ -903,7 +931,7 @@ fn a_table_is_checked_as_go_checks_it_before_it_is_published() {
             "Duplicate column name 'x'",
         ),
     ] {
-        let error = session.execute_write(&sql).unwrap_err();
+        let error = session.node_conn().execute_write(&sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -1026,6 +1054,7 @@ fn foreign_keys_guard_their_columns_and_indexes_as_go_does() {
     );
     rows(&mut session, "CREATE TABLE test.c (a INT, b INT)");
     session
+        .node_conn()
         .execute_write(
             "ALTER TABLE test.c ADD FOREIGN KEY (a) REFERENCES test.p (id), \
              ADD FOREIGN KEY (b) REFERENCES test.p (b)",
@@ -1068,7 +1097,7 @@ fn foreign_keys_guard_their_columns_and_indexes_as_go_does() {
             "Cannot drop index 'fk_1': needed in a foreign key constraint",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -1078,6 +1107,7 @@ fn foreign_keys_guard_their_columns_and_indexes_as_go_does() {
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c"));
     assert!(created[0][1].contains(keys), "{}", created[0][1]);
     session
+        .node_conn()
         .execute_write(
             "ALTER TABLE test.c DROP FOREIGN KEY fk_2, ADD FOREIGN KEY (b) REFERENCES test.p (b)",
         )
@@ -1142,7 +1172,7 @@ fn a_column_others_depend_on_stays_as_go_keeps_it() {
             "Can't DROP '_V$_expression_index_0'; check that column/key exists",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -1251,7 +1281,7 @@ fn shared_session_serves_ranges_joins_and_locking_reads_without_table_selection(
     ] {
         assert_eq!(displayed(rows(&mut session, sql)), expected, "{sql}");
     }
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "UPDATE test.shared_left SET v=99 WHERE id=1");
     rows(&mut session, "INSERT INTO test.shared_left VALUES (2, 88)");
     rows(&mut session, "DELETE FROM test.shared_left WHERE id=0");
@@ -1262,7 +1292,7 @@ fn shared_session_serves_ranges_joins_and_locking_reads_without_table_selection(
         )),
         [["1", "99"], ["2", "88"]],
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -1295,6 +1325,7 @@ fn shared_session_activation_inherits_globals_and_obeys_set() {
     for (session, id, one_pc) in [(&mut first, 1, true), (&mut second, 2, false)] {
         let before = tikv_client::metrics::get_txn_commit_counter();
         session
+            .node_conn()
             .execute_write(&format!(
                 "INSERT INTO test.activation_light (id, v) VALUES ({id}, 10)"
             ))
@@ -1306,24 +1337,36 @@ fn shared_session_activation_inherits_globals_and_obeys_set() {
             "{delta:?}"
         );
     }
-    first.execute_write("SET tidb_enable_1pc = OFF").unwrap();
+    first
+        .node_conn()
+        .execute_write("SET tidb_enable_1pc = OFF")
+        .unwrap();
     let before = tikv_client::metrics::get_txn_commit_counter();
     first
+        .node_conn()
         .execute_write("UPDATE test.activation_light SET v = v + 1 WHERE id=1")
         .unwrap();
     let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
     assert_eq!((delta.two_pc, delta.async_commit, delta.one_pc), (1, 0, 0));
-    first.execute_write("SET tidb_enable_1pc = ON, tidb_txn_assertion_level = 'STRICT', tidb_pessimistic_txn_fair_locking = OFF").unwrap();
-    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first.node_conn().execute_write("SET tidb_enable_1pc = ON, tidb_txn_assertion_level = 'STRICT', tidb_pessimistic_txn_fair_locking = OFF").unwrap();
     first
+        .node_conn()
+        .control_transaction("BEGIN OPTIMISTIC")
+        .unwrap();
+    first
+        .node_conn()
         .execute_write("UPDATE test.activation_light SET v = v + 1 WHERE id=1")
         .unwrap();
-    first.execute_write("SET tidb_enable_1pc = OFF").unwrap();
+    first
+        .node_conn()
+        .execute_write("SET tidb_enable_1pc = OFF")
+        .unwrap();
     let before = tikv_client::metrics::get_txn_commit_counter();
-    first.control_transaction("COMMIT").unwrap();
+    first.node_conn().control_transaction("COMMIT").unwrap();
     let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
     assert_eq!((delta.two_pc, delta.async_commit, delta.one_pc), (0, 0, 1));
     let error = first
+        .node_conn()
         .execute_write("SET tidb_txn_assertion_level = 'invalid'")
         .unwrap_err();
     assert_eq!(error.code, 1231);
@@ -1334,32 +1377,38 @@ fn cluster_account_expiry_survives_sql_writes_and_password_changes() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(902)).unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE USER 'expiry_probe'@'%' IDENTIFIED BY 'pw' PASSWORD EXPIRE INTERVAL 7 DAY",
         )
         .unwrap();
-    let policy = |session: &mut ClusterServerSession| {
+    let policy = |session: &mut Session| {
         displayed(rows(session, "SELECT Password_lifetime, Password_last_changed FROM mysql.user WHERE User='expiry_probe'"))
     };
     assert_eq!(policy(&mut session)[0][0], "7");
-    session.execute_write("UPDATE mysql.user SET Password_last_changed='2001-02-03 04:05:06' WHERE User='expiry_probe'").unwrap();
+    session.node_conn().execute_write("UPDATE mysql.user SET Password_last_changed='2001-02-03 04:05:06' WHERE User='expiry_probe'").unwrap();
     session
+        .node_conn()
         .execute_write("ALTER USER 'expiry_probe'@'%' ACCOUNT LOCK")
         .unwrap();
     assert_eq!(policy(&mut session), [["7", "2001-02-03 04:05:06"]]);
     session
+        .node_conn()
         .execute_write("ALTER USER 'expiry_probe'@'%' PASSWORD EXPIRE NEVER")
         .unwrap();
     assert_eq!(policy(&mut session), [["0", "2001-02-03 04:05:06"]]);
     session
+        .node_conn()
         .execute_write("ALTER USER 'expiry_probe'@'%' PASSWORD EXPIRE DEFAULT")
         .unwrap();
     assert_eq!(policy(&mut session), [["NULL", "2001-02-03 04:05:06"]]);
     session
+        .node_conn()
         .execute_write("ALTER USER 'expiry_probe'@'%' IDENTIFIED BY 'changed'")
         .unwrap();
     assert_ne!(policy(&mut session)[0][1], "2001-02-03 04:05:06");
     session
+        .node_conn()
         .execute_write("SET PASSWORD FOR 'expiry_probe'@'%' = 'changed-again'")
         .unwrap();
     assert_eq!(policy(&mut session)[0][0], "NULL");
@@ -1370,9 +1419,11 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(903)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE USER 'history_probe'@'%' IDENTIFIED BY 'first' PASSWORD HISTORY 3")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER USER 'history_probe'@'%' IDENTIFIED BY 'second'")
         .unwrap();
     let before = displayed(rows(
@@ -1380,18 +1431,20 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
         "SELECT authentication_string FROM mysql.user WHERE User='history_probe'",
     ));
     let error = session
+        .node_conn()
         .execute_write("ALTER USER 'history_probe'@'%' IDENTIFIED BY 'first'")
         .unwrap_err();
     assert_eq!(error.code, 3638);
     assert_eq!(error.message, "Cannot use these credentials for 'history_probe@%' because they contradict the password history policy.");
     session
+        .node_conn()
         .execute_write("CREATE USER 'history_other'@'%' IDENTIFIED BY 'old' PASSWORD HISTORY 2")
         .unwrap();
     let other_before = displayed(rows(
         &mut session,
         "SELECT authentication_string FROM mysql.user WHERE User='history_other'",
     ));
-    assert_eq!(session.execute_write("ALTER USER 'history_other'@'%' IDENTIFIED BY 'new', 'history_probe'@'%' IDENTIFIED BY 'first'").unwrap_err().code, 3638);
+    assert_eq!(session.node_conn().execute_write("ALTER USER 'history_other'@'%' IDENTIFIED BY 'new', 'history_probe'@'%' IDENTIFIED BY 'first'").unwrap_err().code, 3638);
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -1408,6 +1461,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
     // Go ALL includes static role privileges, preserved by the same account image.
     session
+        .node_conn()
         .execute_write("GRANT ALL ON *.* TO 'history_other'@'%'")
         .unwrap();
     assert_eq!(
@@ -1438,6 +1492,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
 
     session
+        .node_conn()
         .execute_write("RENAME USER 'history_probe'@'%' TO 'history_renamed'@'%'")
         .unwrap();
     assert_eq!(
@@ -1456,12 +1511,14 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
     assert_eq!(
         session
+            .node_conn()
             .execute_write("SET PASSWORD FOR 'history_renamed'@'%' = 'first'")
             .unwrap_err()
             .code,
         3638
     );
     session
+        .node_conn()
         .execute_write(
             "ALTER USER 'history_renamed'@'%' IDENTIFIED WITH caching_sha2_password BY 'first'",
         )
@@ -1474,6 +1531,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
         [["1"]]
     );
     session
+        .node_conn()
         .execute_write("DROP USER 'history_renamed'@'%'")
         .unwrap();
     assert_eq!(
@@ -1489,8 +1547,9 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
 fn cluster_account_locking_policy_survives_unrelated_account_writes() {
     let (stack, users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(904)).unwrap();
-    session.execute_write("CREATE USER 'locking_probe'@'%' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 7 COMMENT 'keep'").unwrap();
+    session.node_conn().execute_write("CREATE USER 'locking_probe'@'%' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 7 COMMENT 'keep'").unwrap();
     session
+        .node_conn()
         .execute_write("ALTER USER 'locking_probe'@'%' PASSWORD EXPIRE NEVER")
         .unwrap();
     let attributes = displayed(rows(
@@ -1501,8 +1560,9 @@ fn cluster_account_locking_policy_survives_unrelated_account_writes() {
     assert_eq!(value["Password_locking"]["failed_login_attempts"], 3);
     assert_eq!(value["Password_locking"]["password_lock_time_days"], 7);
     assert_eq!(value["metadata"]["comment"], "keep");
-    session.execute_write(r#"UPDATE mysql.user SET User_attributes='{"Password_locking":{"failed_login_attempts":3,"password_lock_time_days":7,"failed_login_count":2,"auto_account_locked":"Y","auto_locked_last_changed":"Sat Feb  3 04:05:06 UTC 2001"},"metadata":{"comment":"keep"},"additional_password":"preserve"}' WHERE User='locking_probe'"#).unwrap();
+    session.node_conn().execute_write(r#"UPDATE mysql.user SET User_attributes='{"Password_locking":{"failed_login_attempts":3,"password_lock_time_days":7,"failed_login_count":2,"auto_account_locked":"Y","auto_locked_last_changed":"Sat Feb  3 04:05:06 UTC 2001"},"metadata":{"comment":"keep"},"additional_password":"preserve"}' WHERE User='locking_probe'"#).unwrap();
     session
+        .node_conn()
         .execute_write("ALTER USER 'locking_probe'@'%' PASSWORD EXPIRE DEFAULT")
         .unwrap();
     let stored = users
@@ -1513,6 +1573,7 @@ fn cluster_account_locking_policy_survives_unrelated_account_writes() {
     assert!(stored.auto_account_locked);
     assert_eq!(stored.auto_locked_last_changed, 981_173_106);
     session
+        .node_conn()
         .execute_write("ALTER USER 'locking_probe'@'%' ACCOUNT UNLOCK")
         .unwrap();
     let reset = users
@@ -1523,6 +1584,7 @@ fn cluster_account_locking_policy_survives_unrelated_account_writes() {
     assert!(!reset.auto_account_locked);
     assert!(reset.auto_locked_last_changed > stored.auto_locked_last_changed);
     session
+        .node_conn()
         .execute_write(
             "ALTER USER 'locking_probe'@'%' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0",
         )
@@ -1544,12 +1606,17 @@ fn cluster_account_drop_persists_through_its_own_transaction() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(901)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE USER 'drop_probe'@'%' IDENTIFIED BY 'pw'")
         .unwrap();
     session
+        .node_conn()
         .execute_write("GRANT SELECT ON test.* TO 'drop_probe'@'%'")
         .unwrap();
-    session.execute_write("DROP USER 'drop_probe'@'%'").unwrap();
+    session
+        .node_conn()
+        .execute_write("DROP USER 'drop_probe'@'%'")
+        .unwrap();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -1566,12 +1633,14 @@ fn cluster_account_drop_persists_through_its_own_transaction() {
     );
     assert_eq!(
         session
+            .node_conn()
             .execute_write("DROP USER 'drop_probe'@'%'")
             .unwrap_err()
             .code,
         1396
     );
     session
+        .node_conn()
         .execute_write("CREATE USER 'drop_probe'@'%' IDENTIFIED BY 'newpw'")
         .unwrap();
     assert_eq!(
@@ -1599,16 +1668,23 @@ fn a_held_record_lock_does_not_suppress_a_new_duplicate_assertion() {
         "SELECT * FROM test.held_assertion WHERE id=1 FOR UPDATE",
         "SELECT * FROM test.held_assertion WHERE v=10 FOR UPDATE",
     ] {
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
         assert_eq!(displayed(rows(&mut session, select)), [["1", "10"]]);
         let error = session
+            .node_conn()
             .execute_write("INSERT INTO test.held_assertion VALUES (1,99)")
             .err();
-        session.control_transaction("ROLLBACK").unwrap();
+        session.node_conn().control_transaction("ROLLBACK").unwrap();
         assert!(matches!(error, Some(ref error) if error.code == 1062),
             "an already-owned existing key must still reject the INSERT at statement end: {error:?}");
     }
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert!(rows(
         &mut session,
         "SELECT * FROM test.held_assertion WHERE id=3 FOR UPDATE"
@@ -1622,7 +1698,7 @@ fn a_held_record_lock_does_not_suppress_a_new_duplicate_assertion() {
         &mut session,
         "UPDATE test.held_assertion SET v=31 WHERE id=3",
     );
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -1691,6 +1767,7 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         .open_session(session_context(118))
         .expect("reader");
     reader
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin reader");
     for dirty in [true, false] {
@@ -1701,9 +1778,11 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
             );
         } else {
             reader
+                .node_conn()
                 .control_transaction("ROLLBACK")
                 .expect("rollback reader");
             reader
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin reader");
         }
@@ -1721,12 +1800,11 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         );
     }
     reader
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback reader");
 
-    let assert_binding = |reader: &mut crate::domain::cluster_session_node::ClusterServerSession,
-                          expected: &str,
-                          phase: &str| {
+    let assert_binding = |reader: &mut crate::Session, expected: &str, phase: &str| {
         let (result, ops) = tidb_executor::storage::capture_storage_ops(|| {
             rows(reader, "SELECT v FROM test.binding_visibility WHERE v=20")
         });
@@ -1743,6 +1821,7 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     };
     // Uncommitted binding writes must not enter any session's planner image.
     writer
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin writer");
     rows(
@@ -1752,6 +1831,7 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     assert_binding(&mut reader, "1", "reader during uncommitted disable");
     assert_binding(&mut writer, "1", "writer during uncommitted disable");
     writer
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback writer");
     assert_binding(&mut reader, "1", "after rollback");
@@ -1761,10 +1841,14 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         .enumerate()
     {
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
         rows(&mut writer, &format!("UPDATE mysql.bind_info SET status='{status}', update_time='2026-09-07 00:00:0{}' WHERE sql_digest='binding_visibility_probe'", version + 1));
-        writer.control_transaction("COMMIT").expect("commit writer");
+        writer
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit writer");
         for _ in 0..3 {
             assert_binding(&mut reader, expected, status);
         }
@@ -1791,45 +1875,54 @@ fn unchanged_updates_lock_only_matched_rows() {
         "INSERT INTO test.unchanged_lock VALUES (1,20),(2,30)",
     );
     writer
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin writer");
     let write = writer
+        .node_conn()
         .execute_write("UPDATE test.unchanged_lock SET v=v WHERE v=20")
         .expect("unchanged update")
         .expect("write result");
     assert_eq!(write.affected_rows, 0);
     reader
+        .node_conn()
         .execute_write("SET innodb_lock_wait_timeout=1")
         .expect("bounded lock wait");
     reader
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin reader");
     // Go TestSelectForUpdateNoWait and TestInnodbLockWaitTimeout: range
     // locking must preserve NOWAIT, WAIT n and the session timeout.
     for (clause, code) in [("NOWAIT", 3572), ("WAIT 1", 1205), ("", 1205)] {
         let sql = format!("SELECT v FROM test.unchanged_lock WHERE v=20 FOR UPDATE {clause}");
-        let result = reader.execute(&sql);
+        let result = reader.node_conn().execute(&sql);
         assert!(
             matches!(result, Err(ref error) if error.code == code),
             "locking range {clause} must report {code}; got {:?}",
             result.as_ref().err()
         );
     }
-    let result = reader.execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=1");
+    let result = reader
+        .node_conn()
+        .execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=1");
     assert!(
         matches!(result, Err(ref error) if error.code == 1205),
         "the unchanged matched row must remain locked; error={:?}",
         result.as_ref().err()
     );
     let untouched = reader
+        .node_conn()
         .execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=2")
         .expect("a rejected row is not locked")
         .expect("write result");
     assert_eq!(untouched.affected_rows, 1);
     writer
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("release writer");
     reader
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("release reader");
 }
@@ -1862,9 +1955,11 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
         "INSERT INTO test.binding_command_visibility VALUES (1,20)",
     );
     writer
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
     writer
+        .node_conn()
         .execute_write("UPDATE test.binding_command_visibility SET v=21 WHERE id=1")
         .expect("staged write");
     rows(&mut writer, "CREATE GLOBAL BINDING FOR SELECT v FROM test.binding_command_visibility WHERE v=20 USING SELECT v FROM test.binding_command_visibility USE INDEX() WHERE v=20");
@@ -1889,6 +1984,7 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
         "binding committed while caller transaction remains open"
     );
     writer
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback user data");
     assert_eq!(
@@ -1918,9 +2014,11 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
         ),
     ] {
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin user transaction");
         writer
+            .node_conn()
             .execute_write("UPDATE test.binding_command_visibility SET v=21 WHERE id=1")
             .expect("staged user write");
         rows(&mut writer, command);
@@ -1945,6 +2043,7 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
             [["20"]]
         );
         writer
+            .node_conn()
             .control_transaction("ROLLBACK")
             .expect("rollback user transaction");
         assert_eq!(
@@ -1955,33 +2054,34 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
     }
 }
 
-fn handle_stats_schema_change(session: &mut ClusterServerSession, event: &SchemaChangeEvent) {
+fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) {
     session
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("stats subscriber transaction begins");
-    if let Err(error) = session.stage_stats_notifier_event(event) {
+    let staged = session.node_conn().stage_stats_notifier_event(event);
+    if let Err(error) = staged {
         session
+            .node_conn()
             .control_transaction("ROLLBACK")
             .expect("failed stats subscriber transaction rolls back");
         panic!("stats subscriber handles the source event: {error:?}");
     }
     session
+        .node_conn()
         .control_transaction("COMMIT")
         .expect("stats subscriber transaction commits");
 }
 
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
 // statistics. This fixture does not campaign the background statistics owner.
-fn drain_stats_ddl_events(
-    factory: &Arc<Domain>,
-    session: &mut ClusterServerSession,
-) {
+fn drain_stats_ddl_events(factory: &Arc<Domain>, session: &mut Session) {
     let notifier = super::super::ddl_notifier::build_notifier(factory, Duration::ZERO);
     drain_stats_ddl_events_with_notifier(session, notifier);
 }
 
 fn drain_stats_ddl_events_with_notifier(
-    session: &mut ClusterServerSession,
+    session: &mut Session,
     notifier: Arc<tidb_ddl_notifier::DdlNotifier>,
 ) {
     tidb_owner::Listener::on_become_owner(notifier.as_ref());
@@ -2120,6 +2220,7 @@ fn exchange_partition_validates_and_swaps_real_rows_atomically() {
     rows(&mut session, "INSERT INTO exchange_bad_pt VALUES (2)");
     rows(&mut session, "INSERT INTO exchange_bad_nt VALUES (15)");
     let error = match session
+        .node_conn()
         .execute("ALTER TABLE exchange_bad_pt EXCHANGE PARTITION p0 WITH TABLE exchange_bad_nt")
     {
         Err(error) => error,
@@ -2256,10 +2357,7 @@ fn check_constraint_runs_through_the_owner_job_queue() {
         "SET @@global.tidb_enable_check_constraint = ON",
     );
     assert!(
-        session
-            .session
-            .ddl_statement_context()
-            .enable_check_constraint(),
+        session.ddl_statement_context().enable_check_constraint(),
         "the query-shaped DDL context must read the enabled global variable"
     );
     rows(&mut session, "CREATE TABLE queued_check (a INT)");
@@ -2282,7 +2380,10 @@ fn check_constraint_runs_through_the_owner_job_queue() {
         shown[0][1].contains("CONSTRAINT `positive` CHECK ((`a` > 0))"),
         "the terminal owner phase must publish the CHECK: {shown:?}"
     );
-    let error = match session.execute("INSERT INTO queued_check VALUES (-1)") {
+    let error = match session
+        .node_conn()
+        .execute("INSERT INTO queued_check VALUES (-1)")
+    {
         Err(error) => error,
         Ok(_) => panic!("the owner-published CHECK must be enforced"),
     };
@@ -2749,7 +2850,7 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
         |context| {
             context.with_session(|session| {
                 let analyze = Arc::new(KillingSystemAnalyze {
-                    inner: session.domain.analyze(),
+                    inner: session.node.domain.analyze(),
                     processes: factory.processes(),
                     factory: Arc::downgrade(&factory),
                     process_id: Arc::clone(&process_id),
@@ -2851,7 +2952,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             context
                 .with_session(|session| {
                     let analyze = Arc::new(ObservedSystemAnalyze {
-                        inner: session.domain.analyze(),
+                        inner: session.node.domain.analyze(),
                         processes: factory.processes(),
                         kill,
                         process_id,
@@ -3382,14 +3483,17 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
         );
         let key = format!("assert-existence/{id}").into_bytes();
         for existing in [false, true] {
-            session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+            session
+                .node_conn()
+                .control_transaction("BEGIN PESSIMISTIC")
+                .unwrap();
             // Restricted SQL locks its planned keys without loading values,
             // then stages them. Both absent and existing records must survive
             // the native client's assertion check from the lock metadata.
             super::super::transactions::stage_pessimistic_statement(
-                session.txn.explicit.as_deref().unwrap(),
-                &session.buffer,
-                session.session.lock_wait_timeout(),
+                session.node().txn.explicit.as_deref().unwrap(),
+                &session.node().buffer,
+                session.lock_wait_timeout(),
                 |_, _| {
                     let mutation = if existing {
                         BufferMutation::put_existing(key.clone(), b"updated".to_vec())
@@ -3406,7 +3510,7 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
                 },
             )
             .unwrap();
-            session.control_transaction("COMMIT").unwrap();
+            session.node_conn().control_transaction("COMMIT").unwrap();
         }
     }
 }
@@ -3576,9 +3680,9 @@ fn ddl_after_loaded_statistics_matches_go() {
     // Go keeps Domain.StatsHandle independently of an InfoSchema refresh.
     // Demand must still reload evicted payloads after a stats-only refresh
     // and after the DDL below replaces the connection's schema catalog.
-    let check_reload = |session: &mut ClusterServerSession| {
+    let check_reload = |session: &mut Session| {
         let peer = stack.factory.open_session(session_context(76)).unwrap();
-        let peer_catalog = peer.session.shared_catalog();
+        let peer_catalog = peer.shared_catalog();
         assert!(!peer_catalog
             .lock()
             .unwrap()
@@ -3657,11 +3761,10 @@ fn ddl_after_loaded_statistics_matches_go() {
                     .table_statistics_in(&peer_catalog.stats_handle(), table_id)
                     .unwrap(),
                 &session
-                    .session
                     .shared_catalog()
                     .lock()
                     .unwrap()
-                    .table_statistics_in(&session.session.stats_handle(), table_id)
+                    .table_statistics_in(&session.stats_handle(), table_id)
                     .unwrap(),
             ),
             "sessions must share the same converted statistics"
@@ -4634,9 +4737,9 @@ fn add_column_ddl_initializes_statistics_like_go() {
         assert!(column.dependences.contains("a"));
         column.id
     };
-    session.rebuild_catalog_if_stale();
+    session.node_conn().rebuild_catalog_if_stale();
     {
-        let catalog = session.session.shared_catalog();
+        let catalog = session.shared_catalog();
         let catalog = catalog.lock().expect("session catalog is available");
         let tidb_executor::driver::TableEntry::Kv(table) = catalog
             .table_in("test", "stats_add_column")
@@ -5651,7 +5754,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
         .factory
         .open_session(session_context(76))
         .expect("session opens");
-    let assert_no_stats = |session: &mut ClusterServerSession, ids: &[i64]| {
+    let assert_no_stats = |session: &mut Session, ids: &[i64]| {
         let ids = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
         assert_eq!(
             displayed(rows(
@@ -5943,7 +6046,7 @@ fn modify_column_ddl_events_follow_go() {
         )
     };
 
-    let remove_column_stats = |session: &mut ClusterServerSession| {
+    let remove_column_stats = |session: &mut Session| {
         rows(
             session,
             &format!(
@@ -5959,14 +6062,14 @@ fn modify_column_ddl_events_follow_go() {
             ),
         );
     };
-    let notifier_rows = |session: &mut ClusterServerSession| {
+    let notifier_rows = |session: &mut Session| {
         displayed(rows(
             session,
             "SELECT count(*) FROM mysql.tidb_ddl_notifier",
         ))[0][0]
             .clone()
     };
-    let assert_absent = |session: &mut ClusterServerSession| {
+    let assert_absent = |session: &mut Session| {
         assert_eq!(
             displayed(rows(
                 session,
@@ -6034,7 +6137,9 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
     assert_eq!(
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6042,7 +6147,9 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
     rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
     let table_id = session
-        .domain.historical_stats_worker
+        .node()
+        .domain
+        .historical_stats_worker
         .get_one_historical_stats_table();
     assert!(table_id > 0, "a successful ANALYZE posts its table ID");
     let handle = ClusterHistoricalStatsHandle {
@@ -6052,7 +6159,9 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
-        .domain.historical_stats_worker
+        .node()
+        .domain
+        .historical_stats_worker
         .dump_historical_stats(
             table_id,
             &handle,
@@ -6121,7 +6230,9 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     rows(&mut session, "CREATE TABLE history_gc (a INT)");
     rows(&mut session, "ANALYZE TABLE history_gc");
     let table_id = session
-        .domain.historical_stats_worker
+        .node()
+        .domain
+        .historical_stats_worker
         .get_one_historical_stats_table();
     let handle = ClusterHistoricalStatsHandle {
         transactions: Arc::clone(&stack.factory.transactions),
@@ -6130,7 +6241,9 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
-        .domain.historical_stats_worker
+        .node()
+        .domain
+        .historical_stats_worker
         .dump_historical_stats(
             table_id,
             &handle,
@@ -6681,13 +6794,17 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     rows(&mut session, "ANALYZE TABLE history_partition");
     assert_eq!(
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
         partition_id
     );
     assert_eq!(
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6699,10 +6816,14 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     rows(&mut session, "ANALYZE TABLE history_partition");
     let mut queued = vec![
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
     ];
     queued.sort_unstable();
@@ -6711,7 +6832,9 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     assert_eq!(queued, expected);
     assert_eq!(
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6724,7 +6847,9 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     };
     for table_id in queued {
         session
-            .domain.historical_stats_worker
+            .node()
+            .domain
+            .historical_stats_worker
             .dump_historical_stats(
                 table_id,
                 &handle,
@@ -9687,9 +9812,9 @@ fn completed_empty_transaction_does_not_lose_the_next_autocommit_insert() {
         "CREATE TABLE test.txn_lifetime (id int primary key, v int)",
     );
     rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (1, 10)");
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT v FROM test.txn_lifetime WHERE id = 1");
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (2, 20)");
 
     rows(
@@ -9698,20 +9823,29 @@ fn completed_empty_transaction_does_not_lose_the_next_autocommit_insert() {
     );
     rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (3, 30)");
     for (end, id) in [("COMMIT", 4), ("ROLLBACK", 5)] {
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
         rows(
             &mut session,
             "SELECT v FROM test.txn_lifetime WHERE id = 1 FOR UPDATE",
         );
-        session.control_transaction(end).unwrap();
+        session.node_conn().control_transaction(end).unwrap();
         rows(
             &mut session,
             &format!("INSERT INTO test.txn_lifetime VALUES ({id}, {})", id * 10),
         );
     }
-    session.execute_write("SET autocommit = 0").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET autocommit = 0")
+        .unwrap();
     rows(&mut session, "SELECT v FROM test.txn_lifetime WHERE id = 1");
-    session.execute_write("SET autocommit = 1").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET autocommit = 1")
+        .unwrap();
     rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (6, 60)");
 
     // Another connection proves the INSERT was persisted, not merely staged.
@@ -9744,7 +9878,10 @@ fn failed_autocommit_update_does_not_lose_the_next_insert() {
         &mut session,
         "INSERT INTO test.failed_txn_lifetime VALUES (1, 10), (2, 20)",
     );
-    let error = match session.execute("UPDATE test.failed_txn_lifetime SET id = 2 WHERE id = 1") {
+    let error = match session
+        .node_conn()
+        .execute("UPDATE test.failed_txn_lifetime SET id = 2 WHERE id = 1")
+    {
         Err(error) => error,
         Ok(_) => panic!("the conflicting UPDATE must fail"),
     };
@@ -9776,26 +9913,36 @@ fn failed_explicit_statement_retains_native_transaction_and_savepoints() {
         &mut session,
         "INSERT INTO test.statement_lifetime VALUES (1, 10), (2, 20)",
     );
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(
         &mut session,
         "UPDATE test.statement_lifetime SET v = 11 WHERE id = 1",
     );
-    session.control_transaction("SAVEPOINT keep_first").unwrap();
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT keep_first")
+        .unwrap();
     rows(
         &mut session,
         "INSERT INTO test.statement_lifetime VALUES (3, 30)",
     );
-    let error = match session.execute("UPDATE test.statement_lifetime SET id = 2 WHERE id = 1") {
+    let error = match session
+        .node_conn()
+        .execute("UPDATE test.statement_lifetime SET id = 2 WHERE id = 1")
+    {
         Err(error) => error,
         Ok(_) => panic!("the conflicting UPDATE must fail"),
     };
     assert_eq!(error.code, 1062);
-    assert!(session.buffer.native_owner().is_some());
+    assert!(session.node().buffer.native_owner().is_some());
     session
+        .node_conn()
         .control_transaction("ROLLBACK TO keep_first")
         .unwrap();
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     rows(
         &mut session,
         "INSERT INTO test.statement_lifetime VALUES (4, 40)",
@@ -9898,7 +10045,10 @@ fn racing_pessimistic_updates_both_commit_with_serial_effect() {
     rows(&mut first, "INSERT INTO test.race_rw VALUES (1, 0)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     rows(&mut first, "UPDATE test.race_rw SET v = v + 1 WHERE id = 1");
@@ -9909,7 +10059,10 @@ fn racing_pessimistic_updates_both_commit_with_serial_effect() {
                 .open_session(session_context(81))
                 .expect("session opens");
             assert_eq!(
-                second.control_transaction("BEGIN").expect("begin"),
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
                 Some(true)
             );
             // Blocks on the first transaction's pessimistic row lock until
@@ -9918,13 +10071,19 @@ fn racing_pessimistic_updates_both_commit_with_serial_effect() {
                 &mut second,
                 "UPDATE test.race_rw SET v = v + 1 WHERE id = 1",
             );
-            second.control_transaction("COMMIT").expect("commit");
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
         });
         // Give the contender time to reach the lock wait, so the interesting
         // interleaving -- blocked UPDATE, then the winner's COMMIT -- is the
         // one exercised. The assertions hold under any interleaving.
         std::thread::sleep(std::time::Duration::from_millis(200));
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join()
     });
     second.expect("the contending transaction commits after waiting the lock out");
@@ -9967,7 +10126,10 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
     rows(&mut first, "INSERT INTO test.retry_range VALUES (7, 10)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     // Take the row lock so the contender below must wait and then retry.
@@ -9982,7 +10144,10 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
                 .open_session(session_context(87))
                 .expect("session opens");
             assert_eq!(
-                second.control_transaction("BEGIN").expect("begin"),
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
                 Some(true)
             );
             // Blocks on the first transaction's lock, then retries at an
@@ -9991,10 +10156,16 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
                 &mut second,
                 "UPDATE test.retry_range SET v = v + 1 WHERE v > 0",
             );
-            second.control_transaction("COMMIT").expect("commit");
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join()
     });
     second.expect("the contending transaction commits after waiting the lock out");
@@ -10037,7 +10208,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     rows(&mut reader, "INSERT INTO test.lock_cache VALUES (1, 10)");
 
     assert_eq!(
-        reader.control_transaction("BEGIN").expect("begin"),
+        reader
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     assert_eq!(
@@ -10060,7 +10234,9 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     // The LOCKING read may see the newer row -- it takes its own
     // `for_update_ts`, which is Go's behaviour too. This is what fills the
     // lock cache.
-    let _ = reader.execute("SELECT v FROM test.lock_cache WHERE id = 1 FOR UPDATE");
+    let _ = reader
+        .node_conn()
+        .execute("SELECT v FROM test.lock_cache WHERE id = 1 FOR UPDATE");
 
     assert_eq!(
         displayed(rows(
@@ -10071,7 +10247,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
         "the plain read that follows still reads at start_ts: the lock cache \
          belongs to locking reads only (`point_get.go:677`)"
     );
-    reader.control_transaction("ROLLBACK").expect("rollback");
+    reader
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
 }
 
 /// `BEGIN OPTIMISTIC` keeps Go's optimistic contract: neither `UPDATE`
@@ -10095,6 +10274,7 @@ fn racing_optimistic_updates_still_conflict_at_commit() {
     rows(&mut first, "INSERT INTO test.race_opt VALUES (1, 0)");
 
     first
+        .node_conn()
         .control_transaction("BEGIN OPTIMISTIC")
         .expect("begin");
     rows(
@@ -10108,16 +10288,21 @@ fn racing_optimistic_updates_still_conflict_at_commit() {
         .open_session(session_context(85))
         .expect("session opens");
     second
+        .node_conn()
         .control_transaction("BEGIN OPTIMISTIC")
         .expect("begin");
     rows(
         &mut second,
         "UPDATE test.race_opt SET v = v + 1 WHERE id = 1",
     );
-    second.control_transaction("COMMIT").expect("commit");
+    second
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 
     // The first transaction's prewrite now finds the newer commit: 9007.
     let refused = first
+        .node_conn()
         .control_transaction("COMMIT")
         .expect_err("an optimistic loser reports the conflict at COMMIT");
     assert_eq!(
@@ -10158,16 +10343,23 @@ fn begin_inside_a_transaction_implicitly_commits_it() {
         "INSERT INTO test.implicit_commit VALUES (1, 0)",
     );
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     rows(
         &mut session,
         "UPDATE test.implicit_commit SET v = 7 WHERE id = 1",
     );
     // No COMMIT: the next BEGIN carries it implicitly.
     session
+        .node_conn()
         .control_transaction("BEGIN")
         .expect("BEGIN with an open transaction implicitly commits, never conflicts");
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 
     assert_eq!(
         displayed(rows(
@@ -10218,7 +10410,7 @@ fn prepared_select_replans_after_another_session_changes_columns() {
                 "SELECT * FROM test.{table} WHERE id {comparison} ?"
             ))
             .expect("prepare");
-        let select = |session: &mut ClusterServerSession| {
+        let select = |session: &mut Session| {
             let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = session
                 .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
                 .expect("execute")
@@ -10349,6 +10541,7 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
         .open_session(session_context(104))
         .expect("session opens");
     writer
+        .node_conn()
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     let statement = writer
@@ -10356,6 +10549,7 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
         .expect("prepare");
 
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -10373,6 +10567,7 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
     };
     assert_eq!(error.code, 1205, "{}", error.message);
     holder
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback holder");
     assert_eq!(
@@ -10397,6 +10592,7 @@ fn a_point_lock_inside_execution_shows_the_transaction_lock_waiting() {
     );
     rows(&mut holder, "INSERT INTO test.lockstate VALUES (1, 1)");
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -10410,14 +10606,18 @@ fn a_point_lock_inside_execution_shows_the_transaction_lock_waiting() {
                 .open_session(session_context(106))
                 .expect("session opens");
             writer
+                .node_conn()
                 .execute_write("SET SESSION innodb_lock_wait_timeout = 3")
                 .expect("set lock wait");
             writer
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin writer");
             started_tx.send(()).expect("writer started");
-            let result = writer.execute_write("UPDATE test.lockstate SET v = 2 WHERE id = 1");
-            let _ = writer.control_transaction("ROLLBACK");
+            let result = writer
+                .node_conn()
+                .execute_write("UPDATE test.lockstate SET v = 2 WHERE id = 1");
+            let _ = writer.node_conn().control_transaction("ROLLBACK");
             result.map(|_| ())
         });
         started_rx.recv().expect("writer starts");
@@ -10436,6 +10636,7 @@ fn a_point_lock_inside_execution_shows_the_transaction_lock_waiting() {
             }
         }
         holder
+            .node_conn()
             .control_transaction("ROLLBACK")
             .expect("release holder");
         waiter
@@ -10463,9 +10664,11 @@ fn a_pessimistic_range_update_reports_its_advanced_for_update_ts() {
     );
     rows(&mut session, "INSERT INTO test.futs VALUES (1, 1), (2, 2)");
     session
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
     session
+        .node_conn()
         .execute_write("UPDATE test.futs SET v = v + 1 WHERE v > 0")
         .expect("update");
     let info = rows(&mut session, "SELECT @@tidb_last_query_info");
@@ -10480,7 +10683,10 @@ fn a_pessimistic_range_update_reports_its_advanced_for_update_ts() {
         for_update_ts > start_ts,
         "for_update_ts {for_update_ts} must be the statement's fresh timestamp above {start_ts}"
     );
-    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
 }
 
 /// Go's locking point reads lock inside `Next` exactly the keys their
@@ -10543,25 +10749,32 @@ fn locking_point_reads_hold_the_keys_their_isolation_names() {
         .open_session(session_context(111))
         .expect("session opens");
     contender
+        .node_conn()
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     for (isolation, statement, probe, held) in cases {
         writer
+            .node_conn()
             .execute_write(&format!(
                 "SET SESSION transaction_isolation = '{isolation}'"
             ))
             .expect("set isolation");
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
-        writer.execute_write(statement).expect("statement runs");
+        writer
+            .node_conn()
+            .execute_write(statement)
+            .expect("statement runs");
         contender
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin contender");
         let result = if probe.starts_with("SELECT") {
-            contender.execute(probe).map(|_| ())
+            contender.node_conn().execute(probe).map(|_| ())
         } else {
-            contender.execute_write(probe).map(|_| ())
+            contender.node_conn().execute_write(probe).map(|_| ())
         };
         let probed = match result {
             Ok(()) => false,
@@ -10574,8 +10787,14 @@ fn locking_point_reads_hold_the_keys_their_isolation_names() {
                 true
             }
         };
-        contender.control_transaction("ROLLBACK").expect("rollback");
-        writer.control_transaction("ROLLBACK").expect("rollback");
+        contender
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
+        writer
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
         assert_eq!(probed, held, "{isolation}: {statement} / {probe}");
     }
 }
@@ -10603,7 +10822,7 @@ fn an_update_in_a_transaction_stages_untouched_index_entries_like_go() {
         &mut session,
         "INSERT INTO test.untouched VALUES (1, 10, 100, 1), (2, 20, 200, 2)",
     );
-    let keys = |session: &mut crate::domain::cluster_session_node::ClusterServerSession| {
+    let keys = |session: &mut crate::Session| {
         displayed(rows(
             session,
             "SELECT MEM_BUFFER_KEYS FROM information_schema.TIDB_TRX \
@@ -10611,9 +10830,11 @@ fn an_update_in_a_transaction_stages_untouched_index_entries_like_go() {
         ))
     };
     session
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
     session
+        .node_conn()
         .execute_write("UPDATE test.untouched SET v = v + 1 WHERE id = 1")
         .expect("update");
     assert_eq!(keys(&mut session), [["3"]]);
@@ -10625,11 +10846,16 @@ fn an_update_in_a_transaction_stages_untouched_index_entries_like_go() {
         [["2"]]
     );
     session
+        .node_conn()
         .execute_write("UPDATE test.untouched SET v = v + 1 WHERE v > 1")
         .expect("update");
     assert_eq!(keys(&mut session), [["6"]]);
-    session.control_transaction("COMMIT").expect("commit");
     session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
+    session
+        .node_conn()
         .execute_write("ADMIN CHECK TABLE test.untouched")
         .expect("the untouched entries were not committed");
     assert_eq!(
@@ -10657,7 +10883,10 @@ fn a_prepared_point_update_locks_its_row_before_reading_it() {
     rows(&mut first, "INSERT INTO test.fold VALUES (1, 10)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     let statement = first
@@ -10685,14 +10914,23 @@ fn a_prepared_point_update_locks_its_row_before_reading_it() {
                 .open_session(session_context(91))
                 .expect("session opens");
             assert_eq!(
-                second.control_transaction("BEGIN").expect("begin"),
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
                 Some(true)
             );
             rows(&mut second, "UPDATE test.fold SET v = v + 100 WHERE id = 1");
-            second.control_transaction("COMMIT").expect("commit");
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join()
     });
     second.expect("the contending transaction commits after waiting the prelock out");
@@ -10726,7 +10964,10 @@ fn a_text_point_update_locks_its_row_before_reading_it() {
     rows(&mut first, "INSERT INTO test.foldtxt VALUES (1, 10)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     let affected = {
@@ -10743,17 +10984,26 @@ fn a_text_point_update_locks_its_row_before_reading_it() {
                 .open_session(session_context(97))
                 .expect("session opens");
             assert_eq!(
-                second.control_transaction("BEGIN").expect("begin"),
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
                 Some(true)
             );
             rows(
                 &mut second,
                 "UPDATE test.foldtxt SET v = v + 100 WHERE id = 1",
             );
-            second.control_transaction("COMMIT").expect("commit");
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join()
     });
     second.expect("the contending transaction commits after waiting the prelock out");
@@ -10797,6 +11047,7 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
         "INSERT INTO test.noprelock VALUES (0, 0), (1, 1)",
     );
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -10808,6 +11059,7 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
         .open_session(session_context(100))
         .expect("session opens");
     writer
+        .node_conn()
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     for (sql, value) in [
@@ -10817,9 +11069,11 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
         ("DELETE FROM test.noprelock WHERE id IN ('a', 'b')", "a"),
     ] {
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
         let error = writer
+            .node_conn()
             .execute_write(sql)
             .expect_err("the conversion fails the statement");
         assert_eq!(
@@ -10830,9 +11084,13 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
             ),
             "{sql} (1205 would be a wait on the held key 0)"
         );
-        writer.control_transaction("ROLLBACK").expect("rollback");
+        writer
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
     }
     holder
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback holder");
 }
@@ -10855,6 +11113,7 @@ fn a_point_write_that_fails_to_compile_takes_no_lock() {
     );
     rows(&mut holder, "INSERT INTO test.compilelock VALUES (1, 1)");
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -10866,6 +11125,7 @@ fn a_point_write_that_fails_to_compile_takes_no_lock() {
         .open_session(session_context(102))
         .expect("session opens");
     writer
+        .node_conn()
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     for (sql, message) in [
@@ -10879,9 +11139,11 @@ fn a_point_write_that_fails_to_compile_takes_no_lock() {
         ),
     ] {
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
         let error = writer
+            .node_conn()
             .execute_write(sql)
             .expect_err("the statement does not compile");
         assert_eq!(
@@ -10889,9 +11151,13 @@ fn a_point_write_that_fails_to_compile_takes_no_lock() {
             (1054, message),
             "{sql}"
         );
-        writer.control_transaction("ROLLBACK").expect("rollback");
+        writer
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
     }
     holder
+        .node_conn()
         .control_transaction("ROLLBACK")
         .expect("rollback holder");
 }
@@ -10916,7 +11182,10 @@ fn a_text_select_for_update_folds_its_read_into_its_lock() {
     rows(&mut first, "INSERT INTO test.foldsel VALUES (1, 10)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     assert_eq!(
@@ -10936,18 +11205,27 @@ fn a_text_select_for_update_folds_its_read_into_its_lock() {
                 .open_session(session_context(100))
                 .expect("session opens");
             assert_eq!(
-                second.control_transaction("BEGIN").expect("begin"),
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
                 Some(true)
             );
             rows(
                 &mut second,
                 "UPDATE test.foldsel SET v = v + 100 WHERE id = 1",
             );
-            second.control_transaction("COMMIT").expect("commit");
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
         rows(&mut first, "UPDATE test.foldsel SET v = v + 5 WHERE id = 1");
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join()
     });
     second.expect("the contending transaction commits after the folding reader commits");
@@ -11010,6 +11288,7 @@ fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
         ),
     ] {
         session
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin");
         let recorded = Arc::clone(&recorded);
@@ -11043,7 +11322,10 @@ fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
             (1, 0, 0),
             "{statement}: {labels:?}"
         );
-        session.control_transaction("COMMIT").expect("commit");
+        session
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         assert_eq!(
             displayed(rows(
                 &mut session,
@@ -11107,11 +11389,12 @@ fn locking_range_reselects_with_protocol(
         "INSERT INTO test.lock_range VALUES (1,1,1),(1,1,2),(1,1,3)",
     );
     first
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
     let query =
         format!("SELECT {projection} FROM test.lock_range WHERE w=1 AND d=1 {window} FOR UPDATE");
-    let query_rows = |session: &mut ClusterServerSession| {
+    let query_rows = |session: &mut Session| {
         if !prepared {
             return rows(session, &query);
         }
@@ -11162,11 +11445,15 @@ fn locking_range_reselects_with_protocol(
                 .open_session(session_context(111))
                 .expect("session opens");
             second
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin");
             started_tx.send(()).expect("signal begin");
             let result = flatten(query_rows(&mut second));
-            second.control_transaction("ROLLBACK").expect("rollback");
+            second
+                .node_conn()
+                .control_transaction("ROLLBACK")
+                .expect("rollback");
             result
         });
         started_rx.recv().expect("contender began");
@@ -11175,7 +11462,10 @@ fn locking_range_reselects_with_protocol(
             &mut first,
             "DELETE FROM test.lock_range WHERE w=1 AND d=1 AND id=1",
         );
-        first.control_transaction("COMMIT").expect("commit");
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
         contender.join().expect("contender finishes")
     });
     assert_eq!(
@@ -11205,6 +11495,7 @@ fn locking_queries_retain_unprojected_record_handles() {
             &format!("INSERT INTO test.{name} VALUES (1,10)"),
         );
         session
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin");
         assert_eq!(
@@ -11223,18 +11514,27 @@ fn locking_queries_retain_unprojected_record_handles() {
             [["1", "10"]],
             "hidden handles must not leak through wildcard projection"
         );
-        session.control_transaction("ROLLBACK").expect("rollback");
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
     }
     // Go checkLockClauseTables / planner_issue_test's aliased OF targets:
     // the untargeted joined table must remain available to another locker.
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     for target in ["h", "test.lock_heap"] {
         assert_eq!(displayed(rows(&mut session, &format!(
             "SELECT h.v FROM test.lock_heap h JOIN test.lock_integer i ON h.id=i.id FOR UPDATE OF {target}"
         ))), [["10"]]);
     }
     let mut contender = stack.factory.open_session(session_context(115)).unwrap();
-    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert_eq!(
         displayed(rows(
             &mut contender,
@@ -11243,13 +11543,16 @@ fn locking_queries_retain_unprojected_record_handles() {
         [["10"]]
     );
     assert!(
-        matches!(contender.execute("SELECT v FROM test.lock_heap WHERE v>0 FOR UPDATE NOWAIT"),
+        matches!(contender.node_conn().execute("SELECT v FROM test.lock_heap WHERE v>0 FOR UPDATE NOWAIT"),
         Err(error) if error.code == 3572)
     );
-    contender.control_transaction("ROLLBACK").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert!(
-        matches!(session.execute("SELECT v FROM test.lock_heap FOR UPDATE OF missing"),
+        matches!(session.node_conn().execute("SELECT v FROM test.lock_heap FOR UPDATE OF missing"),
         Err(error) if error.code == 1109)
     );
 }
@@ -11308,18 +11611,18 @@ fn a_where_subquery_keeps_the_select_lock_on_its_rows() {
         ),
     ] {
         session
-            .control_transaction("BEGIN PESSIMISTIC")
+            .node_conn().control_transaction("BEGIN PESSIMISTIC")
             .expect("begin");
         assert_eq!(displayed(rows(&mut session, locking)), [["1"]], "{locking}");
         contender
-            .control_transaction("BEGIN PESSIMISTIC")
+            .node_conn().control_transaction("BEGIN PESSIMISTIC")
             .expect("contender begins");
         assert!(
-            matches!(contender.execute(contended), Err(error) if error.code == 3572),
+            matches!(contender.node_conn().execute(contended), Err(error) if error.code == 3572),
             "{locking} left the row unlocked"
         );
-        contender.control_transaction("ROLLBACK").unwrap();
-        session.control_transaction("ROLLBACK").unwrap();
+        contender.node_conn().control_transaction("ROLLBACK").unwrap();
+        session.node_conn().control_transaction("ROLLBACK").unwrap();
     }
 }
 
@@ -11339,6 +11642,7 @@ fn a_locking_range_sees_rows_committed_after_begin() {
         "CREATE TABLE test.fresh_lock (id int primary key, v int)",
     );
     reader
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
     assert!(rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0").is_empty());
@@ -11348,7 +11652,10 @@ fn a_locking_range_sees_rows_committed_after_begin() {
         "SELECT id FROM test.fresh_lock WHERE id>0 ORDER BY id LIMIT 1 FOR UPDATE",
     ));
     let plain = rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0");
-    reader.control_transaction("ROLLBACK").expect("rollback");
+    reader
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
     assert_eq!(
         locked,
         [["1"]],
@@ -11403,6 +11710,7 @@ fn a_locking_batch_locks_missing_primary_keys() {
             rows(&mut first, "SET autocommit=0");
         } else {
             first
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin");
         }
@@ -11472,6 +11780,7 @@ fn a_locking_batch_locks_missing_primary_keys() {
             );
             // Release before asserting so failure cannot strand the writer.
             first
+                .node_conn()
                 .control_transaction("ROLLBACK")
                 .expect("release reader");
             contender.join().expect("writer finishes after release");
@@ -11490,6 +11799,7 @@ fn a_locking_batch_locks_missing_primary_keys() {
             [["1"], ["2"]]
         );
         first
+            .node_conn()
             .control_transaction("ROLLBACK")
             .expect("finish implicit read");
     }
@@ -11515,7 +11825,10 @@ fn a_failed_prelocked_update_releases_its_row() {
     rows(&mut first, "INSERT INTO test.foldfail VALUES (1, 10)");
 
     assert_eq!(
-        first.control_transaction("BEGIN").expect("begin"),
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     let statement = first
@@ -11531,12 +11844,18 @@ fn a_failed_prelocked_update_releases_its_row() {
         // A non-strict node coerces instead of failing; then there is no
         // post-lock failure to exercise and the release behavior above is
         // covered by the transaction-end path instead.
-        first.control_transaction("ROLLBACK").expect("rollback");
+        first
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
         return;
     }
     // The statement failed after its prelock; the transaction stays open.
     assert_eq!(
-        first.control_transaction("ROLLBACK").expect("rollback"),
+        first
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback"),
         Some(false)
     );
 
@@ -11546,11 +11865,17 @@ fn a_failed_prelocked_update_releases_its_row() {
         .open_session(session_context(94))
         .expect("session opens");
     assert_eq!(
-        second.control_transaction("BEGIN").expect("begin"),
+        second
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
         Some(true)
     );
     rows(&mut second, "UPDATE test.foldfail SET v = 99 WHERE id = 1");
-    second.control_transaction("COMMIT").expect("commit");
+    second
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 
     let mut after = factory
         .open_session(session_context(95))
@@ -11576,6 +11901,7 @@ fn analyze_sampling_memory_quota_rejects_then_session_recovers() {
     );
     rows(&mut session, "SET GLOBAL tidb_mem_quota_analyze = 1");
     let error = session
+        .node_conn()
         .execute_write("ANALYZE TABLE test.sample_quota WITH 1 SAMPLERATE")
         .expect_err("sample exceeds quota");
     assert!(
@@ -11601,8 +11927,11 @@ fn analyze_sampling_memory_quota_rejects_then_session_recovers() {
 fn cluster_create_table_foreign_key_resolves_parent_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut s = stack.factory.open_session(session_context(901)).expect("session");
-    let code = |s: &mut crate::domain::cluster_session_node::ClusterServerSession, sql: &str| {
-        s.execute_write(sql).err().map(|error| error.code)
+    let code = |s: &mut crate::Session, sql: &str| {
+        s.node_conn()
+            .execute_write(sql)
+            .err()
+            .map(|error| error.code)
     };
     rows(
         &mut s,
@@ -11636,7 +11965,9 @@ fn cluster_create_table_foreign_key_resolves_parent_like_go() {
         code(&mut s, "CREATE TABLE test.fk_c5 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_q(nope))"),
         Some(3734)
     );
-    s.execute_write("SET foreign_key_checks = 0").expect("fk checks off");
+    s.node_conn()
+        .execute_write("SET foreign_key_checks = 0")
+        .expect("fk checks off");
     assert_eq!(
         code(&mut s, "CREATE TABLE test.fk_c6 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_none(id))"),
         None
@@ -11657,12 +11988,13 @@ fn pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go() {
         &mut s,
         "CREATE TABLE test.pc (id INT PRIMARY KEY, a INT, b INT, d DATETIME, j JSON)",
     );
-    s.execute_write(
-        "INSERT INTO test.pc VALUES (1, 1, NULL, '2024-01-02 03:04:05', '\"x\"'), \
+    s.node_conn()
+        .execute_write(
+            "INSERT INTO test.pc VALUES (1, 1, NULL, '2024-01-02 03:04:05', '\"x\"'), \
          (2, 5, 7, NULL, NULL), (3, NULL, 2, '2020-05-06 00:00:00', '\"yy\"')",
     )
     .expect("insert");
-    let ids = |s: &mut crate::domain::cluster_session_node::ClusterServerSession, sql: &str| {
+    let ids = |s: &mut crate::Session, sql: &str| {
         displayed(rows(s, sql)).into_iter().map(|row| row[0].clone()).collect::<Vec<_>>()
     };
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CASE WHEN a > 2 THEN a ELSE 0 END > 1 ORDER BY id"), ["2"]);
@@ -11689,6 +12021,7 @@ fn pushed_conditionals_keep_the_request_timezone() {
         "CREATE TABLE test.cop_zone (id INT PRIMARY KEY, d DATETIME)",
     );
     session
+        .node_conn()
         .execute_write("INSERT INTO test.cop_zone VALUES (1, '2024-01-02 03:04:05')")
         .unwrap();
     for zone in ["+00:00", "+08:00", "America/New_York"] {
@@ -11721,19 +12054,22 @@ fn shared_update_record_uses_cluster_statement_buffer() {
         )),
         [["1", "11", "21"], ["2", "31", "41"]]
     );
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(
         &mut session,
         "INSERT INTO test.merged_update VALUES (3,50,60)",
     );
-    let before = session.buffer.snapshot();
-    let error = match session.execute("UPDATE test.merged_update a JOIN test.merged_update b ON a.id=b.id SET a.id=IF(a.id=1,11,3) WHERE a.id<3") {
+    let before = session.node().buffer.snapshot();
+    let error = match session.node_conn().execute("UPDATE test.merged_update a JOIN test.merged_update b ON a.id=b.id SET a.id=IF(a.id=1,11,3) WHERE a.id<3") {
         Err(error) => error,
         Ok(_) => panic!("the later duplicate must fail the statement"),
     };
     assert_eq!(error.code, 1062);
-    assert_eq!(session.buffer.snapshot(), before);
-    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(session.node().buffer.snapshot(), before);
+    session.node_conn().control_transaction("COMMIT").unwrap();
     let mut reader = stack.factory.open_session(session_context(684)).unwrap();
     assert_eq!(
         displayed(rows(
@@ -11752,6 +12088,7 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
     rows(&mut session, "SET sql_mode='STRICT_TRANS_TABLES'");
     rows(&mut session, "CREATE TABLE generated_policy (id INT PRIMARY KEY, a INT, b TINYINT AS (a) STORED, KEY idx(b))");
     let error = session
+        .node_conn()
         .execute_write("INSERT INTO generated_policy(id,a) VALUES (1,1000)")
         .unwrap_err();
     assert_eq!(error.code, 1264);
@@ -11879,7 +12216,7 @@ fn assert_analyze_preserves_generated_execution_error(
         "ALTER TABLE analyze_error ADD COLUMN b DOUBLE AS (cot(a)) VIRTUAL",
     );
     let (original_code, original_state, original_message) =
-        match session.execute("SELECT b FROM analyze_error") {
+        match session.node_conn().execute("SELECT b FROM analyze_error") {
             Err(error) => (error.code, error.state, error.message),
             Ok(mut result) => {
                 let error = result
@@ -11892,6 +12229,7 @@ fn assert_analyze_preserves_generated_execution_error(
         };
     assert_eq!((original_code, original_state), (1690, *b"22003"));
     let error = session
+        .node_conn()
         .execute_write("ANALYZE TABLE analyze_error")
         .expect_err("invalid virtual sample");
     assert_eq!((error.code, error.state), (1690, *b"22003"));
@@ -12152,12 +12490,12 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     rows(&mut session, "USE history_batch");
     rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");
     let ts: u64 = displayed(rows(&mut session, "SELECT @@tidb_current_ts"))[0][0]
         .parse()
         .unwrap();
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     std::thread::sleep(Duration::from_millis(5));
     rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
     rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
@@ -12170,6 +12508,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     );
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
     session
+        .node_conn()
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
         .unwrap();
     assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
@@ -12185,10 +12524,11 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         format!("SET tidb_snapshot='{ts}'"),
         "SET tidb_snapshot=DEFAULT".into(),
     ] {
-        assert_eq!(session.execute(&sql).err().unwrap().code, 1568);
+        assert_eq!(session.node_conn().execute(&sql).err().unwrap().code, 1568);
     }
     assert_eq!(
         session
+            .node_conn()
             .execute("SET tidb_snapshot=JSON_EXTRACT('invalid', '$')")
             .err()
             .unwrap()
@@ -12196,12 +12536,19 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         3140,
         "SET evaluates before refusing transaction changes"
     );
-    assert!(session.execute_write("UPDATE t SET v=30").is_err());
-    assert!(session.execute("SELECT * FROM t FOR UPDATE").is_err());
     assert!(session
+        .node_conn()
+        .execute_write("UPDATE t SET v=30")
+        .is_err());
+    assert!(session
+        .node_conn()
+        .execute("SELECT * FROM t FOR UPDATE")
+        .is_err());
+    assert!(session
+        .node_conn()
         .execute("EXPLAIN ANALYZE UPDATE t SET v=30")
         .is_err());
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
@@ -12209,10 +12556,12 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     );
     let future = ts + (1_000_000 << 18);
     assert!(session
+        .node_conn()
         .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {future}"))
         .is_err());
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&future));
     assert!(session
+        .node_conn()
         .execute(&format!("SET tidb_snapshot='{ts}'"))
         .err()
         .unwrap()
@@ -12228,21 +12577,28 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         "idle snapshot SET retains schema, not an active native timestamp"
     );
     assert!(session
+        .node_conn()
         .execute(&format!("SET tidb_snapshot='{future}'"))
         .is_err());
-    assert_eq!(session.session.vars().snapshot_ts(), ts);
+    assert_eq!(session.vars().snapshot_ts(), ts);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    assert!(session.execute_write("UPDATE t SET v=30").is_err());
     assert!(session
+        .node_conn()
+        .execute_write("UPDATE t SET v=30")
+        .is_err());
+    assert!(session
+        .node_conn()
         .execute("EXPLAIN ANALYZE UPDATE t SET v=30")
         .is_err());
     assert!(session
+        .node_conn()
         .execute_write("ALTER TABLE t ADD COLUMN forbidden INT")
         .is_err());
     assert!(session
+        .node_conn()
         .execute_write("CREATE DATABASE forbidden_history")
         .is_err());
     rows(&mut session, "SET autocommit=0");
@@ -12251,7 +12607,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         vec![vec!["1", "10"]]
     );
     assert!(
-        session.session.historical_read_ts().is_none(),
+        session.historical_read_ts().is_none(),
         "SnapshotTS is a statement pin"
     );
     rows(&mut session, "SET autocommit=1");
@@ -12276,16 +12632,16 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    let held = session.session.historical_read_ts().unwrap();
+    let held = session.historical_read_ts().unwrap();
     assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
     rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
     assert!(
-        session.session.historical_read_ts().is_none(),
+        session.historical_read_ts().is_none(),
         "a write starts an ordinary transaction"
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     rows(&mut session, "SET autocommit=1");
     rows(&mut session, "SET timestamp=0, tidb_read_staleness=0");
     rows(
@@ -12298,14 +12654,16 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     );
     rows(&mut session, "DEALLOCATE PREPARE history_query");
     session
+        .node_conn()
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
         .unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert!(
         !tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
         "rollback without a read retires the metadata snapshot"
     );
     session
+        .node_conn()
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
         .unwrap();
     drop(session);
@@ -12325,12 +12683,12 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
     std::thread::sleep(Duration::from_millis(5));
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");
     let ts: u64 = displayed(rows(&mut session, "SELECT @@tidb_current_ts"))[0][0]
         .parse()
         .unwrap();
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     let stamp = displayed(rows(
         &mut session,
         &format!("SELECT FROM_UNIXTIME({:.3})", (ts >> 18) as f64 / 1000.0),
@@ -12341,14 +12699,20 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
     let set = format!("SET tx_read_ts='{stamp}'");
     rows(&mut session, &set);
-    assert!(session.execute_write("UPDATE t SET v=99").is_err());
-    assert!(session.execute("SELECT * FROM t FOR UPDATE").is_err());
+    assert!(session
+        .node_conn()
+        .execute_write("UPDATE t SET v=99")
+        .is_err());
+    assert!(session
+        .node_conn()
+        .execute("SELECT * FROM t FOR UPDATE")
+        .is_err());
 
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.vars().txn_read_ts(), 0);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12366,21 +12730,23 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     rows(&mut session, "DEALLOCATE PREPARE hist");
     rows(&mut session, &set);
     assert!(session
+        .node_conn()
         .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {ts}"))
         .is_err());
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.vars().txn_read_ts(), 0);
     rows(&mut session, &set);
     assert!(session
+        .node_conn()
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
         .is_err());
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    assert!(session.execute(&set).is_err());
-    session.control_transaction("ROLLBACK").unwrap();
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert!(session.node_conn().execute(&set).is_err());
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
+    assert_eq!(session.vars().txn_read_ts(), 0);
     assert!(!tidb_txnkv::ACTIVE_START_TS
         .snapshot()
         .contains(&((ts >> 18) << 18)));
@@ -12394,7 +12760,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         "SET GLOBAL tidb_external_ts=DEFAULT".into(),
         format!("SET GLOBAL tidb_external_ts={}", ts + (1_000_000 << 18)),
     ] {
-        assert!(session.execute(&sql).is_err(), "{sql}");
+        assert!(session.node_conn().execute(&sql).is_err(), "{sql}");
     }
     rows(&mut session, "SET tidb_enable_external_ts_read=ON");
     assert_eq!(
@@ -12402,14 +12768,17 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         vec![vec!["1", "10"]]
     );
 
-    assert!(session.execute_write("UPDATE t SET v=99").is_err());
-    session.control_transaction("BEGIN").unwrap();
+    assert!(session
+        .node_conn()
+        .execute_write("UPDATE t SET v=99")
+        .is_err());
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SET tidb_enable_external_ts_read=OFF");
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     rows(
         &mut session,
         "PREPARE point_history FROM 'SELECT v FROM t WHERE id=?'",
@@ -12441,7 +12810,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    peer.session.set_restricted_sql(true);
+    peer.set_restricted_sql(true);
     assert_eq!(
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12462,18 +12831,19 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
         &mut session,
         "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')",
     );
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");
-    let historical_ts = session.session.current_tso().value() as u64;
-    session.control_transaction("COMMIT").unwrap();
+    let historical_ts = session.current_tso().value() as u64;
+    session.node_conn().control_transaction("COMMIT").unwrap();
     rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
     for mode in ["OPTIMISTIC", "PESSIMISTIC"] {
         session
+            .node_conn()
             .control_transaction(&format!("BEGIN {mode}"))
             .unwrap();
         rows(&mut session, "UPDATE t SET v=30 WHERE id=1");
         rows(&mut session, "INSERT INTO t VALUES (2,40,8)");
-        let ordinary_ts = session.session.current_tso().value();
+        let ordinary_ts = session.current_tso().value();
         rows(&mut session, &format!("SET tidb_snapshot={historical_ts}"));
         assert_eq!(
             displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
@@ -12492,10 +12862,13 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
             vec![vec!["1", "10"]]
         );
         rows(&mut session, "DEALLOCATE PREPARE snapshot_query");
-        assert!(session.execute("SELECT extra FROM t").is_err());
-        assert!(session.execute_write("UPDATE t SET v=99").is_err());
-        assert!(session.session.in_transaction());
-        assert_eq!(session.session.current_tso().value(), ordinary_ts);
+        assert!(session.node_conn().execute("SELECT extra FROM t").is_err());
+        assert!(session
+            .node_conn()
+            .execute_write("UPDATE t SET v=99")
+            .is_err());
+        assert!(session.in_transaction());
+        assert_eq!(session.current_tso().value(), ordinary_ts);
         assert!(
             !tidb_txnkv::ACTIVE_START_TS
                 .snapshot()
@@ -12506,7 +12879,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
             displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
             vec![vec!["1", "30", "7"], vec!["2", "40", "8"]]
         );
-        session.control_transaction("ROLLBACK").unwrap();
+        session.node_conn().control_transaction("ROLLBACK").unwrap();
         assert_eq!(
             displayed(rows(&mut session, "SELECT * FROM t")),
             vec![vec!["1", "10", "7"]]
@@ -12537,32 +12910,45 @@ fn deferred_uniqueness_batch_writes_skip_locks_and_check_at_commit() {
         "UPDATE t SET id=3,u=30 WHERE id=1",
         "INSERT INTO t VALUES (1,40) ON DUPLICATE KEY UPDATE id=3,u=30",
     ] {
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-        let stage = session.buffer.checkpoint();
-        session.execute_write(sql).unwrap();
-        let lock_keys = session.buffer.pessimistic_keys_since(stage);
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
+        let stage = session.node().buffer.checkpoint();
+        session.node_conn().execute_write(sql).unwrap();
+        let lock_keys = session.node().buffer.pessimistic_keys_since(stage);
         // New record/unique-index keys defer their absence check. UPDATE
         // retains the old record lock and deletion entries as Go does.
-        let presumed = session.buffer.presume_not_exists_keys();
+        let presumed = session.node().buffer.presume_not_exists_keys();
         assert!(!presumed.is_empty(), "{sql}");
         assert!(
             lock_keys.iter().all(|key| !presumed.contains(key)),
             "{sql}: deferred keys were locked"
         );
-        session.buffer.release(stage);
+        session.node().buffer.release(stage);
         if sql == "INSERT INTO t VALUES (1,30)" || sql == "INSERT INTO t VALUES (3,10)" {
-            let error = session.control_transaction("COMMIT").unwrap_err();
+            let error = session
+                .node_conn()
+                .control_transaction("COMMIT")
+                .unwrap_err();
             assert_eq!(error.code, 1062, "{sql}: {error:?}");
         } else {
-            session.control_transaction("ROLLBACK").unwrap();
+            session.node_conn().control_transaction("ROLLBACK").unwrap();
         }
     }
     // Go unistore checks NotExist before Insert when assertions are enabled.
     rows(&mut session, "SET tidb_txn_assertion_level=STRICT");
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(&mut session, "INSERT INTO t VALUES (1,30)");
     assert_eq!(
-        session.control_transaction("COMMIT").unwrap_err().code,
+        session
+            .node_conn()
+            .control_transaction("COMMIT")
+            .unwrap_err()
+            .code,
         8141
     );
     assert_eq!(
@@ -12580,18 +12966,31 @@ fn deferred_uniqueness_batch_savepoint_follows_transaction_mode() {
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
     // Autocommit SAVEPOINT is still a no-op; optimistic transactions work.
-    session.control_transaction("SAVEPOINT empty").unwrap();
-    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
-    session.control_transaction("SAVEPOINT allowed").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT empty")
+        .unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN OPTIMISTIC")
+        .unwrap();
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT allowed")
+        .unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     let error = session
+        .node_conn()
         .control_transaction("SAVEPOINT refused")
         .unwrap_err();
     assert_eq!(error.code, 1105);
     assert_eq!(error.message, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled");
-    assert!(session.session.in_transaction());
-    session.control_transaction("ROLLBACK").unwrap();
+    assert!(session.in_transaction());
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 #[test]
@@ -12605,9 +13004,13 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(&mut session, "INSERT INTO t VALUES (1)");
     let error = session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (1)")
         .unwrap_err();
     assert_eq!(error.code, 8147, "{error:?}");
@@ -12622,9 +13025,9 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
         error.identity,
         Some(tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
     );
-    assert!(!session.session.in_transaction());
-    assert!(session.txn.explicit.is_none());
-    assert!(session.buffer.is_empty());
+    assert!(!session.in_transaction());
+    assert!(session.node().txn.explicit.is_none());
+    assert!(session.node().buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
     rows(&mut session, "INSERT INTO t VALUES (2)");
     assert_eq!(
@@ -12648,30 +13051,36 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
-    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-    session.session.set_restricted_sql(true);
-    session.session.set_restricted_sql(false);
-    session.session.set_connection_id(0);
-    session.session.set_connection_id(943);
+    session
+        .node_conn()
+        .control_transaction("BEGIN OPTIMISTIC")
+        .unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
+    session.set_restricted_sql(true);
+    session.set_restricted_sql(false);
+    session.set_connection_id(0);
+    session.set_connection_id(943);
     rows(&mut session, "DELETE FROM t WHERE id=1");
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
     assert!(
-        session.buffer.presume_not_exists_keys().is_empty(),
+        session.node().buffer.presume_not_exists_keys().is_empty(),
         "local tombstones prove absence"
     );
     rows(&mut session, "INSERT INTO t VALUES (3,30),(4,NULL)");
     rows(&mut session, "UPDATE t SET u=31 WHERE id=3");
     rows(&mut session, "INSERT IGNORE INTO t VALUES (5,20)");
     rows(&mut session, "UPDATE IGNORE t SET u=20 WHERE id=3");
-    assert!(session.session.in_transaction());
+    assert!(session.in_transaction());
     rows(
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=ON",
     );
     rows(&mut session, "INSERT INTO t VALUES (6,60)");
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
         vec![
@@ -12687,8 +13096,11 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
-    assert!(session.control_transaction("SAVEPOINT implicit").is_err());
-    session.control_transaction("ROLLBACK").unwrap();
+    assert!(session
+        .node_conn()
+        .control_transaction("SAVEPOINT implicit")
+        .is_err());
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     rows(&mut session, "SET autocommit=1");
 }
 
@@ -12705,13 +13117,19 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
     let insert = session.prepare_general("INSERT INTO t VALUES (?)").unwrap();
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     session
         .execute_general(&insert, &[PreparedValue::SignedLongLong(1)])
         .unwrap();
-    assert!(session.execute("SELECT missing FROM t").is_err());
+    assert!(session
+        .node_conn()
+        .execute("SELECT missing FROM t")
+        .is_err());
     assert!(
-        session.session.in_transaction(),
+        session.in_transaction(),
         "ordinary query errors do not invoke DML abort policy"
     );
     let error = match session.execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
@@ -12719,9 +13137,9 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         Ok(_) => panic!("a local duplicate must fail"),
     };
     assert_eq!(error.code, 8147, "{error:?}");
-    assert!(!session.session.in_transaction());
-    assert!(session.txn.explicit.is_none());
-    assert!(session.buffer.is_empty());
+    assert!(!session.in_transaction());
+    assert!(session.node().txn.explicit.is_none());
+    assert!(session.node().buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
 }
 
@@ -12753,6 +13171,7 @@ fn index_lifecycle_uses_reorg_sql_mode_and_preserves_failed_metadata() {
             "SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'",
         );
         let error = session
+            .node_conn()
             .execute_write(ddl)
             .expect_err("strict reorg rejects zero divisor");
         assert_eq!(error.code, 1365, "{ddl}: {error:?}");
@@ -12779,6 +13198,7 @@ fn index_lifecycle_duplicate_backfill_preserves_sql_error_and_rolls_back() {
     rows(&mut session, "CREATE TABLE test.reorg_dup(a INT)");
     rows(&mut session, "INSERT INTO test.reorg_dup VALUES(1),(1)");
     let error = session
+        .node_conn()
         .execute_write("CREATE UNIQUE INDEX ia ON test.reorg_dup(a)")
         .unwrap_err();
     assert_eq!(error.code, 1062);
@@ -12821,14 +13241,14 @@ fn index_lifecycle_backfill_uses_the_submitting_time_zone() {
 #[test]
 fn cluster_bdr_role_lives_in_meta_and_refuses_denied_ddl() {
     fn run(
-        session: &mut ClusterServerSession,
+        session: &mut Session,
         sql: &str,
     ) -> Result<(), crate::domain::session_api::SqlQueryError> {
-        if session.execute_write(sql)?.is_some() {
+        if session.node_conn().execute_write(sql)?.is_some() {
             return Ok(());
         }
         use crate::domain::resultset_source::ResultSetSource;
-        let mut result = session.execute(sql)?;
+        let mut result = session.node_conn().execute(sql)?;
         let source = result.source();
         while !source.next_batch(8).expect("batch").is_empty() {}
         source.finish().expect("finish");
@@ -12927,7 +13347,7 @@ fn comment_lengths_and_plan_time_warnings_follow_the_sql_mode_as_go_does() {
             "Comment for table 't' is too long (max = 2048)",
         ),
     ] {
-        let error = session.execute_write(&sql).unwrap_err();
+        let error = session.node_conn().execute_write(&sql).unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (code, message));
     }
     rows(&mut session, "SET @@sql_mode = ''");
@@ -12969,7 +13389,7 @@ fn comment_lengths_and_plan_time_warnings_follow_the_sql_mode_as_go_does() {
             ],
         ),
     ] {
-        session.execute_write(&sql).unwrap();
+        session.node_conn().execute_write(&sql).unwrap();
         let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
         if warning[0].is_empty() {
             assert!(warnings.is_empty(), "{sql}: {warnings:?}");
@@ -13013,7 +13433,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
     rows(&mut session, "CREATE TABLE test.t1 (a INT, b INT)");
     rows(&mut session, "INSERT INTO test.t1 VALUES (1, 2)");
     session
-        .execute_write("ALTER TABLE test.t1 DROP COLUMN a, DROP COLUMN b, ADD COLUMN c INT DEFAULT 3, ADD COLUMN d INT DEFAULT 4")
+        .node_conn().execute_write("ALTER TABLE test.t1 DROP COLUMN a, DROP COLUMN b, ADD COLUMN c INT DEFAULT 3, ADD COLUMN d INT DEFAULT 4")
         .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM test.t1")),
@@ -13025,7 +13445,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
         "CREATE TABLE test.t2 (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, KEY i3 (b), KEY i (c))",
     );
     session
-        .execute_write("ALTER TABLE test.t2 DROP INDEX i3, DROP PRIMARY KEY, RENAME INDEX i TO i1, CHANGE COLUMN c d INT")
+        .node_conn().execute_write("ALTER TABLE test.t2 DROP INDEX i3, DROP PRIMARY KEY, RENAME INDEX i TO i1, CHANGE COLUMN c d INT")
         .unwrap();
     assert_eq!(
         displayed(rows(
@@ -13045,7 +13465,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
         "INSERT INTO test.t3 VALUES (1, 2, 3), (11, 22, 33)",
     );
     session
-        .execute_write("ALTER TABLE test.t3 MODIFY COLUMN a TINYINT AFTER c, MODIFY COLUMN b TINYINT, MODIFY COLUMN c TINYINT FIRST")
+        .node_conn().execute_write("ALTER TABLE test.t3 MODIFY COLUMN a TINYINT AFTER c, MODIFY COLUMN b TINYINT, MODIFY COLUMN c TINYINT FIRST")
         .unwrap();
     assert_eq!(
         displayed(rows(
@@ -13061,6 +13481,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
         "CREATE TABLE test.t4 (a INT AUTO_INCREMENT PRIMARY KEY, b INT)",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t4 AUTO_INCREMENT = 110, AUTO_INCREMENT = 90")
         .unwrap();
     assert_eq!(
@@ -13072,7 +13493,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
         ]]
     );
     session
-        .execute_write("ALTER TABLE test.t4 MODIFY COLUMN b TINYINT, AUTO_INCREMENT = 200, COMMENT = 'abc', CHARSET = utf8mb4")
+        .node_conn().execute_write("ALTER TABLE test.t4 MODIFY COLUMN b TINYINT, AUTO_INCREMENT = 200, COMMENT = 'abc', CHARSET = utf8mb4")
         .unwrap();
     rows(&mut session, "INSERT INTO test.t4 (b) VALUES (1)");
     assert_eq!(
@@ -13090,6 +13511,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
 
     rows(&mut session, "CREATE TABLE test.t5 (a INT)");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t5 ADD INDEX i (a), ADD PRIMARY KEY (a)")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t5"));
@@ -13101,6 +13523,7 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
 
     rows(&mut session, "CREATE TABLE test.t6 (a INT, b INT)");
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.t6 MODIFY COLUMN b DOUBLE, ADD INDEX idx ((a + b))")
         .unwrap_err();
     assert_eq!(
@@ -13138,6 +13561,7 @@ fn shard_row_id_bits_create_alter_and_session_default_as_go_does() {
         ))
     };
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.s1 SHARD_ROW_ID_BITS = 4")
         .unwrap();
     assert_eq!(sharding(&mut session, "s1"), [["SHARD_BITS=4"]]);
@@ -13167,7 +13591,7 @@ fn shard_row_id_bits_create_alter_and_session_default_as_go_does() {
             "Unsupported shard_row_id_bits for table with primary key as row id",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -13179,6 +13603,7 @@ fn shard_row_id_bits_create_alter_and_session_default_as_go_does() {
         "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.g SHARD_ROW_ID_BITS = 4")
         .unwrap_err();
     assert_eq!(
@@ -13202,6 +13627,7 @@ fn sequence_ddl_runs_as_go_runs_it() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(998)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE SEQUENCE test.s START 10 INCREMENT 2 CACHE 3 COMMENT 'c'")
         .unwrap();
     assert_eq!(
@@ -13212,6 +13638,7 @@ fn sequence_ddl_runs_as_go_runs_it() {
         [["10", "12"]]
     );
     session
+        .node_conn()
         .execute_write("CREATE SEQUENCE IF NOT EXISTS test.s")
         .unwrap();
     assert_eq!(
@@ -13219,6 +13646,7 @@ fn sequence_ddl_runs_as_go_runs_it() {
         [["Note", "1050", "Table 'test.s' already exists"]]
     );
     session
+        .node_conn()
         .execute_write("ALTER SEQUENCE test.s INCREMENT 5")
         .unwrap();
     // Seeded from the discarded batch's end, 14 (oracle).
@@ -13227,6 +13655,7 @@ fn sequence_ddl_runs_as_go_runs_it() {
         [["15"]]
     );
     session
+        .node_conn()
         .execute_write("ALTER SEQUENCE test.s RESTART WITH 100")
         .unwrap();
     assert_eq!(
@@ -13240,22 +13669,30 @@ fn sequence_ddl_runs_as_go_runs_it() {
          increment by 5 cache 3 nocycle ENGINE=InnoDB COMMENT='c'"
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER SEQUENCE test.s MINVALUE 50")
         .unwrap_err();
     assert_eq!(error.code, 4136, "{}", error.message);
 
     rows(&mut session, "CREATE TABLE test.t (a INT)");
-    let error = session.execute_write("TRUNCATE TABLE test.s").unwrap_err();
+    let error = session
+        .node_conn()
+        .execute_write("TRUNCATE TABLE test.s")
+        .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (1146, "Table 'test.s' doesn't exist")
     );
-    let error = session.execute_write("DROP SEQUENCE test.t").unwrap_err();
+    let error = session
+        .node_conn()
+        .execute_write("DROP SEQUENCE test.t")
+        .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (1347, "'test.t' is not SEQUENCE")
     );
     let error = session
+        .node_conn()
         .execute_write("DROP SEQUENCE test.s, test.nosuch")
         .unwrap_err();
     assert_eq!(
@@ -13263,6 +13700,7 @@ fn sequence_ddl_runs_as_go_runs_it() {
         (4139, "Unknown SEQUENCE: 'test.nosuch'")
     );
     session
+        .node_conn()
         .execute_write("DROP SEQUENCE IF EXISTS test.s, test.t")
         .unwrap();
     assert_eq!(
@@ -13307,7 +13745,7 @@ fn generated_columns_resolve_against_the_whole_table_as_go_does() {
             format!("Identifier name '{}' is too long", "d".repeat(65)),
         ),
     ] {
-        let error = session.execute_write(&sql).unwrap_err();
+        let error = session.node_conn().execute_write(&sql).unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (code, message.as_str()), "{sql}");
     }
     rows(
@@ -13315,6 +13753,7 @@ fn generated_columns_resolve_against_the_whole_table_as_go_does() {
         "CREATE TABLE test.a3 (a BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT, b INT)",
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.a3 ADD COLUMN d BIGINT GENERATED ALWAYS AS (a + 1)")
         .unwrap_err();
     assert_eq!(
@@ -13340,9 +13779,11 @@ fn ttl_table_options_run_as_go_runs_them() {
          TTL = `created_at` + INTERVAL 5 DAY TTL_ENABLE = 'OFF'",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t TTL_JOB_INTERVAL = '2h'")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t TTL = `updated_at` + INTERVAL 1 YEAR")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
@@ -13382,15 +13823,17 @@ fn ttl_table_options_run_as_go_runs_them() {
             "Cannot set TTL_JOB_INTERVAL on a table without TTL config",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
     }
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t REMOVE TTL")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
     assert!(!created[0][1].contains("TTL"), "{}", created[0][1]);
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.t TTL_ENABLE = 'ON'")
         .unwrap_err();
     assert_eq!(
@@ -13462,6 +13905,7 @@ fn partition_reorganizations_move_rows_as_go_does() {
         "INSERT INTO test.r VALUES (1, 1), (5, 5), (15, 15)",
     );
     session
+        .node_conn()
         .execute_write(
             "ALTER TABLE test.r REORGANIZE PARTITION p0 INTO \
              (PARTITION pa VALUES LESS THAN (4), PARTITION pb VALUES LESS THAN (10))",
@@ -13498,6 +13942,7 @@ fn partition_reorganizations_move_rows_as_go_does() {
         "INSERT INTO test.h VALUES (1, 1), (2, 2), (3, 3), (4, 4)",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.h PARTITION BY HASH (a) PARTITIONS 2")
         .unwrap();
     assert_eq!(
@@ -13509,6 +13954,7 @@ fn partition_reorganizations_move_rows_as_go_does() {
     );
     rows(&mut session, "ADMIN CHECK TABLE test.h");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.h REMOVE PARTITIONING")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.h"));
@@ -13541,6 +13987,7 @@ fn hash_partition_management_rehashes_rows_as_go_does() {
         "INSERT INTO test.h VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.h ADD PARTITION PARTITIONS 1")
         .unwrap();
     assert_eq!(
@@ -13552,6 +13999,7 @@ fn hash_partition_management_rehashes_rows_as_go_does() {
     );
     rows(&mut session, "ADMIN CHECK TABLE test.h");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.h COALESCE PARTITION 2")
         .unwrap();
     assert_eq!(
@@ -13575,9 +14023,11 @@ fn hash_partition_management_rehashes_rows_as_go_does() {
          FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (30)",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.iv LAST PARTITION LESS THAN (50)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.iv FIRST PARTITION LESS THAN (20)")
         .unwrap();
     assert_eq!(
@@ -13615,6 +14065,7 @@ fn exchange_and_collapse_honour_go_switches_and_counters() {
          PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (50), PARTITION p1 VALUES LESS THAN (100))",
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.pt EXCHANGE PARTITION p1 WITH TABLE test.nt")
         .unwrap_err();
     assert_eq!(error.code, 1737, "{}", error.message);
@@ -13623,6 +14074,7 @@ fn exchange_and_collapse_honour_go_switches_and_counters() {
         "SET @@global.tidb_enable_check_constraint = 0",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.pt EXCHANGE PARTITION p1 WITH TABLE test.nt")
         .unwrap();
 
@@ -13640,9 +14092,11 @@ fn exchange_and_collapse_honour_go_switches_and_counters() {
     rows(&mut session, "INSERT INTO test.t VALUES (2, 17)");
     rows(&mut session, "INSERT INTO test.t1 VALUES (0, 18)");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t EXCHANGE PARTITION p3 WITH TABLE test.t1")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t REMOVE PARTITIONING")
         .unwrap();
     assert_eq!(
@@ -13672,6 +14126,7 @@ fn alter_table_placement_policy_as_go_does() {
     rows(&mut session, "CREATE PLACEMENT POLICY p1 FOLLOWERS = 1");
     rows(&mut session, "CREATE TABLE test.t (a INT)");
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t PLACEMENT POLICY p1")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
@@ -13681,6 +14136,7 @@ fn alter_table_placement_policy_as_go_does() {
         created[0][1]
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t PLACEMENT POLICY DEFAULT")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
@@ -13703,7 +14159,7 @@ fn alter_table_placement_policy_as_go_does() {
                 "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
             );
         }
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -13726,13 +14182,16 @@ fn year_primary_key_is_not_the_row_handle_as_go_does() {
         "CREATE TABLE test.t1 (a YEAR, PRIMARY KEY (a))",
     );
     session
+        .node_conn()
         .execute_write("INSERT IGNORE INTO test.t1 VALUES (NULL)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t1 VALUES (2001)")
         .unwrap();
     rows(&mut session, "CREATE TABLE test.t2 (a INT, KEY (a))");
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t2 VALUES (0)")
         .unwrap();
     assert_eq!(
@@ -13774,23 +14233,26 @@ fn global_temporary_rows_end_with_their_transaction_as_go_does() {
         "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
     );
     session
+        .node_conn()
         .execute_write("INSERT INTO test.g VALUES (1)")
         .unwrap();
     assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.g VALUES (2)")
         .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT a FROM test.g")),
         [["2"]]
     );
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
     // A BEGIN the query path runs opens the session's own transaction, which
     // the next statement continues into just the same.
     rows(&mut session, "BEGIN");
     session
+        .node_conn()
         .execute_write("INSERT INTO test.g VALUES (3)")
         .unwrap();
     assert_eq!(
@@ -13814,12 +14276,15 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
         "CREATE TABLE test.t (a INT, b INT, c INT, KEY (a))",
     );
     session
+        .node_conn()
         .execute_write("CREATE INDEX hypo_bc TYPE HYPO ON test.t (b, c)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE UNIQUE INDEX hypo_c TYPE HYPO ON test.t (c)")
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("CREATE INDEX hypo_bc TYPE HYPO ON test.t (b)")
         .unwrap_err();
     assert_eq!(
@@ -13835,7 +14300,7 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
         "{}",
         created[0][1]
     );
-    let explain = |session: &mut ClusterServerSession, sql: &str| {
+    let explain = |session: &mut Session, sql: &str| {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row[3].clone())
@@ -13872,9 +14337,11 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
     // Only EXPLAIN sees them: the table has no such index to read.
     assert!(rows(&mut session, "SELECT c FROM test.t WHERE c = 1").is_empty());
     session
+        .node_conn()
         .execute_write("DROP HYPO INDEX hypo_bc ON test.t")
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("DROP HYPO INDEX hypo_bc ON test.t")
         .unwrap_err();
     assert_eq!(
@@ -13882,9 +14349,11 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
         (1091, "index hypo_bc doesn't exist")
     );
     session
+        .node_conn()
         .execute_write("DROP HYPO INDEX IF EXISTS hypo_bc ON test.t")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1")
         .unwrap();
     assert!(
@@ -13899,6 +14368,7 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
     .iter()
     .any(|row| row[2] == "mpp[tiflash]"));
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t SET HYPO TIFLASH REPLICA 0")
         .unwrap();
     assert!(!displayed(rows(
@@ -13975,7 +14445,7 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
     // The connection's COM_QUERY order: parse at the statement boundary,
     // then the write.
     let sql = "CREATE TABLE test.a (id INT PRIMARY KEY) PAGE_CHECKSUM=1 COMPRESSION='zlib'";
-    let parsed = session.parse_statement(sql).unwrap();
+    let parsed = QuerySession::parse_statement(&mut session, sql).unwrap();
     assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
     let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
     assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -13986,7 +14456,7 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
         "{warnings:?}"
     );
     let sql = "CREATE TABLE test.b (a INT)";
-    let parsed = session.parse_statement(sql).unwrap();
+    let parsed = QuerySession::parse_statement(&mut session, sql).unwrap();
     assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.a"));
@@ -14007,9 +14477,11 @@ fn last_txn_info_reports_the_cluster_commit_as_go_does() {
     let mut session = stack.factory.open_session(session_context(1012)).unwrap();
     rows(&mut session, "CREATE TABLE test.t1 (a INT)");
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t1 VALUES (1)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t1 VALUES (2)")
         .unwrap();
     rows(
@@ -14030,11 +14502,12 @@ fn last_txn_info_reports_the_cluster_commit_as_go_does() {
         )),
         [["1"]]
     );
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t1 VALUES (3)")
         .unwrap();
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     let info = displayed(rows(
         &mut session,
         "SELECT json_extract(@@tidb_last_txn_info, '$.start_ts') < \
@@ -14068,7 +14541,7 @@ fn last_txn_info_reports_the_cluster_commit_as_go_does() {
 fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1014)).unwrap();
-    let info = |session: &mut ClusterServerSession| {
+    let info = |session: &mut Session| {
         displayed(rows(session, "SELECT @@tidb_last_txn_info"))[0][0].clone()
     };
     rows(&mut session, "USE test");
@@ -14079,6 +14552,7 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
     rows(&mut session, "CREATE TABLE test.t_info (a INT PRIMARY KEY)");
 
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t_info VALUES (1)")
         .unwrap();
     let committed = info(&mut session);
@@ -14089,6 +14563,7 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
     assert_eq!(info(&mut session), committed, "no transaction, no record");
 
     session
+        .node_conn()
         .execute_write("UPDATE test.t_info SET a = a WHERE a = 99")
         .unwrap();
     let empty_update = info(&mut session);
@@ -14098,8 +14573,8 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
         "{empty_update}"
     );
 
-    session.control_transaction("BEGIN").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     let rolled_back = info(&mut session);
     assert_ne!(rolled_back, empty_update);
     assert!(
@@ -14131,7 +14606,7 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
 fn new_txn_in_stmt_statements_record_a_fresh_start_only_txn_info() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1017)).unwrap();
-    let start = |session: &mut ClusterServerSession| -> u64 {
+    let start = |session: &mut Session| -> u64 {
         displayed(rows(
             session,
             "SELECT IF(@@tidb_last_txn_info = '', 0, cast(json_unquote(json_extract(\
@@ -14147,7 +14622,7 @@ fn new_txn_in_stmt_statements_record_a_fresh_start_only_txn_info() {
         "ALTER TABLE test.t_new_txn ADD COLUMN b INT",
         "CREATE USER 'new_txn_u'@'%' IDENTIFIED BY ''",
     ] {
-        session.execute_write(statement).unwrap();
+        session.node_conn().execute_write(statement).unwrap();
         let now = start(&mut session);
         assert!(now > last, "{statement} left start {now} after {last}");
         let info = displayed(rows(&mut session, "SELECT @@tidb_last_txn_info"))[0][0].clone();
@@ -14158,6 +14633,7 @@ fn new_txn_in_stmt_statements_record_a_fresh_start_only_txn_info() {
         last = now;
     }
     session
+        .node_conn()
         .execute_write("CREATE TEMPORARY TABLE test.tt_new_txn (a INT)")
         .unwrap();
     assert_eq!(start(&mut session), last, "a local temporary table is not one");
@@ -14177,7 +14653,7 @@ fn autocommit_off_transaction_is_pending_until_a_statement_activates_it() {
     let mut session = stack.factory.open_session(session_context(1015)).unwrap();
     let mut peer = stack.factory.open_session(session_context(1016)).unwrap();
     rows(&mut session, "CREATE TABLE test.t_pending (a INT PRIMARY KEY)");
-    let active = |session: &mut ClusterServerSession| {
+    let active = |session: &mut Session| {
         displayed(rows(session, "SELECT @@tidb_current_ts > 0"))[0][0].clone()
     };
     rows(&mut session, "SET autocommit = 0");
@@ -14192,7 +14668,8 @@ fn autocommit_off_transaction_is_pending_until_a_statement_activates_it() {
         rows(&mut session, statement);
         assert_eq!(active(&mut session), "0", "after {statement}");
     }
-    peer.execute_write("INSERT INTO test.t_pending VALUES (21)")
+    peer.node_conn()
+        .execute_write("INSERT INTO test.t_pending VALUES (21)")
         .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
@@ -14204,31 +14681,36 @@ fn autocommit_off_transaction_is_pending_until_a_statement_activates_it() {
     // string like every system variable's value.
     let current_ts = rows(&mut session, "SELECT @@tidb_current_ts");
     assert_eq!(current_ts[0][0].kind(), tidb_datatype::DatumKind::String);
-    peer.execute_write("INSERT INTO test.t_pending VALUES (22)")
+    peer.node_conn()
+        .execute_write("INSERT INTO test.t_pending VALUES (22)")
         .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
         [["1"]],
         "the activated transaction keeps its snapshot"
     );
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(active(&mut session), "0");
     // A pending transaction that never activates commits and rolls back
     // without taking a timestamp.
     rows(&mut session, "SELECT 1");
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     rows(&mut session, "SELECT 1");
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     // DML activates at build, SAVEPOINT activates.
     session
+        .node_conn()
         .execute_write("INSERT INTO test.t_pending VALUES (23)")
         .unwrap();
     assert_eq!(active(&mut session), "1");
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     rows(&mut session, "SELECT 1");
-    session.control_transaction("SAVEPOINT s1").unwrap();
+    session
+        .node_conn()
+        .control_transaction("SAVEPOINT s1")
+        .unwrap();
     assert_eq!(active(&mut session), "1");
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
         [["3"]]
@@ -14250,6 +14732,7 @@ fn region_split_policies_persist_as_go_does() {
          SPLIT PRIMARY KEY BETWEEN (0) AND (10000) REGIONS 5",
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t SPLIT INDEX idx_v BETWEEN (0) AND (100) REGIONS 3")
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
@@ -14262,6 +14745,7 @@ fn region_split_policies_persist_as_go_does() {
         created[0][1]
     );
     session
+        .node_conn()
         .execute_write("CREATE INDEX idx_w ON test.t (v, id)")
         .unwrap();
     assert_eq!(
@@ -14277,6 +14761,7 @@ fn region_split_policies_persist_as_go_does() {
         "CREATE TABLE test.c (id INT PRIMARY KEY CLUSTERED)",
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.c SPLIT PRIMARY KEY BETWEEN (0) AND (10) REGIONS 2")
         .unwrap_err();
     assert_eq!(
@@ -14321,6 +14806,7 @@ fn table_affinity_and_its_groups_as_go_does() {
     };
     assert!(held(&group));
     session
+        .node_conn()
         .execute_write("ALTER TABLE test.t1 AFFINITY = ''")
         .unwrap();
     assert!(!held(&group));
@@ -14357,7 +14843,7 @@ fn table_affinity_and_its_groups_as_go_does() {
             "Unsupported DROP PARTITION of a table with AFFINITY option",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (8200, message),
@@ -14365,6 +14851,7 @@ fn table_affinity_and_its_groups_as_go_does() {
         );
     }
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.t1 AFFINITY = 'partition'")
         .unwrap_err();
     assert_eq!(
@@ -14376,6 +14863,7 @@ fn table_affinity_and_its_groups_as_go_does() {
     );
     rows(&mut session, "CREATE VIEW test.v1 AS SELECT 1");
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE test.v1 AFFINITY = 'table'")
         .unwrap_err();
     assert_eq!(
@@ -14433,9 +14921,11 @@ fn resource_group_ddl_as_go_does() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1016)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 100")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER RESOURCE GROUP rg1 RU_PER_SEC = 200")
         .unwrap();
     assert_eq!(
@@ -14446,6 +14936,7 @@ fn resource_group_ddl_as_go_does() {
         [["rg1", "200"]]
     );
     let error = session
+        .node_conn()
         .execute_write("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 100")
         .unwrap_err();
     assert_eq!(
@@ -14453,25 +14944,36 @@ fn resource_group_ddl_as_go_does() {
         (8248, "Resource group 'rg1' already exists")
     );
     session
+        .node_conn()
         .execute_write("CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 100")
         .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SHOW WARNINGS")),
         [["Note", "8248", "Resource group 'rg1' already exists"]]
     );
-    session.execute_write("SET RESOURCE GROUP rg1").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET RESOURCE GROUP rg1")
+        .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT CURRENT_RESOURCE_GROUP()")),
         [["rg1"]]
     );
-    session.execute_write("SET RESOURCE GROUP default").unwrap();
-    session.execute_write("DROP RESOURCE GROUP rg1").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET RESOURCE GROUP default")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("DROP RESOURCE GROUP rg1")
+        .unwrap();
     assert!(rows(
         &mut session,
         "SELECT name FROM information_schema.resource_groups WHERE name = 'rg1'"
     )
     .is_empty());
     let error = session
+        .node_conn()
         .execute_write("DROP RESOURCE GROUP rg1")
         .unwrap_err();
     assert_eq!(
@@ -14481,9 +14983,9 @@ fn resource_group_ddl_as_go_does() {
 }
 
 /// The error a query raises, whether at `execute` or while its rows stream.
-fn query_error(session: &mut ClusterServerSession, sql: &str) -> (u16, String) {
+fn query_error(session: &mut Session, sql: &str) -> (u16, String) {
     use crate::domain::resultset_source::ResultSetSource;
-    let mut result = match session.execute(sql) {
+    let mut result = match session.node_conn().execute(sql) {
         Ok(result) => result,
         Err(error) => return (error.code, error.message),
     };
@@ -14538,8 +15040,9 @@ fn the_domain_reports_its_ddl_and_binding_statuses() {
 fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1017)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t_mrs (id INT PRIMARY KEY AUTO_INCREMENT, val INT, extra INT)")
         .unwrap();
     let values = (1..=20)
@@ -14547,9 +15050,10 @@ fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
         .collect::<Vec<_>>()
         .join(",");
     session
+        .node_conn()
         .execute_write(&format!("INSERT INTO t_mrs (val, extra) VALUES {values}"))
         .unwrap();
-    session.execute_write("FLUSH STATUS").unwrap();
+    session.node_conn().execute_write("FLUSH STATUS").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT COUNT(*) FROM t_mrs")),
         [["20"]]
@@ -14566,6 +15070,7 @@ fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
         (8274, "tidb_max_keys_read limit exceeded".to_owned())
     );
     session
+        .node_conn()
         .execute_write("CREATE INDEX idx_val ON t_mrs (val)")
         .unwrap();
     assert_eq!(
@@ -14595,20 +15100,23 @@ fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
 fn label_rule_ddl_writes_the_nodes_label_manager() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1018)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE t1 (a INT) PARTITION BY RANGE (a) \
              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE t1 ATTRIBUTES='key=value'")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE t1 PARTITION p0 ATTRIBUTES='k2=v2'")
         .unwrap();
-    let attributes = |session: &mut ClusterServerSession| {
+    let attributes = |session: &mut Session| {
         displayed(rows(
             session,
             "SELECT ID, TYPE, ATTRIBUTES FROM information_schema.attributes ORDER BY ID",
@@ -14621,8 +15129,14 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
             ["schema/test/t1/p0", "key-range", "\"k2=v2\""],
         ]
     );
-    session.execute_write("RENAME TABLE t1 TO t2").unwrap();
-    session.execute_write("TRUNCATE TABLE t2").unwrap();
+    session
+        .node_conn()
+        .execute_write("RENAME TABLE t1 TO t2")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("TRUNCATE TABLE t2")
+        .unwrap();
     assert_eq!(
         attributes(&mut session),
         [
@@ -14631,6 +15145,7 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
         ]
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE t2 ATTRIBUTES=DEFAULT")
         .unwrap();
     assert_eq!(
@@ -14638,22 +15153,37 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
         [["schema/test/t2/p0", "key-range", "\"k2=v2\""]]
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE t2 ATTRIBUTES='nokey'")
         .unwrap_err();
     assert_eq!(error.code, 8237);
-    session.execute_write("CREATE TABLE plain (a INT)").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE plain (a INT)")
+        .unwrap();
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE plain PARTITION p0 ATTRIBUTES='k=v'")
         .unwrap_err();
     assert_eq!(error.code, 1505);
 
-    session.execute_write("CREATE DATABASE d2").unwrap();
-    session.execute_write("CREATE TABLE d2.x (a INT)").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE DATABASE d2")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE d2.x (a INT)")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("ALTER TABLE d2.x ATTRIBUTES='a=b'")
         .unwrap();
     assert_eq!(attributes(&mut session).len(), 2);
-    session.execute_write("DROP DATABASE d2").unwrap();
+    session
+        .node_conn()
+        .execute_write("DROP DATABASE d2")
+        .unwrap();
     assert_eq!(
         tidb_domain::label_manager::label_rule_manager()
             .get_label_rules(&["schema/d2/x".to_owned()])
@@ -14671,47 +15201,56 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
 fn partition_placement_and_multi_option_charset_on_the_production_node() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1019)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE PLACEMENT POLICY pp1 FOLLOWERS=1")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE tp (a INT) PARTITION BY RANGE (a) \
              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
         )
         .unwrap();
-    let show_create = |session: &mut ClusterServerSession, table: &str| {
+    let show_create = |session: &mut Session, table: &str| {
         displayed(rows(session, &format!("SHOW CREATE TABLE {table}")))[0][1].clone()
     };
     session
+        .node_conn()
         .execute_write("ALTER TABLE tp PARTITION p0 PLACEMENT POLICY=pp1")
         .unwrap();
     assert!(show_create(&mut session, "tp").contains(
         "PARTITION `p0` VALUES LESS THAN (10) /*T![placement] PLACEMENT POLICY=`pp1` */"
     ));
     session
+        .node_conn()
         .execute_write("ALTER TABLE tp PARTITION p0 PLACEMENT POLICY=DEFAULT")
         .unwrap();
     assert!(!show_create(&mut session, "tp").contains("PLACEMENT POLICY"));
     session
+        .node_conn()
         .execute_write("CREATE TABLE c (a VARCHAR(10))")
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE c PARTITION p0 PLACEMENT POLICY=pp1")
         .unwrap_err();
     assert_eq!(error.code, 1505);
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE tp PARTITION nope PLACEMENT POLICY=pp1")
         .unwrap_err();
     assert_eq!(error.code, 1735);
 
     session
+        .node_conn()
         .execute_write("ALTER TABLE c CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci")
         .unwrap();
     assert!(show_create(&mut session, "c")
         .contains("DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"));
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE c CHARSET latin1 CHARSET utf8mb4")
         .unwrap_err();
     assert_eq!(error.code, 1302);
@@ -14727,11 +15266,13 @@ fn partition_placement_and_multi_option_charset_on_the_production_node() {
 fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1020)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE only_virtual (c0 TEXT AS ('a\\\\b'))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO only_virtual VALUES ()")
         .unwrap();
     assert_eq!(
@@ -14740,6 +15281,7 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
     );
 
     let error = session
+        .node_conn()
         .execute_write("CREATE TABLE bad_pk (a INT, b INT, c INT AS (a+b), PRIMARY KEY (c))")
         .unwrap_err();
     assert_eq!(
@@ -14752,12 +15294,15 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
     );
 
     session
+        .node_conn()
         .execute_write("CREATE TABLE g (a INT, b INT AS (a+1))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO g (a) VALUES (1)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE g MODIFY b INT AS (a+2)")
         .unwrap();
     assert_eq!(
@@ -14765,6 +15310,7 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
         [["1", "3"]]
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE g MODIFY b INT AS (a+2) STORED")
         .unwrap_err();
     assert_eq!(
@@ -14775,6 +15321,7 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
         )
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE g MODIFY a BIGINT")
         .unwrap_err();
     assert_eq!(
@@ -14796,13 +15343,18 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
 fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1021)).unwrap();
-    session.execute_write("CREATE DATABASE hist_db").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE DATABASE hist_db")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("CREATE TABLE hist_db.t (a INT)")
         .unwrap();
     // Go `buildIndexColumns`: an index may not name a column the same
     // statement adds.
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE hist_db.t ADD COLUMN b INT, ADD INDEX ib (b)")
         .unwrap_err();
     assert_eq!(
@@ -14810,6 +15362,7 @@ fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
         (1072, "column does not exist: b")
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE hist_db.t ADD COLUMN b INT, ADD INDEX ib (a)")
         .unwrap();
     assert_eq!(
@@ -14836,6 +15389,7 @@ fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
     assert_eq!(rows(&mut session, "ADMIN SHOW DDL JOBS 1").len(), 3);
 
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE hist_db.tp (id INT) PARTITION BY RANGE (id) INTERVAL (100) \
              FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (300)",
@@ -14867,11 +15421,13 @@ fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
 fn pushed_reads_answer_large_decimals_and_clustered_time_keys_as_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1022)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE td (col_bigint BIGINT, col_smallint SMALLINT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO td VALUES (NULL, 22876), (9220557287087669248, 32767), (28030, 32767), \
              (-3309864251140603904, 32767), (4, 0), (NULL, 0), (4, -23828), (54720, 32767), \
@@ -14891,14 +15447,17 @@ fn pushed_reads_answer_large_decimals_and_clustered_time_keys_as_go() {
     );
 
     session
+        .node_conn()
         .execute_write("SET @@tidb_enable_clustered_index = ON")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ck (id INT, logtime DATETIME, money INT, PRIMARY KEY (id, logtime))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO ck VALUES (1, '2022-06-09 00:00:00', 10), (2, '2022-06-10 00:00:00', 10)",
         )
@@ -14928,8 +15487,9 @@ fn pushed_reads_answer_large_decimals_and_clustered_time_keys_as_go() {
 fn global_index_rules_on_the_production_create_table() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1023)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     let error = session
+        .node_conn()
         .execute_write("CREATE TABLE plain (a INT, b INT, UNIQUE INDEX idx (a) GLOBAL)")
         .unwrap_err();
     assert_eq!(
@@ -14937,6 +15497,7 @@ fn global_index_rules_on_the_production_create_table() {
         (8200, "Unsupported Global Index on non-partitioned table")
     );
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE gp (a INT, d VARCHAR(10), UNIQUE INDEX d_s (d(3)) GLOBAL) \
              PARTITION BY HASH (a) PARTITIONS 3",
@@ -14951,6 +15512,7 @@ fn global_index_rules_on_the_production_create_table() {
         ]]
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE gp ADD UNIQUE INDEX ie ((a + 2)) GLOBAL")
         .unwrap();
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
@@ -14963,11 +15525,13 @@ fn global_index_rules_on_the_production_create_table() {
 fn admin_check_index_range_rows_carry_the_index_column_types() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1024)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE ci (a INT, b VARCHAR(10), INDEX a_b (a, b))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO ci VALUES (3, 'ab'), (2, 'cd'), (1, 'ef'), (-1, 'hi')")
         .unwrap();
     assert_eq!(
@@ -14985,15 +15549,23 @@ fn admin_check_index_range_rows_carry_the_index_column_types() {
 fn set_global_inside_a_transaction_keeps_the_transaction_open() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1025)).unwrap();
-    session.execute_write("USE test").unwrap();
-    session.execute_write("CREATE TABLE sg (a INT)").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE TABLE sg (a INT)")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_external_ts = 19980613")
         .unwrap();
-    session.control_transaction("BEGIN").unwrap();
-    session.execute_write("INSERT INTO sg VALUES (1)").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
+    session
+        .node_conn()
+        .execute_write("INSERT INTO sg VALUES (1)")
+        .unwrap();
     let start = displayed(rows(&mut session, "SELECT @@tidb_current_ts"));
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_external_ts = @@tidb_current_ts")
         .unwrap();
     assert_eq!(
@@ -15004,7 +15576,7 @@ fn set_global_inside_a_transaction_keeps_the_transaction_open() {
         displayed(rows(&mut session, "SELECT @@tidb_external_ts")),
         start
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert!(rows(&mut session, "SELECT * FROM sg").is_empty());
 }
 
@@ -15015,8 +15587,9 @@ fn set_global_inside_a_transaction_keeps_the_transaction_open() {
 fn create_table_accepts_a_column_qualified_by_its_own_table() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1026)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE q2 (a CHAR, q2.b INT)")
         .unwrap();
     assert_eq!(
@@ -15027,6 +15600,7 @@ fn create_table_accepts_a_column_qualified_by_its_own_table() {
         ["a", "b"]
     );
     let error = session
+        .node_conn()
         .execute_write("CREATE TABLE q3 (q9.a CHAR)")
         .unwrap_err();
     assert_eq!(
@@ -15046,41 +15620,51 @@ fn create_table_default_policy_and_drop_index_hidden_columns_as_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1027)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE PLACEMENT POLICY px FOLLOWERS=1")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE DATABASE pdb PLACEMENT POLICY px")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE pdb.t1 (a INT) PLACEMENT POLICY 'default'")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE pdb.t2 (a INT)")
         .unwrap();
-    let show = |session: &mut ClusterServerSession, table: &str| {
+    let show = |session: &mut Session, table: &str| {
         displayed(rows(session, &format!("SHOW CREATE TABLE {table}")))[0][1].clone()
     };
     assert!(!show(&mut session, "pdb.t1").contains("PLACEMENT POLICY"));
     assert!(show(&mut session, "pdb.t2").contains("PLACEMENT POLICY=`px`"));
     session
+        .node_conn()
         .execute_write("CREATE TEMPORARY TABLE pdb.tmp LIKE pdb.t1")
         .unwrap();
 
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE h (a INT, b REAL)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE h ADD INDEX idx ((a + 1))")
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE h ADD COLUMN (_V$_idx_0 INT)")
         .unwrap_err();
     assert_eq!(error.code, 1060);
     session
+        .node_conn()
         .execute_write("ALTER TABLE h DROP INDEX idx")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE h ADD COLUMN (_V$_idx_0 INT)")
         .unwrap();
 }
@@ -15094,11 +15678,13 @@ fn create_table_default_policy_and_drop_index_hidden_columns_as_go() {
 fn global_index_keys_carry_the_partition_after_exchange() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1028)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED)")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE tp (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED) PARTITION BY RANGE (a) \
              (PARTITION p0 VALUES LESS THAN (5), PARTITION p1 VALUES LESS THAN (11), \
@@ -15106,15 +15692,19 @@ fn global_index_keys_carry_the_partition_after_exchange() {
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tp (a, b) VALUES (2, 2), (4, 4), (6, 6)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (a, b) VALUES (12, 2), (14, 4), (16, 6)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE INDEX idx_b ON tp (b) GLOBAL")
         .unwrap();
     assert_eq!(
@@ -15135,22 +15725,29 @@ fn global_index_keys_carry_the_partition_after_exchange() {
 fn gbk_column_defaults_insert_as_the_text_they_store() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1029)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (a CHAR(10) CHARSET gbk DEFAULT 0xC4E3BAC3)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (DEFAULT)")
         .unwrap();
-    session.execute_write("INSERT INTO t () VALUES ()").unwrap();
+    session
+        .node_conn()
+        .execute_write("INSERT INTO t () VALUES ()")
+        .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT a, HEX(a) FROM t")),
         [["你好", "C4E3BAC3"], ["你好", "C4E3BAC3"]]
     );
     session
+        .node_conn()
         .execute_write("CREATE TABLE t2 (a CHAR(10) CHARSET gbk DEFAULT '好')")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t2 VALUES (DEFAULT)")
         .unwrap();
     assert_eq!(
@@ -15169,17 +15766,21 @@ fn gbk_column_defaults_insert_as_the_text_they_store() {
 fn non_transactional_jobs_each_commit_before_the_next_reads() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1030)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (id INT, v INT, KEY (id))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t2 (id INT, v INT, KEY (id))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (1, 1), (2, 2), (3, 3)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t2 VALUES (1, 1), (2, 2), (4, 4)")
         .unwrap();
     assert_eq!(
@@ -15204,14 +15805,16 @@ fn non_transactional_jobs_each_commit_before_the_next_reads() {
 fn string_columns_keep_clock_words_as_their_text_default() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1031)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE t (id INT, a VARCHAR(20) DEFAULT 'cUrrent_tImestamp', \
              b VARCHAR(20) DEFAULT 'current_date')",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id) VALUES (1)")
         .unwrap();
     assert_eq!(
@@ -15228,11 +15831,13 @@ fn string_columns_keep_clock_words_as_their_text_default() {
 fn view_window_columns_describe_as_nullable() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1032)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t1 (id INT NOT NULL, num INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE VIEW v AS SELECT id, row_number() OVER (PARTITION BY num) AS r FROM t1",
         )
@@ -15258,11 +15863,13 @@ fn view_window_columns_describe_as_nullable() {
 fn result_column_flags_follow_gos_null_and_binary_stamps() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1033)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (a INT NOT NULL, b INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (1, 1)")
         .unwrap();
     for (sql, flag) in [
@@ -15285,7 +15892,7 @@ fn result_column_flags_follow_gos_null_and_binary_stamps() {
         ("SELECT LEAST(a, 1) FROM t", 4225),
         ("SELECT GREATEST(a, b) FROM t", 4224),
     ] {
-        let mut result = session.execute(sql).unwrap();
+        let mut result = session.node_conn().execute(sql).unwrap();
         let columns = crate::domain::resultset_source::ResultSetSource::columns(result.source()).unwrap();
         assert_eq!(columns[0].flag, flag, "{sql}");
     }
@@ -15300,8 +15907,9 @@ fn result_column_flags_follow_gos_null_and_binary_stamps() {
 fn case_branch_differing_only_in_not_null_is_not_cast() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1034)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE li (k INT NOT NULL, price DECIMAL(15,2) NOT NULL, \
              disc DECIMAL(15,2) NOT NULL)",
@@ -15335,6 +15943,7 @@ fn account_names_over_their_limits_are_refused_with_1470() {
     let mut session = stack.factory.open_session(session_context(1035)).unwrap();
     let long_user = "u".repeat(33);
     let error = session
+        .node_conn()
         .execute_write(&format!("CREATE USER '{long_user}'@'%'"))
         .unwrap_err();
     assert_eq!(error.code, 1470);
@@ -15344,6 +15953,7 @@ fn account_names_over_their_limits_are_refused_with_1470() {
     );
     let long_host = "h".repeat(256);
     let error = session
+        .node_conn()
         .execute_write(&format!("CREATE USER 'x'@'{long_host}'"))
         .unwrap_err();
     assert_eq!(error.code, 1470);
@@ -15354,8 +15964,12 @@ fn account_names_over_their_limits_are_refused_with_1470() {
             "h".repeat(70)
         )
     );
-    session.execute_write("CREATE USER 'short'@'%'").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE USER 'short'@'%'")
+        .unwrap();
     let error = session
+        .node_conn()
         .execute_write(&format!("RENAME USER 'short'@'%' TO '{long_user}'@'%'"))
         .unwrap_err();
     assert_eq!(error.code, 1470);
@@ -15367,11 +15981,13 @@ fn account_names_over_their_limits_are_refused_with_1470() {
 fn create_index_if_not_exists_notes_the_duplicate_key_name() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1036)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (a INT, KEY idx (a))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE INDEX IF NOT EXISTS idx ON t (a)")
         .unwrap();
     assert_eq!(
@@ -15387,8 +16003,9 @@ fn create_index_if_not_exists_notes_the_duplicate_key_name() {
 fn convert_charset_refuses_an_index_that_would_grow_too_long() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1037)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE posts (id INT AUTO_INCREMENT PRIMARY KEY, \
              title VARCHAR(500) CHARACTER SET utf8, subtitle VARCHAR(500) CHARACTER SET utf8, \
@@ -15396,6 +16013,7 @@ fn convert_charset_refuses_an_index_that_would_grow_too_long() {
         )
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE posts CONVERT TO CHARACTER SET utf8mb4")
         .unwrap_err();
     assert_eq!(error.code, 1071);
@@ -15404,9 +16022,11 @@ fn convert_charset_refuses_an_index_that_would_grow_too_long() {
         "Specified key was too long (4000 bytes); max key length is 3072 bytes"
     );
     session
+        .node_conn()
         .execute_write("CREATE TABLE short (a VARCHAR(10) CHARACTER SET utf8, KEY (a))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ALTER TABLE short CONVERT TO CHARACTER SET utf8mb4")
         .unwrap();
 }
@@ -15440,7 +16060,7 @@ fn drop_stats_soft_deletes_the_stored_statistics() {
         .expect("table is published")
         .1
         .id;
-    let count = |session: &mut ClusterServerSession, table: &str| {
+    let count = |session: &mut Session, table: &str| {
         displayed(rows(
             session,
             &format!("SELECT COUNT(*) FROM mysql.{table} WHERE table_id = {table_id}"),
@@ -15456,7 +16076,7 @@ fn drop_stats_soft_deletes_the_stored_statistics() {
         .parse::<u64>()
         .unwrap();
 
-    session.execute_write("DROP STATS ds").unwrap();
+    session.node_conn().execute_write("DROP STATS ds").unwrap();
 
     assert_eq!(count(&mut session, "stats_buckets"), "0");
     assert_eq!(count(&mut session, "stats_top_n"), "0");
@@ -15486,11 +16106,18 @@ fn drop_stats_soft_deletes_the_stored_statistics() {
 fn drop_stats_refuses_an_unknown_table_and_a_partition_clause_on_a_plain_one() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1039)).unwrap();
-    session.execute_write("USE test").unwrap();
-    session.execute_write("CREATE TABLE dp (a INT)").unwrap();
-    let error = session.execute_write("DROP STATS missing").unwrap_err();
+    session.node_conn().execute_write("USE test").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE dp (a INT)")
+        .unwrap();
+    let error = session
+        .node_conn()
+        .execute_write("DROP STATS missing")
+        .unwrap_err();
     assert_eq!(error.code, 1146);
     let error = session
+        .node_conn()
         .execute_write("DROP STATS dp PARTITION p0")
         .unwrap_err();
     assert_eq!(error.code, 1505);
@@ -15506,22 +16133,25 @@ fn drop_stats_refuses_an_unknown_table_and_a_partition_clause_on_a_plain_one() {
 fn union_scan_emits_added_rows_in_handle_order() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1040)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE us (c_str VARCHAR(40), c_int INT, c_datetime DATETIME, \
              PRIMARY KEY (c_str) CLUSTERED, UNIQUE KEY (c_datetime))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO us VALUES ('laughing hertz', 1, '2020-04-27 20:29:30'), \
              ('sharp yalow', 2, '2020-04-01 05:53:36'), \
              ('pedantic hoover', 3, '2020-03-10 11:49:00')",
         )
         .unwrap();
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("UPDATE us SET c_str = 'amazing herschel' WHERE c_int = 3")
         .unwrap();
     assert_eq!(
@@ -15536,7 +16166,7 @@ fn union_scan_emits_added_rows_in_handle_order() {
         displayed(rows(&mut session, "SELECT c_int FROM us")),
         [["3"], ["1"], ["2"]]
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// Go assigns a `CREATE TABLE ... LIKE` copy its own physical table ids -- the
@@ -15547,14 +16177,20 @@ fn union_scan_emits_added_rows_in_handle_order() {
 fn create_table_like_a_partitioned_table_gets_its_own_partition_ids() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1041)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE lk1 (c_int INT, PRIMARY KEY (c_int)) PARTITION BY HASH (c_int) PARTITIONS 2",
         )
         .unwrap();
-    session.execute_write("CREATE TABLE lk2 LIKE lk1").unwrap();
-    session.execute_write("INSERT INTO lk2 VALUES (1)").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE lk2 LIKE lk1")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("INSERT INTO lk2 VALUES (1)")
+        .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT COUNT(*) FROM lk1")),
         [["0"]]
@@ -15582,14 +16218,16 @@ fn create_table_like_a_partitioned_table_gets_its_own_partition_ids() {
 fn bit_defaults_keep_their_raw_bytes_across_the_stored_catalog() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1042)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE bd (k INT, v BIT(34) DEFAULT b'111010101111001001100111101111111', \
              z BIT(40) DEFAULT 0xFFEEDDCCBB, w BIT(8) DEFAULT b'101')",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO bd (k) VALUES (1)")
         .unwrap();
     assert_eq!(
@@ -15606,7 +16244,7 @@ fn bit_defaults_keep_their_raw_bytes_across_the_stored_catalog() {
 fn binary_attribute_with_a_collate_option_keeps_the_charsets_bin_collation() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1043)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for (create, expected) in [
         (
             "CREATE TABLE bc1 (a VARCHAR(10) BINARY COLLATE utf8_general_ci)",
@@ -15621,7 +16259,7 @@ fn binary_attribute_with_a_collate_option_keeps_the_charsets_bin_collation() {
             "CHARACTER SET utf8 COLLATE utf8_bin",
         ),
     ] {
-        session.execute_write(create).unwrap();
+        session.node_conn().execute_write(create).unwrap();
         let table = create.split_whitespace().nth(2).unwrap();
         let shown = displayed(rows(&mut session, &format!("SHOW CREATE TABLE {table}")));
         assert!(
@@ -15639,9 +16277,13 @@ fn binary_attribute_with_a_collate_option_keeps_the_charsets_bin_collation() {
 fn compact_table_without_a_replica_warns_instead_of_refusing() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1044)).unwrap();
-    session.execute_write("USE test").unwrap();
-    session.execute_write("CREATE TABLE ct (a INT)").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE TABLE ct (a INT)")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("ALTER TABLE ct COMPACT TIFLASH REPLICA")
         .unwrap();
     assert_eq!(
@@ -15653,10 +16295,12 @@ fn compact_table_without_a_replica_warns_instead_of_refusing() {
         ]]
     );
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE ct COMPACT PARTITION p1 TIFLASH REPLICA")
         .unwrap_err();
     assert_eq!(error.code, 1105);
     let error = session
+        .node_conn()
         .execute_write("ALTER TABLE missing COMPACT")
         .unwrap_err();
     assert_eq!(error.code, 1146);
@@ -15671,18 +16315,23 @@ fn compact_table_without_a_replica_warns_instead_of_refusing() {
 fn merge_join_hint_does_not_merge_enum_or_set_keys() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1045)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for column in [
         "ENUM('y','b','1','x','0','null')",
         "SET('y','b','1','x','0','null')",
     ] {
-        session.execute_write("DROP TABLE IF EXISTS mjx").unwrap();
         session
+            .node_conn()
+            .execute_write("DROP TABLE IF EXISTS mjx")
+            .unwrap();
+        session
+            .node_conn()
             .execute_write(&format!(
                 "CREATE TABLE mjx (a {column} DEFAULT NULL, KEY a (a))"
             ))
             .unwrap();
         session
+            .node_conn()
             .execute_write("INSERT INTO mjx VALUES ('x'), ('x'), ('b'), ('y')")
             .unwrap();
         let mut answer = displayed(rows(
@@ -15716,13 +16365,15 @@ fn merge_join_hint_does_not_merge_enum_or_set_keys() {
 fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1046)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ilp1 (id INT PRIMARY KEY, a VARCHAR(32), b INT, c INT, INDEX i(a, b))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO ilp1 VALUES (1, '9a', 10, 100), (2, '8b', 20, 200), (3, '7c', 30, 300), \
              (4, '6d', 40, 400), (5, '5e', 50, 500), (6, '4f', 60, 600), (7, '3g', 70, 700), \
@@ -15738,6 +16389,7 @@ fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
         [["3"], ["4"], ["6"], ["7"]]
     );
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ilp2 (a VARCHAR(32), b INT, c INT, d INT, e INT, \
              PRIMARY KEY (a, b) CLUSTERED, INDEX i(c), UNIQUE INDEX u(e)) \
@@ -15745,6 +16397,7 @@ fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO ilp2 VALUES ('a', 1, 9010, 100, 90), ('A', 2, 8020, 200, 80), \
              ('a', 3, 7030, 300, 70), ('b', 1, 6040, 400, 60), ('B', 2, 5050, 500, 50), \
@@ -15785,14 +16438,16 @@ fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
 fn cached_index_merge_rebinds_the_table_side_recheck() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1047)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE cim (id INT NOT NULL, a INT, b INT, c INT, \
              PRIMARY KEY (id) CLUSTERED, KEY ia (a, c), KEY ib (b, c))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO cim VALUES (1,1,1,10), (2,1,2,20), (3,2,1,30), (4,2,2,40), \
              (5,1,3,50), (6,3,1,60), (7,3,2,70), (8,1,1,5), (9,2,3,15), (10,3,3,25)",
@@ -15823,11 +16478,13 @@ fn cached_index_merge_rebinds_the_table_side_recheck() {
 fn point_get_fast_path_checks_the_column_qualifier() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1048)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE qpg (a CHAR(2) PRIMARY KEY, b CHAR(2))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO qpg VALUES ('aa', 'bb')")
         .unwrap();
     for sql in [
@@ -15856,14 +16513,16 @@ fn point_get_fast_path_checks_the_column_qualifier() {
 fn partitioned_unique_key_point_get_routes_by_partition() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1049)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ppg (a INT, b INT, UNIQUE KEY (a)) PARTITION BY LIST (a) \
              (PARTITION p0 VALUES IN (0,4), PARTITION p1 VALUES IN (1,3))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO ppg VALUES (4, 40), (1, 10), (3, 30)")
         .unwrap();
     let plan = displayed(rows(
@@ -15891,9 +16550,11 @@ fn partitioned_unique_key_point_get_routes_by_partition() {
         Vec::<Vec<String>>::new()
     );
     session
+        .node_conn()
         .execute_write("UPDATE ppg SET b = 41 WHERE a = 4")
         .unwrap();
     session
+        .node_conn()
         .execute_write("DELETE FROM ppg WHERE a = 3")
         .unwrap();
     assert_eq!(
@@ -15912,7 +16573,7 @@ fn partitioned_unique_key_point_get_routes_by_partition() {
 fn prepared_ddl_and_create_table_build_warnings_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1050)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     rows(
         &mut session,
         "PREPARE pc FROM 'CREATE TABLE pdl (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
@@ -15923,14 +16584,14 @@ fn prepared_ddl_and_create_table_build_warnings_follow_go() {
         displayed(rows(&mut session, "SHOW TABLES LIKE 'pdl'")),
         [["pdl"]]
     );
-    session.execute_write("DROP TABLE pdl").unwrap();
+    session.node_conn().execute_write("DROP TABLE pdl").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SHOW TABLES LIKE 'pdl'")),
         Vec::<Vec<String>>::new()
     );
 
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE lk (c1 INT, c2 CHAR(5), c3 DATE) PARTITION BY LINEAR KEY (c3) PARTITIONS 5",
         )
         .unwrap();
@@ -15943,8 +16604,12 @@ fn prepared_ddl_and_create_table_build_warnings_follow_go() {
         ]]
     );
 
-    session.execute_write("CREATE SEQUENCE sq").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE SEQUENCE sq")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("CREATE TABLE dseq (a INT DEFAULT (NEXTVAL(sq)))")
         .unwrap();
     let shown = displayed(rows(&mut session, "SHOW CREATE TABLE dseq"));
@@ -15953,8 +16618,12 @@ fn prepared_ddl_and_create_table_build_warnings_follow_go() {
         "{shown:?}"
     );
 
-    session.execute_write("CREATE TABLE src (a INT)").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE src (a INT)")
+        .unwrap();
     let error = session
+        .node_conn()
         .execute_write(
             "CREATE VIEW v_stale AS SELECT * FROM src \
              AS OF TIMESTAMP DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 SECOND)",
@@ -15972,7 +16641,7 @@ fn prepared_ddl_and_create_table_build_warnings_follow_go() {
 fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1051)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for sql in [
         "CREATE USER gtu",
         "CREATE ROLE gr_1",
@@ -15983,10 +16652,11 @@ fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
         "GRANT SELECT ON test.gtab TO gtu",
     ] {
         session
+            .node_conn()
             .execute_write(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
     }
-    let grants = |session: &mut ClusterServerSession| {
+    let grants = |session: &mut Session| {
         displayed(rows(
             session,
             "SELECT grantor, table_priv FROM mysql.tables_priv WHERE user = 'gtu'",
@@ -15997,6 +16667,7 @@ fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
         .clone();
     assert_eq!(grants(&mut session), [[granted_by.as_str(), "Select"]]);
     session
+        .node_conn()
         .execute_write("GRANT INSERT ON test.gtab TO gtu")
         .unwrap();
     assert_eq!(
@@ -16004,25 +16675,29 @@ fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
         [[granted_by.as_str(), "Select,Insert"]]
     );
     session
+        .node_conn()
         .execute_write("REVOKE SELECT ON test.gtab FROM gtu")
         .unwrap();
     assert_eq!(grants(&mut session), [[granted_by.as_str(), "Insert"]]);
 
-    let default_roles = |session: &mut ClusterServerSession| {
+    let default_roles = |session: &mut Session| {
         displayed(rows(
             session,
             "SELECT default_role_user FROM mysql.default_roles WHERE user = 'gtu'",
         ))
     };
     session
+        .node_conn()
         .execute_write("SET DEFAULT ROLE gr_2 TO gtu")
         .unwrap();
     assert_eq!(default_roles(&mut session), [["gr_2"]]);
     session
+        .node_conn()
         .execute_write("SET DEFAULT ROLE ALL TO gtu")
         .unwrap();
     assert_eq!(default_roles(&mut session), [["gr_1"], ["gr_2"]]);
     session
+        .node_conn()
         .execute_write("SET DEFAULT ROLE NONE TO gtu")
         .unwrap();
     assert_eq!(default_roles(&mut session), Vec::<Vec<String>>::new());
@@ -16035,37 +16710,40 @@ fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
 fn temporary_table_refuses_rows_past_tmp_table_max_size() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1052)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE GLOBAL TEMPORARY TABLE tg (c1 INT, c2 MEDIUMTEXT) ON COMMIT DELETE ROWS",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TEMPORARY TABLE tl (c1 INT, c2 MEDIUMTEXT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("SET @@session.tidb_tmp_table_max_size = 1048576")
         .unwrap();
     let row = |table: &str| format!("INSERT INTO {table} VALUES (1, REPEAT('x', 512*1024))");
     for table in ["tg", "tl"] {
-        session.control_transaction("BEGIN").unwrap();
-        session.execute_write(&row(table)).unwrap();
-        session.execute_write(&row(table)).unwrap();
-        let error = session.execute_write(&row(table)).unwrap_err();
+        session.node_conn().control_transaction("BEGIN").unwrap();
+        session.node_conn().execute_write(&row(table)).unwrap();
+        session.node_conn().execute_write(&row(table)).unwrap();
+        let error = session.node_conn().execute_write(&row(table)).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (1114, format!("The table '{table}' is full").as_str())
         );
-        session.control_transaction("ROLLBACK").unwrap();
+        session.node_conn().control_transaction("ROLLBACK").unwrap();
     }
     // A LOCAL table's committed rows count against the next transaction.
-    session.execute_write(&row("tl")).unwrap();
-    session.control_transaction("BEGIN").unwrap();
-    session.execute_write(&row("tl")).unwrap();
-    let error = session.execute_write(&row("tl")).unwrap_err();
+    session.node_conn().execute_write(&row("tl")).unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
+    session.node_conn().execute_write(&row("tl")).unwrap();
+    let error = session.node_conn().execute_write(&row("tl")).unwrap_err();
     assert_eq!(error.code, 1114);
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT COUNT(*) FROM tl")),
         [["1"]]
@@ -16081,13 +16759,15 @@ fn temporary_table_refuses_rows_past_tmp_table_max_size() {
 fn point_get_never_pins_a_partial_unique_index() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1053)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE pidx (a INT, b INT, c INT, UNIQUE INDEX idx3 (c) WHERE b > 10)",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO pidx VALUES (1, 5, 1), (2, 20, 2)")
         .unwrap();
     for sql in [
@@ -16127,9 +16807,9 @@ fn result_columns_keep_the_names_the_query_wrote() {
     use crate::domain::resultset_source::ResultSetSource;
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1054)).unwrap();
-    session.execute_write("USE test").unwrap();
-    let names = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
-        let mut result = session.execute(sql).expect("the query runs");
+    session.node_conn().execute_write("USE test").unwrap();
+    let names = |session: &mut Session, sql: &str| -> Vec<String> {
+        let mut result = session.node_conn().execute(sql).expect("the query runs");
         let source = result.source();
         let columns = source
             .columns()
@@ -16170,8 +16850,8 @@ fn result_columns_keep_the_names_the_query_wrote() {
 fn single_table_delete_reads_only_the_columns_removal_needs() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1055)).unwrap();
-    session.execute_write("USE test").unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    session.node_conn().execute_write("USE test").unwrap();
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
             .into_iter()
             .map(|row| format!("{} {}", row[0], row[3]))
@@ -16180,9 +16860,11 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
     };
     // A heap table: the handle is the hidden _tidb_rowid.
     session
+        .node_conn()
         .execute_write("CREATE TABLE dp1 (a INT, b INT, c VARCHAR(20), INDEX ib (b))")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO dp1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 20, 'z'), (4, 40, 'w')",
         )
@@ -16195,9 +16877,11 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
     let filtered = plan(&mut session, "DELETE FROM dp1 WHERE a = 1");
     assert!(filtered.contains("Projection"), "{filtered}");
     session
+        .node_conn()
         .execute_write("DELETE FROM dp1 WHERE a = 1")
         .unwrap();
     session
+        .node_conn()
         .execute_write("DELETE FROM dp1 WHERE b = 20 AND c = 'y'")
         .unwrap();
     assert_eq!(
@@ -16213,19 +16897,22 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
         [["20"], ["40"]]
     );
     session
+        .node_conn()
         .execute_write("DELETE FROM dp1 ORDER BY a LIMIT 1")
         .unwrap();
     assert_eq!(displayed(rows(&mut session, "SELECT a FROM dp1")), [["4"]]);
     // A clustered integer key and a unique secondary index.
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE dp2 (id INT PRIMARY KEY CLUSTERED, u INT, pad VARCHAR(20), UNIQUE KEY uu (u))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO dp2 VALUES (1, 100, 'p'), (2, 200, 'q'), (3, 300, 'r')")
         .unwrap();
     session
+        .node_conn()
         .execute_write("DELETE FROM dp2 WHERE pad = 'q'")
         .unwrap();
     assert_eq!(
@@ -16237,18 +16924,21 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
     );
     // The freed unique value can be inserted again.
     session
+        .node_conn()
         .execute_write("INSERT INTO dp2 VALUES (9, 200, 's')")
         .unwrap();
     // A common handle.
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE dp3 (k1 VARCHAR(10), k2 INT, v INT, w INT, PRIMARY KEY (k1, k2) CLUSTERED, KEY iv (v))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO dp3 VALUES ('a', 1, 5, 0), ('b', 2, 6, 0), ('c', 3, 7, 0)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("DELETE FROM dp3 WHERE w = 0 AND v = 6")
         .unwrap();
     assert_eq!(
@@ -16257,12 +16947,13 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
     );
     // A referenced table keeps every column (its foreign keys read them).
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE dpp (id INT PRIMARY KEY, name VARCHAR(10), INDEX iname (name))",
         )
         .unwrap();
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE dpc (id INT PRIMARY KEY, pid INT, CONSTRAINT fk_dp FOREIGN KEY (pid) REFERENCES dpp (id))",
         )
         .unwrap();
@@ -16280,8 +16971,8 @@ fn single_table_delete_reads_only_the_columns_removal_needs() {
 fn multi_table_writes_read_only_the_columns_they_need() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1056)).unwrap();
-    session.execute_write("USE test").unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    session.node_conn().execute_write("USE test").unwrap();
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
             .into_iter()
             .map(|row| format!("{} {}", row[0], row[3]))
@@ -16289,15 +16980,19 @@ fn multi_table_writes_read_only_the_columns_they_need() {
             .join(" | ")
     };
     session
+        .node_conn()
         .execute_write("CREATE TABLE mu1 (a INT, b INT, pad INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE mu2 (a INT, b INT, other INT, INDEX ib (b))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO mu1 VALUES (1, 1, 0), (2, 2, 0), (3, 9, 0)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO mu2 VALUES (10, 1, 100), (20, 2, 200), (30, 7, 300)")
         .unwrap();
     // `mu2` is only joined: its read is the covering index.
@@ -16310,6 +17005,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
         "{update}"
     );
     session
+        .node_conn()
         .execute_write("UPDATE mu1, mu2 SET mu1.a = 99 WHERE mu1.b = mu2.b")
         .unwrap();
     assert_eq!(
@@ -16318,6 +17014,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
     );
     // A column of `mu2` the SET expression reads is kept.
     session
+        .node_conn()
         .execute_write("UPDATE mu1, mu2 SET mu1.pad = mu2.other WHERE mu1.b = mu2.b AND mu2.a = 20")
         .unwrap();
     assert_eq!(
@@ -16326,6 +17023,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
     );
     // Updating both sources keeps both whole.
     session
+        .node_conn()
         .execute_write("UPDATE mu1, mu2 SET mu1.pad = 5, mu2.other = mu1.b WHERE mu1.b = mu2.b")
         .unwrap();
     assert_eq!(
@@ -16335,6 +17033,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
     // A multi-table DELETE of one target keeps the other source whole and
     // prunes the target to the index and handle.
     session
+        .node_conn()
         .execute_write("DELETE mu1 FROM mu1, mu2 WHERE mu1.b = mu2.b AND mu2.other = 2")
         .unwrap();
     assert_eq!(
@@ -16342,6 +17041,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
         [["1"], ["9"]]
     );
     session
+        .node_conn()
         .execute_write("DELETE mu1, mu2 FROM mu1, mu2 WHERE mu1.b = mu2.b")
         .unwrap();
     assert_eq!(
@@ -16351,6 +17051,7 @@ fn multi_table_writes_read_only_the_columns_they_need() {
     // A multi-table DELETE over one aliased source behaves as its
     // single-table form (this shape used to inherit the single-table prune).
     session
+        .node_conn()
         .execute_write("DELETE m FROM mu2 AS m WHERE m.b = 2")
         .unwrap();
     assert_eq!(displayed(rows(&mut session, "SELECT b FROM mu2")), [["7"]]);
@@ -16366,16 +17067,18 @@ fn multi_table_writes_read_only_the_columns_they_need() {
 fn cop_top_n_ties_follow_go_heap_layout_and_pdqsort() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1057)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tn (a INT, b CHAR)")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "INSERT INTO tn VALUES (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a'),(1,'x'),(1,'y'),(1,'z')",
         )
         .unwrap();
-    let ids = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let ids = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row[0].clone())
@@ -16412,13 +17115,16 @@ fn cop_top_n_ties_follow_go_heap_layout_and_pdqsort() {
     }
     // Beyond twelve survivors the order is pdqsort's, not a stable sort's.
     session
+        .node_conn()
         .execute_write("CREATE TABLE tm (a INT, b CHAR)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tm VALUES (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a')")
         .unwrap();
     for _ in 0..3 {
         session
+            .node_conn()
             .execute_write("INSERT INTO tm SELECT * FROM tm")
             .unwrap();
     }
@@ -16439,15 +17145,17 @@ fn cop_top_n_ties_follow_go_heap_layout_and_pdqsort() {
 fn sort_ties_beyond_twelve_rows_follow_go_pdqsort() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1099)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE st1 (id INT, k INT)")
         .unwrap();
     let values: Vec<String> = (1..=40).map(|id| format!("({id},{})", id % 3)).collect();
     session
+        .node_conn()
         .execute_write(&format!("INSERT INTO st1 VALUES {}", values.join(",")))
         .unwrap();
-    let ids = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let ids = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row[0].clone())
@@ -16482,14 +17190,16 @@ fn sort_ties_beyond_twelve_rows_follow_go_pdqsort() {
 fn analyze_skips_json_bases_of_stored_generated_index_columns() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1100)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE sgb (j1 JSON, j2 JSON, a INT AS (JSON_EXTRACT(j1, '$.a')) STORED, \
              b VARCHAR(20) AS (JSON_KEYS(j2)) STORED, KEY idx_a (a), KEY idx_b (b))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO sgb(j1, j2) VALUES ('{\"a\": 1}', '{\"1\": \"1\"}')")
         .unwrap();
     rows(&mut session, "ANALYZE TABLE sgb");
@@ -16513,11 +17223,13 @@ fn analyze_skips_json_bases_of_stored_generated_index_columns() {
 fn distinct_variance_is_computed_in_two_passes_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1101)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tv (a TINYINT, b SMALLINT, f FLOAT, g DOUBLE)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tv VALUES (1, 2, 6.1, 7.2), (1, 3, 7.1, 8.2), (1, 2, 6.1, 7.2)")
         .unwrap();
     // Expected: Go 1.27 on this branch (`TestZZ` probe). The plain
@@ -16546,11 +17258,13 @@ fn distinct_variance_is_computed_in_two_passes_like_go() {
 fn table_sample_ignores_the_transactions_pending_writes() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1102)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET @@global.tidb_scatter_region = 'table'")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tsp (a INT PRIMARY KEY)")
         .unwrap();
     rows(
@@ -16558,30 +17272,34 @@ fn table_sample_ignores_the_transactions_pending_writes() {
         "SPLIT TABLE tsp BETWEEN (0) AND (40000) REGIONS 4",
     );
     session
+        .node_conn()
         .execute_write("INSERT INTO tsp VALUES (1), (1000), (10002)")
         .unwrap();
-    let sampled = |session: &mut ClusterServerSession| -> Vec<String> {
+    let sampled = |session: &mut Session| -> Vec<String> {
         displayed(rows(session, "SELECT * FROM tsp TABLESAMPLE REGIONS()"))
             .into_iter()
             .map(|row| row[0].clone())
             .collect()
     };
     assert_eq!(sampled(&mut session), ["1", "10002"]);
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tsp VALUES (20006), (50000)")
         .unwrap();
     assert_eq!(sampled(&mut session), ["1", "10002"]);
     session
+        .node_conn()
         .execute_write("DELETE FROM tsp WHERE a = 1")
         .unwrap();
     assert_eq!(sampled(&mut session), ["1", "10002"]);
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(sampled(&mut session), ["1000", "10002", "20006", "50000"]);
     // The splits are store metadata: a DDL rebuilds the catalog from the
     // stored schema (`TestTableSampleNotSupportedPlanWarning`) and must not
     // forget them.
     session
+        .node_conn()
         .execute_write("CREATE TABLE tsr (a INT PRIMARY KEY, b INT)")
         .unwrap();
     rows(
@@ -16589,9 +17307,11 @@ fn table_sample_ignores_the_transactions_pending_writes() {
         "SPLIT TABLE tsr BETWEEN (0) AND (10000) REGIONS 5",
     );
     session
+        .node_conn()
         .execute_write("INSERT INTO tsr VALUES (1000, 1), (1001, 1), (2100, 2), (4500, 3)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE INDEX idx_0 ON tsr (b)")
         .unwrap();
     let rows_after_ddl: Vec<String> = displayed(rows(
@@ -16611,11 +17331,12 @@ fn table_sample_ignores_the_transactions_pending_writes() {
 fn index_with_equality_prefix_provides_the_handle_order() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1105)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tho (a INT PRIMARY KEY, b INT, c INT, KEY idx(b))")
         .unwrap();
-    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let operators = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| {
@@ -16645,9 +17366,9 @@ fn index_with_equality_prefix_provides_the_handle_order() {
 fn derived_table_range_scan_is_estimated_from_its_range() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1106)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
-        .execute_write(
+        .node_conn().execute_write(
             "CREATE TABLE tdr (id INT UNSIGNED NOT NULL AUTO_INCREMENT, k INT UNSIGNED NOT NULL DEFAULT 0, \
              PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY k (k))",
         )
@@ -16676,11 +17397,13 @@ fn derived_table_range_scan_is_estimated_from_its_range() {
 fn explained_dml_is_exempt_from_ordered_result_mode() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1107)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE teo (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("SET tidb_enable_ordered_result_mode = 1")
         .unwrap();
     for sql in [
@@ -16703,8 +17426,9 @@ fn explained_dml_is_exempt_from_ordered_result_mode() {
 fn full_scan_of_a_bit_hash_table_skips_the_unreachable_partition() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1108)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE tbh (a BIT(1) DEFAULT NULL, b INT) PARTITION BY HASH(a) PARTITIONS 3",
         )
@@ -16724,14 +17448,19 @@ fn full_scan_of_a_bit_hash_table_skips_the_unreachable_partition() {
 fn prepared_execute_is_summarized_under_the_prepared_text() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1109)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
         .unwrap();
     session
+        .node_conn()
         .execute_write("PREPARE stmt FROM 'select ?'")
         .unwrap();
-    session.execute_write("SET @number = 1").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET @number = 1")
+        .unwrap();
     rows(&mut session, "EXECUTE stmt USING @number");
     assert_eq!(
         displayed(rows(
@@ -16741,6 +17470,7 @@ fn prepared_execute_is_summarized_under_the_prepared_text() {
         [["1"]]
     );
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
 }
@@ -16754,13 +17484,17 @@ fn prepared_execute_is_summarized_under_the_prepared_text() {
 fn failed_select_for_update_lock_finishes_the_statement() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1131)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
         .unwrap();
     rows(&mut session, "CREATE TABLE lock_summary (id int, v int)");
     rows(&mut session, "INSERT INTO lock_summary VALUES (1, 10)");
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -16769,14 +17503,20 @@ fn failed_select_for_update_lock_finishes_the_statement() {
         [["10"]]
     );
     let mut contender = stack.factory.open_session(session_context(1132)).unwrap();
-    contender.execute_write("USE test").unwrap();
-    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    contender.node_conn().execute_write("USE test").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert!(matches!(
-        contender.execute("SELECT v FROM lock_summary WHERE v > 0 FOR UPDATE NOWAIT"),
+        contender.node_conn().execute("SELECT v FROM lock_summary WHERE v > 0 FOR UPDATE NOWAIT"),
         Err(error) if error.code == 3572
     ));
-    contender.control_transaction("ROLLBACK").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -16786,6 +17526,7 @@ fn failed_select_for_update_lock_finishes_the_statement() {
         [["1", "1"]]
     );
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
 }
@@ -16836,18 +17577,19 @@ impl crate::domain::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
 fn failed_stats_cache_update_fails_the_analyze_statement() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1133)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     rows(&mut session, "CREATE TABLE analyze_update_a (a INT)");
     rows(&mut session, "CREATE TABLE analyze_update_b (a INT)");
     rows(&mut session, "INSERT INTO analyze_update_a VALUES (1), (2)");
     rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
     let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
     let analyze = Arc::new(FailingStatsCacheUpdate {
-        inner: session.domain.analyze(),
+        inner: session.node().domain.analyze(),
         updated: Arc::clone(&updated),
     });
-    session.set_analyzer(&stack.factory, analyze);
+    session.node_conn().set_analyzer(&stack.factory, analyze);
     let error = session
+        .node_conn()
         .execute("ANALYZE TABLE analyze_update_a, analyze_update_b")
         .err()
         .expect("the cache update failure is the statement's error");
@@ -16886,13 +17628,17 @@ fn failed_stats_cache_update_fails_the_analyze_statement() {
 fn insert_select_warnings_keep_the_order_they_were_raised_in() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1110)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tiw (a DECIMAL(10,2))")
         .unwrap();
-    session.execute_write("SET @@sql_mode = ''").unwrap();
     session
-        .execute_write(
+        .node_conn()
+        .execute_write("SET @@sql_mode = ''")
+        .unwrap();
+    session
+        .node_conn().execute_write(
             "INSERT INTO tiw SELECT ROUND(CAST('88888899999999999888888888888888888888888888888888888.11111111111111111111' AS DECIMAL(18,12)) \
              * CAST('88888899999999999888888888888888888888888888888888888.11111111111111111111' AS DECIMAL(42,18)))",
         )
@@ -16921,8 +17667,9 @@ fn insert_select_warnings_keep_the_order_they_were_raised_in() {
 fn statement_summary_plan_digests_match_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1111)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
         .unwrap();
     for ddl in [
@@ -16930,7 +17677,7 @@ fn statement_summary_plan_digests_match_go() {
         "CREATE TABLE b(id INT PRIMARY KEY, y INT, z INT, KEY(y))",
         "CREATE TABLE c(id INT PRIMARY KEY, z INT)",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     for sql in [
         "select * from a where id = 1",
@@ -16962,7 +17709,7 @@ fn statement_summary_plan_digests_match_go() {
         if sql.starts_with("select") {
             rows(&mut session, sql);
         } else {
-            session.execute_write(sql).unwrap();
+            session.node_conn().execute_write(sql).unwrap();
         }
     }
     let recorded: std::collections::BTreeMap<String, String> = displayed(rows(
@@ -17077,6 +17824,7 @@ fn statement_summary_plan_digests_match_go() {
         );
     }
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
 }
@@ -17090,14 +17838,14 @@ fn statement_summary_plan_digests_match_go() {
 fn in_subquery_over_a_primary_key_has_no_deduplicating_aggregation() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1112)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE sia(id INT PRIMARY KEY, x INT, y INT)",
         "CREATE TABLE sib(id INT PRIMARY KEY, y INT, z INT, KEY(y))",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let operators = |session: &mut ClusterServerSession, sql: &str| -> String {
+    let operators = |session: &mut Session, sql: &str| -> String {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| {
@@ -17129,11 +17877,12 @@ fn in_subquery_over_a_primary_key_has_no_deduplicating_aggregation() {
 fn autocommit_for_update_point_gets_have_no_select_lock() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1113)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tfu (id INT PRIMARY KEY, x INT)")
         .unwrap();
-    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let operators = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| {
@@ -17178,11 +17927,13 @@ fn autocommit_for_update_point_gets_have_no_select_lock() {
 fn statement_summary_plan_digests_match_go_for_more_shapes() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1114)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET @@tidb_hash_join_concurrency = 1")
         .unwrap();
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
         .unwrap();
     for ddl in [
@@ -17191,7 +17942,7 @@ fn statement_summary_plan_digests_match_go_for_more_shapes() {
         "CREATE TABLE c(id INT PRIMARY KEY, z INT)",
         "CREATE TABLE u(id INT, k INT, v VARCHAR(20), UNIQUE KEY uk(k), KEY(v))",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     for sql in [
         "select * from u where k = 1",
@@ -17369,6 +18120,7 @@ fn statement_summary_plan_digests_match_go_for_more_shapes() {
         );
     }
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
 }
@@ -17380,13 +18132,15 @@ fn statement_summary_plan_digests_match_go_for_more_shapes() {
 fn top_n_over_a_prefix_index_column_stays_on_the_table_side() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1058)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE tpx (id INT PRIMARY KEY, name VARCHAR(50), INDEX ip (name(3)))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tpx VALUES (1,'abcZ'),(2,'abcY'),(3,'abcA'),(4,'abcB')")
         .unwrap();
     let plan = displayed(rows(
@@ -17418,13 +18172,13 @@ fn top_n_over_a_prefix_index_column_stays_on_the_table_side() {
 fn for_update_of_checks_its_targets_on_the_point_get_fast_path() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1114)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tfo (id INT PRIMARY KEY, a INT)")
         .unwrap();
-    let warnings = |session: &mut ClusterServerSession| -> Vec<Vec<String>> {
-        displayed(rows(session, "SHOW WARNINGS"))
-    };
+    let warnings =
+        |session: &mut Session| -> Vec<Vec<String>> { displayed(rows(session, "SHOW WARNINGS")) };
     rows(
         &mut session,
         "SELECT ue.id FROM tfo ue WHERE ue.id = 1 FOR UPDATE OF tfo",
@@ -17443,6 +18197,7 @@ fn for_update_of_checks_its_targets_on_the_point_get_fast_path() {
     );
     assert!(warnings(&mut session).is_empty());
     let error = session
+        .node_conn()
         .execute("SELECT ue.id FROM tfo ue WHERE ue.id = 1 FOR UPDATE OF zz")
         .err()
         .map(|error| format!("{error:?}"))
@@ -17463,14 +18218,16 @@ fn for_update_of_checks_its_targets_on_the_point_get_fast_path() {
 fn aggregation_pushes_the_relaxed_part_of_a_dnf_filter_below_itself() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1115)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tdd (d_sk INT PRIMARY KEY, d_year INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tss (s_date INT, s_amt INT)")
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, filter: &str| -> String {
+    let plan = |session: &mut Session, filter: &str| -> String {
         let sql = format!(
             "EXPLAIN FORMAT = 'brief' SELECT * FROM (SELECT d_year, SUM(s_amt) total FROM tss, tdd \
              WHERE s_date = d_sk GROUP BY d_year) v WHERE {filter}"
@@ -17529,16 +18286,19 @@ fn aggregation_pushes_the_relaxed_part_of_a_dnf_filter_below_itself() {
 fn plan_cache_admission_follows_go_plan_sizes() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1116)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE t (a INT, b INT, c VARCHAR(20))")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ti (id INT PRIMARY KEY, k INT, k2 INT, v INT, KEY(k), KEY(k2))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("SET @@tidb_hash_join_concurrency = 1")
         .unwrap();
     let cases: [(&str, i64); 15] = [
@@ -17564,11 +18324,13 @@ fn plan_cache_admission_follows_go_plan_sizes() {
             25_883,
         ),
     ];
-    let cached_at = |session: &mut ClusterServerSession, sql: &str, max: i64| -> bool {
+    let cached_at = |session: &mut Session, sql: &str, max: i64| -> bool {
         session
+            .node_conn()
             .execute_write(&format!("SET @@tidb_plan_cache_max_plan_size = {max}"))
             .unwrap();
         session
+            .node_conn()
             .execute_write(&format!("PREPARE sz FROM '{sql}'"))
             .unwrap();
         rows(session, "EXECUTE sz");
@@ -17598,14 +18360,16 @@ fn plan_cache_admission_follows_go_plan_sizes() {
 fn plan_cache_refuses_the_thirty_leg_union_by_default() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1117)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tu (a INT, b INT, c VARCHAR(2048))")
         .unwrap();
     let leg = "select * from tu, tu t1 where t1.c=space(2048) and tu.c=space(2048) and tu.a=t1.b";
     let union = |legs: usize| vec![leg; legs].join(" union all ");
-    let cached = |session: &mut ClusterServerSession, legs: usize| -> bool {
+    let cached = |session: &mut Session, legs: usize| -> bool {
         session
+            .node_conn()
             .execute_write(&format!("PREPARE big FROM '{}'", union(legs)))
             .unwrap();
         rows(session, "EXECUTE big");
@@ -17617,6 +18381,7 @@ fn plan_cache_refuses_the_thirty_leg_union_by_default() {
     assert!(cached(&mut session, 15));
     assert!(!cached(&mut session, 30));
     session
+        .node_conn()
         .execute_write("SET @@tidb_plan_cache_max_plan_size = 1073741824")
         .unwrap();
     assert!(cached(&mut session, 30));
@@ -17632,14 +18397,16 @@ fn plan_cache_refuses_the_thirty_leg_union_by_default() {
 fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1118)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tus (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tus VALUES (1,1,1),(2,2,2),(3,3,3)")
         .unwrap();
-    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let operators = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
             .into_iter()
             .map(|row| {
@@ -17657,8 +18424,9 @@ fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
         operators(&mut session, "SELECT * FROM tus WHERE b = 1")[0],
         "IndexLookUp"
     );
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tus VALUES (4,4,4)")
         .unwrap();
     let dirty = operators(&mut session, "SELECT * FROM tus WHERE b = 1");
@@ -17672,7 +18440,7 @@ fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
     assert_eq!(&ordered[..2], ["Sort", "UnionScan"], "{ordered:?}");
     let limited = operators(&mut session, "SELECT * FROM tus WHERE b > 1 LIMIT 1");
     assert_eq!(&limited[..2], ["Limit", "UnionScan"], "{limited:?}");
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         operators(&mut session, "SELECT * FROM tus WHERE b = 1")[0],
         "IndexLookUp"
@@ -17681,6 +18449,7 @@ fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
     // A local temporary table is always read through a union scan, and its
     // free scans make the index the cheaper way to deliver an order.
     session
+        .node_conn()
         .execute_write("CREATE TEMPORARY TABLE ttus (a INT PRIMARY KEY, b INT, KEY(b))")
         .unwrap();
     let temp = operators(&mut session, "SELECT * FROM ttus WHERE b = 1");
@@ -17705,8 +18474,9 @@ fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
 fn index_join_inner_side_under_a_union_scan_updates_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1119)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tij (a INT PRIMARY KEY, b INT)")
         .unwrap();
     let values = (2..100)
@@ -17714,13 +18484,16 @@ fn index_join_inner_side_under_a_union_scan_updates_like_go() {
         .collect::<Vec<_>>()
         .join(",");
     session
+        .node_conn()
         .execute_write(&format!("INSERT INTO tij VALUES {values}"))
         .unwrap();
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tij VALUES (1, 1)")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "UPDATE /*+ INL_JOIN(t1) */ tij t1, (SELECT a, b FROM tij) t2 \
              SET t1.b = t2.b WHERE t1.a = t2.a + 10",
@@ -17740,7 +18513,7 @@ fn index_join_inner_side_under_a_union_scan_updates_like_go() {
         )),
         [["89"]]
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// An aggregate over an empty input keeps Go's `ndv >= 1` row estimate, a
@@ -17753,11 +18526,12 @@ fn index_join_inner_side_under_a_union_scan_updates_like_go() {
 fn empty_input_aggregation_and_scalar_subquery_ids_match_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1119)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE tdz (a INT, b VARCHAR(10), c DECIMAL(10,2))")
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
             .into_iter()
             .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[5]))
@@ -17796,7 +18570,7 @@ fn empty_input_aggregation_and_scalar_subquery_ids_match_go() {
 fn plan_ids_and_dirty_partition_shapes_match_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1120)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE tpi (a INT PRIMARY KEY, b INT, c INT, KEY(c))",
         "CREATE TABLE tpd (a INT PRIMARY KEY, b INT, c INT, UNIQUE KEY(b), KEY(c))",
@@ -17804,9 +18578,9 @@ fn plan_ids_and_dirty_partition_shapes_match_go() {
         "INSERT INTO tpd VALUES (1,1,1),(2,2,2),(3,3,3)",
         "INSERT INTO tpp VALUES (1,1),(2,2),(3,3)",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
             .into_iter()
             .filter(|row| row.len() > 5)
@@ -17829,8 +18603,9 @@ fn plan_ids_and_dirty_partition_shapes_match_go() {
         "└─Projection_5 10000.00 630395.30 plus(test.tpd.a, 10)->Column#8, \
          plus(test.tpd.b, 10)->Column#9, test.tpd.c"
     );
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO tpp VALUES (4,4)")
         .unwrap();
     assert_eq!(
@@ -17849,7 +18624,7 @@ fn plan_ids_and_dirty_partition_shapes_match_go() {
             "  └─TableReader_13 10000.00 387557.30 data:TableFullScan_12",
         ]
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// Inside a transaction a locking SELECT over a point key plans as the point
@@ -17861,16 +18636,16 @@ fn plan_ids_and_dirty_partition_shapes_match_go() {
 fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1121)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE tlk (a INT PRIMARY KEY, b INT, c INT, UNIQUE KEY(b), KEY(c))",
         "CREATE TABLE tlp (a INT PRIMARY KEY, b INT) PARTITION BY HASH(a) PARTITIONS 3",
         "INSERT INTO tlk VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)",
         "INSERT INTO tlp VALUES (1,1),(2,2),(3,3)",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
             .into_iter()
             .map(|row| format!("{} {} {} {} {}", row[0], row[1], row[2], row[4], row[5]))
@@ -17881,7 +18656,10 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
         plan(&mut session, "SELECT * FROM tlp WHERE a = 1 FOR UPDATE"),
         ["Point_Get_1 1.00 0.00 table:tlp, partition:p1 handle:1"]
     );
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert_eq!(
         plan(&mut session, "SELECT * FROM tlk WHERE a = 1 FOR UPDATE"),
         ["Point_Get_1 1.00 0.00 table:tlk handle:1, lock"]
@@ -17904,11 +18682,14 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
         [["1"]]
     );
     let mut contender = stack.factory.open_session(session_context(1122)).unwrap();
-    contender.execute_write("USE test").unwrap();
-    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    contender.node_conn().execute_write("USE test").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert!(
         matches!(
-            contender.execute("SELECT b FROM tlk WHERE a = 1 FOR UPDATE NOWAIT"),
+            contender.node_conn().execute("SELECT b FROM tlk WHERE a = 1 FOR UPDATE NOWAIT"),
             Err(error) if error.code == 3572
         ),
         "the point lock must be held"
@@ -17916,11 +18697,13 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
     // A prepared statement caches the fast plan: its second EXECUTE, with a
     // different key, locks that key too.
     session
+        .node_conn()
         .execute_write("PREPARE lockp FROM 'SELECT b FROM tlk WHERE a = ? FOR UPDATE'")
         .unwrap();
-    session.execute_write("SET @lk = 3").unwrap();
+    session.node_conn().execute_write("SET @lk = 3").unwrap();
     for key in [3, 2] {
         session
+            .node_conn()
             .execute_write(&format!("SET @lk = {key}"))
             .unwrap();
         assert_eq!(
@@ -17929,7 +18712,7 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
         );
         assert!(
             matches!(
-                contender.execute(&format!(
+                contender.node_conn().execute(&format!(
                     "SELECT b FROM tlk WHERE a = {key} FOR UPDATE NOWAIT"
                 )),
                 Err(error) if error.code == 3572
@@ -17939,22 +18722,26 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
     }
     // The same holds for a prepared locking read that is no point read.
     session
+        .node_conn()
         .execute_write("PREPARE lockq FROM 'SELECT b FROM tlk WHERE c = ? FOR UPDATE'")
         .unwrap();
-    session.execute_write("SET @lc = 4").unwrap();
+    session.node_conn().execute_write("SET @lc = 4").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "EXECUTE lockq USING @lc")),
         [["4"]]
     );
     assert!(
         matches!(
-            contender.execute("SELECT b FROM tlk WHERE a = 4 FOR UPDATE NOWAIT"),
+            contender.node_conn().execute("SELECT b FROM tlk WHERE a = 4 FOR UPDATE NOWAIT"),
             Err(error) if error.code == 3572
         ),
         "a prepared locking index read must lock its row"
     );
-    contender.control_transaction("ROLLBACK").unwrap();
-    session.control_transaction("ROLLBACK").unwrap();
+    contender
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// A correlated scalar subquery's aggregation, decorrelated into a join,
@@ -17967,12 +18754,12 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
 fn correlated_subquery_enumeration_draws_the_same_ids_as_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1123)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE tcs (a INT, b VARCHAR(10), c DECIMAL(10,2), KEY(a))",
         "CREATE TABLE tcu (a INT, b INT, c DECIMAL(10,2), KEY(a))",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     let text = displayed(rows(
         &mut session,
@@ -18002,8 +18789,9 @@ fn correlated_subquery_enumeration_draws_the_same_ids_as_go() {
 fn ordered_request_keeps_the_index_path_next_to_a_table_range() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1124)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE tsk (id INT NOT NULL, k INT NOT NULL DEFAULT 0, c CHAR(120) NOT NULL \
              DEFAULT '', PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY k (k))",
@@ -18036,16 +18824,16 @@ fn ordered_request_keeps_the_index_path_next_to_a_table_range() {
 fn static_partition_pruning_spends_the_plan_ids_go_does() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1125)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "SET @@tidb_partition_prune_mode = 'static'",
         "CREATE TABLE tsp (a BIT(1) DEFAULT NULL, b INT DEFAULT NULL) PARTITION BY HASH(a) PARTITIONS 3",
         "CREATE TABLE tsr (a INT, b INT, KEY(b)) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
          PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (MAXVALUE))",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
             .into_iter()
             .filter(|row| row.len() > 5 && row[3] == "root")
@@ -18076,14 +18864,14 @@ fn static_partition_pruning_spends_the_plan_ids_go_does() {
 fn join_hints_spend_the_plan_ids_go_does() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1126)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE tja (id INT PRIMARY KEY, x INT, y INT, KEY(x), KEY(y))",
         "CREATE TABLE tjb (id INT PRIMARY KEY, y INT, z INT, KEY(y))",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
             .into_iter()
             .filter(|row| row.len() > 5 && row[3] == "root")
@@ -18133,7 +18921,7 @@ fn join_hints_spend_the_plan_ids_go_does() {
 fn force_index_join_hint_still_builds_the_other_sides_inner_task() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1127)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE ihs1 (j1 JSON, a INT, b INT, KEY idx_a (a), KEY idx_b (b), KEY idx_a_b (a, b))",
         "CREATE TABLE ihs2 (j1 JSON, a INT, b INT, KEY idx_a (a), KEY idx_b (b), KEY idx_a_b (a, b))",
@@ -18141,9 +18929,9 @@ fn force_index_join_hint_still_builds_the_other_sides_inner_task() {
         "INSERT INTO ihs2 VALUES ('{\"a\": 1}',1,1)",
         "ANALYZE TABLE ihs1, ihs2",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let ids = |session: &mut ClusterServerSession, hint: &str| -> Vec<String> {
+    let ids = |session: &mut Session, hint: &str| -> Vec<String> {
         displayed(rows(
             session,
             &format!(
@@ -18174,11 +18962,12 @@ fn force_index_join_hint_still_builds_the_other_sides_inner_task() {
 fn rowid_range_estimates_use_the_default_selectivity_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1128)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE rowid_range (a INT, b INT, KEY b (b))")
         .unwrap();
-    let counts = |session: &mut ClusterServerSession, sql: &str| -> Vec<(String, String)> {
+    let counts = |session: &mut Session, sql: &str| -> Vec<(String, String)> {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
             .into_iter()
             .map(|row| (row[0].trim_start_matches([' ', '└', '─']).to_string(), row[1].clone()))
@@ -18211,7 +19000,7 @@ fn rowid_range_estimates_use_the_default_selectivity_like_go() {
 fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1130)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE note_t (a INT PRIMARY KEY, b INT, c INT, d INT, UNIQUE KEY ub (b), KEY ic (c))",
         "CREATE TABLE note_u (a INT, b INT, c INT, KEY ia (a), KEY ib (b), KEY iab (a, b))",
@@ -18219,9 +19008,9 @@ fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
         "INSERT INTO note_u VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
         "ANALYZE TABLE note_t, note_u",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let notes = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+    let notes = |session: &mut Session, sql: &str| -> Vec<String> {
         rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}"));
         displayed(rows(session, "SHOW WARNINGS"))
             .into_iter()
@@ -18274,7 +19063,7 @@ fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
 fn explain_format_hint_reproduces_the_plan_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1131)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE hint_t1 (a INT PRIMARY KEY, b INT, c INT, d INT, KEY ib (b), KEY ic (c), KEY ibc (b, c))",
         "CREATE TABLE hint_t2 (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
@@ -18282,9 +19071,9 @@ fn explain_format_hint_reproduces_the_plan_like_go() {
         "INSERT INTO hint_t2 VALUES (1,1,1),(2,2,2),(3,3,3)",
         "ANALYZE TABLE hint_t1, hint_t2",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
-    let hint = |session: &mut ClusterServerSession, sql: &str| -> String {
+    let hint = |session: &mut Session, sql: &str| -> String {
         displayed(rows(session, &format!("EXPLAIN FORMAT = 'hint' {sql}")))[0][0].clone()
     };
     assert_eq!(
@@ -18323,15 +19112,18 @@ fn explain_format_hint_reproduces_the_plan_like_go() {
 fn statement_summary_records_plan_hint_and_binding_text_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1132)).unwrap();
-    session.execute_write("CREATE DATABASE IF NOT EXISTS ss_hint").unwrap();
-    session.execute_write("USE ss_hint").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE DATABASE IF NOT EXISTS ss_hint")
+        .unwrap();
+    session.node_conn().execute_write("USE ss_hint").unwrap();
     for ddl in [
         "CREATE TABLE st (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
         "CREATE TABLE su (a INT, b INT, KEY ia (a))",
         "INSERT INTO st VALUES (1,1,1),(2,2,2),(3,3,3)",
         "ANALYZE TABLE st",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     rows(&mut session, "SELECT /*+ use_index(st, ib) max_execution_time(1000) */ * FROM st WHERE b > 1");
     rows(&mut session, "INSERT INTO su SELECT a, b FROM st");
@@ -18365,8 +19157,11 @@ fn statement_summary_records_plan_hint_and_binding_text_like_go() {
 fn statement_summary_records_cop_task_details_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1133)).unwrap();
-    session.execute_write("CREATE DATABASE IF NOT EXISTS ss_cop").unwrap();
-    session.execute_write("USE ss_cop").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE DATABASE IF NOT EXISTS ss_cop")
+        .unwrap();
+    session.node_conn().execute_write("USE ss_cop").unwrap();
     for ddl in [
         "CREATE TABLE ct (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
         "CREATE TABLE cu (a INT, b INT, KEY ia (a))",
@@ -18374,7 +19169,7 @@ fn statement_summary_records_cop_task_details_like_go() {
         "INSERT INTO cu VALUES (1,1),(2,2)",
         "ANALYZE TABLE ct, cu",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     for query in [
         "SELECT a FROM ct WHERE b > 1",
@@ -18417,9 +19212,10 @@ fn a_dml_read_reaches_the_coprocessor_like_a_select() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1135)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE DATABASE IF NOT EXISTS ss_dml")
         .unwrap();
-    session.execute_write("USE ss_dml").unwrap();
+    session.node_conn().execute_write("USE ss_dml").unwrap();
     for statement in [
         "CREATE TABLE ct (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
         "INSERT INTO ct VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
@@ -18428,7 +19224,7 @@ fn a_dml_read_reaches_the_coprocessor_like_a_select() {
         "DELETE FROM ct WHERE c = 3",
         "UPDATE ct SET c = 0 WHERE a = 1",
     ] {
-        session.execute_write(statement).unwrap();
+        session.node_conn().execute_write(statement).unwrap();
     }
     let summary = displayed(rows(
         &mut session,
@@ -18463,9 +19259,10 @@ fn a_covering_index_join_update_reads_its_target_handle_from_the_coprocessor() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1136)).unwrap();
     session
+        .node_conn()
         .execute_write("CREATE DATABASE IF NOT EXISTS ij_dml")
         .unwrap();
-    session.execute_write("USE ij_dml").unwrap();
+    session.node_conn().execute_write("USE ij_dml").unwrap();
     for statement in [
         "CREATE TABLE t (a VARCHAR(1), INDEX idx(a))",
         "CREATE TABLE t1 (a VARCHAR(5), INDEX idx(a))",
@@ -18474,7 +19271,7 @@ fn a_covering_index_join_update_reads_its_target_handle_from_the_coprocessor() {
         "UPDATE /*+ INL_JOIN(t) */ t, t1 SET t.a = 'a' WHERE t.a = t1.a",
         "UPDATE /*+ INL_HASH_JOIN(t) */ t, t1 SET t.a = 'a' WHERE t.a = t1.a",
     ] {
-        session.execute_write(statement).unwrap();
+        session.node_conn().execute_write(statement).unwrap();
     }
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY a")),
@@ -18491,10 +19288,14 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1134)).unwrap();
     session
+        .node_conn()
         .execute_write("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
         .unwrap();
-    session.execute_write("CREATE DATABASE IF NOT EXISTS bh1").unwrap();
-    session.execute_write("USE bh1").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE DATABASE IF NOT EXISTS bh1")
+        .unwrap();
+    session.node_conn().execute_write("USE bh1").unwrap();
     for ddl in [
         "CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY ib (b), KEY ic (c))",
         "CREATE TABLE u (a INT, b INT, KEY ia (a))",
@@ -18502,7 +19303,7 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
         "INSERT INTO u VALUES (1,1),(2,2)",
         "ANALYZE TABLE t, u",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     for query in [
         "SELECT * FROM t WHERE b = 2",
@@ -18517,6 +19318,7 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
         ("@pd3", "select `t` . `a` from `t` join%"),
     ] {
         session
+            .node_conn()
             .execute_write(&format!(
                 "SET {variable} = (SELECT plan_digest FROM information_schema.statements_summary \
                  WHERE schema_name = 'bh1' AND digest_text LIKE '{pattern}' LIMIT 1)"
@@ -18524,10 +19326,12 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
             .unwrap();
     }
     session
+        .node_conn()
         .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd1")
         .unwrap();
     // The second spelling covers the same statement, so Go skips it with a note.
     session
+        .node_conn()
         .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd2, @pd2")
         .unwrap();
     assert_eq!(
@@ -18535,6 +19339,7 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
         [["Warning", "1105", "37da0e4188d56394b943d77850b13c70ea2c8b962a72de5ce6700ff3a5d34d9f is ignored because it corresponds to the same SQL digest as another Plan Digest"]]
     );
     session
+        .node_conn()
         .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd3")
         .unwrap();
     assert_eq!(
@@ -18570,6 +19375,7 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
     );
     assert_eq!(
         session
+            .node_conn()
             .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'nosuchdigest'")
             .err()
             .unwrap()
@@ -18578,6 +19384,7 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
     );
     assert_eq!(
         session
+            .node_conn()
             .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST ' , '")
             .err()
             .unwrap()
@@ -18598,14 +19405,14 @@ fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
 fn apply_enumeration_spends_the_embedded_hash_join_id() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1129)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "SET @@session.tidb_opt_insubq_to_join_and_agg = 0",
         "CREATE TABLE apply_ids (a INT PRIMARY KEY, b INT, c INT, KEY idx (b))",
         "INSERT INTO apply_ids VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 3, 4), (5, 3, 5)",
         "ANALYZE TABLE apply_ids",
     ] {
-        session.execute_write(ddl).unwrap();
+        session.node_conn().execute_write(ddl).unwrap();
     }
     let plan = displayed(rows(
         &mut session,
@@ -18627,7 +19434,7 @@ fn apply_enumeration_spends_the_embedded_hash_join_id() {
 fn rejected_statements_answer_with_go_codes_and_messages() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1130)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for ddl in [
         "CREATE TABLE ge (a INT, b INT, c INT AS (a + b))",
         "CREATE TABLE tv0 (a INT PRIMARY KEY, b INT)",
@@ -18648,10 +19455,13 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
         "CREATE VIEW v_b AS SELECT * FROM v_a",
         "CREATE TABLE sd (c INT, c1 VARCHAR(32) DEFAULT (STR_TO_DATE('01-01', '%Y-%m-%d')))",
     ] {
-        session.execute_write(ddl).unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
+        session
+            .node_conn()
+            .execute_write(ddl)
+            .unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
     }
-    let write_error = |session: &mut ClusterServerSession, sql: &str| {
-        let error = session.execute_write(sql).unwrap_err();
+    let write_error = |session: &mut Session, sql: &str| {
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         (error.code, error.message)
     };
     for (sql, code, message) in [
@@ -18805,7 +19615,7 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
         ),
     ] {
         if code == 0 {
-            session.execute_write(sql).unwrap();
+            session.node_conn().execute_write(sql).unwrap();
             continue;
         }
         assert_eq!(write_error(&mut session, sql), (code, message.to_owned()), "{sql}");
@@ -18869,8 +19679,9 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
 fn json_function_arguments_carry_go_implicit_casts() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1131)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE jt (a INT, j JSON, k JSON, s VARCHAR(10))")
         .unwrap();
     for (sql, expected) in [
@@ -18921,11 +19732,13 @@ fn json_function_arguments_carry_go_implicit_casts() {
 fn range_pruning_and_handle_ordering_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1132)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("SET @@tidb_partition_prune_mode = 'dynamic'")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE pr (a INT, b INT) PARTITION BY RANGE (a) (\
              PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20), \
@@ -18933,9 +19746,10 @@ fn range_pruning_and_handle_ordering_follow_go() {
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE ho (a INT, KEY ia (a))")
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, &format!("explain format='brief' {sql}")))
             .into_iter()
             .map(|row| row.join(" "))
@@ -18968,17 +19782,20 @@ fn range_pruning_and_handle_ordering_follow_go() {
 fn scalar_subquery_null_reference_and_derived_topn_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1133)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dq1 (a INT, b INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dq2 (a INT, b INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dw (a INT, b INT, c INT, PRIMARY KEY (b, a))")
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, &format!("explain format='brief' {sql}")))
             .into_iter()
             .map(|row| row.join(" "))
@@ -18993,6 +19810,7 @@ fn scalar_subquery_null_reference_and_derived_topn_follow_go() {
     let off = plan(&mut session, window);
     assert!(!off.contains("TopN"), "{off}");
     session
+        .node_conn()
         .execute_write("SET tidb_opt_derive_topn = 1")
         .unwrap();
     let on = plan(&mut session, window);
@@ -19012,8 +19830,9 @@ fn scalar_subquery_null_reference_and_derived_topn_follow_go() {
 fn builtin_arguments_carry_go_signature_casts() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1134)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE sa (i INT, s VARCHAR(20), d DECIMAL(10,2), dt DATETIME)")
         .unwrap();
     for (expression, expected) in [
@@ -19068,11 +19887,12 @@ fn builtin_arguments_carry_go_signature_casts() {
 fn dnf_over_an_index_prefers_the_range_scan_and_keeps_go_or_shape() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1135)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dn (a INT, b INT, KEY (a))")
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, &format!("explain format='brief' {sql}")))
             .into_iter()
             .map(|row| row.join(" "))
@@ -19108,13 +19928,15 @@ fn dnf_over_an_index_prefers_the_range_scan_and_keeps_go_or_shape() {
 fn grouped_range_reads_merge_sort_instead_of_sorting() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1137)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE gc (a INT, b INT, c INT, d INT, PRIMARY KEY (a, b, c) CLUSTERED)",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE gi (a INT, b INT, c INT, d INT, KEY iabc (a, b, c))")
         .unwrap();
     for table in ["gc", "gi"] {
@@ -19123,19 +19945,19 @@ fn grouped_range_reads_merge_sort_instead_of_sorting() {
             .collect::<Vec<_>>()
             .join(", ");
         session
+            .node_conn()
             .execute_write(&format!("INSERT INTO {table} VALUES {values}"))
             .unwrap();
     }
-    let text = |session: &mut ClusterServerSession, sql: &str| {
+    let text = |session: &mut Session, sql: &str| {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row.join(" "))
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
-        text(session, &format!("explain format='brief' {sql}"))
-    };
+    let plan =
+        |session: &mut Session, sql: &str| text(session, &format!("explain format='brief' {sql}"));
     for (sql, reader) in [
         (
             "select c from gc where a = 1 and b in (1, 3, 2) order by c",
@@ -19186,6 +20008,7 @@ fn grouped_range_reads_merge_sort_instead_of_sorting() {
     // ordered scan above the plain one: Go sorts the unordered lookup, and
     // the hinted ordered plan keeps the order under a trimming Projection.
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE gp (a INT, b INT, c INT, d INT, KEY iabc (a, b, c)) \
              PARTITION BY RANGE (d) (PARTITION p0 VALUES LESS THAN (100), \
@@ -19229,20 +20052,24 @@ fn grouped_range_reads_merge_sort_instead_of_sorting() {
 fn decorrelated_defaults_dual_limits_and_frames_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1138)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dd1 (c1 INT PRIMARY KEY, c2 INT)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE dd2 (c1 INT, c2 INT, KEY (c1))")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO dd1 VALUES (1,1),(2,2),(3,3),(4,4)")
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO dd2 VALUES (1,1),(1,2),(3,3),(3,5),(3,6)")
         .unwrap();
-    let text = |session: &mut ClusterServerSession, sql: &str| {
+    let text = |session: &mut Session, sql: &str| {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row.join(" "))
@@ -19273,6 +20100,7 @@ fn decorrelated_defaults_dual_limits_and_frames_follow_go() {
     let dual = text(&mut session, "explain format='brief' select 1 as a from dual order by a limit 1");
     assert!(!dual.contains("Limit") && dual.contains("TableDual"), "{dual}");
     session
+        .node_conn()
         .execute_write("CREATE TABLE ff (a INT, b INT)")
         .unwrap();
     let frame = text(
@@ -19291,8 +20119,9 @@ fn decorrelated_defaults_dual_limits_and_frames_follow_go() {
 fn table_metadata_answers_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1139)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE md (a INT, b INT, KEY ((a + b)))")
         .unwrap();
     let created = displayed(rows(
@@ -19306,6 +20135,7 @@ fn table_metadata_answers_follow_go() {
     let index = displayed(rows(&mut session, "show index from md"));
     assert_eq!(index[0][4], "NULL", "{index:?}");
     let fulltext = session
+        .node_conn()
         .execute_write("CREATE TABLE ft (a TEXT, FULLTEXT KEY k (a))")
         .unwrap_err();
     let fulltext = format!("{fulltext:?}");
@@ -19314,6 +20144,7 @@ fn table_metadata_answers_follow_go() {
         "{fulltext}"
     );
     let invisible = session
+        .node_conn()
         .execute_write("ALTER TABLE md ADD INDEX kb (b), ALTER INDEX kb INVISIBLE")
         .unwrap_err();
     let invisible = format!("{invisible:?}");
@@ -19328,7 +20159,7 @@ fn table_metadata_answers_follow_go() {
 fn bootstrap_views_and_column_defaults_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1140)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     for view in ["sys.schema_unused_indexes", "mysql.tidb_mdl_view"] {
         let result = rows(&mut session, &format!("select * from {view} limit 0"));
         assert!(result.is_empty(), "{view}: {result:?}");
@@ -19336,7 +20167,10 @@ fn bootstrap_views_and_column_defaults_follow_go() {
     let described = displayed(rows(&mut session, "desc mysql.tidb_mdl_view"));
     assert!(!described.is_empty(), "{described:?}");
     session
-        .execute_write("CREATE TABLE nd (a INT NOT NULL, b TEXT NOT NULL, c INT NOT NULL DEFAULT 5)")
+        .node_conn()
+        .execute_write(
+            "CREATE TABLE nd (a INT NOT NULL, b TEXT NOT NULL, c INT NOT NULL DEFAULT 5)",
+        )
         .unwrap();
     let defaults = displayed(rows(
         &mut session,
@@ -19355,13 +20189,21 @@ fn bootstrap_views_and_column_defaults_follow_go() {
 fn account_rows_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1141)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE USER cu1 WITH MAX_USER_CONNECTIONS 3")
         .unwrap();
-    session.execute_write("CREATE ROLE cr1").unwrap();
-    session.execute_write("CREATE TABLE ct (a INT, b INT)").unwrap();
     session
+        .node_conn()
+        .execute_write("CREATE ROLE cr1")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE ct (a INT, b INT)")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("GRANT SELECT (a) ON test.ct TO cu1")
         .unwrap();
     let limit = displayed(rows(
@@ -19379,7 +20221,10 @@ fn account_rows_follow_go() {
         "select user, priv from mysql.global_priv where user = 'cr1'",
     ));
     assert_eq!(roles, [["cr1", "{}"]], "{roles:?}");
-    session.execute_write("RENAME USER cu1 TO cu2").unwrap();
+    session
+        .node_conn()
+        .execute_write("RENAME USER cu1 TO cu2")
+        .unwrap();
     let grants = displayed(rows(&mut session, "show grants for cu2"));
     assert!(
         grants.iter().all(|row| !row[0].contains("SELECT(a)")),
@@ -19400,8 +20245,9 @@ fn account_rows_follow_go() {
 fn explain_for_connection_renders_the_previous_plan() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1142)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE TABLE efc (a INT PRIMARY KEY, b INT)")
         .unwrap();
     let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
@@ -19437,14 +20283,17 @@ fn explain_for_connection_renders_the_previous_plan() {
 fn placement_policies_reach_the_cluster_catalog() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1143)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write("CREATE PLACEMENT POLICY ppa FOLLOWERS=4")
         .unwrap();
     session
+        .node_conn()
         .execute_write("CREATE PLACEMENT POLICY ppb PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"")
         .unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE ppt (a INT, b INT) PLACEMENT POLICY ppa PARTITION BY RANGE (a) \
              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY ppb, \
@@ -19502,13 +20351,14 @@ fn placement_policies_reach_the_cluster_catalog() {
 fn cte_ids_and_cast_wrapped_pushdown_follow_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1136)).unwrap();
-    session.execute_write("USE test").unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE pc (i INT NOT NULL, s VARCHAR(20) NOT NULL, dt DATETIME NOT NULL)",
         )
         .unwrap();
-    let plan = |session: &mut ClusterServerSession, sql: &str| {
+    let plan = |session: &mut Session, sql: &str| {
         displayed(rows(session, sql))
             .into_iter()
             .map(|row| row.join(" "))
@@ -19564,7 +20414,10 @@ fn binding_gc_commits_on_the_maintenance_thread() {
     // A second transaction holds the row's lock, so the GC's prewrite meets
     // it and runs the client's lock-resolution path, where the overflow was.
     let mut holder = stack.factory.open_session(session_context(133)).unwrap();
-    holder.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    holder
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(
         &mut holder,
         "SELECT * FROM mysql.bind_info WHERE status = 'deleted' FOR UPDATE",
@@ -19578,7 +20431,7 @@ fn binding_gc_commits_on_the_maintenance_thread() {
     )
     .expect("binding worker");
     std::thread::sleep(Duration::from_millis(300));
-    holder.control_transaction("COMMIT").unwrap();
+    holder.node_conn().control_transaction("COMMIT").unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let left = rows(
@@ -19656,29 +20509,35 @@ fn a_failed_commit_publishes_nothing_later() {
     rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
     rows(&mut session, "INSERT INTO t VALUES (1, 10)");
     rows(&mut session, "SET tidb_txn_mode = 'optimistic'");
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (1, 99)")
         .unwrap();
-    let error = session.control_transaction("COMMIT").unwrap_err();
+    let error = session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .unwrap_err();
     assert_eq!(error.code, 1062, "{error:?}");
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (2, 20)")
         .unwrap();
 
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t WHERE id = 1 FOR UPDATE");
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (3, 30)")
         .unwrap();
     {
         // A republish of the connection's catalog lands while the
         // transaction is open, as a schema or statistics reload does.
-        let shared = session.session.shared_catalog();
+        let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap();
         assert!(catalog.set_database_placement_policy("failed_commit", None));
     }
-    session.control_transaction("COMMIT").unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
         vec![vec!["1", "10"], vec!["2", "20"], vec!["3", "30"]]
@@ -19695,25 +20554,34 @@ fn completion_types_and_a_refused_read_only_begin_follow_go() {
     rows(&mut session, "CREATE DATABASE txn_shapes");
     rows(&mut session, "USE txn_shapes");
     rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (3, 30)")
         .unwrap();
-    session.control_transaction("COMMIT AND CHAIN").unwrap();
-    session.control_transaction("ROLLBACK RELEASE").unwrap();
+    session
+        .node_conn()
+        .control_transaction("COMMIT AND CHAIN")
+        .unwrap();
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK RELEASE")
+        .unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
         vec![vec!["3", "30"]]
     );
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t VALUES (4, 40)")
         .unwrap();
     let error = session
+        .node_conn()
         .control_transaction("START TRANSACTION READ ONLY")
         .unwrap_err();
     assert_eq!(error.code, 1235, "{error:?}");
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
         vec![vec!["3", "30"]]
@@ -19731,6 +20599,7 @@ fn disabled_lock_tables_resolves_every_table_like_go() {
     rows(&mut session, "USE lock_disabled");
     rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY)");
     session
+        .node_conn()
         .execute_write("LOCK TABLES mysql.user READ, t WRITE")
         .unwrap();
     assert_eq!(
@@ -19742,6 +20611,7 @@ fn disabled_lock_tables_resolves_every_table_like_go() {
         ]]
     );
     let error = session
+        .node_conn()
         .execute_write("LOCK TABLES t READ, nosuch READ")
         .unwrap_err();
     assert_eq!(
@@ -19765,14 +20635,20 @@ fn stats_partition_names_and_the_nonpartitioned_refusal_follow_go() {
         "CREATE TABLE pt (a INT) PARTITION BY RANGE (a) \
          (PARTITION pÄ VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
     );
-    session.execute_write("LOCK STATS pt PARTITION PÄ").unwrap();
     session
+        .node_conn()
+        .execute_write("LOCK STATS pt PARTITION PÄ")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("UNLOCK STATS pt PARTITION pä")
         .unwrap();
     session
+        .node_conn()
         .execute_write("ANALYZE TABLE pt PARTITION PÄ")
         .unwrap();
     let error = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t PARTITION p0")
         .unwrap_err();
     assert_eq!(
@@ -19812,7 +20688,7 @@ fn an_unsupported_alter_spec_is_refused_after_the_table_checks() {
             "Unsupported rebuild partition",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -19840,19 +20716,28 @@ fn read_committed_statements_see_commits_made_after_begin() {
             &mut reader,
             &format!("SET transaction_isolation = '{isolation}'"),
         );
-        reader.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        reader
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .unwrap();
         assert_eq!(
             displayed(rows(&mut reader, "SELECT COUNT(*) FROM t")),
             vec![vec!["1"]]
         );
-        writer.execute_write("INSERT INTO t VALUES (2)").unwrap();
+        writer
+            .node_conn()
+            .execute_write("INSERT INTO t VALUES (2)")
+            .unwrap();
         assert_eq!(
             displayed(rows(&mut reader, "SELECT COUNT(*) FROM t")),
             vec![vec![visible]],
             "{isolation}"
         );
-        reader.control_transaction("ROLLBACK").unwrap();
-        writer.execute_write("DELETE FROM t WHERE id = 2").unwrap();
+        reader.node_conn().control_transaction("ROLLBACK").unwrap();
+        writer
+            .node_conn()
+            .execute_write("DELETE FROM t WHERE id = 2")
+            .unwrap();
     }
 }
 
@@ -19933,7 +20818,7 @@ fn ddl_checks_and_notes_follow_go_order() {
             "The 'default' syntax is reserved for purposes internal to the MySQL server",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -19981,7 +20866,7 @@ fn ddl_checks_and_notes_follow_go_order() {
             "Unknown placement policy 'nosuch'",
         ),
     ] {
-        session.execute_write(sql).unwrap();
+        session.node_conn().execute_write(sql).unwrap();
         assert_eq!(
             displayed(rows(&mut session, "SHOW WARNINGS")),
             vec![vec!["Note", code, message]],
@@ -19998,6 +20883,7 @@ fn a_failing_set_global_keeps_the_assignments_before_it() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1909)).unwrap();
     let error = session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_mem_quota_query = 2147483648, GLOBAL autocommit = 'bogus'")
         .unwrap_err();
     assert_eq!(error.code, 1231, "{error:?}");
@@ -20019,7 +20905,6 @@ fn prepare_shows_only_the_plan_cache_note() {
         .unwrap();
     assert_eq!(
         session
-            .session
             .warnings()
             .iter()
             .map(|warning| warning.code())
@@ -20041,13 +20926,18 @@ fn pessimistic_dml_acts_on_rows_committed_after_begin() {
     rows(&mut b, "USE dml_current");
     rows(&mut a, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
     rows(&mut a, "INSERT INTO t VALUES (1, 0)");
-    a.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    a.node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     assert_eq!(
         displayed(rows(&mut a, "SELECT * FROM t")),
         vec![vec!["1", "0"]]
     );
-    b.execute_write("INSERT INTO t VALUES (2, 0)").unwrap();
+    b.node_conn()
+        .execute_write("INSERT INTO t VALUES (2, 0)")
+        .unwrap();
     let updated = a
+        .node_conn()
         .execute_write("UPDATE t SET v = 9 WHERE id > 0")
         .unwrap()
         .unwrap();
@@ -20056,17 +20946,22 @@ fn pessimistic_dml_acts_on_rows_committed_after_begin() {
         displayed(rows(&mut a, "SELECT * FROM t")),
         vec![vec!["1", "9"], vec!["2", "9"]]
     );
-    a.control_transaction("COMMIT").unwrap();
+    a.node_conn().control_transaction("COMMIT").unwrap();
 
-    a.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    a.node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
     rows(&mut a, "SELECT * FROM t");
-    b.execute_write("INSERT INTO t VALUES (3, 0)").unwrap();
+    b.node_conn()
+        .execute_write("INSERT INTO t VALUES (3, 0)")
+        .unwrap();
     let deleted = a
+        .node_conn()
         .execute_write("DELETE FROM t WHERE v = 0")
         .unwrap()
         .unwrap();
     assert_eq!(deleted.affected_rows, 1);
-    a.control_transaction("COMMIT").unwrap();
+    a.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(
         displayed(rows(&mut a, "SELECT * FROM t")),
         vec![vec!["1", "9"], vec!["2", "9"]]
@@ -20131,7 +21026,7 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
     for (kind, sql, data, expected, expected_warnings) in cases {
         match *kind {
             "ex" => {
-                if session.execute_write(sql).expect(sql).is_none() {
+                if session.node_conn().execute_write(sql).expect(sql).is_none() {
                     rows(&mut session, sql);
                 }
             }
@@ -20144,15 +21039,15 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
             _ => {
                 // The connection's order: one `ExecuteStmt`, then the client's
                 // file for a statement that parked a request for it.
-                let stmt = session.parse_statement(sql).unwrap();
+                let stmt = QuerySession::parse_statement(&mut session, sql).unwrap();
                 let outcome = (|| {
                     assert!(session.execute_stmt(sql, &stmt)?.is_none(), "{sql} answers no rows");
                     if session.take_local_infile_request().is_some() {
                         session.finish_local_infile(data)?;
                     }
                     Ok(crate::domain::session_api::WriteOutcome {
-                        affected_rows: session.affected_rows(),
-                        last_insert_id: session.last_insert_id(),
+                        affected_rows: QuerySession::affected_rows(&session),
+                        last_insert_id: QuerySession::last_insert_id(&session),
                     })
                 })();
                 let actual = match outcome {
@@ -20307,7 +21202,7 @@ fn insert_ignore_no_default_zero_value_warns_like_go() {
         "INSERT IGNORE INTO t4 (a) VALUES (5), (6)",
         "INSERT IGNORE INTO t4 (a) SELECT 7",
     ] {
-        session.execute_write(sql).unwrap();
+        session.node_conn().execute_write(sql).unwrap();
         assert_eq!(
             displayed(rows(&mut session, "SHOW WARNINGS")),
             expected,
@@ -20382,6 +21277,7 @@ fn regions_split_and_show_like_go() {
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
     session
+        .node_conn()
         .execute_write("SET @@tidb_scatter_region = 'table'")
         .unwrap();
     rows(
@@ -20549,6 +21445,7 @@ fn add_index_runs_as_a_persisted_job_like_go() {
         assert_eq!(last_job(&mut session), job, "{sql}");
     }
     let error = session
+        .node_conn()
         .execute_write("alter table t add unique index u(b)")
         .unwrap_err();
     assert_eq!(
@@ -20564,7 +21461,7 @@ fn add_index_runs_as_a_persisted_job_like_go() {
         ("t", "alter table t add index p(a) where a > 1"),
         ("e", "alter table e add index p(a) where a > 1"),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (
@@ -20593,6 +21490,7 @@ fn add_index_runs_as_a_persisted_job_like_go() {
     let created = displayed(rows(&mut session, "show create table t")).remove(0);
     assert!(!created[1].contains("`u`"), "{}", created[1]);
     let error = session
+        .node_conn()
         .execute_write("alter table t add index i(b)")
         .unwrap_err();
     assert_eq!(
@@ -20636,6 +21534,7 @@ fn add_index_runs_as_a_persisted_job_like_go() {
         "insert into big1 select a, if(a = 999, 5, a) from big order by a",
     );
     let error = session
+        .node_conn()
         .execute_write("alter table big1 add unique index ub(b)")
         .unwrap_err();
     assert_eq!(
@@ -20941,7 +21840,7 @@ fn drop_index_runs_as_a_persisted_job_like_go() {
             "Cannot drop index 'fk_idx': needed in a foreign key constraint",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -21056,7 +21955,7 @@ fn add_and_drop_column_run_as_persisted_jobs_like_go() {
             "can't drop only column a in table only1",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -21139,6 +22038,7 @@ fn add_and_drop_column_run_as_persisted_jobs_like_go() {
         "create table tc (a int, b int check (b > 0), c int, constraint cc check (c > a), constraint cb2 check (b < 100))",
     );
     let error = session
+        .node_conn()
         .execute_write("alter table tc drop column a")
         .unwrap_err();
     assert_eq!(
@@ -21155,6 +22055,7 @@ fn add_and_drop_column_run_as_persisted_jobs_like_go() {
         "CREATE TABLE `tc` (\n  `a` int DEFAULT NULL,\n  `c` int DEFAULT NULL,\n  CONSTRAINT `cc` CHECK ((`c` > `a`))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
     let error = session
+        .node_conn()
         .execute_write("insert into tc values (1, 0)")
         .unwrap_err();
     assert_eq!(
@@ -21296,7 +22197,7 @@ fn one_step_alters_and_create_database_run_as_persisted_jobs_like_go() {
             "Unsupported modify charset from utf8mb4 to latin1",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -21354,6 +22255,7 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
         "CONSTRAINT `fkc` FOREIGN KEY (`pid`) REFERENCES `p2` (`id`)"
     );
     let error = session
+        .node_conn()
         .execute_write("insert into c values (2, 2)")
         .unwrap_err();
     assert_eq!(
@@ -21414,7 +22316,7 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
             "Changing schema from 'test' to 'd2' is not allowed.",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -21464,14 +22366,14 @@ fn partition_changes_run_as_persisted_jobs_like_go() {
             query,
         )
     };
-    let step = |session: &mut ClusterServerSession, sql: &str| -> (i64, String, String) {
+    let step = |session: &mut Session, sql: &str| -> (i64, String, String) {
         let before = version(session);
         rows(session, sql);
         let (_, kind, query) = job(session);
         (version(session) - before, kind, query)
     };
-    let refused = |session: &mut ClusterServerSession, sql: &str| -> (u16, String) {
-        let error = session.execute_write(sql).unwrap_err();
+    let refused = |session: &mut Session, sql: &str| -> (u16, String) {
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         (error.code, error.message)
     };
     rows(
@@ -21716,17 +22618,17 @@ fn auto_random_changes_run_as_modify_column_jobs_like_go() {
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
     rows(&mut session, "set @@tidb_allow_remove_auto_inc = 1");
-    let version = |session: &mut ClusterServerSession| -> i64 {
+    let version = |session: &mut Session| -> i64 {
         displayed(rows(session, "admin show ddl"))[0][0]
             .parse()
             .unwrap()
     };
-    let job = |session: &mut ClusterServerSession| -> String {
+    let job = |session: &mut Session| -> String {
         let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
         [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|")
     };
-    let refused = |session: &mut ClusterServerSession, sql: &str| -> (u16, String) {
-        let error = session.execute_write(sql).unwrap_err();
+    let refused = |session: &mut Session, sql: &str| -> (u16, String) {
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         (error.code, error.message)
     };
     rows(
@@ -21826,19 +22728,19 @@ fn partition_reorganizations_run_as_persisted_jobs_like_go() {
     let mut session = stack.factory.open_session(session_context(1955)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
-    let version = |session: &mut ClusterServerSession| -> i64 {
+    let version = |session: &mut Session| -> i64 {
         displayed(rows(session, "admin show ddl"))[0][0]
             .parse()
             .unwrap()
     };
-    let job = |session: &mut ClusterServerSession| -> String {
+    let job = |session: &mut Session| -> String {
         let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
         [1, 2, 3, 4, 7, 11]
             .map(|column| row[column].clone())
             .join("|")
     };
     // (versions, warnings) of one statement.
-    let step = |session: &mut ClusterServerSession, sql: &str| -> (i64, Vec<Vec<String>>) {
+    let step = |session: &mut Session, sql: &str| -> (i64, Vec<Vec<String>>) {
         let before = version(session);
         rows(session, sql);
         let warnings = displayed(rows(session, "show warnings"));
@@ -21973,6 +22875,7 @@ fn partition_reorganizations_run_as_persisted_jobs_like_go() {
         [["5"]]
     );
     let error = session
+        .node_conn()
         .execute_write(
             "alter table r reorganize partition p9 into (partition p10 values less than (5))",
         )
@@ -21994,12 +22897,12 @@ fn exchange_partition_runs_as_a_persisted_job_like_go() {
     let mut session = stack.factory.open_session(session_context(1954)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
-    let version = |session: &mut ClusterServerSession| -> i64 {
+    let version = |session: &mut Session| -> i64 {
         displayed(rows(session, "admin show ddl"))[0][0]
             .parse()
             .unwrap()
     };
-    let job = |session: &mut ClusterServerSession| -> String {
+    let job = |session: &mut Session| -> String {
         let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
         [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|")
     };
@@ -22038,6 +22941,7 @@ fn exchange_partition_runs_as_a_persisted_job_like_go() {
     rows(&mut session, "insert into nt values (15,15)");
     let before = version(&mut session);
     let error = session
+        .node_conn()
         .execute_write("alter table pt exchange partition p0 with table nt")
         .unwrap_err();
     assert_eq!(
@@ -22071,6 +22975,7 @@ fn exchange_partition_runs_as_a_persisted_job_like_go() {
         [["2", "2"], ["3", "3"]]
     );
     let error = session
+        .node_conn()
         .execute_write("alter table pt exchange partition p9 with table nt")
         .unwrap_err();
     assert_eq!(
@@ -22090,7 +22995,7 @@ fn dropped_partitions_leave_the_global_indexes_like_go() {
     let mut session = stack.factory.open_session(session_context(1953)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
-    let job = |session: &mut ClusterServerSession| -> String {
+    let job = |session: &mut Session| -> String {
         let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
         [1, 2, 3, 4, 7, 11]
             .map(|column| row[column].clone())
@@ -22274,7 +23179,10 @@ fn table_locks_run_as_persisted_jobs_like_go() {
     // Another session's WRITE lock refuses before any job.
     step(&mut first, "lock tables t1 write");
     let (_, last, _, _) = step(&mut second, "select 1");
-    let error = second.execute_write("lock tables t1 read").unwrap_err();
+    let error = second
+        .node_conn()
+        .execute_write("lock tables t1 read")
+        .unwrap_err();
     assert_eq!(error.code, 8020, "{}", error.message);
     assert_eq!(job(&mut second).0, last);
     rows(&mut first, "unlock tables");
@@ -22436,7 +23344,10 @@ fn table_options_run_as_persisted_jobs_like_go() {
         job(&mut session).1,
         "test|tp|alter table partition placement|public|synced"
     );
-    let error = session.execute_write("alter table tp cache").unwrap_err();
+    let error = session
+        .node_conn()
+        .execute_write("alter table tp cache")
+        .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (8242, "'partition mode' is unsupported on cache tables.")
@@ -22479,6 +23390,7 @@ fn placement_policies_and_resource_groups_run_as_persisted_jobs_like_go() {
     );
     rows(&mut session, "create database dp placement policy p2");
     let error = session
+        .node_conn()
         .execute_write("drop placement policy p2")
         .unwrap_err();
     assert_eq!(
@@ -22674,6 +23586,7 @@ fn multi_schema_alter_runs_as_a_persisted_job_like_go() {
     );
     rows(&mut session, "update t set c=1");
     let error = session
+        .node_conn()
         .execute_write("alter table t add column f int, add unique index uc(c)")
         .unwrap_err();
     assert_eq!(
@@ -22695,6 +23608,7 @@ fn multi_schema_alter_runs_as_a_persisted_job_like_go() {
     // Go `fillMultiSchemaInfo` has no CHECK sub-job.
     rows(&mut session, "set global tidb_enable_check_constraint = 1");
     let error = session
+        .node_conn()
         .execute_write("alter table t add column j int, add constraint chk check (a > 0)")
         .unwrap_err();
     assert_eq!(
@@ -22735,6 +23649,7 @@ fn multi_schema_alter_runs_as_a_persisted_job_like_go() {
     );
     rows(&mut session, "insert into ch2 values (1, 5)");
     let error = session
+        .node_conn()
         .execute_write("alter table ch2 add constraint fk2 foreign key (pid) references p(id)")
         .unwrap_err();
     assert_eq!(
@@ -22854,6 +23769,7 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
         assert_eq!(kind(&last_job(&mut session)), job, "{sql}");
     }
     let error = session
+        .node_conn()
         .execute_write("alter table t modify c tinyint")
         .unwrap_err();
     assert_eq!(
@@ -22870,6 +23786,7 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
         "modify column|public|0|synced"
     );
     let error = session
+        .node_conn()
         .execute_write("alter table t modify a int not null")
         .unwrap_err();
     assert_eq!(
@@ -22928,6 +23845,7 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
     rows(&mut session, "create table s (a varchar(10))");
     rows(&mut session, "insert into s values ('abc'), ('12')");
     let error = session
+        .node_conn()
         .execute_write("alter table s modify a int")
         .unwrap_err();
     assert_eq!(
@@ -22971,7 +23889,7 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
             "Unknown column 'a' in 'r'",
         ),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -23097,7 +24015,7 @@ fn drop_objects_run_as_persisted_jobs_like_go() {
         ("drop view tv", 1347, "'test.tv' is not VIEW"),
         ("drop table vv", 1051, "Unknown table 'test.vv'"),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (code, message),
@@ -23110,7 +24028,10 @@ fn drop_objects_run_as_persisted_jobs_like_go() {
         &mut session,
         "create table c (id int primary key, pid int, constraint fkc foreign key (pid) references p(id))",
     );
-    let error = session.execute_write("drop table p").unwrap_err();
+    let error = session
+        .node_conn()
+        .execute_write("drop table p")
+        .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (
@@ -23125,7 +24046,10 @@ fn drop_objects_run_as_persisted_jobs_like_go() {
         &mut session,
         "create table c2 (id int primary key, pid int, constraint fk2 foreign key (pid) references dp.pp(id))",
     );
-    let error = session.execute_write("drop database dp").unwrap_err();
+    let error = session
+        .node_conn()
+        .execute_write("drop database dp")
+        .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
         (
@@ -23177,7 +24101,7 @@ fn truncate_table_runs_as_a_persisted_job_like_go() {
         ("truncate table v", 1146, "Table 'test.v' doesn't exist"),
         ("truncate table nosuch", 1146, "Table 'test.nosuch' doesn't exist"),
     ] {
-        let error = session.execute_write(sql).unwrap_err();
+        let error = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
     }
     rows(&mut session, "truncate table c");
@@ -23230,7 +24154,7 @@ fn renaming_an_expression_index_frees_its_name_like_go() {
 
 /// The `operation` column of `TRACE <sql>`: the span tree Go's `dfsTree`
 /// prints, one line per span, region IDs (the embedded store's own) as `N`.
-fn trace_tree(session: &mut ClusterServerSession, sql: &str) -> Vec<String> {
+fn trace_tree(session: &mut Session, sql: &str) -> Vec<String> {
     displayed(rows(session, &format!("TRACE {sql}")))
         .into_iter()
         .map(|row| match row[0].split_once("region ID: ") {
@@ -23473,8 +24397,12 @@ fn trace_records_go_executor_and_transaction_regions() {
         "      ├─executor.handleNoDelayExecutor",
         "      │ └─*executor.SimpleExec.Next",
     ];
-    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
     session
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .unwrap();
+    session
+        .node_conn()
         .execute_write("UPDATE test.tr SET v = v + 1 WHERE id = 5")
         .unwrap();
     let mut expected = compile.to_vec();
@@ -23490,21 +24418,21 @@ fn trace_records_go_executor_and_transaction_regions() {
         "              └─regionRequest.SendReqCtx",
     ]);
     assert_eq!(trace_tree(&mut session, "COMMIT"), expected);
-    assert!(!session.session.in_transaction());
+    assert!(!session.in_transaction());
 
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM test.tr WHERE id = 1");
     let mut expected = compile.to_vec();
     expected.extend(simple);
     expected.push("      └─session.CommitTxn");
     assert_eq!(trace_tree(&mut session, "ROLLBACK"), expected);
-    assert!(!session.session.in_transaction());
+    assert!(!session.in_transaction());
 }
 
 /// [`trace_tree`] without the client's spans (`regionRequest.SendReqCtx`,
 /// region loads, snapshot reads, commits), whose presence depends on the
 /// region cache and the store rather than on the TiDB-side regions.
-fn tidb_trace_tree(session: &mut ClusterServerSession, sql: &str) -> Vec<String> {
+fn tidb_trace_tree(session: &mut Session, sql: &str) -> Vec<String> {
     const CLIENT: [&str; 7] = [
         "regionRequest.SendReqCtx",
         "loadRegion",
@@ -23702,8 +24630,9 @@ fn trace_records_go_statement_path_regions() {
         ]
     );
 
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.tr VALUES (7, 7, 7)")
         .unwrap();
     let tree = tidb_trace_tree(
@@ -23721,7 +24650,7 @@ fn trace_records_go_statement_path_regions() {
         ],
         "{tree:#?}"
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
 }
 
 /// The span names of a `TRACE` tree, each with its depth, the tree glyphs
@@ -23823,10 +24752,14 @@ fn a_non_point_pessimistic_write_locks_inside_select_lock_next() {
         ),
     ] {
         session
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin");
         let tree = trace_tree(&mut session, sql);
-        session.control_transaction("ROLLBACK").expect("rollback");
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
         assert_eq!(lock_markers(&tree), expected, "{sql}\n{tree:#?}");
     }
 }
@@ -23875,19 +24808,28 @@ fn non_point_pessimistic_statements_hold_the_rows_go_locks() {
         ("UPDATE test.slheld SET w = 1 WHERE v = 99", vec![]),
     ] {
         writer
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
         if statement.starts_with("SELECT") {
-            writer.execute(statement).expect("statement runs");
+            writer
+                .node_conn()
+                .execute(statement)
+                .expect("statement runs");
         } else {
-            writer.execute_write(statement).expect("statement runs");
+            writer
+                .node_conn()
+                .execute_write(statement)
+                .expect("statement runs");
         }
         let mut probed = Vec::new();
         for id in 1..=4 {
             contender
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin contender");
             let refused = contender
+                .node_conn()
                 .execute(&format!(
                     "SELECT id FROM test.slheld WHERE id = {id} FOR UPDATE NOWAIT"
                 ))
@@ -23896,9 +24838,15 @@ fn non_point_pessimistic_statements_hold_the_rows_go_locks() {
                 assert_eq!(error.code, 3572, "{statement} id {id}: {}", error.message);
                 probed.push(id);
             }
-            contender.control_transaction("ROLLBACK").expect("rollback");
+            contender
+                .node_conn()
+                .control_transaction("ROLLBACK")
+                .expect("rollback");
         }
-        writer.control_transaction("ROLLBACK").expect("rollback");
+        writer
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
         assert_eq!(probed, held, "{statement}");
     }
 }
@@ -23924,6 +24872,7 @@ fn a_row_error_in_a_pessimistic_update_preempts_its_lock_wait() {
         "INSERT INTO test.slerr VALUES (1, 10, 0), (2, 20, 0), (3, 30, 0)",
     );
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -23934,6 +24883,7 @@ fn a_row_error_in_a_pessimistic_update_preempts_its_lock_wait() {
         .open_session(session_context(2006))
         .expect("session opens");
     contender
+        .node_conn()
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     for (statement, code) in [
@@ -23942,16 +24892,23 @@ fn a_row_error_in_a_pessimistic_update_preempts_its_lock_wait() {
         ("UPDATE test.slerr SET w = 1 WHERE id > 1", 1205),
     ] {
         contender
+            .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin contender");
-        let error = match contender.execute_write(statement) {
+        let error = match contender.node_conn().execute_write(statement) {
             Err(error) => error,
             Ok(_) => panic!("{statement} must fail"),
         };
-        contender.control_transaction("ROLLBACK").expect("rollback");
+        contender
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
         assert_eq!(error.code, code, "{statement}: {}", error.message);
     }
-    holder.control_transaction("ROLLBACK").expect("rollback");
+    holder
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
 }
 
 /// A non-point UPDATE that waits on a row and finds it changed when the lock
@@ -23975,6 +24932,7 @@ fn a_non_point_pessimistic_update_retries_after_a_conflict_found_by_its_lock() {
         "INSERT INTO test.slretry VALUES (1, 2, 0), (2, 2, 0), (3, 5, 0), (4, 2, 0)",
     );
     holder
+        .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin holder");
     rows(
@@ -23987,23 +24945,33 @@ fn a_non_point_pessimistic_update_retries_after_a_conflict_found_by_its_lock() {
                 .open_session(session_context(2008))
                 .expect("session opens");
             contender
+                .node_conn()
                 .execute_write("SET SESSION innodb_lock_wait_timeout = 10")
                 .expect("set lock wait");
             contender
+                .node_conn()
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin contender");
             let outcome = contender
+                .node_conn()
                 .execute_write("UPDATE test.slretry SET w = w + 1 WHERE v = 2")
                 .expect("the update waits for the holder, then retries")
                 .expect("write result");
-            contender.control_transaction("COMMIT").expect("commit");
+            contender
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
             outcome.affected_rows
         });
         std::thread::sleep(std::time::Duration::from_millis(700));
         holder
+            .node_conn()
             .execute_write("UPDATE test.slretry SET w = 100 WHERE id = 2")
             .expect("holder writes");
-        holder.control_transaction("COMMIT").expect("commit holder");
+        holder
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit holder");
         contender.join().expect("contender thread")
     });
     assert_eq!(affected, 3);
@@ -24051,8 +25019,9 @@ fn gc_worker_sessions_run_gos_system_table_statements() {
         .factory
         .open_session(session_context(1))
         .expect("session");
-    sql.execute_write(
-        "INSERT INTO mysql.gc_delete_range VALUES \
+    sql.node_conn()
+        .execute_write(
+            "INSERT INTO mysql.gc_delete_range VALUES \
          (1, 2, '31', '32', 10), (3, 4, '33', '34', 10), (5, 6, '35', '36', 30)",
     )
     .unwrap();
@@ -24229,7 +25198,6 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .open_storage_session(141)
         .expect("storage session");
     let has_client = opened
-        .session
         .with_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
             Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
             _ => Ok(false),

@@ -33,6 +33,7 @@ use tidb_gcworker::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
 
 use super::{ClusterServerSession, Domain};
+use crate::Session;
 use crate::domain::session_api::SessionContext;
 use crate::domain::session_api::{QuerySessionFactory, SqlQueryError};
 
@@ -142,7 +143,7 @@ impl GcSessionFactory for NodeGcSessions {
 }
 
 struct NodeGcSession<'a> {
-    session: GcResult<ClusterServerSession>,
+    session: GcResult<Session>,
     history_job: &'a HistoryJobLoader,
 }
 
@@ -174,8 +175,11 @@ fn datum_i64(value: &tidb_datatype::Datum) -> GcResult<i64> {
 }
 
 impl NodeGcSession<'_> {
-    fn session(&mut self) -> GcResult<&mut ClusterServerSession> {
-        self.session.as_mut().map_err(|error| error.clone())
+    fn session(&mut self) -> GcResult<ClusterServerSession<'_>> {
+        self.session
+            .as_mut()
+            .map(Session::node_conn)
+            .map_err(|error| error.clone())
     }
 
     /// Go `ExecuteInternal` of a read: every row.

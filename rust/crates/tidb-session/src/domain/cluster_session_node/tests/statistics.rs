@@ -175,12 +175,13 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
         Arc::clone(&stats_lock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
     );
 
-    session.execute_write("BEGIN").expect("begin");
+    session.node_conn().execute_write("BEGIN").expect("begin");
     session
+        .node_conn()
         .execute_write("LOCK STATS t")
         .expect("cluster lockstats route");
     assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
-    assert!(session.session.in_transaction());
+    assert!(session.in_transaction());
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
@@ -190,6 +191,7 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
         ]]
     );
     session
+        .node_conn()
         .execute_write("ROLLBACK")
         .expect("rollback user txn");
 }
@@ -209,6 +211,7 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
     );
 
     let error = session
+        .node_conn()
         .execute_write("LOCK STATS t")
         .expect_err("INSERT is checked before SELECT and before the stats transaction");
     assert_eq!(error.code, 1142);
@@ -278,6 +281,7 @@ fn analyze_internal_panics_become_query_errors_and_leave_the_session_usable() {
             open_session_on_with_analyze(&node, Arc::new(PanickingAnalyze(source_test)));
 
         let query_error = session
+            .node_conn()
             .execute_write("ANALYZE TABLE t")
             .expect_err("an internal ANALYZE panic must become a statement error");
         assert_eq!(query_error.code, 1105, "source test: {source_test}");
@@ -300,6 +304,7 @@ fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
     let node = MockNode::start();
     let mut session = open_session_on_with_analyze(&node, Arc::new(UndeterminedAnalyze));
     let query_error = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t")
         .expect_err("ANALYZE cannot answer success after losing its commit response");
     assert_undetermined_closes_without_packet(&query_error);
@@ -356,6 +361,7 @@ fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
 fn analyze_table_routes_to_the_statistics_seam() {
     let (mut session, _node) = open_session();
     let refusal = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t")
         .expect_err("the mock node has no statistics to store")
         .message;
@@ -379,22 +385,26 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
     // (`getSavedAnalyzeOpts` over `mysql.analyze_options`) is turned off;
     // what this test pins is the temporary table's sampling route.
     session
+        .node_conn()
         .execute_write("SET GLOBAL tidb_persist_analyze_options = OFF")
         .expect("persisted analyze options off");
-    session.execute_write("BEGIN").expect("begin");
+    session.node_conn().execute_write("BEGIN").expect("begin");
     session
+        .node_conn()
         .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
         .unwrap();
-    let driver_in_transaction = session.session.in_transaction();
+    let driver_in_transaction = session.in_transaction();
     assert!(
         driver_in_transaction,
         "Go returns from LOCAL CREATE before opening a DDL transaction, so it must not commit"
     );
     session
+        .node_conn()
         .execute_write("INSERT INTO temp_stats VALUES (1), (2), (3)")
         .unwrap();
 
     session
+        .node_conn()
         .execute_write("ANALYZE TABLE temp_stats")
         .expect("temporary ANALYZE bypasses the rejecting cluster seam");
 
@@ -411,10 +421,11 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
     // that shared image, but Go's process-wide statistics cache retains the
     // explicit ANALYZE result and the rebuilt session must do the same.
     session
+        .node()
         .domain
         .stats
-        .store_after_analyze((*session.domain.stats.load()).clone());
-    session.rebuild_catalog_now();
+        .store_after_analyze((*session.node().domain.stats.load()).clone());
+    session.node_conn().rebuild_catalog_now();
     let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
     assert!(
         explain.iter().all(|row| !row.iter().any(|datum| {
@@ -426,7 +437,7 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
 
 /// Opens a connection authenticated as `user`, which is how a test says
 /// "somebody other than root".
-fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
+fn open_session_as(node: &MockNode, user: &str) -> Session {
     open_session_as_with_stats_lock(
         node,
         user,
@@ -438,7 +449,7 @@ fn open_session_as_with_stats_lock(
     node: &MockNode,
     user: &str,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-) -> ClusterServerSession {
+) -> Session {
     let cluster = Arc::clone(&node.cluster);
     let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
@@ -478,7 +489,10 @@ fn open_session_as_with_stats_lock(
             close: ConnectionClose::default(),
         })
         .expect("the cluster session opens");
-    session.execute_write("USE app").expect("USE app");
+    session
+        .node_conn()
+        .execute_write("USE app")
+        .expect("USE app");
     session
 }
 
@@ -507,6 +521,7 @@ fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
         .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
     let mut session = open_session_as(&node, "low");
     let refusal = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t")
         .expect_err("an account with no privilege on `t` may not analyze it");
     // Captured from a real TiDB, for a user with no privileges at all and
@@ -531,6 +546,7 @@ fn analyze_with_only_select_on_the_table_is_still_refused() {
         .grant_table("ro", "%", "app", "t", tidb_mysql::SelectPriv.mask());
     let mut session = open_session_as(&node, "ro");
     let refusal = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t")
         .expect_err("SELECT alone does not carry an ANALYZE");
     assert_eq!(refusal.code, 1142);
@@ -555,6 +571,7 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
     );
     let mut session = open_session_as(&node, "rw");
     let refusal = session
+        .node_conn()
         .execute_write("ANALYZE TABLE t")
         .expect_err("the mock node has no statistics to store")
         .message;

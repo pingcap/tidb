@@ -62,8 +62,9 @@ const PAID: Opens = Opens {
     max_ts: 0,
 };
 
-fn seed(session: &mut ClusterServerSession) {
+fn seed(session: &mut Session) {
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
         .expect("seed");
 }
@@ -74,11 +75,13 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
 
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))",
         )
         .unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO indexed_read VALUES (1, 7, 10), (2, 7, 20), (3, 8, 30)")
         .unwrap();
     let statement = session
@@ -133,6 +136,7 @@ fn prepared_cursor_retains_its_statement_overlay() {
     let (mut session, node) = open_session();
     seed(&mut session);
     session
+        .node_conn()
         .execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024")
         .unwrap();
     let prepared = session.prepare_general(
@@ -296,7 +300,7 @@ fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
         .prepare_general("SELECT id, v, v FROM t WHERE id = ?")
         .expect("prepare");
 
-    let execute = |session: &mut ClusterServerSession, id| {
+    let execute = |session: &mut Session, id| {
         let outcome = session
             .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
             .expect("execute");
@@ -439,6 +443,7 @@ fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
     seed(&mut session);
 
     session
+        .node_conn()
         .execute_write("SET tidb_opt_fix_control = '52592:OFF'")
         .expect("fix off");
     let opens = opens_of(&node, || {
@@ -457,6 +462,7 @@ fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
     );
 
     session
+        .node_conn()
         .execute_write("SET tidb_opt_fix_control = '52592:ON'")
         .expect("persistent fix on");
     let opens = opens_of(&node, || {
@@ -483,6 +489,7 @@ fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
     );
 
     session
+        .node_conn()
         .execute_write("SET tidb_opt_fix_control = '52592:OFF'")
         .expect("persistent fix off");
     let opens = opens_of(&node, || {
@@ -604,7 +611,9 @@ fn a_locking_read_still_takes_a_timestamp() {
     seed(&mut session);
 
     let opens = opens_of(&node, || {
-        let _ = session.execute("SELECT v FROM t WHERE id = 1 FOR UPDATE");
+        let _ = session
+            .node_conn()
+            .execute("SELECT v FROM t WHERE id = 1 FOR UPDATE");
     });
     assert_eq!(opens.max_ts, 0, "a locking read took the shortcut");
 }
@@ -621,12 +630,16 @@ fn the_same_point_get_inside_a_transaction_reads_at_the_transaction_snapshot() {
     let mut writer = open_session_on(&node);
     seed(&mut session);
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(
         rows(&mut session, "SELECT v FROM t WHERE id = 1"),
         vec![vec![Datum::Int(10)]]
     );
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("a racing commit lands after BEGIN");
 
@@ -647,7 +660,10 @@ fn the_same_point_get_inside_a_transaction_reads_at_the_transaction_snapshot() {
         },
         "a point get inside BEGIN opened a snapshot of its own"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 }
 
 /// `SET autocommit = 0` is the third door onto transaction state and carries
@@ -658,6 +674,7 @@ fn a_point_get_under_autocommit_zero_takes_no_shortcut() {
     let (mut session, node) = open_session();
     seed(&mut session);
     session
+        .node_conn()
         .execute_write("SET autocommit = 0")
         .expect("autocommit off");
 
@@ -671,7 +688,10 @@ fn a_point_get_under_autocommit_zero_takes_no_shortcut() {
         opens.max_ts, 0,
         "a statement inside a transaction opened at MaxUint64"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 }
 
 /// Both visibility directions, which is the pin that says `MaxUint64` means
@@ -694,6 +714,7 @@ fn a_concurrent_commit_is_visible_between_autocommit_point_gets_but_not_inside_a
         vec![vec![Datum::Int(10)]]
     );
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("racing commit");
     assert_eq!(
@@ -702,12 +723,16 @@ fn a_concurrent_commit_is_visible_between_autocommit_point_gets_but_not_inside_a
         "an autocommit point get did not see a commit that preceded it"
     );
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(
         rows(&mut session, "SELECT v FROM t WHERE id = 1"),
         vec![vec![Datum::Int(99)]]
     );
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 42 WHERE id = 1")
         .expect("racing commit inside the transaction");
     assert_eq!(
@@ -715,7 +740,10 @@ fn a_concurrent_commit_is_visible_between_autocommit_point_gets_but_not_inside_a
         vec![vec![Datum::Int(99)]],
         "a point get inside BEGIN saw a commit made after BEGIN"
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
 }
 
 /// The predicate against the guard it ports, statement by statement, with no
@@ -725,7 +753,7 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     use tidb_executor::access_path::{statement_read_shape, StatementReadShape};
 
     let (session, _node) = open_session();
-    let catalog = session.session.shared_catalog();
+    let catalog = session.shared_catalog();
     let shape = |sql: &str| {
         let catalog = catalog.lock().expect("catalog");
         let stmt = tidb_parser::parse(sql).expect("parse");
@@ -807,6 +835,7 @@ fn an_updates_read_before_write_does_not_take_the_shortcut() {
 
     let opens = opens_of(&node, || {
         session
+            .node_conn()
             .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
             .expect("update");
     });
@@ -833,6 +862,7 @@ fn an_updates_read_before_write_does_not_take_the_shortcut() {
     // And a DELETE, whose read-before-write is the same shape.
     let opens = opens_of(&node, || {
         session
+            .node_conn()
             .execute_write("DELETE FROM t WHERE id = 1")
             .expect("delete");
     });
@@ -854,6 +884,7 @@ fn an_updates_read_before_write_does_not_take_the_shortcut() {
 fn a_double_reads_row_lookup_does_not_take_the_shortcut() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO hnd (v) VALUES (10), (20)")
         .expect("seed");
 
@@ -877,9 +908,11 @@ fn a_prepared_unique_index_point_get_does_not_take_the_shortcut() {
 
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("CREATE TABLE u (id BIGINT PRIMARY KEY, uk BIGINT UNIQUE, v BIGINT)")
         .expect("create");
     session
+        .node_conn()
         .execute_write("INSERT INTO u (id, uk, v) VALUES (1, 10, 100), (2, 20, 200)")
         .expect("seed");
     let statement = session
@@ -1023,9 +1056,13 @@ fn neither_the_deferral_nor_the_declaration_reaches_a_statement_inside_a_transac
     let mut writer = open_session_on(&node);
     seed(&mut session);
 
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 2);
     writer
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("a racing commit lands after BEGIN");
 
@@ -1041,7 +1078,10 @@ fn neither_the_deferral_nor_the_declaration_reaches_a_statement_inside_a_transac
             max_ts: 0
         }
     );
-    session.control_transaction("COMMIT").expect("commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 3);
 }
 
@@ -1051,10 +1091,11 @@ fn snapshot_read_policy_follows_deferred_max_ts_batch_and_explicit_execution() {
     seed(&mut session);
     for explicit in [false, true] {
         if explicit {
-            session.execute_write("BEGIN").unwrap();
+            session.node_conn().execute_write("BEGIN").unwrap();
         }
         for (mode, timeout) in [("follower", 731), ("closest-adaptive", 233), ("leader", 0)] {
             session
+                .node_conn()
                 .execute_write(&format!(
                     "SET tidb_replica_read='{mode}', tikv_client_read_timeout={timeout}"
                 ))
@@ -1081,7 +1122,7 @@ fn snapshot_read_policy_follows_deferred_max_ts_batch_and_explicit_execution() {
             }
         }
         if explicit {
-            session.execute_write("ROLLBACK").unwrap();
+            session.node_conn().execute_write("ROLLBACK").unwrap();
         }
     }
 }

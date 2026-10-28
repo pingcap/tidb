@@ -34,8 +34,8 @@ fn unistore_with_low_account(
     low: &str,
 ) -> (
     crate::domain::unistore_node::UnistoreClusterStack,
-    ClusterServerSession,
-    ClusterServerSession,
+    Session,
+    Session,
 ) {
     let (stack, users) = cop_backed_stack();
     let mut root = stack.factory.open_session(session_context(1)).unwrap();
@@ -55,7 +55,7 @@ fn unistore_with_low_account(
     (stack, root, low)
 }
 
-fn count(session: &mut ClusterServerSession, table: &str) -> String {
+fn count(session: &mut Session, table: &str) -> String {
     displayed(rows(session, &format!("SELECT count(*) FROM test.{table}")))[0][0].clone()
 }
 
@@ -66,22 +66,20 @@ fn count(session: &mut ClusterServerSession, table: &str) -> String {
 #[test]
 fn a_compile_time_account_denial_leaves_the_transaction_open() {
     let (_stack, mut root, mut low) = unistore_with_low_account("cp_accounts", "cp_low");
-    low.control_transaction("BEGIN").unwrap();
-    low.execute_write("INSERT INTO test.cp_accounts VALUES (1)")
+    low.node_conn().control_transaction("BEGIN").unwrap();
+    low.node_conn()
+        .execute_write("INSERT INTO test.cp_accounts VALUES (1)")
         .unwrap();
     for sql in [
         "RENAME USER 'cp_low'@'%' TO 'cp_low2'@'%'",
         "GRANT 'cp_role' TO 'cp_low'@'%'",
     ] {
-        let denied = low.execute_write(sql).unwrap_err();
+        let denied = low.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(denied.code, 1227, "{sql}: {}", denied.message);
-        assert!(
-            low.session.in_transaction(),
-            "{sql} must not end the transaction"
-        );
+        assert!(low.in_transaction(), "{sql} must not end the transaction");
         assert_eq!(count(&mut root, "cp_accounts"), "0", "{sql} committed");
     }
-    low.control_transaction("COMMIT").unwrap();
+    low.node_conn().control_transaction("COMMIT").unwrap();
     assert_eq!(count(&mut root, "cp_accounts"), "1");
 }
 
@@ -91,14 +89,16 @@ fn a_compile_time_account_denial_leaves_the_transaction_open() {
 #[test]
 fn an_executor_time_create_user_denial_commits_first() {
     let (_stack, mut root, mut low) = unistore_with_low_account("cp_create_user", "cp_low");
-    low.control_transaction("BEGIN").unwrap();
-    low.execute_write("INSERT INTO test.cp_create_user VALUES (1)")
+    low.node_conn().control_transaction("BEGIN").unwrap();
+    low.node_conn()
+        .execute_write("INSERT INTO test.cp_create_user VALUES (1)")
         .unwrap();
     let denied = low
+        .node_conn()
         .execute_write("CREATE USER 'cp_new'@'%'")
         .unwrap_err();
     assert_eq!(denied.code, 1227, "{}", denied.message);
-    assert!(!low.session.in_transaction());
+    assert!(!low.in_transaction());
     assert_eq!(count(&mut root, "cp_create_user"), "1");
 }
 
@@ -112,17 +112,18 @@ fn set_password_and_set_default_role_leave_the_transaction_open() {
     let mut peer = stack.factory.open_session(session_context(2)).unwrap();
     rows(&mut session, "CREATE TABLE test.cp_pw (a INT PRIMARY KEY)");
     rows(&mut session, "CREATE USER 'cp_pw'@'%'");
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO test.cp_pw VALUES (1)")
         .unwrap();
     for sql in [
         "SET PASSWORD FOR 'cp_pw'@'%' = 'changed'",
         "SET DEFAULT ROLE ALL TO 'cp_pw'@'%'",
     ] {
-        session.execute_write(sql).unwrap();
+        session.node_conn().execute_write(sql).unwrap();
         assert!(
-            session.session.in_transaction(),
+            session.in_transaction(),
             "{sql} must not end the transaction"
         );
         assert_eq!(count(&mut peer, "cp_pw"), "0", "{sql} committed");
@@ -135,7 +136,7 @@ fn set_password_and_set_default_role_leave_the_transaction_open() {
         [["1"]],
         "the system session committed the password itself"
     );
-    session.control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(count(&mut peer, "cp_pw"), "0");
 }
 
@@ -154,14 +155,15 @@ fn an_executor_time_alter_refusal_commits_the_open_transaction_first() {
             "This type of ALTER TABLE is currently unsupported",
         ),
     ] {
-        session.control_transaction("BEGIN").unwrap();
+        session.node_conn().control_transaction("BEGIN").unwrap();
         session
+            .node_conn()
             .execute_write(&format!("INSERT INTO t (id, v) VALUES ({id}, 10)"))
             .unwrap();
-        let refused = session.execute_write(sql).unwrap_err();
+        let refused = session.node_conn().execute_write(sql).unwrap_err();
         assert_eq!((refused.code, refused.message.as_str()), (8200, message));
         assert_eq!(node.rows(), id, "{sql} commits the transaction first");
-        assert!(!session.session.in_transaction(), "{sql}");
+        assert!(!session.in_transaction(), "{sql}");
     }
 }
 
@@ -172,13 +174,15 @@ fn an_executor_time_alter_refusal_commits_the_open_transaction_first() {
 #[test]
 fn an_undetermined_implicit_commit_is_connection_fatal_and_runs_no_job() {
     let (mut session, node) = open_session();
-    session.control_transaction("BEGIN").unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .unwrap();
     node.fail_next_commit_undetermined
         .store(true, std::sync::atomic::Ordering::Release);
     let error = session
+        .node_conn()
         .execute_write("CREATE TABLE after_lost (id BIGINT PRIMARY KEY)")
         .unwrap_err();
     assert_undetermined_closes_without_packet(&error);
@@ -223,7 +227,7 @@ fn repair_table_is_refused_by_the_preprocessor() {
         ),
     );
     let repair = "ADMIN REPAIR TABLE app.t CREATE TABLE app.t (id BIGINT PRIMARY KEY)";
-    let refused = low.execute_write(repair).unwrap_err();
+    let refused = low.node_conn().execute_write(repair).unwrap_err();
     assert_eq!(
         (refused.code, refused.message.as_str()),
         (8215, "Failed to repair table: TiDB is not in REPAIR MODE")
@@ -232,7 +236,7 @@ fn repair_table_is_refused_by_the_preprocessor() {
     assert!(tidb_domain::domainutil::REPAIR_INFO
         .get_repair_table_list()
         .is_empty());
-    let refused = low.execute_write(repair).unwrap_err();
+    let refused = low.node_conn().execute_write(repair).unwrap_err();
     assert_eq!(
         (refused.code, refused.message.as_str()),
         (8215, "Failed to repair table: repair list is empty")
@@ -245,14 +249,17 @@ fn repair_table_is_refused_by_the_preprocessor() {
 #[test]
 fn analyze_leaves_the_users_transaction_open() {
     let (_stack, mut root, _low) = unistore_with_low_account("cp_analyze", "cp_analyze_low");
-    root.control_transaction("BEGIN").unwrap();
-    root.execute_write("INSERT INTO test.cp_analyze VALUES (1)")
+    root.node_conn().control_transaction("BEGIN").unwrap();
+    root.node_conn()
+        .execute_write("INSERT INTO test.cp_analyze VALUES (1)")
         .unwrap();
-    root.execute_write("ANALYZE TABLE test.cp_analyze").unwrap();
+    root.node_conn()
+        .execute_write("ANALYZE TABLE test.cp_analyze")
+        .unwrap();
     assert!(
-        root.session.in_transaction(),
+        root.in_transaction(),
         "ANALYZE must not end the transaction"
     );
-    root.control_transaction("ROLLBACK").unwrap();
+    root.node_conn().control_transaction("ROLLBACK").unwrap();
     assert_eq!(count(&mut root, "cp_analyze"), "0");
 }

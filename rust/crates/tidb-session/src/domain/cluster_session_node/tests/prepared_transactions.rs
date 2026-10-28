@@ -36,7 +36,7 @@ use tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 /// Runs one statement through PREPARE + EXECUTE with no parameters, the way
 /// `COM_STMT_PREPARE`/`COM_STMT_EXECUTE` do for a statement neither the point
 /// read nor the write planner claims.
-fn prepared(session: &mut ClusterServerSession, sql: &str) {
+fn prepared(session: &mut Session, sql: &str) {
     let statement = session.prepare_general(sql).expect("prepare");
     session.execute_general(&statement, &[]).expect("execute");
 }
@@ -138,6 +138,7 @@ fn prepared_point_update_reuses_the_planned_dml() {
 
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let statement = session
@@ -175,6 +176,7 @@ fn prepared_point_delete_reuses_the_planned_dml() {
 
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
         .expect("seed");
     let statement = session
@@ -201,6 +203,7 @@ fn prepared_point_update_preserves_typed_handle_coercion() {
 
     let (mut session, _) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let statement = session
@@ -225,7 +228,7 @@ fn prepared_point_update_preserves_typed_handle_coercion() {
 
 /// Reads through the prepared path, so the snapshot under test is the one an
 /// EXECUTE takes.
-fn prepared_rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
+fn prepared_rows(session: &mut Session, sql: &str) -> Vec<Vec<Datum>> {
     let statement = session.prepare_general(sql).expect("prepare");
     let outcome = session.execute_general(&statement, &[]).expect("execute");
     let GeneralExecuteOutcome::Rows(mut result) = outcome else {
@@ -251,6 +254,7 @@ fn prepared_rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum
 fn a_prepared_begin_holds_one_snapshot_for_every_statement() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -267,6 +271,7 @@ fn a_prepared_begin_holds_one_snapshot_for_every_statement() {
 
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits");
 
@@ -290,6 +295,7 @@ fn a_prepared_begin_holds_one_snapshot_for_every_statement() {
 fn prepared_autocommit_statements_do_not_share_a_snapshot() {
     let (mut reader, cluster) = open_session();
     reader
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -299,6 +305,7 @@ fn prepared_autocommit_statements_do_not_share_a_snapshot() {
     );
     let mut writer = open_session_on(&cluster);
     writer
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits");
     assert_eq!(
@@ -320,9 +327,11 @@ fn a_prepared_transaction_that_lost_the_race_fails_at_commit() {
     let (mut loser, cluster) = open_session();
     // A commit-time write conflict is an optimistic transaction contract.
     loser
+        .node_conn()
         .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
         .expect("select optimistic conflict semantics");
     loser
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
@@ -334,10 +343,12 @@ fn a_prepared_transaction_that_lost_the_race_fails_at_commit() {
 
     let mut winner = open_session_on(&cluster);
     winner
+        .node_conn()
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the racing writer commits first");
 
     loser
+        .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("the statement itself succeeds; nothing is published yet");
     let statement = loser.prepare_general("COMMIT").expect("prepare commit");
@@ -361,6 +372,7 @@ fn a_prepared_rollback_discards_the_transactions_writes() {
     let (mut session, cluster) = open_session();
     prepared(&mut session, "BEGIN");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
     prepared(&mut session, "ROLLBACK");
@@ -380,13 +392,21 @@ fn prepared_and_text_transaction_control_describe_the_same_transaction() {
     let (mut session, cluster) = open_session();
     prepared(&mut session, "BEGIN");
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (11, 110)")
         .expect("insert");
-    session.control_transaction("COMMIT").expect("text commit");
+    session
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("text commit");
     assert_eq!(cluster.rows(), 1);
 
-    session.control_transaction("BEGIN").expect("text begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("text begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (12, 120)")
         .expect("insert");
     assert_eq!(cluster.rows(), 1, "staged, not published");
@@ -414,6 +434,7 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
     ] {
         let (mut holder, cluster) = open_session();
         holder
+            .node_conn()
             .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
             .expect("seed");
         prepared(&mut holder, "BEGIN");
@@ -422,6 +443,7 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
             let _ = prepared_rows(&mut holder, locking_statement);
         } else {
             holder
+                .node_conn()
                 .execute_write(locking_statement)
                 .expect("the locking DML itself succeeds");
         }
@@ -429,10 +451,12 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
         // Go would BLOCK this contender until the holder commits.
         let mut contender = open_session_on(&cluster);
         contender
+            .node_conn()
             .execute_write("UPDATE t SET v = 99 WHERE id = 1")
             .expect("the contender is not blocked, where Go blocks it");
 
         holder
+            .node_conn()
             .execute_write("UPDATE t SET v = 51 WHERE id = 1")
             .expect("the statement itself succeeds; nothing is published yet");
         let statement = holder.prepare_general("COMMIT").expect("prepare commit");
@@ -465,12 +489,14 @@ fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
 
     let (mut session, _node) = open_session();
     session
+        .node_conn()
         .execute_write(
             "CREATE TABLE dist (w INT NOT NULL, d INT NOT NULL, \
              ytd DECIMAL(10,2) NOT NULL DEFAULT 0, PRIMARY KEY (w, d))",
         )
         .expect("create");
     session
+        .node_conn()
         .execute_write("INSERT INTO dist (w, d, ytd) VALUES (1, 1, 100.00)")
         .expect("seed");
 

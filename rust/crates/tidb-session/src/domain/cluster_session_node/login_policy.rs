@@ -60,7 +60,12 @@ impl Domain {
                     let session = slot.as_mut().ok_or_else(|| {
                         tidb_syssession::SysSessionError::new("login session is closed")
                     })?;
-                    let result = self.apply_login_policy_in_session(session, user, host, action);
+                    let result = self.apply_login_policy_in_session(
+                        &mut session.node_conn(),
+                        user,
+                        host,
+                        action,
+                    );
                     if matches!(result, Err(AuthenticationFailure::Storage(_))) {
                         lease.avoid_reuse();
                     }
@@ -74,7 +79,7 @@ impl Domain {
 
     fn apply_login_policy_in_session(
         &self,
-        session: &mut ClusterServerSession,
+        session: &mut ClusterServerSession<'_>,
         user: &str,
         host: &str,
         action: LoginPolicyAction,

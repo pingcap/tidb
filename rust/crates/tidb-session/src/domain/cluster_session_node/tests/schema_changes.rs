@@ -113,7 +113,10 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
                 report,
             }),
         );
-        session.execute_write(sql).expect("route multi-table DROP");
+        session
+            .node_conn()
+            .execute_write(sql)
+            .expect("route multi-table DROP");
         let expected: Vec<_> = notes
             .iter()
             .map(|note| {
@@ -146,6 +149,7 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
         }),
     );
     session
+        .node_conn()
         .execute_write("ALTER TABLE t WITH VALIDATION")
         .expect("route option-only ALTER");
     assert_eq!(
@@ -192,6 +196,7 @@ fn full_cluster_ddl_keeps_an_undetermined_verdict_connection_fatal() {
     let node = MockNode::start();
     let mut session = open_session_on_with_ddl(&node, Arc::new(UndeterminedDdl(query_error)));
     let query_error = session
+        .node_conn()
         .execute_write("CREATE DATABASE uncertain")
         .expect_err("the DDL cannot answer success when its commit response was lost");
     assert_undetermined_closes_without_packet(&query_error);
@@ -272,6 +277,7 @@ fn ddl_shapes_reach_the_catalog_writer() {
         "TRUNCATE TABLE t",
     ] {
         let routed = session
+            .node_conn()
             .execute_write(sql)
             .expect_err("the mock writer holds no rows");
         assert!(
@@ -314,6 +320,7 @@ fn cluster_create_default_errors_reach_the_client_unchanged() {
         // via `executor.CreateTable`), after `DDLExec.Next`'s implicit commit
         // and before any job is published.
         let error = session
+            .node_conn()
             .execute_write(sql)
             .expect_err("the invalid default is refused before catalog publication");
         assert_eq!((error.code, error.state), (code, state), "{sql}");
@@ -332,6 +339,7 @@ fn cluster_create_default_errors_reach_the_client_unchanged() {
 fn create_table_runs_and_the_same_connection_uses_the_new_table() {
     let (mut session, node) = open_session();
     let outcome = session
+        .node_conn()
         .execute_write("CREATE TABLE fresh (id BIGINT PRIMARY KEY, v BIGINT)")
         .expect("the catalog change runs")
         .expect("a DDL answers with an OK packet");
@@ -340,6 +348,7 @@ fn create_table_runs_and_the_same_connection_uses_the_new_table() {
     assert_eq!(node.catalog.load().schema_version, 12);
 
     session
+        .node_conn()
         .execute_write("INSERT INTO fresh (id, v) VALUES (1, 10), (2, 20)")
         .expect("the new table takes writes on the same connection");
     assert_eq!(
@@ -366,6 +375,7 @@ fn ddl_success_is_not_replaced_by_a_statistics_subscriber_error() {
     node.fail_next_begin.store(true, Ordering::Release);
 
     let outcome = session
+        .node_conn()
         .execute_write("CREATE TABLE stats_subscriber_failure (id BIGINT)")
         .expect("subscriber errors are ignored after the DDL commit")
         .expect("DDL returns an OK packet");
@@ -387,14 +397,16 @@ fn ddl_success_is_not_replaced_by_a_statistics_subscriber_error() {
 fn drop_table_removes_it_from_the_connections_own_catalog() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     session
+        .node_conn()
         .execute_write("DROP TABLE t")
         .expect("the catalog change runs");
     assert_eq!(node.catalog.load().schema_version, 12);
 
-    let Err(error) = session.execute("SELECT id FROM t") else {
+    let Err(error) = session.node_conn().execute("SELECT id FROM t") else {
         panic!("a dropped table must not answer");
     };
     assert!(
@@ -413,14 +425,16 @@ fn drop_table_removes_it_from_the_connections_own_catalog() {
 fn alter_table_rename_rebuilds_the_connection_catalog_without_losing_rows() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed the table before renaming it");
     session
+        .node_conn()
         .execute_write("ALTER TABLE t RENAME TO renamed")
         .expect("the rename runs through the catalog writer");
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
     assert_eq!(node.catalog.load().schema_version, 12);
-    assert!(session.execute("SELECT id FROM t").is_err());
+    assert!(session.node_conn().execute("SELECT id FROM t").is_err());
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM renamed"),
         vec![vec![Datum::Int(1), Datum::Int(10)]],
@@ -437,20 +451,23 @@ fn alter_table_rename_rebuilds_the_connection_catalog_without_losing_rows() {
 fn rename_table_multiple_pairs_publish_one_catalog_change() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed the first table");
     session
+        .node_conn()
         .execute_write("INSERT INTO g (id, grp) VALUES (2, 20)")
         .expect("seed the second table");
 
     session
+        .node_conn()
         .execute_write("RENAME TABLE t TO t_renamed, g TO g_renamed")
         .expect("one multi-pair rename DDL job runs");
 
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
     assert_eq!(node.catalog.load().schema_version, 12);
-    assert!(session.execute("SELECT id FROM t").is_err());
-    assert!(session.execute("SELECT id FROM g").is_err());
+    assert!(session.node_conn().execute("SELECT id FROM t").is_err());
+    assert!(session.node_conn().execute("SELECT id FROM g").is_err());
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM t_renamed"),
         vec![vec![Datum::Int(1), Datum::Int(10)]]
@@ -465,13 +482,16 @@ fn rename_table_multiple_pairs_publish_one_catalog_change() {
 fn rename_table_later_pair_failure_leaves_every_prior_pair_unpublished() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed the first table");
     session
+        .node_conn()
         .execute_write("INSERT INTO g (id, grp) VALUES (2, 20)")
         .expect("seed the second table");
 
     let error = session
+        .node_conn()
         .execute_write("RENAME TABLE t TO t_renamed, g TO t_renamed")
         .expect_err("the occupied second target rejects the complete DDL job");
     assert!(error.message.contains("already exists"), "{error:?}");
@@ -485,7 +505,10 @@ fn rename_table_later_pair_failure_leaves_every_prior_pair_unpublished() {
         rows(&mut session, "SELECT id, grp FROM g"),
         vec![vec![Datum::Int(2), Datum::Int(20)]]
     );
-    assert!(session.execute("SELECT id FROM t_renamed").is_err());
+    assert!(session
+        .node_conn()
+        .execute("SELECT id FROM t_renamed")
+        .is_err());
 }
 
 /// A second connection, opened before the DDL, notices it at its next
@@ -500,9 +523,11 @@ fn a_second_connection_sees_the_new_table_after_the_ddl() {
     assert!(rows(&mut peer, "SELECT id FROM t").is_empty());
 
     author
+        .node_conn()
         .execute_write("CREATE TABLE shared (id BIGINT PRIMARY KEY, v BIGINT)")
         .expect("the catalog change runs");
     author
+        .node_conn()
         .execute_write("INSERT INTO shared (id, v) VALUES (5, 50)")
         .expect("the author writes the new table");
 
@@ -519,10 +544,15 @@ fn a_second_connection_sees_the_new_table_after_the_ddl() {
 fn create_and_drop_database_route_to_the_catalog_writer() {
     let (mut session, node) = open_session();
     session
+        .node_conn()
         .execute_write("CREATE DATABASE extra CHARACTER SET utf8 COLLATE utf8_general_ci")
         .expect("the catalog change runs");
-    session.execute_write("USE extra").expect("USE extra");
     session
+        .node_conn()
+        .execute_write("USE extra")
+        .expect("USE extra");
+    session
+        .node_conn()
         .execute_write("CREATE TABLE here (id BIGINT PRIMARY KEY)")
         .expect("a table in the new database");
     assert!(rows(&mut session, "SELECT id FROM here").is_empty());
@@ -539,9 +569,10 @@ fn create_and_drop_database_route_to_the_catalog_writer() {
     drop(catalog);
 
     session
+        .node_conn()
         .execute_write("DROP DATABASE extra")
         .expect("the catalog change runs");
-    assert!(session.execute("SELECT id FROM here").is_err());
+    assert!(session.node_conn().execute("SELECT id FROM here").is_err());
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 3);
 }
 
@@ -551,6 +582,7 @@ fn create_and_drop_database_route_to_the_catalog_writer() {
 fn an_already_satisfied_ddl_publishes_nothing() {
     let (mut session, node) = open_session();
     let outcome = session
+        .node_conn()
         .execute_write("CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY)")
         .expect("an IF NOT EXISTS no-op succeeds")
         .expect("it answers with an OK packet");
@@ -565,19 +597,24 @@ fn an_already_satisfied_ddl_publishes_nothing() {
 #[test]
 fn a_ddl_implicitly_commits_the_open_transaction() {
     let (mut session, node) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
     session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    session
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("staged insert");
     assert_eq!(node.rows(), 0);
 
     session
+        .node_conn()
         .execute_write("CREATE TABLE after (id BIGINT PRIMARY KEY)")
         .expect("the catalog change runs");
     assert_eq!(node.rows(), 1, "the DDL committed the open transaction");
     assert_eq!(node.publications.load(Ordering::Acquire), 1);
     assert!(
-        !session.session.in_transaction(),
+        !session.in_transaction(),
         "the implicit commit ends the transaction"
     );
     // And the new table is usable straight away, which it could not be if
@@ -602,10 +639,17 @@ fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them
         .expect("the zero-DDL-privilege account authenticates normally");
     let mut normal =
         open_session_on_with_context(&node, session_context_with_identity(21, normal_identity));
-    normal.execute_write("USE app").expect("app is visible");
-    normal.control_transaction("BEGIN").expect("begin");
+    normal
+        .node_conn()
+        .execute_write("USE app")
+        .expect("app is visible");
+    normal
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
 
     let denied = normal
+        .node_conn()
         .execute_write("CREATE TABLE blocked (id BIGINT PRIMARY KEY)")
         .expect_err("CREATE must be checked before the cluster DDL seam");
     assert_eq!((denied.code, denied.state), (1142, *b"42000"));
@@ -614,17 +658,21 @@ fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them
         "CREATE command denied to user 'low'@'%' for table 'blocked'"
     );
     assert!(
-        normal.session.in_transaction(),
+        normal.in_transaction(),
         "a denied DDL must not implicitly commit the caller's transaction"
     );
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    normal.control_transaction("ROLLBACK").expect("rollback");
+    normal
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
 
     for (sql, database) in [
         ("CREATE DATABASE blocked_db", "blocked_db"),
         ("DROP DATABASE app", "app"),
     ] {
         let denied = normal
+            .node_conn()
             .execute_write(sql)
             .expect_err("database DDL needs its schema-scoped privilege");
         assert_eq!((denied.code, denied.state), (1044, *b"42000"), "{sql}");
@@ -644,6 +692,7 @@ fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them
     let mut bypass =
         open_session_on_with_context(&node, session_context_with_identity(22, bypass_identity));
     bypass
+        .node_conn()
         .execute_write("CREATE TABLE app.allowed (id BIGINT PRIMARY KEY)")
         .expect("skip-grant-table bypasses DDL authorization");
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
@@ -657,10 +706,14 @@ fn a_transaction_keeps_the_schema_its_begin_saw() {
     let node = MockNode::start();
     let mut reader = open_session_on(&node);
     let mut author = open_session_on(&node);
-    reader.control_transaction("BEGIN").expect("begin");
+    reader
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     assert!(rows(&mut reader, "SELECT id FROM t").is_empty());
 
     author
+        .node_conn()
         .execute_write("DROP TABLE t")
         .expect("the peer drops the table");
 
@@ -668,9 +721,12 @@ fn a_transaction_keeps_the_schema_its_begin_saw() {
         rows(&mut reader, "SELECT id FROM t").is_empty(),
         "a statement inside BEGIN must keep the schema BEGIN saw"
     );
-    reader.control_transaction("COMMIT").expect("commit");
+    reader
+        .node_conn()
+        .control_transaction("COMMIT")
+        .expect("commit");
     // Once the transaction is over the connection follows the node again.
-    assert!(reader.execute("SELECT id FROM t").is_err());
+    assert!(reader.node_conn().execute("SELECT id FROM t").is_err());
 }
 
 /// Every catalog refusal already rendered Go's own message, but only two
@@ -747,7 +803,10 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
 #[test]
 fn commit_survives_a_schema_move_under_the_transaction() {
     let (mut session, node) = open_session();
-    session.control_transaction("BEGIN").expect("begin");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
     let statement = session
         .prepare_general("UPDATE t SET v = 90 WHERE id = 9")
         .expect("prepare");
@@ -762,7 +821,7 @@ fn commit_survives_a_schema_move_under_the_transaction() {
     moved.schema_version += 1;
     node.catalog.store(moved);
 
-    let outcome = session.control_transaction("COMMIT");
+    let outcome = session.node_conn().control_transaction("COMMIT");
     assert!(
         outcome.is_ok(),
         "an unrelated schema move must not fail COMMIT: {:?}",
@@ -786,7 +845,10 @@ fn lock_tables_run_as_a_cluster_lock_job() {
     };
     let (mut first, node) = open_session();
     let mut second = open_session_on_with_context(&node, session_context(2));
-    first.execute_write("LOCK TABLES t WRITE").expect("lock");
+    first
+        .node_conn()
+        .execute_write("LOCK TABLES t WRITE")
+        .expect("lock");
     let lock = stored_lock(&node).expect("the lock is stored on the table");
     assert_eq!(lock.tp, tidb_ast::TableLockType::WRITE);
     assert_eq!(lock.state, tidb_model::TableLockState::PUBLIC);
@@ -797,32 +859,40 @@ fn lock_tables_run_as_a_cluster_lock_job() {
             .collect::<Vec<_>>(),
         [1]
     );
-    let Err(error) = second.execute("SELECT id FROM app.t") else {
+    let Err(error) = second.node_conn().execute("SELECT id FROM app.t") else {
         panic!("another connection must meet the WRITE lock");
     };
     assert_eq!(error.code, 8020, "{}", error.message);
     // The holder still writes its own table.
     first
+        .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("the lock holder writes");
 
-    first.execute_write("UNLOCK TABLES").expect("unlock");
+    first
+        .node_conn()
+        .execute_write("UNLOCK TABLES")
+        .expect("unlock");
     assert!(stored_lock(&node).is_none());
     rows(&mut second, "SELECT id FROM app.t");
 
     // Go `CleanupTableLock`: the IsCleanup job drops every holder's lock.
     first
+        .node_conn()
         .execute_write("LOCK TABLES t WRITE")
         .expect("lock to clean");
     second
+        .node_conn()
         .execute_write("ADMIN CLEANUP TABLE LOCK app.t")
         .expect("cleanup");
     assert!(stored_lock(&node).is_none());
     first
+        .node_conn()
         .execute_write("UNLOCK TABLES")
         .expect("unlock after cleanup");
 
     first
+        .node_conn()
         .execute_write("LOCK TABLES t READ")
         .expect("lock again");
     assert!(stored_lock(&node).is_some());
@@ -851,8 +921,9 @@ fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
         .authenticate_native("low", "127.0.0.1", &SALT, &[])
         .expect("the SELECT-only account authenticates");
     let mut low = open_session_on_with_context(&node, session_context_with_identity(22, identity));
-    low.execute_write("USE app").unwrap();
+    low.node_conn().execute_write("USE app").unwrap();
     let missing = low
+        .node_conn()
         .execute_write("ALTER TABLE nosuch REBUILD PARTITION p0")
         .unwrap_err();
     assert_eq!(
@@ -860,6 +931,7 @@ fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
         (1146, "Table 'app.nosuch' doesn't exist")
     );
     let denied = low
+        .node_conn()
         .execute_write("ALTER TABLE t REBUILD PARTITION p0")
         .unwrap_err();
     assert_eq!(
@@ -890,7 +962,7 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
                 .unwrap(),
         ),
     );
-    low.execute_write("USE app").unwrap();
+    low.node_conn().execute_write("USE app").unwrap();
     for sql in [
         "ALTER TABLE missing ADD COLUMN c INT",
         "CREATE INDEX i ON missing (a)",
@@ -898,7 +970,7 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
         "TRUNCATE TABLE missing",
         "CREATE TABLE t3 LIKE missing",
     ] {
-        let error = low.execute_write(sql).unwrap_err();
+        let error = low.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message.as_str()),
             (1146, "Table 'app.missing' doesn't exist"),
@@ -920,7 +992,7 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
         ("DROP INDEX i ON app.Missing", "SELECT"),
         ("TRUNCATE TABLE app.Missing", "SELECT"),
     ] {
-        let error = none.execute_write(sql).unwrap_err();
+        let error = none.node_conn().execute_write(sql).unwrap_err();
         assert_eq!(
             (error.code, error.message),
             (
@@ -931,6 +1003,7 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
         );
     }
     let error = none
+        .node_conn()
         .execute_write("CREATE TABLE app.t9 LIKE app.Missing")
         .unwrap_err();
     assert_eq!(
