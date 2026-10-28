@@ -16,22 +16,26 @@
 //! Logical source construction belongs to `tidb-planner::plan_builder`;
 //! physical row execution belongs to `driver::physical_builder`.
 
-use super::*;
+use tidb_datatype::{Datum, FieldType};
+use tidb_driver_error::DriverError;
+use tidb_expr::expression::Expression;
+use tidb_expr::rewriter::ColumnResolver;
+use tidb_infoschema::{split_table_path, TableEntry};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 /// An internal qualifier that parsed SQL can never produce. Plain EXPLAIN
 /// uses it for Go's `ScalarSubQueryExpr`: a typed, non-constant planner value
 /// that is visible to expression rewriting but is not part of an executor row.
-pub(crate) const SCALAR_QUERY_SCOPE: &str = "\0scalar_subquery";
+pub const SCALAR_QUERY_SCOPE: &str = "\0scalar_subquery";
 
 #[derive(Clone)]
-pub(crate) struct PlanColumn {
-    pub(crate) name: String,
-    pub(crate) field_type: FieldType,
-    pub(crate) unique_id: i64,
+pub struct PlanColumn {
+    pub name: String,
+    pub field_type: FieldType,
+    pub unique_id: i64,
     /// The default plain-EXPLAIN branch evaluates scalar subqueries once.
-    pub(crate) value: Option<Datum>,
+    pub value: Option<Datum>,
 }
 
 /// The joined `FROM` scope: every table's columns concatenated left to right,
@@ -41,14 +45,14 @@ pub(crate) struct PlanColumn {
 /// is expressed here, as the two pieces of naming a coalesced join adds on
 /// top of it (see [`coalesce_common_columns`]).
 #[derive(Clone)]
-pub(crate) struct FromScope {
-    pub(crate) tables: Vec<FromTable>,
+pub struct FromScope {
+    pub tables: Vec<FromTable>,
     /// Planner-only values registered by plain EXPLAIN. Their synthetic row
     /// offsets follow the physical source width, but they deliberately do not
     /// contribute to [`FromScope::width`] or wildcard expansion because no
     /// executor ever produces them.
-    pub(crate) plan_columns: Vec<PlanColumn>,
-    pub(crate) constant_context: Option<crate::StmtContext>,
+    pub plan_columns: Vec<PlanColumn>,
+    pub constant_context: Option<tidb_stmtctx::StmtContext>,
     /// The statement's session `time_zone`, which [`ScopeResolver`] publishes
     /// to the expression rewriter as [`ColumnResolver::time_zone`] -- Go's
     /// `ctx.Location()`, reached while BUILDING an expression (the
@@ -56,20 +60,20 @@ pub(crate) struct FromScope {
     /// on the scope because the scope is the one value every rewrite over
     /// this `FROM` already receives; the statement build points set it from
     /// `StmtContext::session_zone` and every derived scope clones it along.
-    pub(crate) zone: tidb_expr::SessionTimeZone,
-    pub(crate) like_default_escape: u8,
-    pub(crate) no_unsigned_subtraction: bool,
-    pub(crate) div_precision_increment: u32,
+    pub zone: tidb_expr::SessionTimeZone,
+    pub like_default_escape: u8,
+    pub no_unsigned_subtraction: bool,
+    pub div_precision_increment: u32,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
     /// an unqualified name -- Go's `FullNames[...].Redundant`. Empty for
     /// every other `FROM` shape, which is what makes this a no-op there.
-    pub(crate) coalesced: Vec<usize>,
+    pub coalesced: Vec<usize>,
     /// The row offsets `*` expands to, in order, when that is NOT plain row
     /// order: a coalesced join puts the common columns first and a RIGHT
     /// join reports its two sides right-then-left. Empty means row order.
-    pub(crate) star: Vec<usize>,
+    pub star: Vec<usize>,
 }
 
 impl Default for FromScope {
@@ -94,7 +98,7 @@ impl Default for FromScope {
 }
 
 impl FromScope {
-    pub(crate) fn for_statement(ctx: &crate::StmtContext) -> Self {
+    pub fn for_statement(ctx: &tidb_stmtctx::StmtContext) -> Self {
         Self {
             constant_context: Some(ctx.clone()),
             zone: ctx.session_zone(),
@@ -105,12 +109,12 @@ impl FromScope {
         }
     }
 
-    pub(crate) fn width(&self) -> usize {
+    pub fn width(&self) -> usize {
         self.tables.iter().map(|t| t.columns.len()).sum()
     }
 
     /// The column at a row offset, with the name it answers to.
-    pub(crate) fn column_at(&self, offset: usize) -> Option<&(String, FieldType)> {
+    pub fn column_at(&self, offset: usize) -> Option<&(String, FieldType)> {
         self.tables
             .iter()
             .find(|t| (t.offset..t.offset + t.columns.len()).contains(&offset))
@@ -119,7 +123,7 @@ impl FromScope {
 
     /// Every column an unqualified `*` expands to, in display order (Go's
     /// `unfoldWildStar` over the join's own output names).
-    pub(crate) fn star_columns(&self) -> Vec<(usize, String, FieldType)> {
+    pub fn star_columns(&self) -> Vec<(usize, String, FieldType)> {
         let offsets: Vec<usize> = if self.star.is_empty() {
             (0..self.width()).collect()
         } else {
@@ -136,7 +140,7 @@ impl FromScope {
 }
 
 /// The scope exposed by one base table.
-pub(crate) fn single_table_scope(
+pub fn single_table_scope(
     visible: &str,
     database: Option<String>,
     columns: Vec<(String, FieldType)>,
@@ -164,8 +168,8 @@ pub(crate) fn single_table_scope(
 /// makes `id` unambiguous after `u1 JOIN u2 USING (id)` while `u2.id` still
 /// names the right side's own value (captured from Go, which reports the pair
 /// as two distinct columns for `SELECT u1.id, u2.id`).
-pub(crate) struct ScopeResolver<'a> {
-    pub(crate) scope: &'a FromScope,
+pub struct ScopeResolver<'a> {
+    pub scope: &'a FromScope,
 }
 
 impl ScopeResolver<'_> {
@@ -174,7 +178,7 @@ impl ScopeResolver<'_> {
     /// truncation message renders. The rewritten `Expression` keeps only an
     /// index and a unique id, so the name has to be read here, where the
     /// scope still knows which table the reference bound to.
-    pub(crate) fn orig_name(&self, path: &[String]) -> Option<String> {
+    pub fn orig_name(&self, path: &[String]) -> Option<String> {
         let (index, _, _) = self.resolve(path)?;
         let table =
             self.scope.tables.iter().find(|table| {
@@ -264,7 +268,7 @@ impl ColumnResolver for ScopeResolver<'_> {
             Some(ctx) => tidb_expr::fold_constant_in_mode(expression, ctx, mode),
             None if mode != tidb_expr::ConstantFoldMode::Disabled => {
                 tidb_expr::derive_constant_null_flag(expression);
-                let minimal = crate::StmtContext::for_query();
+                let minimal = tidb_stmtctx::StmtContext::for_query();
                 tidb_expr::fold_constant_in_mode(expression, &minimal, mode);
                 // go appends the fold-time warnings to StmtCtx.warnings; the
                 // minimal context is otherwise discarded, so its warnings
@@ -369,7 +373,7 @@ impl ColumnResolver for ScopeResolver<'_> {
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.
-pub(crate) fn single_table_name(
+pub fn single_table_name(
     table_ref: &tidb_ast::TableRef,
     current_db: &str,
 ) -> Result<(String, String), DriverError> {
@@ -383,7 +387,7 @@ pub(crate) fn single_table_name(
 /// clustered common handle builds `HandleCols` from the primary index -- in
 /// both cases `_tidb_rowid` names nothing, which is why TiDB answers
 /// "Unknown column" for it there. Only a HEAP table gets the extra column.
-pub(crate) fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldType)> {
+pub fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldType)> {
     let TableEntry::Kv(kv) = entry else {
         return None;
     };
@@ -395,4 +399,18 @@ pub(crate) fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldTy
         FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
             .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
     ))
+}
+
+/// One table in a query's `FROM`: the name a qualifier must match (its alias
+/// when it has one, as in Go's `TableSource`), its columns, and the offset of
+/// its first column in the joined row.
+#[derive(Clone, Debug)]
+pub struct FromTable {
+    pub name: String,
+    /// The schema the table lives in, when a `db.t.column` reference may name
+    /// it. `None` for a source that cannot be schema-qualified: an aliased
+    /// table (MySQL's alias replaces the whole path) or a synthetic scope.
+    pub database: Option<String>,
+    pub columns: Vec<(String, FieldType)>,
+    pub offset: usize,
 }

@@ -23,21 +23,21 @@ use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 use tidb_expr::schema::Schema;
 use tidb_infoschema::{split_table_path, Catalog, TableEntry};
-use tidb_planner::plan_builder::field_name::default_field_display_name;
+use crate::plan_builder::field_name::default_field_display_name;
 
-use super::from::{single_table_scope, FromScope, ScopeResolver};
-use super::point_get_key::point_get_value;
-use super::{eval_limit_bound, DriverError};
-use crate::kv_table::{KvTable, TableHandle};
+use crate::from_scope::{single_table_scope, FromScope, ScopeResolver};
+use crate::point_get_key::point_get_value;
+use tidb_driver_error::DriverError;
+use tidb_table::kv_table::{KvTable, TableHandle};
 use tidb_hack::GoCaseCompare;
 
 #[derive(Clone, Debug)]
-pub(crate) struct FastPointOutput {
-    pub(crate) offsets: Vec<usize>,
-    pub(crate) columns: Vec<(String, FieldType)>,
+pub struct FastPointOutput {
+    pub offsets: Vec<usize>,
+    pub columns: Vec<(String, FieldType)>,
     /// The table's visible name (its alias when it has one): every output
     /// column's `TableAsName`.
-    pub(crate) table_alias: String,
+    pub table_alias: String,
 }
 
 /// Go `ast.TiDBRowChecksum`.
@@ -62,7 +62,7 @@ fn row_checksum_field_type() -> FieldType {
 /// source-column projection whose whole predicate is owned by the point key is
 /// returned here. Every residual operator or unsupported table shape declines
 /// to the ordinary planner below.
-pub(crate) fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
+pub fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
     let columns = output
         .offsets
         .iter()
@@ -93,9 +93,9 @@ pub(crate) fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Sc
     Schema::new(columns)
 }
 
-fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_planner::ranger::types::Ranges {
+fn closed_point_ranges(keys: &[Vec<Datum>]) -> crate::ranger::types::Ranges {
     keys.iter()
-        .map(|values| tidb_planner::ranger::types::Range {
+        .map(|values| crate::ranger::types::Range {
             low_val: values.clone(),
             high_val: values.clone(),
             collators: vec![tidb_datatype::Collation::Binary; values.len()],
@@ -109,18 +109,18 @@ fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_planner::ranger::types::Rang
 /// physical root later consumed by `executorBuilder.build`. This is the
 /// optimizer stage; it never drains a source or constructs a separate
 /// executor pipeline.
-pub(crate) fn try_fast_point_physical_plan(
+pub fn try_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    ctx: &tidb_stmtctx::StmtContext,
+) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     let plan = try_fast_point_physical_plan_with_allocator(
         select,
         catalog,
         current_db,
         ctx,
-        &tidb_planner::plan_base::PlanIdAllocator::new(),
+        &crate::plan_base::PlanIdAllocator::new(),
     )?;
     // Go `TryFastPlan`'s deferred check on a SELECT: a session
     // `sql_select_limit` discards the fast plan so the ordinary planner can
@@ -139,13 +139,13 @@ pub(crate) fn try_fast_point_physical_plan(
 /// DML tries its point child before allocating the write root, while a plain
 /// query starts from a fresh counter; both call sites therefore share the
 /// same implementation without assigning fixed IDs by hand.
-pub(crate) fn try_fast_point_physical_plan_with_allocator(
+pub fn try_fast_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    ctx: &tidb_stmtctx::StmtContext,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, false,
     )
@@ -154,13 +154,13 @@ pub(crate) fn try_fast_point_physical_plan_with_allocator(
 /// Go's `tryUpdatePointPlan` / `tryDeletePointPlan` retain the complete table
 /// row and its handle on the PointGet child instead of applying a SELECT-list
 /// projection.
-pub(crate) fn try_fast_dml_point_physical_plan_with_allocator(
+pub fn try_fast_dml_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    ctx: &tidb_stmtctx::StmtContext,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, true,
     )
@@ -212,10 +212,10 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    ctx: &tidb_stmtctx::StmtContext,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
     dml_source: bool,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     let Some(of_warnings) = fast_point_lock_of_warnings(select, current_db) else {
         return Ok(None);
     };
@@ -233,14 +233,14 @@ fn build_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    ctx: &tidb_stmtctx::StmtContext,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
     dml_source: bool,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     if ctx.stable_result_mode()
         || ctx
             .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            .get_bool_with_default(crate::fix_control::FIX_52592, false)
         || select.into_outfile.is_some()
         // Go `tryPointGetPlan` accepts a locking read and `getLockWaitTime`
         // sets `Lock` only when `PessimisticLockEligible` (autocommit off, or
@@ -262,11 +262,11 @@ fn build_fast_point_physical_plan(
     .then_some(select.lock.as_ref())
     .flatten()
     .map(|lock| match lock.wait {
-        tidb_ast::LockWait::NoWait => (tidb_planner::logical::SelectLockType::ForUpdateNoWait, 0),
+        tidb_ast::LockWait::NoWait => (crate::logical::SelectLockType::ForUpdateNoWait, 0),
         tidb_ast::LockWait::Wait(seconds) => {
-            (tidb_planner::logical::SelectLockType::ForUpdateWaitN, seconds)
+            (crate::logical::SelectLockType::ForUpdateWaitN, seconds)
         }
-        _ => (tidb_planner::logical::SelectLockType::ForUpdate, 0),
+        _ => (crate::logical::SelectLockType::ForUpdate, 0),
     });
     // The PARTITION clause is decided below, against the table and pin.
     let Some(table_ref) = sole_table_ref(&select.from) else {
@@ -280,7 +280,7 @@ fn build_fast_point_physical_plan(
     // name is looked up -- so `tryPointGetPlan` finds no `TableNameW` for
     // it (`resolveCtx.GetTableName(tblName) == nil`) and declines; the
     // ordinary planner then reads the CTE.
-    if super::planner_bridge::is_cte(select.with.as_ref(), table_ref) {
+    if is_cte(select.with.as_ref(), table_ref) {
         return Ok(None);
     }
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
@@ -325,7 +325,7 @@ fn build_fast_point_physical_plan(
                 },
                 None => None,
             };
-            tidb_planner::access_path::fast_index_is_available_by_hints(
+            crate::access_path::fast_index_is_available_by_hints(
                 current_db,
                 database,
                 visible,
@@ -360,9 +360,9 @@ fn build_fast_point_physical_plan(
             // COLUMNS and KEY forms do not carry.
             if !matches!(
                 partition.kind,
-                crate::partition_routing::PartitionKind::Hash
-                    | crate::partition_routing::PartitionKind::Range { .. }
-                    | crate::partition_routing::PartitionKind::List { .. }
+                tidb_table::partition_routing::PartitionKind::Hash
+                    | tidb_table::partition_routing::PartitionKind::Range { .. }
+                    | tidb_table::partition_routing::PartitionKind::List { .. }
             ) || !matches!(partition.expr, Expression::Column(_))
             {
                 return Ok(None);
@@ -421,25 +421,25 @@ fn build_fast_point_physical_plan(
             None
         };
         if batch.key_values.is_empty() {
-            let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
-                .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(0.0, [])));
+                .set_stats(Some(crate::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
-            return Ok(Some(tidb_planner::physical::PhysicalPlan::TableDual(
-                tidb_planner::physical::PhysicalTableDual::new(base, 0),
+            return Ok(Some(crate::physical::PhysicalPlan::TableDual(
+                crate::physical::PhysicalTableDual::new(base, 0),
             )));
         }
         let mut base =
-            tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
+            crate::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
         base.base
-            .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(
+            .set_stats(Some(crate::stats_info::StatsInfo::new(
                 batch.plan_rows as f64,
                 [],
             )));
         base.base.set_schema(Some(schema));
         let ranges = closed_point_ranges(&batch.key_values);
-        return Ok(Some(tidb_planner::physical::PhysicalPlan::BatchPointGet(
-            tidb_planner::physical::PhysicalBatchPointGet {
+        return Ok(Some(crate::physical::PhysicalPlan::BatchPointGet(
+            crate::physical::PhysicalBatchPointGet {
                 base,
                 table_id: table.table_id(),
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
@@ -454,7 +454,7 @@ fn build_fast_point_physical_plan(
                 },
                 range_rebuild: batch
                     .constants
-                    .map(tidb_planner::physical_plan_cache::PointRangeRebuild::Constants),
+                    .map(crate::physical_plan_cache::PointRangeRebuild::Constants),
                 keep_order: false,
                 desc: false,
                 lock: select_lock.is_some(),
@@ -487,12 +487,12 @@ fn build_fast_point_physical_plan(
         {
             // Go `tryPointGetPlan`'s `isTableDual` arm: the predicate can
             // equal no stored row, so the answer is empty and no read runs.
-            let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
-                .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(0.0, [])));
+                .set_stats(Some(crate::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
-            return Ok(Some(tidb_planner::physical::PhysicalPlan::TableDual(
-                tidb_planner::physical::PhysicalTableDual::new(base, 0),
+            return Ok(Some(crate::physical::PhysicalPlan::TableDual(
+                crate::physical::PhysicalTableDual::new(base, 0),
             )));
         }
         return Ok(None);
@@ -524,7 +524,7 @@ fn build_fast_point_physical_plan(
     if point.index_id.is_some() && index_name.is_none() {
         return Ok(None);
     }
-    if !tidb_planner::access_path::fast_index_is_available_by_hints(
+    if !crate::access_path::fast_index_is_available_by_hints(
         current_db,
         database,
         visible,
@@ -534,18 +534,18 @@ fn build_fast_point_physical_plan(
     ) {
         return Ok(None);
     }
-    let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
+    let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
     base.base
-        .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(1.0, [])));
+        .set_stats(Some(crate::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
     // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
-    let constants = tidb_planner::physical_plan_cache::PointConstantsRebuild {
+    let constants = crate::physical_plan_cache::PointConstantsRebuild {
         rows: vec![point
             .key_markers
             .iter()
             .zip(&point.key_values)
             .map(
-                |(marker, value)| tidb_planner::physical_plan_cache::PointKeyConstant {
+                |(marker, value)| crate::physical_plan_cache::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 },
@@ -556,16 +556,16 @@ fn build_fast_point_physical_plan(
     };
     let range_rebuild = constants
         .has_parameters()
-        .then_some(tidb_planner::physical_plan_cache::PointRangeRebuild::Constants(constants));
-    Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
-        tidb_planner::physical::PhysicalPointGet {
+        .then_some(crate::physical_plan_cache::PointRangeRebuild::Constants(constants));
+    Ok(Some(crate::physical::PhysicalPlan::PointGet(
+        crate::physical::PhysicalPointGet {
             base,
             table_id: table.table_id(),
             // Go `PointGetPlan.PartitionNames`: a global index applies them
             // to the partition its entry records.
             partition: ((global_index && !table_ref.partitions.is_empty())
                 || (routed_int_handle && table.partition().is_some()))
-            .then(|| tidb_planner::physical::PointGetPartition {
+            .then(|| crate::physical::PointGetPartition {
                 names: table_ref.partitions.clone(),
                 physical_table_id: None,
             }),
@@ -602,7 +602,7 @@ fn overflow_plans_table_dual(
     table_ref: &tidb_ast::TableRef,
 ) -> bool {
     let index_available = |index_name: Option<&str>| {
-        tidb_planner::access_path::fast_index_is_available_by_hints(
+        crate::access_path::fast_index_is_available_by_hints(
             current_db,
             database,
             visible,
@@ -660,11 +660,11 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
 /// `Name.Schema` -- so `SELECT nosuch.t.a FROM t WHERE id = 1` is a point get
 /// that answers, where the ordinary planner would refuse the qualifier
 /// (1054).
-pub(crate) fn point_get_column_path(path: &[String]) -> &[String] {
+pub fn point_get_column_path(path: &[String]) -> &[String] {
     &path[path.len().saturating_sub(2)..]
 }
 
-pub(crate) fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
+pub fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
     let resolver = ScopeResolver { scope };
     let mut offsets = Vec::new();
     let mut columns = Vec::new();
@@ -749,7 +749,7 @@ fn point_get_consumes_where(
     )
 }
 
-pub(crate) fn point_get_predicate_is_consumed(
+pub fn point_get_predicate_is_consumed(
     where_clause: Option<&tidb_ast::Expr>,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -810,7 +810,7 @@ pub(crate) fn point_get_predicate_is_consumed(
 /// An unresolvable `PARTITION (p)` name answers the FULL list rather than
 /// failing here: the read has already raised 1735 for it, and this is only
 /// ever asked for a plan that got built.
-pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
+pub fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
     let table_ref = sole_table_ref(from)?;
     // A `PARTITION (...)` restriction is refused by `build_from`; declining
     // the fast path here too keeps a point get from answering a statement the
@@ -828,7 +828,7 @@ pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_as
 /// only want to know which table -- and which partitions of it -- the
 /// statement reads want this one, so that a `PARTITION (p)` narrowing is
 /// reported rather than silently read as "no single table".
-pub(crate) fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
+pub fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
     let join = from.as_ref()?;
     if join.right.is_some() {
         return None;
@@ -852,14 +852,14 @@ pub(crate) fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast:
 /// The row form, `(a, b) IN ((1, 2), (3, 4))`, is a composite-key
 /// `Batch_Point_Get` when the tuples pin every column of a unique index or a
 /// clustered common handle.
-pub(crate) struct BatchPointLookup {
+pub struct BatchPointLookup {
     index: Option<(i64, String)>,
     common_handle: bool,
     plan_rows: usize,
     key_values: Vec<Vec<Datum>>,
     /// Go `HandleParams` / `IndexValueParams`: every candidate key with the
     /// EXECUTE parameters it reads, present when any part is a parameter.
-    constants: Option<tidb_planner::physical_plan_cache::PointConstantsRebuild>,
+    constants: Option<crate::physical_plan_cache::PointConstantsRebuild>,
 }
 
 /// One IN-list item a batch point plan keys by. Go's `newBatchPointGetPlan`
@@ -922,11 +922,11 @@ impl BatchPointLookup {
     /// reads an EXECUTE parameter.
     fn with_constants(
         mut self,
-        rows: Vec<Vec<tidb_planner::physical_plan_cache::PointKeyConstant>>,
+        rows: Vec<Vec<crate::physical_plan_cache::PointKeyConstant>>,
         field_types: Vec<FieldType>,
         handle_batch: bool,
     ) -> Self {
-        let rebuild = tidb_planner::physical_plan_cache::PointConstantsRebuild {
+        let rebuild = crate::physical_plan_cache::PointConstantsRebuild {
             rows,
             field_types,
             handle_batch,
@@ -939,7 +939,7 @@ impl BatchPointLookup {
         plan_rows: usize,
         table: &KvTable,
         columns: &[(String, FieldType)],
-        index: &crate::kv_table::KvIndex,
+        index: &tidb_table::kv_table::KvIndex,
         key_values: Vec<Vec<Datum>>,
     ) -> Self {
         let index_columns = index
@@ -970,7 +970,7 @@ impl BatchPointLookup {
 /// Go `tryWhereIn2BatchPointGet`. `statement` is the statement whose type
 /// context converts the list (see [`batch_key_value`]); `None` applies the
 /// detached rule.
-pub(crate) fn try_batch_point_get(
+pub fn try_batch_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -992,12 +992,12 @@ fn batch_key_value(
     value: &Datum,
 ) -> Option<Datum> {
     match statement {
-        Some(ctx) => tidb_planner::point_get_value::statement_point_get_value(ctx, column, value),
+        Some(ctx) => crate::point_get_value::statement_point_get_value(ctx, column, value),
         None => point_get_value(column, value),
     }
 }
 
-pub(crate) fn try_batch_point_get_stmt(
+pub fn try_batch_point_get_stmt(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -1078,7 +1078,7 @@ pub(crate) fn try_batch_point_get_stmt(
                         else {
                             return Ok(None);
                         };
-                        constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
+                        constant_row.push(crate::physical_plan_cache::PointKeyConstant {
                             marker,
                             value: value.clone(),
                         });
@@ -1155,7 +1155,7 @@ pub(crate) fn try_batch_point_get_stmt(
                     else {
                         return Ok(None);
                     };
-                    constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
+                    constant_row.push(crate::physical_plan_cache::PointKeyConstant {
                         marker,
                         value: value.clone(),
                     });
@@ -1210,7 +1210,7 @@ pub(crate) fn try_batch_point_get_stmt(
                     Some(Datum::UInt(v)) => v as i64,
                     _ => return Ok(None),
                 };
-                constant_rows.push(vec![tidb_planner::physical_plan_cache::PointKeyConstant {
+                constant_rows.push(vec![crate::physical_plan_cache::PointKeyConstant {
                     marker: *marker,
                     value: Datum::Int(handle),
                 }]);
@@ -1263,7 +1263,7 @@ pub(crate) fn try_batch_point_get_stmt(
             .iter()
             .zip(&markers)
             .map(|(value, marker)| {
-                vec![tidb_planner::physical_plan_cache::PointKeyConstant {
+                vec![crate::physical_plan_cache::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 }]
@@ -1287,7 +1287,7 @@ pub(crate) fn try_batch_point_get_stmt(
 /// Returns false when any pair names an unknown column or holds a constant
 /// the column cannot represent exactly, which is Go's "no point plan; let the
 /// scan decide" answer.
-pub(crate) fn convert_pairs_to_column_domain(
+pub fn convert_pairs_to_column_domain(
     pairs: &mut [NameValuePair],
     columns: &[(String, FieldType)],
 ) -> bool {
@@ -1301,7 +1301,7 @@ pub(crate) fn convert_pairs_to_column_domain(
 
 /// [`convert_pairs_to_column_domain`] over any column lookup, so a caller
 /// holding the table's own column list need not copy it first.
-pub(crate) fn convert_pairs_to_column_domain_by<'a>(
+pub fn convert_pairs_to_column_domain_by<'a>(
     pairs: &mut [NameValuePair],
     field_type_of: impl Fn(&str) -> Option<&'a FieldType>,
 ) -> bool {
@@ -1318,7 +1318,7 @@ pub(crate) fn convert_pairs_to_column_domain_by<'a>(
 }
 
 /// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
-pub(crate) struct NameValuePair {
+pub struct NameValuePair {
     column: String,
     /// The table qualifier the column was written with (`t` in `t.a = 1`).
     table: Option<String>,
@@ -1330,13 +1330,13 @@ pub(crate) struct NameValuePair {
 
 impl NameValuePair {
     /// The column this equality pinned.
-    pub(crate) fn column(&self) -> &str {
+    pub fn column(&self) -> &str {
         &self.column
     }
 
     /// The value it pinned the column to, already moved into that column's
     /// domain by [`convert_pairs_to_column_domain`].
-    pub(crate) const fn value(&self) -> &Datum {
+    pub const fn value(&self) -> &Datum {
         &self.value
     }
 }
@@ -1359,7 +1359,7 @@ fn index_key_part_name(table: &KvTable, offset: usize) -> String {
 /// through `AND`; anything else (an `OR`, a comparison, a function call)
 /// makes the statement ineligible for a point get, which is what returning
 /// `None` means here.
-pub(crate) fn name_value_pairs(
+pub fn name_value_pairs(
     expr: &tidb_ast::Expr,
     pairs: &mut Vec<NameValuePair>,
     zone: &tidb_datatype::SessionTimeZone,
@@ -1371,7 +1371,7 @@ pub(crate) fn name_value_pairs(
 /// against EXECUTE parameters, so one implementation decides the point-pin
 /// rule for a bound tree and for a PREPARE template alike. A template whose
 /// marker position is unfilled refuses, exactly like a non-literal.
-pub(crate) fn point_equal_pairs(
+pub fn point_equal_pairs(
     expr: &tidb_ast::Expr,
     pairs: &mut Vec<NameValuePair>,
     zone: &tidb_datatype::SessionTimeZone,
@@ -1486,7 +1486,7 @@ fn point_equal_pairs_visiting(
 /// copy Go performs rather than as a second point-plan builder -- there is
 /// one rule here and one implementation of it, and a write cannot drift from
 /// a read about which statements are point plans.
-pub(crate) struct PointPlanStmt<'a> {
+pub struct PointPlanStmt<'a> {
     where_clause: Option<&'a tidb_ast::Expr>,
     order_by: &'a [tidb_ast::OrderItem],
     limit: Option<&'a tidb_ast::Limit>,
@@ -1515,7 +1515,7 @@ pub(crate) struct PointPlanStmt<'a> {
 
 impl<'a> PointPlanStmt<'a> {
     /// A `SELECT`'s own clauses.
-    pub(crate) fn of_select(select: &'a tidb_ast::SelectStmt) -> Self {
+    pub fn of_select(select: &'a tidb_ast::SelectStmt) -> Self {
         PointPlanStmt {
             where_clause: select.where_clause.as_ref(),
             order_by: &select.order_by,
@@ -1545,17 +1545,17 @@ impl<'a> PointPlanStmt<'a> {
 /// `table:t handle:N` for the first, `table:t, index:idx(cols)` for the
 /// second, never both.
 #[derive(Clone, Debug)]
-pub(crate) struct PointGetPin {
+pub struct PointGetPin {
     /// The exact handle or unique-index values retained by Go's point plan.
-    pub(crate) key_values: Vec<Datum>,
+    pub key_values: Vec<Datum>,
     /// The selected unique-index id, or `None` for a record-handle lookup.
-    pub(crate) index_id: Option<i64>,
+    pub index_id: Option<i64>,
     /// Go `HandleConstant` / `IndexConstants`: the EXECUTE parameter each
     /// key part came from, aligned with [`Self::key_values`].
-    pub(crate) key_markers: Vec<Option<usize>>,
+    pub key_markers: Vec<Option<usize>>,
     /// The key columns' types, which a cached plan moves each execution's
     /// parameters into.
-    pub(crate) key_types: Vec<FieldType>,
+    pub key_types: Vec<FieldType>,
 }
 
 /// Go `tryPointGetPlan`'s pin (see the doc above [`PointGetPin`]).
@@ -1563,11 +1563,11 @@ pub(crate) struct PointGetPin {
 /// With `statement`, the constants are converted the way Go's fast plan
 /// converts them: under the statement's type context, pair by pair as
 /// `getNameValuePairs` walks the `WHERE`, reporting through the statement
-/// (see [`tidb_planner::point_get_value::name_value_pair_value`]), and
+/// (see [`crate::point_get_value::name_value_pair_value`]), and
 /// `table_dual` is set when that walk ended on Go's `isTableDual`
 /// (`ErrOverflow`). Without it the detached rule converts every pair
 /// silently.
-pub(crate) fn try_point_get(
+pub fn try_point_get(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -1618,20 +1618,20 @@ pub(crate) fn try_point_get(
                 else {
                     return true;
                 };
-                match tidb_planner::point_get_value::name_value_pair_value(
+                match crate::point_get_value::name_value_pair_value(
                     ctx,
                     field_type,
                     &pair.value,
                 ) {
-                    tidb_planner::point_get_value::NameValuePairValue::Key(value) => {
+                    crate::point_get_value::NameValuePairValue::Key(value) => {
                         pair.value = value;
                         true
                     }
-                    tidb_planner::point_get_value::NameValuePairValue::TableDual => {
+                    crate::point_get_value::NameValuePairValue::TableDual => {
                         *table_dual = true;
                         false
                     }
-                    tidb_planner::point_get_value::NameValuePairValue::Decline => false,
+                    crate::point_get_value::NameValuePairValue::Decline => false,
                 }
             })
         }
@@ -1840,4 +1840,37 @@ pub(crate) fn try_point_get(
         }));
     }
     Ok(None)
+}
+
+/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal or
+/// an execute-time integer parameter. Go keeps a `ParamMarkerExpr` in the
+/// prepared AST and resolves its value during execution; the Rust prepared
+/// path installs that same datum on [`tidb_ast::Expr::ParamMarker`].
+pub fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+    match expr {
+        tidb_ast::Expr::Int(text) => text
+            .parse::<u64>()
+            .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::Int(value)),
+            ..
+        } if *value >= 0 => Ok(*value as u64),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::UInt(value)),
+            ..
+        } => Ok(*value),
+        _ => Err(DriverError::unsupported(
+            "LIMIT bound must be an integer literal",
+        )),
+    }
+}
+
+/// Go `isCTE(tblW)` for a write statement's table ref: `buildDataSource`
+/// resolves an unqualified name to a CTE of the statement's `WITH` before any
+/// table of that name.
+pub fn is_cte(with: Option<&tidb_ast::WithClause>, table: &tidb_ast::TableRef) -> bool {
+    let [name] = table.name.as_slice() else {
+        return false;
+    };
+    with.is_some_and(|with| with.ctes.iter().any(|cte| cte.name.go_lower_eq(name)))
 }

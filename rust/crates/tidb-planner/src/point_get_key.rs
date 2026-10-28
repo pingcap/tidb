@@ -15,14 +15,14 @@
 //! The key a point plan looks a row up by.
 //!
 //! Go's conversion rule (`getPointGetValue` / `checkCanConvertInPointGet`)
-//! lives with the planner in [`tidb_planner::point_get_value`], where a cached
+//! lives with the planner in [`crate::point_get_value`], where a cached
 //! fast plan's rebuild applies it too. This module adds the executor-side
 //! answers for a constant that cannot be a key: a value outside the column's
 //! domain, or one longer than its capacity, matches no stored row.
 
 use tidb_datatype::{Datum, FieldType};
-use tidb_planner::point_get_value::can_convert_in_point_get;
-pub(crate) use tidb_planner::point_get_value::point_get_value;
+use crate::point_get_value::can_convert_in_point_get;
+pub use crate::point_get_value::point_get_value;
 
 /// Whether a constant cannot be represented in its column's domain.
 ///
@@ -33,7 +33,7 @@ pub(crate) use tidb_planner::point_get_value::point_get_value;
 /// to answer the same empty set without a storage read. The event, not the
 /// value, is the signal: `convert_to` clamps to a representable value and
 /// records the overflow.
-pub(crate) fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> bool {
+pub fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> bool {
     if value.is_null() || !can_convert_in_point_get(column, value) {
         return false;
     }
@@ -57,7 +57,7 @@ pub(crate) fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> b
 /// spaces first, so those are discounted before the length test; a non-ASCII
 /// payload stays with the ordinary planner because byte length is not char
 /// length.
-pub(crate) fn names_no_rows(column: &FieldType, value: &Datum) -> bool {
+pub fn names_no_rows(column: &FieldType, value: &Datum) -> bool {
     let payload = match value {
         Datum::String(string) => string.bytes(),
         Datum::Bytes(bytes) => bytes,

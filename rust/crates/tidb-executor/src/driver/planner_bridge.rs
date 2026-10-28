@@ -757,15 +757,7 @@ mod list_columns_pruning_tests {
 
 
 
-/// Go `isCTE(tblW)` for a write statement's table ref: `buildDataSource`
-/// resolves an unqualified name to a CTE of the statement's `WITH` before any
-/// table of that name.
-pub(super) fn is_cte(with: Option<&tidb_ast::WithClause>, table: &tidb_ast::TableRef) -> bool {
-    let [name] = table.name.as_slice() else {
-        return false;
-    };
-    with.is_some_and(|with| with.ctes.iter().any(|cte| cte.name.go_lower_eq(name)))
-}
+pub(super) use tidb_planner::point_get_plan::is_cte;
 
 pub(super) fn logical_from_plan(
     join: &tidb_ast::Join,

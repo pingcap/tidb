@@ -45,7 +45,7 @@ pub use tidb_planner::plan_builder::field_name::{
 };
 
 pub mod access;
-pub mod point_get_plan;
+pub use tidb_planner::point_get_plan;
 mod agg_build;
 mod catalog_ctx;
 #[cfg(test)]
@@ -56,7 +56,7 @@ mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
 pub(crate) use tidb_stats_handle::sync_load;
 mod dml;
-mod from;
+pub(crate) use tidb_planner::from_scope as from;
 mod index_usage_reporter;
 mod multi_dml;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
@@ -69,7 +69,7 @@ pub(crate) mod params;
 pub(crate) mod physical_builder;
 pub mod plan_cache;
 pub(crate) mod planner_bridge;
-pub(crate) mod point_get_key;
+pub(crate) use tidb_planner::point_get_key;
 pub(crate) mod set_opr;
 mod subquery;
 #[cfg(test)]
@@ -792,19 +792,7 @@ pub(crate) fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverEr
     })
 }
 
-/// One table in a query's `FROM`: the name a qualifier must match (its alias
-/// when it has one, as in Go's `TableSource`), its columns, and the offset of
-/// its first column in the joined row.
-#[derive(Clone, Debug)]
-pub(crate) struct FromTable {
-    pub(crate) name: String,
-    /// The schema the table lives in, when a `db.t.column` reference may name
-    /// it. `None` for a source that cannot be schema-qualified: an aliased
-    /// table (MySQL's alias replaces the whole path) or a synthetic scope.
-    pub(crate) database: Option<String>,
-    pub(crate) columns: Vec<(String, FieldType)>,
-    pub(crate) offset: usize,
-}
+pub(crate) use tidb_planner::from_scope::FromTable;
 
 /// Delivers each physical row before requesting another chunk. The DML owner
 /// accounts retained rows inside `visit`; no intermediate datum matrix exists.
@@ -1000,28 +988,7 @@ fn next_executor(
     Ok(())
 }
 
-/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal or
-/// an execute-time integer parameter. Go keeps a `ParamMarkerExpr` in the
-/// prepared AST and resolves its value during execution; the Rust prepared
-/// path installs that same datum on [`tidb_ast::Expr::ParamMarker`].
-pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
-    match expr {
-        tidb_ast::Expr::Int(text) => text
-            .parse::<u64>()
-            .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
-        tidb_ast::Expr::ParamMarker {
-            value: Some(Datum::Int(value)),
-            ..
-        } if *value >= 0 => Ok(*value as u64),
-        tidb_ast::Expr::ParamMarker {
-            value: Some(Datum::UInt(value)),
-            ..
-        } => Ok(*value),
-        _ => Err(DriverError::unsupported(
-            "LIMIT bound must be an integer literal",
-        )),
-    }
-}
+pub(crate) use tidb_planner::point_get_plan::eval_limit_bound;
 
 #[cfg(test)]
 mod limit_bound_tests {
