@@ -66,23 +66,6 @@ type schemaTables struct {
 	tables map[string]table.Table
 }
 
-func (s *schemaTables) tableInfos(ctx stdctx.Context) ([]*model.TableInfo, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	infos := make([]*model.TableInfo, 0, len(s.tables))
-	for _, tbl := range s.tables {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		infos = append(infos, tbl.Meta())
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return infos, nil
-}
-
 const bucketCount = 512
 
 type infoSchema struct {
@@ -411,7 +394,41 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	if !ok {
 		return nil, nil
 	}
-	return schemaTables.tableInfos(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
+	for _, tbl := range schemaTables.tables {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+// iterSchemaTableInfos makes one streaming pass over all table infos in the schema.
+func (is *infoSchema) iterSchemaTableInfos(
+	ctx stdctx.Context,
+	schema ast.CIStr,
+	visit func(*model.TableInfo) error,
+) error {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil
+	}
+	for _, tbl := range schemaTables.tables {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := visit(tbl.Meta()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
@@ -1372,16 +1389,4 @@ func getTableInfo(tbl table.Table) *model.TableInfo {
 		return nil
 	}
 	return tbl.Meta()
-}
-
-func getTableInfoList(tables []table.Table) []*model.TableInfo {
-	if tables == nil {
-		return nil
-	}
-
-	infoLost := make([]*model.TableInfo, 0, len(tables))
-	for _, tbl := range tables {
-		infoLost = append(infoLost, tbl.Meta())
-	}
-	return infoLost
 }

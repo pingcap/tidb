@@ -134,6 +134,7 @@ func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 			StatusValid:       true,
 			StartTime:         model.TSConvert2Time(1234),
 			PhysicalTableIDs:  []int64{11, 12},
+			schemaVersion:     9,
 			startTS:           1234,
 		},
 	}
@@ -143,6 +144,7 @@ func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 			Direction:        storageClassDirectionToIA,
 			StartTime:        model.TSConvert2Time(1234),
 			PhysicalTableIDs: []int64{11, 12},
+			schemaVersion:    9,
 			startTS:          1234,
 		},
 	}
@@ -153,6 +155,52 @@ func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 	require.Equal(t, uint64(4), transition.TotalReplicas)
 	require.Equal(t, uint64(3), transition.CompletedReplicas)
 	require.Equal(t, 0.75, transition.Progress)
+
+	observed, ok := manager.cachedObservation(operation)
+	require.True(t, ok)
+	require.Equal(t, manager.mu.observed[key], observed)
+	for _, tc := range []struct {
+		name   string
+		change func(*StorageClassTransitionStatus)
+	}{
+		{name: "table", change: func(status *StorageClassTransitionStatus) { status.TableID++ }},
+		{name: "start TSO", change: func(status *StorageClassTransitionStatus) { status.startTS++ }},
+		{name: "direction", change: func(status *StorageClassTransitionStatus) { status.Direction = storageClassDirectionToStandard }},
+		{name: "schema version", change: func(status *StorageClassTransitionStatus) { status.schemaVersion++ }},
+		{name: "partition", change: func(status *StorageClassTransitionStatus) { status.PartitionID++ }},
+		{name: "start time", change: func(status *StorageClassTransitionStatus) { status.StartTime = status.StartTime.Add(1) }},
+		{name: "physical targets", change: func(status *StorageClassTransitionStatus) { status.PhysicalTableIDs = []int64{11, 13} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := *operation
+			tc.change(&other.StorageClassTransitionStatus)
+			_, ok := manager.cachedObservation(&other)
+			require.False(t, ok)
+		})
+	}
+
+	observed.StatusValid = false
+	manager.mu.observed[key] = observed
+	_, ok = manager.cachedObservation(operation)
+	require.False(t, ok)
+
+	// A successful 0/0 observation is distinct from an unknown observation.
+	observed.StatusValid = true
+	observed.TotalReplicas = 0
+	observed.CompletedReplicas = 0
+	observed.Progress = 0
+	observed.ProgressValid = false
+	manager.mu.observed[key] = observed
+	zero, ok := manager.cachedObservation(operation)
+	require.True(t, ok)
+	require.Equal(t, observed, zero)
+
+	manager.clear()
+	_, ok = manager.cachedObservation(operation)
+	require.False(t, ok)
+	var noOwner *storageClassTransitionManager
+	_, ok = noOwner.cachedObservation(operation)
+	require.False(t, ok)
 }
 
 func TestStorageClassTransitionStatusesUseCurrentNames(t *testing.T) {

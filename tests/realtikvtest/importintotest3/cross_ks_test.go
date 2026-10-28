@@ -639,6 +639,7 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 	})
 
 	const keyspaceName = "keyspace_cancel"
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/skipStartTTLJobManager", "return()")
 	runtimes := realtikvtest.PrepareForCrossKSTest(t, keyspaceName)
 	userStore := runtimes[keyspaceName].Store
 	userTK := testkit.NewTestKit(t, userStore)

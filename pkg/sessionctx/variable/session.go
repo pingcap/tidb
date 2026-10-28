@@ -1228,6 +1228,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1472,6 +1475,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1696,6 +1702,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// It does not limit range construction. 0 disables the threshold.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
@@ -1763,10 +1772,6 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
-
-	// PagingSizeBytes is the byte budget per page.
-	// 0 means disabled.
-	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -2432,6 +2437,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2468,6 +2474,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
@@ -2498,7 +2505,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
-		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -2517,6 +2523,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
@@ -3071,6 +3078,41 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 		return val, true, nil
 	}
 	return "", false, nil
+}
+
+// getSnapshotTSState preserves the effective timestamp, which can differ from
+// the cached string after changing time_zone or setting tx_read_ts.
+func getSnapshotTSState(s *SessionVars) (string, bool, error) {
+	if s.SnapshotTS == 0 {
+		return "", false, nil
+	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
+	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
+}
+
+// getTxnReadTSState must not replay a timestamp that has been consumed or cleared
+// by tidb_snapshot. Keep the existing datetime syntax for session-state compatibility.
+func getTxnReadTSState(s *SessionVars) (string, bool, error) {
+	ts := s.TxnReadTS.PeakTxnReadTS()
+	if ts == 0 {
+		return "", false, nil
+	}
+	value := oracle.GetTimeFromTS(ts).In(s.Location()).Format("2006-01-02 15:04:05.000")
+	// A timezone change can make the local time ambiguous during a DST rollback.
+	// Refuse migration if the datetime cannot represent the exact timestamp.
+	restoredTS, err := parseTSFromNumberOrTime(s, value)
+	if err != nil {
+		return "", false, err
+	}
+	if restoredTS != ts {
+		return "", false, sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("tx_read_ts cannot be represented in the session time zone")
+	}
+	return value, true, nil
 }
 
 // GetGlobalSystemVar gets a global system variable.

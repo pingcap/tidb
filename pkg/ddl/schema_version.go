@@ -265,14 +265,22 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
 
 	// When create table with foreign key, there are two schema status change:
-	// 1. none -> write-only
-	// 2. write-only -> public
-	// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+	// 1. none -> delete-only
+	// 2. delete-only -> public
+	// In the second status change delete-only -> public, infoschema loader should apply drop old table first, then
 	// apply create new table. So need to set diff.OldTableID here to make sure it.
 	if tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
 		diff.OldTableID = job.TableID
 	}
 	return nil
+}
+
+// SetSchemaDiffForMViewRefreshOutOfPlaceCutover sets the old and new table IDs
+// used by InfoSchema to atomically replace an MV with its shadow table.
+func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCtx *jobContext) {
+	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+	diff.TableID = args.ShadowTableID
+	diff.OldTableID = args.OldMViewID
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
@@ -329,6 +337,11 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+	var err error
+	failpoint.InjectCall("beforeUpdateSchemaVersion", job, &err)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	schemaVersion, err := jobCtx.setSchemaVersion(jobCtx, job)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -357,14 +370,16 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForDropTablePartition(diff, job, jobCtx)
 	case model.ActionRecoverTable:
 		SetSchemaDiffForRecoverTable(diff, job, jobCtx)
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		SetSchemaDiffForDropTable(diff, job, jobCtx)
 	case model.ActionReorganizePartition:
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
-	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionCreateMaterializedViewShadow:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:

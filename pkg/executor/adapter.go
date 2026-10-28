@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -70,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -88,6 +91,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
@@ -1811,7 +1815,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
 	a.SummaryStmt(succ, statementRUTotal)
-	a.observeStmtFinishedForTopProfiling()
+	a.observeStmtFinishedForTopProfiling(statementRUTotal)
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
@@ -1829,6 +1833,19 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
+	}
+	// Restricted SQL helpers already record query durations. Their session flag may be
+	// restored before the result set closes, so also check the statement's snapshot.
+	if !sessVars.InRestrictedSQL && !sessVars.StmtCtx.InRestrictedSQL {
+		sqlType := sessVars.StmtCtx.StmtType
+		if sqlType == "" {
+			sqlType = metrics.LblGeneral
+		}
+		// Include parsing before DurationParse is reset, and use one duration for all DB labels.
+		cost := sessVars.GetTotalCostDuration().Seconds()
+		for _, dbName := range metricsutil.GetDBNames(sessVars) {
+			metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, sessVars.StmtCtx.ResourceGroupName).Observe(cost)
+		}
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
@@ -1872,6 +1889,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 func (a *ExecStmt) recordAffectedRows2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		if shouldSkipAffectedRowsMetricForInternalMVMaintenance(sessVars) {
+			return
+		}
 		switch sessVars.StmtCtx.StmtType {
 		case "Insert":
 			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
@@ -1889,7 +1909,26 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
 		case "NTDML-Replace":
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
+		case "PurgeMaterializedViewLog":
+			metrics.AffectedRowsCounterPurgeMLog.Add(float64(affectedRows))
+		case "RefreshMaterializedView":
+			metrics.AffectedRowsCounterRefreshMV.Add(float64(affectedRows))
 		}
+	}
+}
+
+func shouldSkipAffectedRowsMetricForInternalMVMaintenance(sessVars *variable.SessionVars) bool {
+	if sessVars == nil || !sessVars.InRestrictedSQL || !sessVars.InMViewMaintenance {
+		return false
+	}
+	switch sessVars.StmtCtx.StmtType {
+	case "Insert", "Replace", "Delete", "Update",
+		"NTDML-Delete", "NTDML-Update", "NTDML-Insert", "NTDML-Replace":
+		// Internal MV maintenance DMLs are already rolled up and reported by the outer
+		// REFRESH MATERIALIZED VIEW / PURGE MATERIALIZED VIEW LOG statement.
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1914,6 +1953,34 @@ func firstStatementRUTotal(statementRUTotal []float64) float64 {
 		return 0
 	}
 	return statementRUTotal[0]
+}
+
+// ruDetailsForStatementLog selects the RU values exposed by slow logs and
+// statement summaries without changing the shared execution accounting.
+func (a *ExecStmt) ruDetailsForStatementLog(ruDetails *util.RUDetails, statementRUTotal []float64) *util.RUDetails {
+	do := domain.GetDomain(a.Ctx)
+	if do == nil || do.GetRUVersion() != rmclient.RUVersionV2 {
+		return ruDetails
+	}
+	// Cursor fetches can emit slow logs before the statement RU total is finalized.
+	if len(statementRUTotal) == 0 {
+		return ruDetails
+	}
+
+	totalRU := statementRUTotal[0]
+	consumption := rmpb.Consumption{RRU: totalRU}
+	kind := classifyStatementRUPlan(a.Plan).kind
+	if kind == statementRUPlanWrite || kind == statementRUPlanCommit {
+		// Explicit transactions account for their committed write payload on COMMIT.
+		consumption.RRU, consumption.WRU = 0, totalRU
+	}
+	var waitDuration time.Duration
+	if ruDetails != nil {
+		waitDuration = ruDetails.RUWaitDuration()
+	}
+	logRUDetails := util.NewRUDetails()
+	logRUDetails.Update(&consumption, waitDuration)
+	return logRUDetails
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
@@ -2050,6 +2117,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			return
 		}
 	}
+	if shouldSkipSlowLogForInternalMVMaintenance(sessVars) {
+		return
+	}
 
 	if !vardef.GlobalSlowLogRateLimiter.Allow() {
 		sampleLoggerFactory().Info("slow log skipped due to rate limiting", zap.Int64("tidb_slow_log_max_per_sec", int64(vardef.GlobalSlowLogRateLimiter.Limit())))
@@ -2060,6 +2130,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 		slowItems = &variable.SlowQueryLogItems{}
 	}
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
+	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -2067,7 +2138,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
-	slowLog := sessVars.SlowLogFormat(slowItems, statementRUTotal...)
+	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
 	if trace.IsEnabled() {
@@ -2261,6 +2332,14 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 	return config.UserCommand.PlanDigest == digest.Digest
 }
 
+func shouldSkipSlowLogForInternalMVMaintenance(sessVars *variable.SessionVars) bool {
+	if sessVars == nil {
+		return false
+	}
+	// Controlled by tidb_mlog_log_slow_purge: ON -> log (don't skip), OFF -> skip.
+	return !vardef.MLogLogSlowPurge.Load() && sessVars.StmtCtx.StmtType == "PurgeMaterializedViewLog"
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -2364,8 +2443,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
-	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
+	stmtExecInfo.RUDetail = a.ruDetailsForStatementLog(ruDetail, statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2441,6 +2519,21 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
+}
+
+func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {
+	implementStmt, ok := stmt.(*ast.RefreshMaterializedViewImplementStmt)
+	if !ok || implementStmt.RefreshStmt == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("IMPLEMENT FOR ")
+	if err := implementStmt.RefreshStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+		logutil.BgLogger().Debug("restore refresh materialized view stmt for slow log failed", zap.Error(err))
+		return ""
+	}
+	sb.WriteString(" USING TIMESTAMP")
+	return sb.String()
 }
 
 // getLazyText is equivalent to `a.GetTextToLog(false)`. Note that the s.Params is a shallow copy of
@@ -2572,7 +2665,7 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
+func (a *ExecStmt) observeStmtFinishedForTopProfiling(statementRUTotal ...float64) {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
 		return
@@ -2594,6 +2687,7 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 		TopRUEnabled:    topRU,
 	}
 	if topRU {
+		finishInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
 		}

@@ -121,6 +121,27 @@ type Executor interface {
 	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
 	AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewStmt) error
 	AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error
+	CreateMaterializedViewShadowTable(
+		ctx sessionctx.Context,
+		schemaID int64,
+		schemaName ast.CIStr,
+		shadowTableInfo *model.TableInfo,
+	) error
+	DropMaterializedViewShadowTable(ctx sessionctx.Context, schemaName, shadowName ast.CIStr) error
+	RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		ctx sessionctx.Context,
+		schemaID int64,
+		schemaName ast.CIStr,
+		viewName ast.CIStr,
+		oldMViewID int64,
+		shadowTableID int64,
+		buildReadTSO uint64,
+		expectedOldMViewRevision *uint64,
+		expectedLastSuccessReadTSO uint64,
+		expectedLastSuccessReadTSONull bool,
+		nextRefreshUnixSeconds *int64,
+		shouldUpdateNextRefreshUnixSeconds bool,
+	) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
@@ -1083,6 +1104,9 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+	if err = checkStorageClassAdmission(tbInfo.EngineAttribute, tbInfo); err != nil {
+		return err
+	}
 
 	// Process region split policies from CREATE TABLE
 	if len(s.SplitIndex) > 0 {
@@ -1918,7 +1942,7 @@ func checkAlterTableBaseTableMLogColumnConstraints(
 
 func checkAlterTableMaterializedViewConstraints(
 	ctx context.Context,
-	_ *variable.SessionVars,
+	sv *variable.SessionVars,
 	is infoschema.InfoSchema,
 	tblInfo *model.TableInfo,
 	specs []*ast.AlterTableSpec,
@@ -1942,6 +1966,9 @@ func checkAlterTableMaterializedViewConstraints(
 		}
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
+	if err := checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op); err != nil {
+		return err
+	}
 	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
 		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) || isAlterTableOnlyAddColumnsAtEnd(specs) {
 			return nil
@@ -1951,6 +1978,26 @@ func checkAlterTableMaterializedViewConstraints(
 		}
 	}
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
+}
+
+func allowInternalMViewShadowBypass(sv *variable.SessionVars) bool {
+	return sv != nil && sv.InMViewMaintenance && sv.InRestrictedSQL
+}
+
+func checkProtectedMaterializedViewShadowConstraint(
+	sv *variable.SessionVars,
+	tblInfo *model.TableInfo,
+	op string,
+) error {
+	if tblInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+	if allowInternalMViewShadowBypass(sv) {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		fmt.Sprintf("%s on materialized view shadow table", op),
+	)
 }
 
 func checkBaseTableMaterializedViewDependencyConstraints(tblInfo *model.TableInfo, op string) error {
@@ -1971,14 +2018,14 @@ func checkBaseTableMaterializedViewDependencyConstraints(tblInfo *model.TableInf
 }
 
 // CheckIndexOperationMaterializedViewConstraints checks whether an index operation is allowed on an MV-related table.
-func CheckIndexOperationMaterializedViewConstraints(_ *variable.SessionVars, tblInfo *model.TableInfo, op string, unique bool) error {
+func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string, unique bool) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
 	}
 	if unique && tblInfo.MaterializedView != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
-	return nil
+	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -2250,6 +2297,12 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(spec.Options)
 			if engineAttributeErr != nil {
 				return engineAttributeErr
+			}
+			// Check before other options in this statement can submit a job.
+			if hasEngineAttribute {
+				if err = checkStorageClassAdmission(engineAttribute, nil); err != nil {
+					return err
+				}
 			}
 			// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'.
 			// Validate it before handling any other option, so that no option
@@ -2948,9 +3001,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(ctx.GetExprCtx(), model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	partInfo.Definitions = definitions
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -3057,11 +3112,15 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+// checkAndNormalizeReorgPartitionDefinitions checks the final layout without changing
+// current or requested metadata, and returns the normalized replacement definitions.
+func checkAndNormalizeReorgPartitionDefinitions(ctx expression.BuildContext, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) ([]model.PartitionDefinition, error) {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
-	clonedMeta := tblInfo.Clone()
+	clonedMeta := *tblInfo
+	clonedPartition := *pi
+	clonedMeta.Partition = &clonedPartition
 	switch action {
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		clonedMeta.Partition = partInfo
@@ -3070,67 +3129,65 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
 		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
-	}
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
-		return errors.Trace(err)
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	definitionsOffset := 0
 	if action == model.ActionReorganizePartition {
 		definitionsOffset = firstPartIdx
 	}
-	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
-		return errors.Trace(err)
+	definitions, err := checkAndNormalizePartitionDefinitions(ctx, &clonedMeta, definitionsOffset, len(partInfo.Definitions))
+	if err != nil {
+		return nil, err
 	}
 	if action == model.ActionReorganizePartition {
 		if pi.Type == ast.PartitionTypeRange {
 			if lastPartIdx == len(pi.Definitions)-1 {
 				// Last partition dropped, OK to change the end range
 				// Also includes MAXVALUE
-				return nil
+				return definitions, nil
 			}
 			// Check if the replaced end range is the same as before
-			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastAddingPartition := definitions[len(definitions)-1]
 			lastOldPartition := pi.Definitions[lastPartIdx]
 			if len(pi.Columns) > 0 {
-				newGtOld, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if newGtOld {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				oldGtNew, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if oldGtNew {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				return nil
+				return definitions, nil
 			}
 
-			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
-			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+			isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
-			newRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+			newRangeValue, _, err := getRangeValue(ctx, definitions[len(definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			if currentRangeValue != newRangeValue {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
 		}
 	} else {
 		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
 			// if not ActionReorganizePartition, require all partitions to be changed.
-			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
+			return nil, errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
-	return nil
+	return definitions, nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
@@ -3294,6 +3351,7 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	partitionNames := spec.PartitionNames
 	if spec.Tp == ast.AlterTableDropFirstPartition {
 		intervalOptions := getPartitionIntervalFromTable(ctx.GetExprCtx(), meta)
 		if intervalOptions == nil {
@@ -3304,8 +3362,9 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, table info already contains partition definitions")
 		}
-		spec.Partition.Interval = intervalOptions
-		err = GeneratePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, spec.Partition)
+		options := *spec.Partition
+		options.Interval = intervalOptions
+		definitions, err := generatePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, &options)
 		if err != nil {
 			return err
 		}
@@ -3313,27 +3372,28 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		if intervalOptions.NullPart {
 			pNullOffset = 1
 		}
-		if len(spec.Partition.Definitions) == 0 ||
-			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+		if len(definitions) == 0 ||
+			len(definitions) >= len(meta.Partition.Definitions)-pNullOffset {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, number of partitions does not match")
 		}
-		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+		if len(partitionNames) != 0 || len(definitions) <= 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
 		}
-		for i := range spec.Partition.Definitions {
-			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		partitionNames = make([]ast.CIStr, 0, len(definitions))
+		for i := range definitions {
+			partitionNames = append(partitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
 		}
 		// Use the last generated partition as First, i.e. do not drop the last name in the slice
-		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+		partitionNames = partitionNames[:len(partitionNames)-1]
 
 		query, ok := ctx.Value(sessionctx.QueryString).(string)
 		if ok {
-			partNames := make([]string, 0, len(spec.PartitionNames))
+			partNames := make([]string, 0, len(partitionNames))
 			sqlMode := ctx.GetSessionVars().SQLMode
-			for i := range spec.PartitionNames {
-				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			for i := range partitionNames {
+				partNames = append(partNames, stringutil.Escape(partitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
 			syntacticStart := strings.Index(query, syntacticSugar)
@@ -3347,8 +3407,8 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
-	partNames := make([]string, len(spec.PartitionNames))
-	for i, partCIName := range spec.PartitionNames {
+	partNames := make([]string, len(partitionNames))
+	for i, partCIName := range partitionNames {
 		partNames[i] = partCIName.L
 	}
 	err = CheckDropTablePartition(meta, partNames)
@@ -3549,6 +3609,11 @@ func checkExchangePartitionMaterializedViewConstraints(tblInfo *model.TableInfo,
 			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view table", tableRole),
 		)
 	}
+	if tblInfo.MaterializedViewShadow != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view shadow table", tableRole),
+		)
+	}
 	return checkBaseTableMaterializedViewDependencyConstraints(tblInfo, fmt.Sprintf("EXCHANGE PARTITION on %s", tableRole))
 }
 
@@ -3574,7 +3639,7 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+	if metadef.IsReservedID(ntMeta.ID) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)
@@ -4287,6 +4352,11 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
 			}
 		}
+		if ttlCronJobSchedule != nil {
+			if err := checkTTLJobInterval(*ttlCronJobSchedule); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	job = &model.Job{
@@ -4727,6 +4797,7 @@ const (
 	sequenceObject
 	materializedViewObject
 	materializedViewLogObject
+	materializedViewShadowObject
 )
 
 // dropTableObject provides common logic to drop table-like objects, views, and sequences.
@@ -4750,7 +4821,7 @@ func (e *executor) dropTableObject(
 		fkCheck      bool
 	)
 	switch tableObjectType {
-	case tableObject, materializedViewObject, materializedViewLogObject:
+	case tableObject, materializedViewObject, materializedViewLogObject, materializedViewShadowObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		objectIdents = make([]ast.Ident, len(objects))
 		for i, tn := range objects {
@@ -4770,6 +4841,8 @@ func (e *executor) dropTableObject(
 			jobType = model.ActionDropMaterializedView
 		case materializedViewLogObject:
 			jobType = model.ActionDropMaterializedViewLog
+		case materializedViewShadowObject:
+			jobType = model.ActionDropMaterializedViewShadow
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
@@ -4806,13 +4879,16 @@ func (e *executor) dropTableObject(
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
-		case tableObject, materializedViewObject, materializedViewLogObject:
+		case tableObject, materializedViewObject, materializedViewLogObject, materializedViewShadowObject:
 			if !tableInfo.Meta().IsBaseTable() {
 				notExistTables = append(notExistTables, fullti.String())
 				continue
 			}
+			if tableObjectType == materializedViewShadowObject && tableInfo.Meta().MaterializedViewShadow == nil {
+				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "MATERIALIZED VIEW SHADOW TABLE")
+			}
 			if tableObjectType == tableObject && !allowMaterializedViewRelated {
-				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
+				if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tableInfo.Meta(), "DROP TABLE"); err != nil {
 					return errors.Trace(err)
 				}
 				failpoint.InjectCall("afterCheckDropTableMaterializedViewConstraints", tableInfo.Meta().ID)
@@ -5006,12 +5082,15 @@ func (e *executor) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (er
 	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject, false)
 }
 
-func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
+func checkTableMaterializedViewConstraints(sv *variable.SessionVars, tblInfo *model.TableInfo, op string) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
 	}
 	if tblInfo.MaterializedView != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
+	}
+	if err := checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op); err != nil {
+		return err
 	}
 	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
@@ -5031,7 +5110,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
 	}
-	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+	if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
 	failpoint.InjectCall("afterCheckTruncateTableMaterializedViewConstraints", tblInfo.ID)
@@ -5114,7 +5193,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 
 	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
-		if err := checkTableMaterializedViewConstraints(tbl.Meta(), "RENAME TABLE"); err != nil {
+		if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tbl.Meta(), "RENAME TABLE"); err != nil {
 			return errors.Trace(err)
 		}
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -5170,7 +5249,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		}
 
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
-			if err := checkTableMaterializedViewConstraints(t.Meta(), "RENAME TABLE"); err != nil {
+			if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), t.Meta(), "RENAME TABLE"); err != nil {
 				return errors.Trace(err)
 			}
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -6315,6 +6394,7 @@ func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffini
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
+	partDefs := spec.PartDefinitions
 	switch meta.Partition.Type {
 	case ast.PartitionTypeNone:
 		// OK
@@ -6329,11 +6409,11 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 
 	case ast.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
-			err := buildAddedPartitionDefs(ctx, meta, spec)
+			var err error
+			partDefs, err = buildAddedPartitionDefs(ctx, meta, spec)
 			if err != nil {
 				return nil, err
 			}
-			spec.PartDefinitions = spec.Partition.Definitions
 		} else {
 			if len(spec.PartDefinitions) == 0 {
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -6369,7 +6449,7 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
+	defs, err := buildPartitionDefinitionsInfo(ctx, partDefs, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
@@ -6379,22 +6459,22 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 	return part, nil
 }
 
-func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) ([]*ast.PartitionDefinition, error) {
 	partInterval := getPartitionIntervalFromTable(ctx, meta)
 	if partInterval == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
 	}
 	if partInterval.MaxValPart {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
 	}
-
-	spec.Partition.Interval = partInterval
 
 	if len(spec.PartDefinitions) > 0 {
-		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
-	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+	options := *spec.Partition
+	options.Interval = partInterval
+	return generatePartDefsFromInterval(ctx, spec.Tp, meta, &options)
 }
 
 // LockTables uses to execute lock tables statement.
@@ -7951,8 +8031,9 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	// KILL can cancel this DDL job.
 	ctx.GetSessionVars().StmtCtx.DDLJobID = jobID
 
-	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
-	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	// A DDL job may pass through several schema states, depending on its action.
+	// Without MDL, each state change may wait up to 2 * lease for schema sync; with
+	// MDL, it waits until MDL synchronization completes. The ticker is capped at 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	initInterval, _ := getJobCheckInterval(ddlAction, 0)
 	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
@@ -8203,7 +8284,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
-	case model.ActionCreateTable, model.ActionCreateSchema:
+	case model.ActionCreateTable, model.ActionCreateMaterializedViewShadow, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
 	case model.ActionCreateMaterializedView:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)

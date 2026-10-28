@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -349,21 +349,120 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(3), approxCompilePlanTokenCnt("select @@version @a", false))
 
 	normalizedSQL := "select * from `t` where `a` = ?"
-	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db1", Table: "t"}}, "db1")
-	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db2", Table: "t"}}, "db2")
+	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, "db1")
+	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, "db2")
 	require.NotEqual(t, db1DigestID, db2DigestID)
 
 	explicitDBSQL := "select * from `db3`.`t` where `a` = ?"
-	db3Table := []stmtctx.TableEntry{{DB: "db3", Table: "t"}}
+	require.NotEqual(t,
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db2"))
 	require.Equal(t,
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db2"))
-	require.Equal(t,
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
-		buildMemArbitratorDigestID(explicitDBSQL, []stmtctx.TableEntry{{DB: "DB3", Table: "T"}}, "db1"))
+		buildMemArbitratorDigestID(explicitDBSQL, "DB1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"))
 
 	require.NotEqual(t,
-		buildMemArbitratorDigestID(normalizedSQL, nil, "db1"),
-		buildMemArbitratorDigestID(normalizedSQL, nil, "db2"))
-	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", db3Table, "db1"))
+		buildMemArbitratorDigestID(normalizedSQL, "db1"),
+		buildMemArbitratorDigestID(normalizedSQL, "db2"))
+	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
+}
+
+func TestAttachStatsCollectorForInternalSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se, err := CreateSessionWithDomain(store, dom)
+	require.NoError(t, err)
+	defer se.Close()
+	require.Nil(t, se.statsCollector)
+	restore := se.AttachStatsCollectorForInternalSession()
+	require.NotNil(t, se.statsCollector)
+	statsCollector, idxUsageCollector := se.statsCollector, se.idxUsageCollector
+	restoreNested := se.AttachStatsCollectorForInternalSession()
+	restoreNested()
+	require.Same(t, statsCollector, se.statsCollector)
+	require.Equal(t, idxUsageCollector, se.idxUsageCollector)
+	restore()
+	require.Nil(t, se.statsCollector)
+	require.Nil(t, se.idxUsageCollector)
+	// A session without an attached domain has no collectors to restore.
+	(&session{}).AttachStatsCollectorForInternalSession()()
+}
+
+func TestAdvisoryLockWithoutProcessInfo(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.Nil(t, se.ShowProcess())
+	lockName := t.Name()
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+	require.NoError(t, se.GetAdvisoryLock(lockName, 1))
+	ownerID := se.IsUsedAdvisoryLock(lockName)
+	require.NotZero(t, ownerID)
+
+	// Executing SQL must not change the owner of later locks on this session.
+	se.SetConnectionID(12345)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(lockName+"-second", 1))
+	require.Equal(t, ownerID, se.IsUsedAdvisoryLock(lockName+"-second"))
+	require.True(t, se.ReleaseAdvisoryLock(lockName))
+	require.True(t, se.ReleaseAdvisoryLock(lockName+"-second"))
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+}
+
+func TestAdvisoryLockUsesProcessInfoOwner(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	const connID uint64 = 12345
+	se.SetConnectionID(connID)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(t.Name(), 1))
+	require.Equal(t, connID, se.IsUsedAdvisoryLock(t.Name()))
+	require.True(t, se.ReleaseAdvisoryLock(t.Name()))
+}
+
+func TestAdvisoryLockSetupFailureReleasesSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	resource, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	se := resource.(*session)
+	cleaned := false
+	clean := func() {
+		cleaned = true
+		dom.SysSessionPool().Put(resource)
+	}
+	defer func() {
+		if !cleaned {
+			se.RollbackTxn(context.Background())
+			clean()
+		}
+	}()
+
+	injectedErr := errors.New("advisory lock SET failed")
+	original := variable.GetSysVar(vardef.InnodbLockWaitTimeout)
+	override := *original
+	override.SetSession = func(vars *variable.SessionVars, value string) error {
+		if vars == se.GetSessionVars() {
+			return injectedErr
+		}
+		return original.SetSession(vars, value)
+	}
+	variable.RegisterSysVar(&override)
+	defer variable.RegisterSysVar(original)
+
+	lock := &advisoryLock{session: se, ctx: context.Background(), clean: clean}
+	require.ErrorIs(t, lock.GetLock(t.Name(), 1), injectedErr)
+	require.True(t, cleaned, "failed lock setup must return the borrowed session")
 }

@@ -15,9 +15,15 @@
 package parsedef
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap/zapcore"
 )
+
+// ErrRowTooLarge is returned when the source text or the encoded size of a
+// single row exceeds the max txn entry size limit. It is shared by the CSV,
+// SQL and parquet parsers.
+var ErrRowTooLarge = errors.NewNoStackError("size of row cannot exceed the max value of txn-entry-size-limit")
 
 // Row is the content of a row.
 type Row struct {
