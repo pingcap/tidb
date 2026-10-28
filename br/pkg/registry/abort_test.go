@@ -26,17 +26,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAbortKeepsTaskWithLiveHeartbeat(t *testing.T) {
+func newRegistryWithRunningTask(t *testing.T) (*registry.Registry, registry.RegistrationInfo, uint64) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration", "return(1)")
 
 	cluster, err := mock.NewCluster()
 	require.NoError(t, err)
-	defer cluster.Stop()
+	t.Cleanup(cluster.Stop)
 
 	ctx := context.Background()
 	r, err := registry.NewRestoreRegistry(ctx, gluetidb.New(), cluster.Domain)
 	require.NoError(t, err)
-	defer r.Close()
+	t.Cleanup(r.Close)
 
 	info := registry.RegistrationInfo{
 		FilterStrings:     []string{"db.*"},
@@ -48,6 +48,18 @@ func TestAbortKeepsTaskWithLiveHeartbeat(t *testing.T) {
 	taskID, _, err := r.ResumeOrCreateRegistration(ctx, info, true)
 	require.NoError(t, err)
 	require.NotZero(t, taskID)
+	return r, info, taskID
+}
+
+func registeredTaskCount(t *testing.T, r *registry.Registry, taskID uint64) int {
+	registrations, err := r.GetRegistrationsByMaxID(context.Background(), taskID+1)
+	require.NoError(t, err)
+	return len(registrations)
+}
+
+func TestAbortKeepsTaskWithLiveHeartbeat(t *testing.T) {
+	r, info, taskID := newRegistryWithRunningTask(t)
+	ctx := context.Background()
 
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	heartbeatDone := make(chan struct{})
@@ -75,4 +87,32 @@ func TestAbortKeepsTaskWithLiveHeartbeat(t *testing.T) {
 	deletedTaskID, err = r.FindAndDeleteMatchingTask(ctx, info, true)
 	require.NoError(t, err)
 	require.Equal(t, taskID, deletedTaskID)
+}
+
+func TestAbortDeletesTaskWhoseHeartbeatStopsDuringTheAbort(t *testing.T) {
+	r, info, taskID := newRegistryWithRunningTask(t)
+	ctx := context.Background()
+
+	lastHeartbeat := time.AfterFunc(1500*time.Millisecond, func() { _ = r.UpdateHeartbeat(ctx, taskID) })
+	defer lastHeartbeat.Stop()
+
+	deletedTaskID, err := r.FindAndDeleteMatchingTask(ctx, info, true)
+	require.NoError(t, err)
+	require.Equal(t, taskID, deletedTaskID)
+	require.Zero(t, registeredTaskCount(t, r, taskID))
+}
+
+func TestAbortKeepsTaskWhenCancelledWhileWaitingForItsHeartbeat(t *testing.T) {
+	r, info, taskID := newRegistryWithRunningTask(t)
+	ctx := context.Background()
+
+	lastHeartbeat := time.AfterFunc(1500*time.Millisecond, func() { _ = r.UpdateHeartbeat(ctx, taskID) })
+	defer lastHeartbeat.Stop()
+	abortCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
+	defer cancel()
+
+	deletedTaskID, err := r.FindAndDeleteMatchingTask(abortCtx, info, true)
+	require.NoError(t, err)
+	require.Zero(t, deletedTaskID)
+	require.Equal(t, 1, registeredTaskCount(t, r, taskID))
 }
