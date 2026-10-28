@@ -29,18 +29,18 @@ use tidb_meta::transaction::Mutator;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
-pub(super) struct ClusterBdrRoleStore<S: StoreClient> {
+pub struct ClusterBdrRoleStore<S: StoreClient> {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
 impl<S: StoreClient> ClusterBdrRoleStore<S> {
-    pub(super) fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S> crate::BdrRoleStore for ClusterBdrRoleStore<S>
+impl<S> tidb_executor::admin::BdrRoleStore for ClusterBdrRoleStore<S>
 where
     S: StoreClient,
 {

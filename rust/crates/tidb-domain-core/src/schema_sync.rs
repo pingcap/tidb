@@ -22,7 +22,7 @@ use std::sync::Arc;
 pub use tidb_ddl::schema_sync::*;
 
 /// The session-facing half of the registry: one connection's recorder,
-/// handed to the driver session as its [`crate::MdlRelatedTableSink`].
+/// handed to the driver session as its [`MdlRelatedTableSink`].
 ///
 /// Recording lands only while the connection holds a pin (a live statement
 /// or an open transaction) -- `record_table_use` is a no-op for an idle
@@ -45,7 +45,7 @@ impl ConnectionMdlSink {
     }
 }
 
-impl crate::MdlRelatedTableSink for ConnectionMdlSink {
+impl MdlRelatedTableSink for ConnectionMdlSink {
     fn record_table(&self, table_id: i64, version: i64) {
         self.registry
             .record_table_use(self.connection_id, table_id, version);
@@ -57,4 +57,20 @@ impl crate::MdlRelatedTableSink for ConnectionMdlSink {
         // an actually unresolved name does not add a synthetic all-table
         // dependency.
     }
+}
+
+/// The node-side sink for Go's `GetRelatedTableForMDL` map: which stored
+/// tables this session's live statement or transaction has bound, and at
+/// which cluster schema version each was FIRST bound.
+///
+/// Go records into the transaction context and the session manager reads it
+/// (`RemoveLockDDLJobs`); here the record crosses a crate boundary, so it is
+/// a trait the node implements over its pin registry.
+pub trait MdlRelatedTableSink: Send + Sync {
+    /// One stored table, bound at `version`; first use wins.
+    fn record_table(&self, table_id: i64, version: i64);
+    /// A referenced name resolved to no concrete storage table (for example an
+    /// unknown name or a virtual object); the gate may conservatively retain
+    /// the unresolved marker.
+    fn record_unresolved(&self);
 }

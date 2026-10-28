@@ -367,21 +367,7 @@ impl DomainMap {
 /// mirrors that with a shared, mutex-guarded catalog; the statement-level lock
 /// stands in for Go's schema-version/lease machinery, which is a separate
 /// tier (documented deferral).
-/// The node-side sink for Go's `GetRelatedTableForMDL` map: which stored
-/// tables this session's live statement or transaction has bound, and at
-/// which cluster schema version each was FIRST bound.
-///
-/// Go records into the transaction context and the session manager reads it
-/// (`RemoveLockDDLJobs`); here the record crosses a crate boundary, so it is
-/// a trait the node implements over its pin registry.
-pub trait MdlRelatedTableSink: Send + Sync {
-    /// One stored table, bound at `version`; first use wins.
-    fn record_table(&self, table_id: i64, version: i64);
-    /// A referenced name resolved to no concrete storage table (for example an
-    /// unknown name or a virtual object); the gate may conservatively retain
-    /// the unresolved marker.
-    fn record_unresolved(&self);
-}
+pub use tidb_domain_core::schema_sync::MdlRelatedTableSink;
 
 pub struct Session {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,

@@ -29,18 +29,18 @@ use tidb_txnkv::{NewTxnStorage, NewTxnTransaction};
 /// Go `ddl.batchNumHistoryJobs`, the history read's page size.
 const BATCH_NUM_HISTORY_JOBS: i32 = 128;
 
-pub(super) struct ClusterDdlJobHistoryStore<S: StoreClient> {
+pub struct ClusterDdlJobHistoryStore<S: StoreClient> {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
 impl<S: StoreClient> ClusterDdlJobHistoryStore<S> {
-    pub(super) fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S> crate::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
+impl<S> tidb_executor::memtable_reader::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
 where
     S: StoreClient,
 {

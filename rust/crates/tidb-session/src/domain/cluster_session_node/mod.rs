@@ -250,11 +250,11 @@ pub const STATS_OWNER_PROMPT: &str = "stats";
 /// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
 /// for.
 
-mod bdr_role_store;
+pub(crate) use tidb_domain_core::bdr_role_store;
 mod catalog_follower;
 mod binding_maintenance;
 use tidb_ddl::worker as ddl;
-mod ddl_job_history_store;
+pub(crate) use tidb_domain_core::ddl_job_history_store;
 mod ddl_notifier;
 pub mod gc_worker;
 use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
@@ -267,7 +267,7 @@ mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
 pub mod schema_lease;
-pub mod schema_sync;
+pub use tidb_domain_core::schema_sync;
 mod stat;
 mod statistics;
 mod test_session;
