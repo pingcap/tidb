@@ -40,7 +40,7 @@ use tidb_txnkv::{
     INTERNAL_TXN_OTHERS,
 };
 
-use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
+use super::{ClusterStatsSessionContext, Domain, UsageWorkerStop};
 
 /// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)`, the context
 /// `ExecRCRestrictedSQL` executes under (`runaway/record.go:401`).
@@ -275,7 +275,7 @@ pub(super) struct RuStatsWriterWorker {
 }
 
 impl RuStatsWriterWorker {
-    pub(super) fn start<D>(factory: &Arc<ClusterSessionFactory>, deps: D) -> Self
+    pub(super) fn start<D>(factory: &Arc<Domain>, deps: D) -> Self
     where
         D: RuStatsDeps + Send + 'static,
     {
@@ -283,7 +283,7 @@ impl RuStatsWriterWorker {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
         });
-        let weak: Weak<ClusterSessionFactory> = Arc::downgrade(factory);
+        let weak: Weak<Domain> = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
         let thread = crate::domain::session_api::sql_worker_thread("ru-stats-writer")
             .spawn(move || {

@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_chunk::chunk::Chunk;
-use tidb_datatype::FieldType;
-use tidb_executor::{driver::QueryRecordSet, DriverError, StmtContext};
 
-use crate::{Session, StmtOutput};
+//! The session side of `tidb_executor::record_set`: opening a statement's
+//! record set and the session primitives it finishes through.
+
+use crate::*;
+pub use tidb_executor::record_set::{OpenedStatement, StatementRecordSet};
+pub(crate) use tidb_executor::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
+pub(crate) use tidb_executor::stmt_ctx_build::StatementCompletion;
 
 /// A statement either returns an opened query or has already executed.
-pub enum StatementExecution<'a> {
-    /// Query execution and its statement state remain owned by this result.
-    Rows(SessionRecordSet<'a>),
-    /// Statements that execute before returning a result, such as DML/SHOW.
-    Complete(StmtOutput),
-}
+pub type StatementExecution<'a> = tidb_executor::record_set::StatementExecution<'a, Session>;
+/// An opened query over this session.
+pub type SessionRecordSet<'a> = tidb_executor::record_set::SessionRecordSet<'a, Session>;
 
 impl Session {
     pub(crate) fn return_opened_record_set(
@@ -45,332 +45,42 @@ impl Session {
     }
 }
 
-pub(crate) enum PendingExecution {
-    Query(PendingQuery),
-    Complete(StmtOutput),
-}
-
-impl PendingExecution {
-    pub(crate) fn collect(self, session: &mut Session) -> Result<StmtOutput, DriverError> {
-        match self {
-            Self::Complete(output) => Ok(output),
-            Self::Query(query) => query.collect(session),
-        }
-    }
-}
-
-#[derive(Default)]
-pub(crate) enum QueryTransactionEnd {
-    #[default]
-    None,
-    StaleRead,
-    SnapshotRead,
-}
-
-impl QueryTransactionEnd {
-    fn finish(self, session: &mut Session) -> Result<(), DriverError> {
-        match self {
-            // A one-statement stale transaction must end even after Next/Close fails.
-            Self::StaleRead => session.discard_stale_statement_transaction(),
-            Self::SnapshotRead => session.statement_snapshot = None,
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-pub(crate) struct PendingQuery {
-    record_set: QueryRecordSet,
-    context: StmtContext,
-    pub(crate) transaction_end: QueryTransactionEnd,
-    /// Go `ExecStmt.startExecute`: the moment the executor was opened; the
-    /// run-duration observation at Finish/Close measures to here.
-    execute_opened_at: std::time::Instant,
-}
-
-impl PendingQuery {
-    pub(crate) fn new(record_set: QueryRecordSet, context: StmtContext) -> Self {
-        Self {
-            record_set,
-            context,
-            transaction_end: QueryTransactionEnd::None,
-            execute_opened_at: std::time::Instant::now(),
-        }
+impl tidb_executor::record_set::RecordSetSession for Session {
+    fn discard_stale_statement_transaction(&mut self) {
+        Session::discard_stale_statement_transaction(self)
     }
 
-    fn finish(&mut self, session: &mut Session) -> Result<(), DriverError> {
-        crate::metrics::observe_execute_duration(
-            self.execute_opened_at.elapsed().as_secs_f64(),
-            false,
-        );
-        session.vars.use_chunk_alloc = self.context.is_chunk_alloc_valid();
-        let result = self.record_set.finish();
-        self.context.drain_fold_warnings();
-        session.drain_eval_warnings(&self.context);
-        let finished = std::mem::take(&mut self.transaction_end).finish(session);
-        result.and(finished)
+    fn clear_statement_snapshot(&mut self) {
+        self.statement_snapshot = None;
     }
 
-    fn collect(self, session: &mut Session) -> Result<StmtOutput, DriverError> {
-        crate::metrics::observe_execute_duration(
-            self.execute_opened_at.elapsed().as_secs_f64(),
-            false,
-        );
-        // Go's result writer draws every chunk from the statement's
-        // allocator, which marks `StmtCtx.useChunkAlloc` while it is valid.
-        session.vars.use_chunk_alloc = self.context.is_chunk_alloc_valid();
-        let Self {
-            record_set,
-            context,
-            transaction_end,
-            execute_opened_at: _,
-        } = self;
-        session.last_result_output_names = record_set.output_names().to_vec();
-        record_set
-            .current_db()
-            .clone_into(&mut session.last_result_current_db);
-        let result = record_set.collect();
-        context.drain_fold_warnings();
-        session.drain_eval_warnings(&context);
-        let finished = transaction_end.finish(session);
-        let (columns, rows) = result?;
-        finished?;
-        Ok(StmtOutput::Rows { columns, rows })
-    }
-}
-
-/// Owned execution state for one statement. A front-end result owner keeps
-/// this together with its originating session and calls Close on every exit.
-/// It contains no borrow into the session, so the outer owner can also finish
-/// the transaction and snapshot without a self-reference.
-pub struct StatementRecordSet {
-    query: PendingQuery,
-    retained: Option<std::collections::VecDeque<Chunk>>,
-    retained_offset: usize,
-    found_rows: u64,
-    exhausted: bool,
-    finished: bool,
-    closed: bool,
-    last_error: Option<DriverError>,
-}
-
-impl StatementRecordSet {
-    pub(crate) fn new(query: PendingQuery) -> Self {
-        Self {
-            query,
-            retained: None,
-            retained_offset: 0,
-            found_rows: 0,
-            exhausted: false,
-            finished: false,
-            closed: false,
-            last_error: None,
-        }
+    fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+        Session::drain_eval_warnings(self, ctx);
     }
 
-    /// Metadata remains available after Finish or Close, as in Go.
-    pub fn columns(&self) -> &[(String, FieldType)] {
-        self.query.record_set.columns()
+    fn set_last_result_names(
+        &mut self,
+        names: Vec<tidb_datatype::FieldNameMetadata>,
+        current_db: &str,
+    ) {
+        self.last_result_output_names = names;
+        current_db.clone_into(&mut self.last_result_current_db);
     }
 
-    /// Go `ExecStmt.OutputNames`, one per column, and the `CurrentDB` the
-    /// statement opened under: the inputs of `colNames2ResultFields`.
-    pub fn output_names(&self) -> (&[tidb_datatype::FieldNameMetadata], &str) {
-        let record_set = &self.query.record_set;
-        (record_set.output_names(), record_set.current_db())
+    fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
+        Session::finish_statement_state(self, result);
     }
 
-    /// Allocates the result's configured chunk shape.
-    pub fn new_chunk(&self) -> Chunk {
-        self.query.record_set.new_chunk()
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        Session::add_write_sql_resp_duration(self, duration);
     }
 
-    /// Retains a failure from an outer transaction's Finish for CloseRecordSet.
-    pub fn record_error(&mut self, error: DriverError) {
-        self.last_error.get_or_insert(error);
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        Session::add_result_chunk_cells(self, cells);
     }
 
-    /// Fills a reusable chunk and transfers warnings from this execution.
-    pub fn next(&mut self, session: &mut Session, req: &mut Chunk) -> Result<(), DriverError> {
-        let retained = self.retained.is_some();
-        let result = if self.finished {
-            Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_QUERY_INTERRUPTED
-                    .generate_with_stack_by_args(&[]),
-            )))
-        } else if let Some(chunks) = &mut self.retained {
-            req.reset();
-            while req.num_rows() < req.required_rows() {
-                let Some(chunk) = chunks.front() else { break };
-                let end = (self.retained_offset + req.required_rows() - req.num_rows())
-                    .min(chunk.num_rows());
-                req.append_range_from(chunk, self.retained_offset, end);
-                self.retained_offset = end;
-                if end == chunk.num_rows() {
-                    chunks.pop_front();
-                    self.retained_offset = 0;
-                }
-            }
-            Ok(())
-        } else {
-            self.query.record_set.next(req)
-        };
-        session.drain_eval_warnings(&self.query.context);
-        match &result {
-            // Go chunkRowRecordSet does not update LastFoundRows while replaying retained rows.
-            Ok(()) if retained => {}
-            Ok(()) if req.num_rows() == 0 => {
-                self.exhausted = true;
-                session.vars.last_found_rows = self.found_rows;
-            }
-            Ok(()) => self.found_rows += req.num_rows() as u64,
-            Err(error) => {
-                self.last_error.get_or_insert_with(|| error.clone());
-            }
-        }
-        result
-    }
-
-    /// Go runPessimisticSelectForUpdate retains chunks before locks/retries
-    /// complete. Do not publish rows to a client from inside a replayable attempt.
-    pub fn retain_chunks(&mut self, session: &mut Session) -> Result<(), DriverError> {
-        let mut chunks = std::collections::VecDeque::new();
-        let mut req = self.new_chunk();
-        let result = (|| {
-            loop {
-                self.query.record_set.next(&mut req)?;
-                if req.num_rows() == 0 {
-                    break;
-                }
-                let next = req.renew(req.required_rows());
-                chunks.push_back(std::mem::replace(&mut req, next));
-            }
-            self.query.record_set.finish()
-        })();
-        session.drain_eval_warnings(&self.query.context);
-        if let Err(error) = &result {
-            self.last_error.get_or_insert_with(|| error.clone());
-        }
-        result?;
-        self.retained = Some(chunks);
-        Ok(())
-    }
-
-    /// Finishes execution before the writer emits its terminal packet.
-    pub fn finish(&mut self, session: &mut Session) -> Result<(), DriverError> {
-        if self.finished {
-            return Ok(());
-        }
-        self.finished = true;
-        let result = self.query.finish(session);
-        if let Err(error) = &result {
-            self.last_error.get_or_insert_with(|| error.clone());
-        }
-        result
-    }
-
-    /// Publishes the completed statement after execution has been finished.
-    pub fn close(&mut self, session: &mut Session) -> Result<(), DriverError> {
-        if self.closed {
-            return Ok(());
-        }
-        let result = self.finish(session);
-        self.closed = true;
-        let completion = match self.last_error.clone() {
-            Some(error) => Err(error),
-            None => Ok(StatementCompletion::Rows(
-                self.exhausted.then_some(self.found_rows),
-            )),
-        };
-        session.finish_statement_state(&completion);
-        result
-    }
-}
-
-/// An opened statement whose outer owner will retain the session and snapshot.
-#[must_use]
-pub enum OpenedStatement {
-    /// Execution is deferred to Next.
-    Rows(StatementRecordSet),
-    /// A statement that has already executed and published its effects.
-    Complete(StmtOutput),
-}
-
-impl OpenedStatement {
-    /// Keeps the originating session borrowed until the result closes.
-    pub fn attach(self, session: &mut Session) -> StatementExecution<'_> {
-        match self {
-            Self::Rows(state) => StatementExecution::Rows(SessionRecordSet { session, state }),
-            Self::Complete(output) => StatementExecution::Complete(output),
-        }
-    }
-}
-
-/// A session-borrowing result owner for callers without an outer transaction
-/// wrapper. Drop and explicit Close use the same completion path.
-pub struct SessionRecordSet<'a> {
-    session: &'a mut Session,
-    state: StatementRecordSet,
-}
-
-impl SessionRecordSet<'_> {
-    /// Result metadata, including after Finish.
-    pub fn columns(&self) -> &[(String, FieldType)] {
-        self.state.columns()
-    }
-    /// See [`StatementRecordSet::output_names`].
-    pub fn output_names(&self) -> (&[tidb_datatype::FieldNameMetadata], &str) {
-        self.state.output_names()
-    }
-    /// Allocates a chunk with this statement's schema and sizing.
-    pub fn new_chunk(&self) -> Chunk {
-        self.state.new_chunk()
-    }
-    /// Current statement state while execution remains borrowed.
-    pub fn session(&self) -> &Session {
-        self.session
-    }
-    /// Fills a reusable chunk.
-    pub fn next(&mut self, req: &mut Chunk) -> Result<(), DriverError> {
-        self.state.next(self.session, req)
-    }
-    /// Finishes the executor once.
-    pub fn finish(&mut self) -> Result<(), DriverError> {
-        self.state.finish(self.session)
-    }
-    /// See [`Session::add_write_sql_resp_duration`].
-    pub fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
-        self.session.add_write_sql_resp_duration(duration);
-    }
-    /// See [`Session::add_result_chunk_cells`].
-    pub fn add_result_chunk_cells(&mut self, cells: i64) {
-        self.session.add_result_chunk_cells(cells);
-    }
-    /// Publishes completion once.
-    pub fn close(&mut self) -> Result<(), DriverError> {
-        self.state.close(self.session)
-    }
-}
-
-impl Drop for SessionRecordSet<'_> {
-    fn drop(&mut self) {
-        let _ = self.close();
-    }
-}
-
-pub(crate) enum StatementCompletion {
-    Rows(Option<u64>),
-    Affected(u64),
-    Done,
-}
-
-impl From<&StmtOutput> for StatementCompletion {
-    fn from(output: &StmtOutput) -> Self {
-        match output {
-            StmtOutput::Rows { rows, .. } => Self::Rows(Some(rows.len() as u64)),
-            StmtOutput::Affected(rows) => Self::Affected(*rows),
-            StmtOutput::Done(_) => Self::Done,
-        }
+    fn observe_execute_duration(seconds: f64, internal: bool) {
+        crate::metrics::observe_execute_duration(seconds, internal);
     }
 }
 

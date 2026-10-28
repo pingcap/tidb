@@ -2,6 +2,7 @@
 //! conflict a commit can lose, `autocommit`, and how `BEGIN` resolves its
 //! mode -- Go `pkg/session/txn.go`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 

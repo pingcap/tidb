@@ -18,11 +18,11 @@
 
 use std::sync::Arc;
 
-use tidb_session::domain::cluster_session_node::ClusterSessionFactory;
+use tidb_session::domain::cluster_session_node::Domain;
 
 /// The peer coprocessor service of this node (Go `tikvHandlerTool`'s
 /// coprocessor over the node's own sessions).
-pub(crate) fn peer_service(factory: &Arc<ClusterSessionFactory>) -> crate::peer_rpc::PeerService {
+pub(crate) fn peer_service(factory: &Arc<Domain>) -> crate::peer_rpc::PeerService {
     crate::peer_rpc::PeerService::new(
         factory.peer_session_builder(),
         factory.processes(),
@@ -34,6 +34,6 @@ pub(crate) fn peer_service(factory: &Arc<ClusterSessionFactory>) -> crate::peer_
 }
 
 /// The HTTP GLOBAL settings handler of this node.
-pub(crate) fn status_settings(factory: &Arc<ClusterSessionFactory>) -> crate::http_settings::Settings {
+pub(crate) fn status_settings(factory: &Arc<Domain>) -> crate::http_settings::Settings {
     crate::http_settings::Settings::new(factory.global_vars(), factory.http_global_setter())
 }

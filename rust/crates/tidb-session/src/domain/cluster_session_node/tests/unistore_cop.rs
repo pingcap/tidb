@@ -20,6 +20,7 @@
 //! client -- never fails in-tree. This module builds the same stack `--store unistore`
 //! boots and pins those plans.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +36,7 @@ use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
     partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
-    ClusterServerSession, ClusterSessionFactory,
+    ClusterServerSession, Domain,
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
@@ -1972,7 +1973,7 @@ fn handle_stats_schema_change(session: &mut ClusterServerSession, event: &Schema
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
 // statistics. This fixture does not campaign the background statistics owner.
 fn drain_stats_ddl_events(
-    factory: &Arc<ClusterSessionFactory>,
+    factory: &Arc<Domain>,
     session: &mut ClusterServerSession,
 ) {
     let notifier = super::super::ddl_notifier::build_notifier(factory, Duration::ZERO);
@@ -2256,7 +2257,7 @@ fn check_constraint_runs_through_the_owner_job_queue() {
     );
     assert!(
         session
-            .store.session
+            .session
             .ddl_statement_context()
             .enable_check_constraint(),
         "the query-shaped DDL context must read the enabled global variable"
@@ -2612,7 +2613,7 @@ struct ObservedSystemAnalyze {
     processes: crate::process::ProcessRegistry,
     kill: Option<bool>,
     process_id: u64,
-    factory: std::sync::Weak<ClusterSessionFactory>,
+    factory: std::sync::Weak<Domain>,
     observed: Arc<AtomicBool>,
     interrupted: Arc<AtomicBool>,
 }
@@ -2672,7 +2673,7 @@ impl crate::domain::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
 struct KillingSystemAnalyze {
     inner: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
     processes: crate::process::ProcessRegistry,
-    factory: std::sync::Weak<ClusterSessionFactory>,
+    factory: std::sync::Weak<Domain>,
     process_id: Arc<AtomicU64>,
 }
 
@@ -2748,7 +2749,7 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
         |context| {
             context.with_session(|session| {
                 let analyze = Arc::new(KillingSystemAnalyze {
-                    inner: Arc::clone(&session.analyze),
+                    inner: session.domain.analyze(),
                     processes: factory.processes(),
                     factory: Arc::downgrade(&factory),
                     process_id: Arc::clone(&process_id),
@@ -2850,7 +2851,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             context
                 .with_session(|session| {
                     let analyze = Arc::new(ObservedSystemAnalyze {
-                        inner: Arc::clone(&session.analyze),
+                        inner: session.domain.analyze(),
                         processes: factory.processes(),
                         kill,
                         process_id,
@@ -3386,9 +3387,9 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
             // then stages them. Both absent and existing records must survive
             // the native client's assertion check from the lock metadata.
             super::super::transactions::stage_pessimistic_statement(
-                session.store.txn.explicit.as_deref().unwrap(),
+                session.txn.explicit.as_deref().unwrap(),
                 &session.buffer,
-                session.store.session.lock_wait_timeout(),
+                session.session.lock_wait_timeout(),
                 |_, _| {
                     let mutation = if existing {
                         BufferMutation::put_existing(key.clone(), b"updated".to_vec())
@@ -3577,7 +3578,7 @@ fn ddl_after_loaded_statistics_matches_go() {
     // and after the DDL below replaces the connection's schema catalog.
     let check_reload = |session: &mut ClusterServerSession| {
         let peer = stack.factory.open_session(session_context(76)).unwrap();
-        let peer_catalog = peer.store.session.shared_catalog();
+        let peer_catalog = peer.session.shared_catalog();
         assert!(!peer_catalog
             .lock()
             .unwrap()
@@ -3656,11 +3657,11 @@ fn ddl_after_loaded_statistics_matches_go() {
                     .table_statistics_in(&peer_catalog.stats_handle(), table_id)
                     .unwrap(),
                 &session
-                    .store.session
+                    .session
                     .shared_catalog()
                     .lock()
                     .unwrap()
-                    .table_statistics_in(&session.store.session.stats_handle(), table_id)
+                    .table_statistics_in(&session.session.stats_handle(), table_id)
                     .unwrap(),
             ),
             "sessions must share the same converted statistics"
@@ -4635,7 +4636,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     };
     session.rebuild_catalog_if_stale();
     {
-        let catalog = session.store.session.shared_catalog();
+        let catalog = session.session.shared_catalog();
         let catalog = catalog.lock().expect("session catalog is available");
         let tidb_executor::driver::TableEntry::Kv(table) = catalog
             .table_in("test", "stats_add_column")
@@ -6033,7 +6034,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
     assert_eq!(
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6041,7 +6042,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
     rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
     let table_id = session
-        .historical_stats_worker
+        .domain.historical_stats_worker
         .get_one_historical_stats_table();
     assert!(table_id > 0, "a successful ANALYZE posts its table ID");
     let handle = ClusterHistoricalStatsHandle {
@@ -6051,7 +6052,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
-        .historical_stats_worker
+        .domain.historical_stats_worker
         .dump_historical_stats(
             table_id,
             &handle,
@@ -6120,7 +6121,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     rows(&mut session, "CREATE TABLE history_gc (a INT)");
     rows(&mut session, "ANALYZE TABLE history_gc");
     let table_id = session
-        .historical_stats_worker
+        .domain.historical_stats_worker
         .get_one_historical_stats_table();
     let handle = ClusterHistoricalStatsHandle {
         transactions: Arc::clone(&stack.factory.transactions),
@@ -6129,7 +6130,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         auto_ids: Arc::clone(&stack.factory.auto_ids),
     };
     session
-        .historical_stats_worker
+        .domain.historical_stats_worker
         .dump_historical_stats(
             table_id,
             &handle,
@@ -6680,13 +6681,13 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     rows(&mut session, "ANALYZE TABLE history_partition");
     assert_eq!(
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
         partition_id
     );
     assert_eq!(
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6698,10 +6699,10 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     rows(&mut session, "ANALYZE TABLE history_partition");
     let mut queued = vec![
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
     ];
     queued.sort_unstable();
@@ -6710,7 +6711,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     assert_eq!(queued, expected);
     assert_eq!(
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
     );
@@ -6723,7 +6724,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     };
     for table_id in queued {
         session
-            .historical_stats_worker
+            .domain.historical_stats_worker
             .dump_historical_stats(
                 table_id,
                 &handle,
@@ -12229,7 +12230,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     assert!(session
         .execute(&format!("SET tidb_snapshot='{future}'"))
         .is_err());
-    assert_eq!(session.store.session.vars().snapshot_ts(), ts);
+    assert_eq!(session.session.vars().snapshot_ts(), ts);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
@@ -12250,7 +12251,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         vec![vec!["1", "10"]]
     );
     assert!(
-        session.store.session.historical_read_ts().is_none(),
+        session.session.historical_read_ts().is_none(),
         "SnapshotTS is a statement pin"
     );
     rows(&mut session, "SET autocommit=1");
@@ -12275,13 +12276,13 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    let held = session.store.session.historical_read_ts().unwrap();
+    let held = session.session.historical_read_ts().unwrap();
     assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
     session.control_transaction("ROLLBACK").unwrap();
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
     rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
     assert!(
-        session.store.session.historical_read_ts().is_none(),
+        session.session.historical_read_ts().is_none(),
         "a write starts an ordinary transaction"
     );
     session.control_transaction("ROLLBACK").unwrap();
@@ -12347,7 +12348,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12367,7 +12368,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     assert!(session
         .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {ts}"))
         .is_err());
-    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
     rows(&mut session, &set);
     assert!(session
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
@@ -12379,7 +12380,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     );
     assert!(session.execute(&set).is_err());
     session.control_transaction("ROLLBACK").unwrap();
-    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
     assert!(!tidb_txnkv::ACTIVE_START_TS
         .snapshot()
         .contains(&((ts >> 18) << 18)));
@@ -12440,7 +12441,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    peer.store.session.set_restricted_sql(true);
+    peer.session.set_restricted_sql(true);
     assert_eq!(
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12463,7 +12464,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
     );
     session.control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");
-    let historical_ts = session.store.session.current_tso().value() as u64;
+    let historical_ts = session.session.current_tso().value() as u64;
     session.control_transaction("COMMIT").unwrap();
     rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
     for mode in ["OPTIMISTIC", "PESSIMISTIC"] {
@@ -12472,7 +12473,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
             .unwrap();
         rows(&mut session, "UPDATE t SET v=30 WHERE id=1");
         rows(&mut session, "INSERT INTO t VALUES (2,40,8)");
-        let ordinary_ts = session.store.session.current_tso().value();
+        let ordinary_ts = session.session.current_tso().value();
         rows(&mut session, &format!("SET tidb_snapshot={historical_ts}"));
         assert_eq!(
             displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
@@ -12493,8 +12494,8 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
         rows(&mut session, "DEALLOCATE PREPARE snapshot_query");
         assert!(session.execute("SELECT extra FROM t").is_err());
         assert!(session.execute_write("UPDATE t SET v=99").is_err());
-        assert!(session.store.session.in_transaction());
-        assert_eq!(session.store.session.current_tso().value(), ordinary_ts);
+        assert!(session.session.in_transaction());
+        assert_eq!(session.session.current_tso().value(), ordinary_ts);
         assert!(
             !tidb_txnkv::ACTIVE_START_TS
                 .snapshot()
@@ -12589,7 +12590,7 @@ fn deferred_uniqueness_batch_savepoint_follows_transaction_mode() {
         .unwrap_err();
     assert_eq!(error.code, 1105);
     assert_eq!(error.message, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled");
-    assert!(session.store.session.in_transaction());
+    assert!(session.session.in_transaction());
     session.control_transaction("ROLLBACK").unwrap();
 }
 
@@ -12621,8 +12622,8 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
         error.identity,
         Some(tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
     );
-    assert!(!session.store.session.in_transaction());
-    assert!(session.store.txn.explicit.is_none());
+    assert!(!session.session.in_transaction());
+    assert!(session.txn.explicit.is_none());
     assert!(session.buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
     rows(&mut session, "INSERT INTO t VALUES (2)");
@@ -12650,10 +12651,10 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
     session.control_transaction("BEGIN OPTIMISTIC").unwrap();
     session.control_transaction("ROLLBACK").unwrap();
     session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-    session.store.session.set_restricted_sql(true);
-    session.store.session.set_restricted_sql(false);
-    session.store.session.set_connection_id(0);
-    session.store.session.set_connection_id(943);
+    session.session.set_restricted_sql(true);
+    session.session.set_restricted_sql(false);
+    session.session.set_connection_id(0);
+    session.session.set_connection_id(943);
     rows(&mut session, "DELETE FROM t WHERE id=1");
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
     assert!(
@@ -12664,7 +12665,7 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
     rows(&mut session, "UPDATE t SET u=31 WHERE id=3");
     rows(&mut session, "INSERT IGNORE INTO t VALUES (5,20)");
     rows(&mut session, "UPDATE IGNORE t SET u=20 WHERE id=3");
-    assert!(session.store.session.in_transaction());
+    assert!(session.session.in_transaction());
     rows(
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=ON",
@@ -12710,7 +12711,7 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         .unwrap();
     assert!(session.execute("SELECT missing FROM t").is_err());
     assert!(
-        session.store.session.in_transaction(),
+        session.session.in_transaction(),
         "ordinary query errors do not invoke DML abort policy"
     );
     let error = match session.execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
@@ -12718,8 +12719,8 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         Ok(_) => panic!("a local duplicate must fail"),
     };
     assert_eq!(error.code, 8147, "{error:?}");
-    assert!(!session.store.session.in_transaction());
-    assert!(session.store.txn.explicit.is_none());
+    assert!(!session.session.in_transaction());
+    assert!(session.txn.explicit.is_none());
     assert!(session.buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
 }
@@ -16842,7 +16843,7 @@ fn failed_stats_cache_update_fails_the_analyze_statement() {
     rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
     let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
     let analyze = Arc::new(FailingStatsCacheUpdate {
-        inner: Arc::clone(&session.analyze),
+        inner: session.domain.analyze(),
         updated: Arc::clone(&updated),
     });
     session.set_analyzer(&stack.factory, analyze);
@@ -19673,7 +19674,7 @@ fn a_failed_commit_publishes_nothing_later() {
     {
         // A republish of the connection's catalog lands while the
         // transaction is open, as a schema or statistics reload does.
-        let shared = session.store.session.shared_catalog();
+        let shared = session.session.shared_catalog();
         let mut catalog = shared.lock().unwrap();
         assert!(catalog.set_database_placement_policy("failed_commit", None));
     }
@@ -20018,7 +20019,7 @@ fn prepare_shows_only_the_plan_cache_note() {
         .unwrap();
     assert_eq!(
         session
-            .store.session
+            .session
             .warnings()
             .iter()
             .map(|warning| warning.code())
@@ -23489,7 +23490,7 @@ fn trace_records_go_executor_and_transaction_regions() {
         "              └─regionRequest.SendReqCtx",
     ]);
     assert_eq!(trace_tree(&mut session, "COMMIT"), expected);
-    assert!(!session.store.session.in_transaction());
+    assert!(!session.session.in_transaction());
 
     session.control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM test.tr WHERE id = 1");
@@ -23497,7 +23498,7 @@ fn trace_records_go_executor_and_transaction_regions() {
     expected.extend(simple);
     expected.push("      └─session.CommitTxn");
     assert_eq!(trace_tree(&mut session, "ROLLBACK"), expected);
-    assert!(!session.store.session.in_transaction());
+    assert!(!session.session.in_transaction());
 }
 
 /// [`trace_tree`] without the client's spans (`regionRequest.SendReqCtx`,
@@ -24228,7 +24229,6 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .open_storage_session(141)
         .expect("storage session");
     let has_client = opened
-        .store
         .session
         .with_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
             Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),

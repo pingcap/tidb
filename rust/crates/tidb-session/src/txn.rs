@@ -291,14 +291,14 @@ fn run_discovering_temporary_overlay<T>(
 struct CatalogStage<'a> {
     /// The catalog the statement mutates in place.
     catalog: &'a mut Catalog,
-    /// The image to put back, taken away once the statement has succeeded.
-    stage: Option<Catalog>,
+    /// The statement's stage, taken away once the statement has succeeded.
+    stage: Option<tidb_executor::StatementStage>,
 }
 
 impl Drop for CatalogStage<'_> {
     fn drop(&mut self) {
         if let Some(stage) = self.stage.take() {
-            *self.catalog = stage;
+            self.catalog.end_statement_stage(stage, false);
         }
     }
 }
@@ -1189,7 +1189,7 @@ impl Session {
         self.global_temporary_data.clear();
     }
 
-    /// Runs one DML statement over a STAGE of the catalog this statement sees,
+    /// Runs one DML statement under a STAGE of the catalog this statement sees,
     /// so a statement that fails partway leaves the tables as it found them.
     ///
     /// This is Go's statement-level rollback. A statement opens a staging
@@ -1202,27 +1202,14 @@ impl Session {
     /// why a failed statement inside `BEGIN` discards only its own writes and
     /// the statements around it survive to `COMMIT`.
     ///
-    /// The stage here is an image of the catalog rather than an undo log,
-    /// because this tier's tables ARE the buffer: `Catalog::clone` deep-copies
-    /// the in-process bytes (`MemTableStorage::clone_box`). Restoring the
-    /// image is the same observable effect as `Cleanup()`.
-    ///
-    /// # What the image does NOT undo
-    ///
-    /// The restore takes back exactly what `TableStorage::clone_box` copied by
-    /// VALUE. `MemTableStorage` copies its bytes, so the rows come back. A
-    /// storage whose `clone_box` clones a shared HANDLE does not: the image
-    /// and the original write into the same place, so a failed statement's
-    /// rows survive this restore. `tidb_executor::cluster_storage` is exactly
-    /// that -- its `MutationBuffer` and snapshot are `Arc`s shared by every
-    /// table of the session -- so on the cluster path the guard is NOT this
-    /// function. It is the statement savepoint the convergence node takes over
-    /// the buffer itself (`tidb_server`'s `ClusterServerSession::with_statement`:
+    /// The in-process stores (the temporary tables) keep Go's staging undo
+    /// log themselves (`TableStorage::staging` / `cleanup` / `release`), and
+    /// `Catalog::begin_statement_stage` opens one stage on each. A KV-backed
+    /// table's writes go to the store session's `MutationBuffer`, whose
+    /// statement savepoint the convergence node takes over the buffer itself
+    /// (`tidb_server`'s `ClusterServerSession::with_statement`:
     /// `MutationBuffer::staged()` before the statement, `restore()` on its
-    /// error arm), which is the same `Staging()`/`Cleanup()` pair one tier
-    /// down. Any future front end that drives a `Session` over cluster storage
-    /// must bring such a savepoint with it; this restore alone will not roll
-    /// its writes back.
+    /// error arm) -- the same `Staging()`/`Cleanup()` pair one tier down.
     ///
     /// The `_tidb_rowid` a row without a clustered handle gets is NOT undone
     /// either, and for the same reason: Go allocates it from the very counter
@@ -1230,11 +1217,10 @@ impl Session {
     /// builds one `RowIDAllocType` allocator for both), so a handle a failed
     /// statement consumed stays consumed.
     ///
-    /// AUTO_INCREMENT deliberately survives the restore: Go allocates ids
+    /// AUTO_INCREMENT deliberately survives the cleanup: Go allocates ids
     /// outside transaction semantics and never returns a consumed one, and
-    /// `KvTable`'s `AutoIdAllocator` is a SHARED cell that a catalog copy
-    /// keeps pointing at -- so the burn is retained with no exclusion rule
-    /// here (captured: a failed one-row insert into an `AUTO_INCREMENT` table
+    /// the stage covers rows only -- so the burn is retained with no
+    /// exclusion rule here (captured: a failed one-row insert into an `AUTO_INCREMENT` table
     /// stores nothing and the next successful insert skips the burned id).
     ///
     /// Making this the one door every mutating statement goes through is the
@@ -1249,72 +1235,26 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // Store sessions keep statement writes in the store session's
-        // `MutationBuffer`/`BufferCheckpoint`. Their catalog contains only
-        // KV-backed tables, so taking a deep image here duplicates schema
-        // maps on every prepared DML without adding a rollback capability.
-        // In-process rows (temporary tables) still need the image.
+        // Go stages a statement's writes on the transaction's membuffer
+        // (`MemBuffer.Staging()`) and `StmtRollback` cleans the stage up. A
+        // store session's `MutationBuffer` checkpoint is that stage for its
+        // KV-backed tables; the in-process stores (temporary tables) open
+        // their own here.
         self.with_catalog_mut(|catalog| {
-            if catalog.all_tables_have_external_statement_rollback() {
-                return body(catalog);
-            }
+            let stage = catalog.begin_statement_stage();
             let mut guard = CatalogStage {
-                stage: Some(catalog.clone()),
                 catalog,
+                stage: Some(stage),
             };
-            // `?` and an unwind both drop the guard while it is still armed;
-            // only reaching the disarm below keeps the statement's writes.
+            // `?` and an unwind both drop the guard while it is still armed,
+            // which cleans the stage up; only reaching the release below keeps
+            // the statement's writes.
             let value = body(guard.catalog)?;
-            guard.stage = None;
+            if let Some(stage) = guard.stage.take() {
+                guard.catalog.end_statement_stage(stage, true);
+            }
             Ok(value)
         })
-    }
-
-    /// Runs a DML statement over its target table without taking a catalog
-    /// image when the target is cluster-backed. Cluster sessions keep row
-    /// mutations in the outer statement savepoint, while standalone and
-    /// pipeline sessions (whose `KvTable`s use `MemTableStorage`) still need
-    /// the image even though their table entry is not a `MemTable`.
-    pub(crate) fn with_staged_catalog_for_table<T>(
-        &mut self,
-        database: &str,
-        table_name: &str,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
-    ) -> Result<T, DriverError> {
-        self.with_catalog_mut(|catalog| {
-            if catalog.table_has_external_statement_rollback(database, table_name) {
-                return body(catalog);
-            }
-            let mut guard = CatalogStage {
-                stage: Some(catalog.clone()),
-                catalog,
-            };
-            let value = body(guard.catalog)?;
-            guard.stage = None;
-            Ok(value)
-        })
-    }
-
-    /// Path-resolving wrapper for [`Self::with_staged_catalog_for_table`].
-    /// Invalid/empty paths keep the original staged behavior so the executor
-    /// remains responsible for returning the canonical schema error.
-    pub(crate) fn with_staged_catalog_for_path<T>(
-        &mut self,
-        path: &[String],
-        current_database: &str,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
-    ) -> Result<T, DriverError> {
-        let target = match path {
-            [table] if !current_database.is_empty() => Some((current_database, table.as_str())),
-            [database, table] => Some((database.as_str(), table.as_str())),
-            _ => None,
-        };
-        match target {
-            Some((database, table_name)) => {
-                self.with_staged_catalog_for_table(database, table_name, body)
-            }
-            None => self.with_staged_catalog(body),
-        }
     }
 
     /// Go `serverStatus2Str` over this session's status bits: the `State`

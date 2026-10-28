@@ -42,6 +42,13 @@ pub struct MockStoreDomain {
 }
 
 impl MockStoreDomain {
+    /// The domain booted over this store.
+    pub(crate) fn domain(&self) -> &Arc<crate::domain::cluster_session_node::Domain> {
+        &self.stack.factory
+    }
+}
+
+impl MockStoreDomain {
     /// Boots a fresh store with Go testkit's settings: a 500ms schema lease
     /// (`vardef.SetSchemaLease(500 * time.Millisecond)`) and the bootstrap's
     /// passwordless `root`@`%`.
@@ -84,7 +91,7 @@ impl MockStoreDomain {
     /// The session factory of this domain's node: Go's server, which opens
     /// each connection's session on the store.
     #[must_use]
-    pub fn factory(&self) -> &Arc<crate::domain::cluster_session_node::ClusterSessionFactory> {
+    pub fn factory(&self) -> &Arc<crate::domain::cluster_session_node::Domain> {
         &self.stack.factory
     }
 

@@ -76,7 +76,7 @@ fn a_compile_time_account_denial_leaves_the_transaction_open() {
         let denied = low.execute_write(sql).unwrap_err();
         assert_eq!(denied.code, 1227, "{sql}: {}", denied.message);
         assert!(
-            low.store.session.in_transaction(),
+            low.session.in_transaction(),
             "{sql} must not end the transaction"
         );
         assert_eq!(count(&mut root, "cp_accounts"), "0", "{sql} committed");
@@ -98,7 +98,7 @@ fn an_executor_time_create_user_denial_commits_first() {
         .execute_write("CREATE USER 'cp_new'@'%'")
         .unwrap_err();
     assert_eq!(denied.code, 1227, "{}", denied.message);
-    assert!(!low.store.session.in_transaction());
+    assert!(!low.session.in_transaction());
     assert_eq!(count(&mut root, "cp_create_user"), "1");
 }
 
@@ -122,7 +122,7 @@ fn set_password_and_set_default_role_leave_the_transaction_open() {
     ] {
         session.execute_write(sql).unwrap();
         assert!(
-            session.store.session.in_transaction(),
+            session.session.in_transaction(),
             "{sql} must not end the transaction"
         );
         assert_eq!(count(&mut peer, "cp_pw"), "0", "{sql} committed");
@@ -161,7 +161,7 @@ fn an_executor_time_alter_refusal_commits_the_open_transaction_first() {
         let refused = session.execute_write(sql).unwrap_err();
         assert_eq!((refused.code, refused.message.as_str()), (8200, message));
         assert_eq!(node.rows(), id, "{sql} commits the transaction first");
-        assert!(!session.store.session.in_transaction(), "{sql}");
+        assert!(!session.session.in_transaction(), "{sql}");
     }
 }
 
@@ -250,7 +250,7 @@ fn analyze_leaves_the_users_transaction_open() {
         .unwrap();
     root.execute_write("ANALYZE TABLE test.cp_analyze").unwrap();
     assert!(
-        root.store.session.in_transaction(),
+        root.session.in_transaction(),
         "ANALYZE must not end the transaction"
     );
     root.control_transaction("ROLLBACK").unwrap();

@@ -17,7 +17,7 @@
 //! status port itself is the server's.
 use super::*;
 
-impl ClusterSessionFactory {
+impl Domain {
     /// Fresh metadata and the existing usage collector for a peer's internal
     /// session, without retaining a client connection or transaction.
     pub fn peer_session_builder(self: &Arc<Self>) -> Arc<dyn Fn() -> Session + Send + Sync> {

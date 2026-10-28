@@ -15,6 +15,7 @@
 //! The checks Go's `session.ExecuteStmt` makes before `Compile`
 //! (`rust/docs/compile-path-execplan.md`).
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::Session;
 
 /// Go `validateStatementReadOnlyInStaleness` (`session.go:2822`) switches on

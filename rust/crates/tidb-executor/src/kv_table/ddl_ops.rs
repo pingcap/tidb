@@ -93,16 +93,14 @@ impl KvTableDdl for KvTable {
         ctx: &dyn tidb_expr::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {
-        // Go's transaction owns backfill rollback. The nontransactional test
-        // store needs one COW image for the entire backfill instead of repair
-        // writes that can themselves fail or hide the original error.
-        let original =
-            (!self.store().has_external_statement_rollback()).then(|| self.store().clone_box());
+        // Go's transaction owns backfill rollback: the backfill's writes sit
+        // in one stage that a failure cleans up.
+        let stage = self.store_mut().staging();
         let result = self.backfill_index(index, ctx, decode_context);
         if result.is_err() {
-            if let Some(original) = original {
-                *self.store_mut() = original;
-            }
+            self.store_mut().cleanup(stage);
+        } else {
+            self.store_mut().release(stage);
         }
         result
     }

@@ -25,12 +25,12 @@ use std::sync::Arc;
 
 use tidb_ast::Stmt;
 
-use super::{ClusterServerSession, ClusterSessionFactory};
+use super::{ClusterServerSession, Domain};
 use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::session_api::{QuerySession, SqlQueryError};
 use crate::{Session, StmtOutput};
 
-impl ClusterSessionFactory {
+impl Domain {
     /// Go `DDLExecutor().UpdateTableReplicaInfo(sctx, physicalID, available)`:
     /// the TiFlash replica manager's status change, as the persisted
     /// `ActionUpdateTiFlashReplicaStatus` job (none when the status already
@@ -65,20 +65,20 @@ impl ClusterSessionFactory {
         connection_id: u64,
     ) -> Result<ClusterServerSession, SqlQueryError> {
         let mut opened = self.open_storage_session(connection_id)?;
-        opened.store.session.set_restricted_sql(false);
+        opened.session.set_restricted_sql(false);
         let guard = self.processes.register(
             connection_id,
             String::new(),
             String::new(),
-            opened.store.session.current_database().to_owned(),
+            opened.session.current_database().to_owned(),
             None,
         );
-        self.attach_connection(&mut opened.store.session, connection_id, guard);
+        self.attach_connection(&mut opened.session, connection_id, guard);
         Ok(opened)
     }
 }
 
-impl ClusterSessionFactory {
+impl Domain {
     /// This node's DDL notifier, owning: what Go's
     /// `statstestutil.HandleNextDDLEventWithTxn` runs until the statistics
     /// subscriber has handled every pending event. The caller stops it.
@@ -94,7 +94,7 @@ impl ClusterSessionFactory {
 impl ClusterServerSession {
     /// The SQL session this connection drives.
     pub(crate) fn driver_session_mut(&mut self) -> &mut Session {
-        &mut self.store.session
+        &mut self.session
     }
 
     /// Runs `body` over the driver session with a fresh committed snapshot
@@ -107,22 +107,16 @@ impl ClusterServerSession {
     ) -> Result<R, tidb_executor::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
+            .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_executor::DriverError::unsupported)?;
-        let previous = crate::statement_lifecycle::bind_snapshot(
-            &self.store.slot,
-            &self.store.session,
-            snapshot,
-        );
-        let result = body(&mut self.store.session);
-        let _ = crate::statement_lifecycle::finish_snapshot(&self.store.slot);
+        let previous =
+            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, snapshot);
+        let result = body(&mut self.session);
+        let _ = crate::statement_lifecycle::finish_snapshot(&self.slot);
         if let Some(previous) = previous {
-            crate::statement_lifecycle::bind_snapshot(
-                &self.store.slot,
-                &self.store.session,
-                previous,
-            );
+            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, previous);
         }
         Ok(result)
     }
@@ -135,14 +129,12 @@ impl ClusterServerSession {
     pub(crate) fn bind_open_statement_snapshot(&mut self) -> Result<(), tidb_executor::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
+            .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_executor::DriverError::unsupported)?;
-        let _previous = crate::statement_lifecycle::bind_snapshot(
-            &self.store.slot,
-            &self.store.session,
-            snapshot,
-        );
+        let _previous =
+            crate::statement_lifecycle::bind_snapshot(&self.slot, &self.session, snapshot);
         Ok(())
     }
 
@@ -182,37 +174,30 @@ impl ClusterServerSession {
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
         self.rebuild_catalog_if_stale();
-        let resource_group = self
-            .store
-            .session
-            .statement_resource_group(&bound)
-            .into_owned();
-        let shape = self.store.session.statement_read_shape_bound(&bound);
-        self.store
-            .session
+        let resource_group = self.session.statement_resource_group(&bound).into_owned();
+        let shape = self.session.statement_read_shape_bound(&bound);
+        self.session
             .begin_prepared_routed_statement_observation(prepared.sql(), &bound);
-        self.store.session.set_binary_prepared_execution(true);
-        self.store.activate_statement_txn = self.activates_txn_at_build(&bound);
+        self.session.set_binary_prepared_execution(true);
+        self.activate_statement_txn = self.activates_txn_at_build(&bound);
         let attempt = self.with_prelocked_statement(shape, &resource_group, true, |session| {
             session
                 .run_parsed_bound_owned_for(bound.clone(), prepared)
                 .map_err(super::map_error)
         });
-        self.store.activate_statement_txn = false;
-        self.store.session.set_binary_prepared_execution(false);
+        self.activate_statement_txn = false;
+        self.session.set_binary_prepared_execution(false);
         let affected_rows = match &attempt {
             Ok(StmtOutput::Affected(count)) => *count,
             _ => 0,
         };
-        self.store
-            .session
-            .finish_routed_statement_observation_with_error(
-                attempt.is_ok(),
-                affected_rows,
-                attempt.as_ref().err().map(|error| error.error_string()),
-            );
+        self.session.finish_routed_statement_observation_with_error(
+            attempt.is_ok(),
+            affected_rows,
+            attempt.as_ref().err().map(|error| error.error_string()),
+        );
         let output = attempt.map_err(driver_error)?;
-        self.store.session.add_statement_read_keys(affected_rows);
+        self.session.add_statement_read_keys(affected_rows);
         Ok(output)
     }
 
@@ -221,24 +206,24 @@ impl ClusterServerSession {
     /// that observes or fails the analysis.
     pub(crate) fn set_analyzer(
         &mut self,
-        factory: &ClusterSessionFactory,
+        factory: &Domain,
         analyze: Arc<dyn super::ClusterAnalyze>,
     ) {
         let mut services = self
-            .store
             .session
             .domain_services()
             .expect("a node session holds its domain's services")
             .clone();
         services.analyze = factory.analyze_service_over(Arc::clone(&analyze));
-        self.store.session.install_domain_services(services);
-        self.analyze = analyze;
+        self.session.install_domain_services(services);
+        self.domain.set_analyze(analyze);
     }
 
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
     pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
-        self.analyze
+        self.domain
+            .analyze()
             .update_stats_cache(Vec::new())
             .map_err(driver_error)
     }
@@ -248,7 +233,8 @@ impl ClusterServerSession {
     /// they are, as Go's mock-statistics tests install theirs.
     pub(crate) fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
         for table in tables {
-            self.stats
+            self.domain
+                .stats
                 .publish_analyzed_table(table.hist_coll.physical_id, table);
         }
     }
@@ -258,13 +244,13 @@ impl ClusterServerSession {
     /// `physical_id`, which a test copies and changes before publishing it
     /// back through [`Self::update_stats_cache_with`].
     pub(crate) fn stats_table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
-        self.stats.get(physical_id)
+        self.domain.stats.get(physical_id)
     }
 
     /// A fresh timestamp from the store's oracle, for a test transaction
     /// written straight into the store.
     pub(crate) fn fresh_timestamp_for_test(&self) -> Result<u64, String> {
-        self.transactions.fresh_timestamp()
+        self.domain.transactions.fresh_timestamp()
     }
 
     /// Rebuilds the session's catalog when the node's schema moved on.
@@ -276,7 +262,7 @@ impl ClusterServerSession {
     /// deletes aged `deleted` tombstones through its internal session, on
     /// the internal session's own clock.
     pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {
-        match &self.bindings {
+        match &self.domain.bindings {
             Some(bindings) => bindings
                 .gc()
                 .map_err(tidb_executor::DriverError::unsupported),
@@ -299,7 +285,7 @@ impl ClusterServerSession {
         // its file request, and the connection answers it with the client's
         // file -- here the session's installed client-file reader.
         if let Some(path) = self.take_local_infile_request() {
-            let data = self.store.session.read_client_local_file(&path)?;
+            let data = self.session.read_client_local_file(&path)?;
             self.finish_local_infile(&data).map_err(driver_error)?;
         }
         // The outputs the session's own DDL arms give: CREATE TABLE reports
@@ -310,7 +296,6 @@ impl ClusterServerSession {
             Stmt::Ddl(ddl) => match &**ddl {
                 tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
                     !self
-                        .store
                         .session
                         .warnings()
                         .iter()

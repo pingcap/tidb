@@ -16,6 +16,7 @@
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
 //! [`crate::prepared_plan_cache`] for what is and is not modelled.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use tidb_datatype::Datum;
 

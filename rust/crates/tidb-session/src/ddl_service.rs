@@ -24,6 +24,7 @@
 //! production node, and later the in-process tier, differ only in the service
 //! they hand in and in how they commit the open transaction.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_executor::{DriverError, StmtContext};

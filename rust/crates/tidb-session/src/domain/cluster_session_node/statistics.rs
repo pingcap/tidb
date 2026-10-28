@@ -10,6 +10,7 @@
 //! `variable.SetMemQuotaAnalyze` (`pkg/executor/select.go:141`, the quota
 //! below).
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::Arc;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
@@ -216,10 +217,9 @@ impl ClusterServerSession {
         analyze_snapshot: Option<bool>,
         partition_prune_mode: &str,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let _process_statement = self.store.session.retain_process_statement(sql);
+        let _process_statement = self.session.retain_process_statement(sql);
         self.rebuild_catalog_if_stale();
         let parsed = self
-            .store
             .session
             .parse_statement(sql)
             .map_err(super::map_error)?;
@@ -247,13 +247,13 @@ impl ClusterServerSession {
         &self,
     ) -> Box<dyn crate::stats_statement_service::StatsStatementService> {
         let stats = Arc::clone(&self.domain_services().stats);
-        stats(&self.store.session)
+        stats(&self.session)
     }
 
     /// Applies client-transferred LOAD STATS bytes through the cluster handle.
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.store
+        self
             .session
             .run_load_stats(data, service.as_ref())
             .map_err(super::map_error)?;
@@ -265,7 +265,7 @@ impl ClusterServerSession {
         targets: &FlushStatsDeltaTargets,
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.store
+        self
             .session
             .run_flush_stats_delta(targets, service.as_ref())
             .map_err(super::map_error)?;
@@ -277,7 +277,7 @@ impl ClusterServerSession {
         physical_ids: &[i64],
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.store
+        self
             .session
             .run_drop_stats(physical_ids, service.as_ref())
             .map_err(super::map_error)?;
@@ -289,7 +289,7 @@ impl ClusterServerSession {
         statement: &ClusterStatsLockStatement,
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.store
+        self
             .session
             .run_stats_lock(statement, service.as_ref())
             .map_err(super::map_error)?;
@@ -314,8 +314,8 @@ impl ClusterServerSession {
         // `NewTxnInStmt`: the statistics are written by internal sessions and
         // the user's transaction stays open.
         let analyze = Arc::clone(&self.domain_services().analyze);
-        let service = analyze(&self.store.session);
-        self.store
+        let service = analyze(&self.session);
+        self
             .session
             .run_analyze_statements(tables, service.as_ref())
             .map_err(super::map_error)?;
@@ -327,7 +327,7 @@ impl ClusterServerSession {
     }
 }
 
-impl super::ClusterSessionFactory {
+impl super::Domain {
     /// The cluster analyzer as the session's [`AnalyzeService`], for the
     /// statement running on the session it is built from: its memory, its
     /// active resource group and its analyze-job identity.
@@ -337,7 +337,7 @@ impl super::ClusterSessionFactory {
         &self,
     ) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService>
     {
-        self.analyze_service_over(Arc::clone(&self.analyze))
+        self.analyze_service_over(self.analyze())
     }
 
     /// [`Self::analyze_service`] over `analyze`, the domain's analyzer.
@@ -388,7 +388,7 @@ impl super::ClusterSessionFactory {
         let catalog = Arc::clone(&self.catalog);
         let stats = Arc::clone(&self.stats);
         let global_vars = self.global_vars.clone();
-        let analyze = Arc::clone(&self.analyze);
+        let analyze = self.analyze();
         let stats_lock = Arc::clone(&self.stats_lock);
         let row_ids = Arc::clone(&self.auto_ids);
         Arc::new(move |session: &crate::Session| {
@@ -431,7 +431,7 @@ struct ClusterAnalyzeService {
 
 impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
-        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+        super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
             self.catalog.as_ref(),
@@ -536,7 +536,7 @@ struct ClusterStatsStatementService {
 
 impl crate::stats_statement_service::StatsStatementService for ClusterStatsStatementService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
-        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+        super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
             self.catalog.as_ref(),

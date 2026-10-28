@@ -26,6 +26,7 @@
 //! and from [`Session::ddl_preserves_transaction`] whether `Next` returns
 //! before `NewTxnInStmt`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::{DdlStmt, Stmt};
 use tidb_executor::DriverError;
 

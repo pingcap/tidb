@@ -15,6 +15,7 @@
 //! Literal assertions extracted from Go windows/window_sql_test.go.
 //! Regenerate upstream.json with rust/scripts/generate-go-window-tests.py.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::cell_text;
 use crate::{Session, StmtOutput, StmtResult};
 

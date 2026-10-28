@@ -3,6 +3,7 @@
 //! The session's shared DDL orchestration, driven by a fake service so the
 //! behavior around the call (not the publish itself) is pinned.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::ddl_service::DdlService;
 use crate::tests_support::*;
 use crate::*;

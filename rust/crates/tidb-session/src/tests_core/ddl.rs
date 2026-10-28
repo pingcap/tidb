@@ -2,6 +2,7 @@
 //! against the current one, and `CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`RENAME`
 //! of tables and indexes -- Go `pkg/ddl`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 

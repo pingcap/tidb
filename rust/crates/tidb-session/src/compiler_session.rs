@@ -44,10 +44,6 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::session_plan_cache_capacity(self)
     }
 
-    fn has_statement_snapshot(&self) -> bool {
-        self.statement_snapshot.is_some()
-    }
-
     fn staged_dirty_table_ids(&self) -> Vec<i64> {
         self.staged_writes.dirty_table_ids()
     }
@@ -59,40 +55,12 @@ impl tidb_executor::compiler::CompilerSession for Session {
     }
 
 
-    fn statement_context_for_stmt(&self, stmt: &tidb_ast::Stmt, is_dml: bool) -> tidb_executor::StmtContext {
-        Session::statement_context_for_stmt(self, stmt, is_dml)
-    }
-
     fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {
         Session::refresh_node_catalog(self)
     }
 
-    fn in_transaction(&self) -> bool {
-        Session::in_transaction(self)
-    }
-
-    fn statement_is_pessimistic(&self) -> bool {
-        Session::statement_is_pessimistic(self)
-    }
-
-    fn statement_context_for_update_read(&self, ignore_err: bool) -> tidb_executor::StmtContext {
-        Session::statement_context_for_update_read(self, ignore_err)
-    }
-
-    fn parse_statement(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
-        Session::parse_statement(self, sql)
-    }
-
-    fn is_autocommit(&self) -> bool {
-        Session::is_autocommit(self)
-    }
-
     fn historical_read_ts(&self) -> Option<u64> {
         Session::historical_read_ts(self)
-    }
-
-    fn foreign_key_checks(&self) -> bool {
-        Session::foreign_key_checks(self)
     }
 
     fn external_timestamp_read_enabled(&self) -> bool {
@@ -117,10 +85,6 @@ impl tidb_executor::compiler::CompilerSession for Session {
 
     fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
         Session::rewrite_fts_for_planning(self, stmt)
-    }
-
-    fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
-        Session::scanner_sql_mode(self)
     }
 
     fn retrieving_memory_tables<T>(&mut self, ctx: &tidb_executor::StmtContext, mut run: impl FnMut(&mut Self) -> Result<T, DriverError>, ) -> Result<T, DriverError> {
@@ -151,16 +115,11 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::with_staged_catalog(self, body)
     }
 
-    fn statement_context_ignoring(&self, is_dml: bool, ignore_err: bool) -> tidb_executor::StmtContext {
-        Session::statement_context_ignoring(self, is_dml, ignore_err)
-    }
-
-    fn require_explain_statement_privileges(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+    fn require_explain_statement_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
         Session::require_explain_statement_privileges(self, stmt)
-    }
-
-    fn check_noop_functions(&mut self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-        Session::check_noop_functions(self, query)
     }
 
     fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {

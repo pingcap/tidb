@@ -1,6 +1,7 @@
 //! Ordinary aggregates used as window functions, including over
 //! `GROUP BY` and `WITH ROLLUP` inputs.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 

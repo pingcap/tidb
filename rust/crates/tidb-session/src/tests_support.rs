@@ -1,6 +1,7 @@
 //! Shared test fixtures and helpers used across the tidb-session test modules.
 #![cfg(test)]
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 
 /// The single value a one-column, one-row query returns, as text.

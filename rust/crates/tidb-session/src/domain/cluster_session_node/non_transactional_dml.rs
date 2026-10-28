@@ -19,6 +19,7 @@
 //! later job's lookup met the earlier jobs' unpublished rows, and one failed
 //! job discarded every job's writes.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use super::{map_error, ClusterServerSession, MaterializedResultSetSource, QueryResult};
 use crate::domain::session_api::SqlQueryError;
 use tidb_datatype::Datum;
@@ -37,10 +38,10 @@ impl ClusterServerSession {
         &'a mut self,
         batch: &tidb_ast::BatchDmlStmt,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
-        let mut dml = self.store.session.begin_non_transactional_dml(batch);
+        let mut dml = self.session.begin_non_transactional_dml(batch);
         let mut input = NonTransactionalInput::Start;
         let outcome = loop {
-            input = match self.store.session.non_transactional_step(&mut dml, input) {
+            input = match self.session.non_transactional_step(&mut dml, input) {
                 Err(error) => break Err(error),
                 Ok(NonTransactionalStep::Done(output)) => break Ok(output),
                 Ok(NonTransactionalStep::ShardSelect(select)) => {
@@ -51,7 +52,7 @@ impl ClusterServerSession {
                 }
             };
         };
-        self.store.session.finish_non_transactional_dml(dml);
+        self.session.finish_non_transactional_dml(dml);
         let (columns, rows) = match outcome.map_err(map_error)? {
             StmtOutput::Rows { columns, rows } => (columns, rows),
             StmtOutput::Affected(_) | StmtOutput::Done(_) => {
@@ -59,15 +60,15 @@ impl ClusterServerSession {
             }
         };
         let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-        let authority = self.store.session.result_materialization_authority();
+        let authority = self.session.result_materialization_authority();
         Ok(QueryResult::new(Box::new(MaterializedResultSetSource::new(
             crate::domain::pipeline_session::select_columns(&columns),
             rows,
         )))
         .with_cursor_materialization(field_types, authority)
         .with_statement_status(
-            self.store.session.wire_warning_count(),
-            crate::domain::wire_status::WireStatus::of_session(&self.store.session),
+            self.session.wire_warning_count(),
+            crate::domain::wire_status::WireStatus::of_session(&self.session),
         ))
     }
 

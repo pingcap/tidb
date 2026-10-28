@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use super::*;
 use crate::domain::resultset_source::{ResultSetSource, StatementStatus};
 use tidb_chunk::chunk::Chunk;
@@ -55,7 +56,7 @@ impl ClusterServerSession {
         .map_err(|error| self.record_statement_failure(error))?;
         let buffers_rows = shape == StatementReadShape::LockingRead
             && self
-                .store.txn.explicit
+                .txn.explicit
                 .as_ref()
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
@@ -103,7 +104,7 @@ impl ClusterServerSession {
                             )
                             .with_identity_opt(error.identity),
                         ));
-                        let _ = state.close(&mut self.store.session);
+                        let _ = state.close(&mut self.session);
                     }
                     return Err(self.record_statement_failure(error));
                 }
@@ -114,7 +115,7 @@ impl ClusterServerSession {
             let snapshot = self
                 .begin_read_statement(shape, resource_group)
                 .map_err(|error| self.record_statement_failure(error))?;
-            match run(&mut self.store.session) {
+            match run(&mut self.session) {
                 Ok(opened) => (opened, Some(snapshot)),
                 Err(error) => {
                     let _ = self.end_read_statement(snapshot, false);
@@ -129,7 +130,7 @@ impl ClusterServerSession {
                     .iter()
                     .map(|(_, field)| field.clone())
                     .collect();
-                let authority = self.store.session.result_materialization_authority();
+                let authority = self.session.result_materialization_authority();
                 Ok(QueryResult::new(Box::new(ClusterRecordSet {
                     owner: self,
                     state,
@@ -157,13 +158,13 @@ impl ClusterServerSession {
                 };
                 Ok(QueryResult::new(Box::new(source))
                     .with_statement_status(
-                        self.store.session.wire_warning_count(),
-                        WireStatus::of_session(&self.store.session),
+                        self.session.wire_warning_count(),
+                        WireStatus::of_session(&self.session),
                     )
                     .with_statement_output(
-                        self.store.session.statement_affected_rows(),
-                        self.store.session.statement_insert_id(),
-                        self.store.session.statement_message().as_bytes().to_vec(),
+                        self.session.statement_affected_rows(),
+                        self.session.statement_insert_id(),
+                        self.session.statement_message().as_bytes().to_vec(),
                     ))
             }
         }
@@ -172,7 +173,7 @@ impl ClusterServerSession {
 
 impl ResultSetSource for ClusterRecordSet<'_> {
     fn statement_status(&self) -> Option<StatementStatus<'_>> {
-        let session = &self.owner.store.session;
+        let session = &self.owner.session;
         Some(StatementStatus {
             warnings: session.wire_warning_count(),
             status: WireStatus::of_session(session),
@@ -188,7 +189,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         &self.field_types
     }
     fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
-        let result = self.state.next(&mut self.owner.store.session, chunk);
+        let result = self.state.next(&mut self.owner.session, chunk);
         self.failed |= result.is_err();
         result.map_err(|error| error.to_mysql_error())
     }
@@ -216,12 +217,12 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         // The result set's field origins, as the in-process collect records
         // them for the statement that produced them.
         let (names, current_db) = self.state.output_names();
-        let session = &mut self.owner.store.session;
+        let session = &mut self.owner.session;
         session.last_result_output_names = names.to_vec();
         current_db.clone_into(&mut session.last_result_current_db);
         let result = self
             .state
-            .finish(&mut self.owner.store.session)
+            .finish(&mut self.owner.session)
             .map_err(|error| error.to_mysql_error());
         self.failed |= result.is_err();
         let ended = self.snapshot.take().map_or(Ok(()), |snapshot| {
@@ -245,15 +246,15 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         let finished = self.finish();
         let closed = self
             .state
-            .close(&mut self.owner.store.session)
+            .close(&mut self.owner.session)
             .map_err(|error| error.to_mysql_error());
         finished.and(closed)
     }
     fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
-        self.owner.store.session.add_write_sql_resp_duration(duration);
+        self.owner.session.add_write_sql_resp_duration(duration);
     }
     fn add_result_chunk_cells(&mut self, cells: i64) {
-        self.owner.store.session.add_result_chunk_cells(cells);
+        self.owner.session.add_result_chunk_cells(cells);
     }
 }
 

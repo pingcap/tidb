@@ -5,6 +5,7 @@
 //! doc comment for the inheritance rule these tests capture: a session's
 //! copy is made from the shared table once, at connect.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 

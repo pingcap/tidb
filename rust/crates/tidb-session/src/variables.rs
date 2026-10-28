@@ -21,6 +21,7 @@
 //! read side); both read the one [`crate::SessionVars`] this session owns, so
 //! both live here.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use std::borrow::Cow;
 

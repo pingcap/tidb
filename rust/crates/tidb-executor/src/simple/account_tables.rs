@@ -22,12 +22,11 @@ use tidb_hack::GoToLower;
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_util::stringutil::go_to_lower;
 
-use crate::sessionctx::SessionContext;
 use crate::DriverError;
 
 /// What an account executor reaches through its session: Go
 /// `sessionctx.Context` plus the system session's `sqlExecutor`.
-pub trait AccountSession: SessionContext + Sized {
+pub trait AccountSession: crate::stmt_ctx_build::ResetContextOfStmt {
     /// Whether the `mysql` privilege tables exist to write (a session whose
     /// catalog was never bootstrapped skips the rows).
     fn user_table_present(&mut self) -> bool;
@@ -61,15 +60,8 @@ pub trait AccountSession: SessionContext + Sized {
     fn exec_restricted_sql(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// The statement's infoschema.
     fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, crate::Catalog>, DriverError>;
-    /// The statement's infoschema, mutably (the in-process tables).
-    fn with_catalog_mut<T>(
-        &mut self,
-        body: impl FnOnce(&mut crate::Catalog) -> Result<T, DriverError>,
-    ) -> Result<T, DriverError>;
     /// The `RESOURCE_GROUP` user attribute after Go's resource-group checks.
     fn user_resource_group_attribute(&self, name: &str, is_role: bool) -> Result<String, DriverError>;
-    /// The statement context an internal read decodes under.
-    fn statement_context(&self, is_dml: bool) -> crate::StmtContext;
 }
 
 /// Renders one SQL string literal under the default (backslash-escaping)

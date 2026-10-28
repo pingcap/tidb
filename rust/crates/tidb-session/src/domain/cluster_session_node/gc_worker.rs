@@ -32,7 +32,7 @@ use tidb_gcworker::tikv_store::TikvStoreClient;
 use tidb_gcworker::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
 
-use super::{ClusterServerSession, ClusterSessionFactory};
+use super::{ClusterServerSession, Domain};
 use crate::domain::session_api::SessionContext;
 use crate::domain::session_api::{QuerySessionFactory, SqlQueryError};
 
@@ -48,7 +48,7 @@ pub struct NodeGcWorker {
 /// Go `gcworker.NewGCWorker(store, pdClient)` and `Start` for this node, over
 /// the node's one store.
 pub fn start_gc_worker(
-    factory: &Arc<ClusterSessionFactory>,
+    factory: &Arc<Domain>,
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
     opener: Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
@@ -96,13 +96,13 @@ type HistoryJobLoader = Arc<dyn Fn(i64) -> Result<Option<tidb_model::Job>, Strin
 
 /// Go `createSession(store)`: internal sessions without privilege checks.
 pub struct NodeGcSessions {
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
     next_connection_id: AtomicU64,
     history_job: HistoryJobLoader,
 }
 
 impl NodeGcSessions {
-    pub fn new(factory: &Arc<ClusterSessionFactory>, history_job: HistoryJobLoader) -> Self {
+    pub fn new(factory: &Arc<Domain>, history_job: HistoryJobLoader) -> Self {
         Self {
             factory: Arc::downgrade(factory),
             next_connection_id: AtomicU64::new(GC_CONNECTION_ID_BASE),

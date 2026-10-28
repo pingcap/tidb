@@ -180,7 +180,7 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
         .execute_write("LOCK STATS t")
         .expect("cluster lockstats route");
     assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
-    assert!(session.store.session.in_transaction());
+    assert!(session.session.in_transaction());
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
@@ -385,7 +385,7 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
     session
         .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
         .unwrap();
-    let driver_in_transaction = session.store.session.in_transaction();
+    let driver_in_transaction = session.session.in_transaction();
     assert!(
         driver_in_transaction,
         "Go returns from LOCAL CREATE before opening a DDL transaction, so it must not commit"
@@ -411,8 +411,9 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
     // that shared image, but Go's process-wide statistics cache retains the
     // explicit ANALYZE result and the rebuilt session must do the same.
     session
+        .domain
         .stats
-        .store_after_analyze((*session.stats.load()).clone());
+        .store_after_analyze((*session.domain.stats.load()).clone());
     session.rebuild_catalog_now();
     let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
     assert!(
@@ -439,7 +440,7 @@ fn open_session_as_with_stats_lock(
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> ClusterServerSession {
     let cluster = Arc::clone(&node.cluster);
-    let factory = ClusterSessionFactory::new(
+    let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,

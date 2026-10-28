@@ -15,6 +15,7 @@
 
 //! Tests of `tidb_executor::compiler::plan_cacheable_checker` over a session.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PlanCacheableChecker;
 
 use crate::Session;

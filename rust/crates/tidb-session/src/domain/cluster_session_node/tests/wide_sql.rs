@@ -126,29 +126,26 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
 
     assert_eq!(
         first
-            .store
             .session
             .run("SELECT GET_LOCK('cluster-lock', 0)")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
     assert_eq!(
         second
-            .store
             .session
             .run("SELECT IS_USED_LOCK('CLUSTER-LOCK'), GET_LOCK('cluster-lock', 0)")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
+        crate::StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
     );
 
     drop(first);
     assert_eq!(
         second
-            .store
             .session
             .run("SELECT GET_LOCK('cluster-lock', 0)")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
 }
 

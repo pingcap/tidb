@@ -10,6 +10,7 @@
 //! so the assertions are on the ESTIMATES Go produced, not merely on
 //! `stats:pseudo` disappearing.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 use tidb_executor::TableEntry;

@@ -30,6 +30,7 @@
 
 #![cfg(test)]
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};

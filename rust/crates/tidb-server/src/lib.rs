@@ -91,7 +91,7 @@ pub use auth_plugin_registry::{
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 use cluster_boot::run_cluster_session_node_with_spill;
 pub use cluster_session_node::{
-    ClusterServerSession, ClusterSessionFactory,
+    ClusterServerSession, Domain,
 };
 pub use configured_user_store::{
     AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,

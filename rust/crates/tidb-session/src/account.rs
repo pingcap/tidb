@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 
 impl Session {

@@ -49,6 +49,8 @@ pub use tidb_util::execdetails;
 pub mod sessionctx;
 pub use sessionctx::StmtOutput;
 pub mod admin;
+pub mod record_set;
+pub mod stmt_ctx_build;
 pub mod select_result_stats;
 pub mod statement_cop_stats;
 pub mod table_privilege;
@@ -360,3 +362,4 @@ pub(crate) mod test_temp_storage {
 pub use tidb_stmtctx::advisory_lock_state;
 pub mod metrics;
 pub use tidb_infoschema::TidbDecodeKeySnapshot;
+pub use tidb_infoschema::StatementStage;

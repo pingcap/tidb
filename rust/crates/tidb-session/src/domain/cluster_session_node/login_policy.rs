@@ -18,9 +18,9 @@ use crate::domain::configured_user_store::{
 use crate::privilege::{LoginPolicyAction, PasswordLocking};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
 
-struct LoginStorage(Weak<ClusterSessionFactory>);
+struct LoginStorage(Weak<Domain>);
 
-impl ClusterSessionFactory {
+impl Domain {
     pub fn attach_login_storage(self: &Arc<Self>, users: &ConfiguredUserStore) {
         users.attach_login_storage(Arc::new(LoginStorage(Arc::downgrade(self))));
     }
@@ -42,7 +42,7 @@ impl LoginPolicyStorage for LoginStorage {
     }
 }
 
-impl ClusterSessionFactory {
+impl Domain {
     fn apply_login_policy(
         self: &Arc<Self>,
         user: &str,

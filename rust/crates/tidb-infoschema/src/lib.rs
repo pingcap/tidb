@@ -542,31 +542,58 @@ impl Catalog {
             .map(Arc::make_mut)
     }
 
-    /// Whether every table in this catalog is backed by a session-owned
-    /// statement savepoint. Cluster sessions satisfy this for their loaded
-    /// `KvTable`s; standalone and pipeline sessions use the in-process
-    /// `MemTableStorage` and must stage a catalog image instead.
-    #[must_use]
-    pub fn all_tables_have_external_statement_rollback(&self) -> bool {
-        let external = |entry: &Arc<TableEntry>| match entry.as_ref() {
-            TableEntry::Kv(table) => table.has_external_statement_rollback(),
-            _ => false,
-        };
-        self.schema.databases
-            .values()
-            .all(|database| database.tables.values().all(external))
-            && self.local_temporary.iter().all(|(_, entry)| external(entry))
+    /// Go `MemBuffer.Staging()` for the tables whose rows live in this
+    /// catalog's in-process stores (the temporary tables): opens one stage
+    /// on each. Tables a session-owned savepoint covers stage nothing here.
+    pub fn begin_statement_stage(&mut self) -> StatementStage {
+        let needs = |entry: &Arc<TableEntry>| matches!(entry.as_ref(), TableEntry::Kv(table) if !table.has_external_statement_rollback());
+        let mut at: Vec<StagedTable> = Vec::new();
+        for (database, catalog) in self.schema.databases.iter() {
+            for (name, entry) in &catalog.tables {
+                if needs(entry) {
+                    at.push(StagedTable::Persistent(database.clone(), name.clone()));
+                }
+            }
+        }
+        for (index, (_, entry)) in self.local_temporary.iter().enumerate() {
+            if needs(entry) {
+                at.push(StagedTable::Local(index));
+            }
+        }
+        let mut staged = Vec::with_capacity(at.len());
+        for at in at {
+            if let Some(TableEntry::Kv(table)) = self.staged_entry_mut(&at) {
+                let handle = Arc::make_mut(table).store_mut().staging();
+                staged.push((at, handle));
+            }
+        }
+        StatementStage(staged)
     }
 
-    /// Whether one named table is backed by a session-owned statement
-    /// savepoint. A missing or non-KV entry deliberately returns false so the
-    /// caller keeps the image-based path while the executor reports the
-    /// canonical schema error.
-    #[must_use]
-    pub fn table_has_external_statement_rollback(&self, database: &str, name: &str) -> bool {
-        self.get_in(database, name).is_some_and(|entry| {
-            matches!(entry, TableEntry::Kv(table) if table.has_external_statement_rollback())
-        })
+    /// Go `MemBuffer.Release(h)` when `keep`, `Cleanup(h)` otherwise, for
+    /// every stage [`Self::begin_statement_stage`] opened.
+    pub fn end_statement_stage(&mut self, stage: StatementStage, keep: bool) {
+        for (at, handle) in stage.0 {
+            if let Some(TableEntry::Kv(table)) = self.staged_entry_mut(&at) {
+                if keep {
+                    Arc::make_mut(table).store_mut().release(handle);
+                } else {
+                    Arc::make_mut(table).store_mut().cleanup(handle);
+                }
+            }
+        }
+    }
+
+    fn staged_entry_mut(&mut self, at: &StagedTable) -> Option<&mut TableEntry> {
+        let entry = match at {
+            StagedTable::Persistent(database, name) => {
+                Arc::make_mut(Arc::make_mut(&mut self.schema.databases).get_mut(database)?)
+                    .tables
+                    .get_mut(name)?
+            }
+            StagedTable::Local(index) => &mut self.local_temporary.get_mut(*index)?.1,
+        };
+        Some(Arc::make_mut(entry))
     }
 
     /// Registers a matrix-backed `table` in the default database.
@@ -1391,3 +1418,16 @@ pub fn run_create_system_table_in(
     let name = info.name.original().to_owned();
     catalog.register_kv_in(database, &name, table)
 }
+
+/// Where a staged table sits in the catalog.
+#[derive(Clone, Debug)]
+enum StagedTable {
+    Persistent(String, String),
+    Local(usize),
+}
+
+/// The stages [`Catalog::begin_statement_stage`] opened, closed by
+/// [`Catalog::end_statement_stage`].
+#[derive(Debug)]
+#[must_use]
+pub struct StatementStage(Vec<(StagedTable, tidb_kv::storage::StagingHandle)>);

@@ -17,6 +17,7 @@
 //! options from session variables, temporary tables, the warnings), and an
 //! [`AnalyzeService`] the caller supplies samples and persists.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

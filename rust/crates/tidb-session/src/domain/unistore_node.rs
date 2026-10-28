@@ -235,7 +235,7 @@ mod transaction_buffer_tests {
 /// catalog, and coprocessor client the live `--store unistore
 /// --cluster-session` process serves.
 pub struct UnistoreClusterStack {
-    pub factory: Arc<crate::domain::cluster_session_node::ClusterSessionFactory>,
+    pub factory: Arc<crate::domain::cluster_session_node::Domain>,
     pub schema_version: i64,
     pub stats: Arc<tidb_exec::stats_watch::SharedStats>,
     pub _stats_maintenance:
@@ -482,9 +482,7 @@ pub fn unistore_cluster_session_stack_from(
     image: Option<&BootstrapImage>,
     mock_tiflash: usize,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
-    use crate::domain::cluster_session_node::{
-        ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
-    };
+    use crate::domain::cluster_session_node::{Domain, RealClusterDdl, RealClusterTransactions};
     use crate::domain::real_tikv_node::RunConfiguredNodeError;
 
     let engine = RunConfiguredNodeError::Engine;
@@ -696,7 +694,7 @@ pub fn unistore_cluster_session_stack_from(
         })?,
     );
 
-    let factory = ClusterSessionFactory::new(
+    let factory = Domain::new(
         Arc::new(RealClusterTransactions::new(
             opener.clone(),
             IN_PROCESS_TIMEOUT,

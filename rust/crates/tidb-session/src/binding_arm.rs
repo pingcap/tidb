@@ -17,6 +17,7 @@
 //! `SELECT` runs through. The mechanics they build on live in
 //! [`crate::binding`]; read that module's doc first.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;

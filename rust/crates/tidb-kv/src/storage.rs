@@ -133,6 +133,10 @@ where
     }
 }
 
+/// A statement stage of a [`TableStorage`] (Go `kv.StagingHandle`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StagingHandle(pub usize);
+
 /// The key/value backend a table's rows and index entries live in.
 ///
 /// All four KV methods speak raw TiKV-format bytes: the caller encodes record
@@ -414,6 +418,21 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         false
     }
 
+    /// Go `MemBuffer.Staging()`: opens a statement stage over this backend's
+    /// writes. A backend whose statement savepoint the session owns
+    /// elsewhere (see [`Self::has_external_statement_rollback`]) stages
+    /// nothing.
+    fn staging(&mut self) -> StagingHandle {
+        StagingHandle(0)
+    }
+
+    /// Go `MemBuffer.Cleanup(h)`: drops every write made since `handle`.
+    fn cleanup(&mut self, _handle: StagingHandle) {}
+
+    /// Go `MemBuffer.Release(h)`: keeps the stage's writes, folding them
+    /// into the enclosing stage.
+    fn release(&mut self, _handle: StagingHandle) {}
+
     /// Whether this backend's commit drops untouched index entries (Go
     /// `TiDBKVFilter.IsUnnecessaryKeyValue`), so an UPDATE may stage them as
     /// Go's `index.create(untouched = true)` does. A backend that would
@@ -496,6 +515,9 @@ pub struct MemTableStorage {
     /// The transaction's staged writes while a write runs inside a
     /// transaction (see [`TableStorage::attach_txn_staging`]).
     staging: Option<crate::staged_writes::TxnStaging>,
+    /// Go `memdb`'s staging stack: per open stage, every key this backend
+    /// wrote with the value it held before (`None`: absent), oldest first.
+    stages: Vec<Vec<(Key, Option<Vec<u8>>)>>,
 }
 
 impl MemTableStorage {
@@ -507,6 +529,45 @@ impl MemTableStorage {
 }
 
 impl TableStorage for MemTableStorage {
+    fn staging(&mut self) -> StagingHandle {
+        self.stages.push(Vec::new());
+        StagingHandle(self.stages.len())
+    }
+
+    fn cleanup(&mut self, handle: StagingHandle) {
+        while self.stages.len() >= handle.0 && handle.0 > 0 {
+            let Some(stage) = self.stages.pop() else {
+                break;
+            };
+            for (key, previous) in stage.into_iter().rev() {
+                let current = Getter::get(&mut self.inner, &key, GetOptions::default())
+                    .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+                self.byte_size = self.byte_size.saturating_sub(current);
+                match previous {
+                    Some(value) => {
+                        self.byte_size += (key.as_bytes().len() + value.len()) as u64;
+                        let _ = Mutator::set(&mut self.inner, key, value);
+                    }
+                    None => {
+                        let _ = Mutator::delete(&mut self.inner, key);
+                    }
+                }
+            }
+        }
+    }
+
+    fn release(&mut self, handle: StagingHandle) {
+        if handle.0 == 0 || self.stages.len() != handle.0 {
+            return;
+        }
+        let Some(stage) = self.stages.pop() else {
+            return;
+        };
+        if let Some(parent) = self.stages.last_mut() {
+            parent.extend(stage);
+        }
+    }
+
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         note_storage_op(|ops| ops.gets += 1);
         Getter::get(&mut self.inner, key, GetOptions::default())
@@ -522,9 +583,16 @@ impl TableStorage for MemTableStorage {
         if let Some(staging) = &self.staging {
             staging.writes.note(staging.table_id, key.as_bytes());
         }
-        let replaced = Getter::get(&mut self.inner, &key, GetOptions::default())
-            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        let previous = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .ok()
+            .map(|entry| entry.value.clone());
+        let replaced = previous
+            .as_ref()
+            .map_or(0, |value| (key.as_bytes().len() + value.len()) as u64);
         let added = (key.as_bytes().len() + value.len()) as u64;
+        if let Some(stage) = self.stages.last_mut() {
+            stage.push((key.clone(), previous));
+        }
         Mutator::set(&mut self.inner, key, value).map_err(StorageError::from)?;
         self.byte_size = self.byte_size.saturating_sub(replaced) + added;
         Ok(())
@@ -534,8 +602,15 @@ impl TableStorage for MemTableStorage {
         if let Some(staging) = &self.staging {
             staging.writes.note(staging.table_id, key.as_bytes());
         }
-        let removed = Getter::get(&mut self.inner, &key, GetOptions::default())
-            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        let previous = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .ok()
+            .map(|entry| entry.value.clone());
+        let removed = previous
+            .as_ref()
+            .map_or(0, |value| (key.as_bytes().len() + value.len()) as u64);
+        if let Some(stage) = self.stages.last_mut() {
+            stage.push((key.clone(), previous));
+        }
         Mutator::delete(&mut self.inner, key).map_err(StorageError::from)?;
         self.byte_size = self.byte_size.saturating_sub(removed);
         Ok(())

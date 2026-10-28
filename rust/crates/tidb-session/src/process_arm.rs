@@ -21,6 +21,7 @@
 //! registry and kill-target trait a server front end wires in; this file is
 //! the Session-side use of that registry.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 use tidb_executor::memtable_reader::SqlDigestTextRetriever;
 

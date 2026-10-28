@@ -682,8 +682,6 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
     ) -> Result<(), DriverError>;
     /// Go `domain.GetDomain(ctx).GetWorkloadRepository()`.
     fn workload_repository(&self) -> Option<std::sync::Arc<tidb_workloadrepo::Worker>>;
-    /// The server's published pushdown and optimizer-rule blacklists.
-    fn pushdown_blacklists(&self) -> &crate::blacklist::PushdownBlacklists;
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;

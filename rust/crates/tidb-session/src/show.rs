@@ -19,6 +19,7 @@
 //! domain and its session manager. The executors' bodies live in
 //! `tidb_executor`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::privilege::PrivilegeTypeExt;
 use crate::*;
 use tidb_executor::show::exec::ShowExec;
@@ -168,28 +169,12 @@ impl tidb_executor::show::exec::ShowExec for Session {
         Session::with_catalog_scope(self, include_local, body)
     }
 
-    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<Catalog>> {
-        std::sync::Arc::clone(self.catalog.inner())
-    }
-
     fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
         Session::load_global_bindings(self)
     }
 
     fn session_bindings_mut(&mut self) -> &mut binding::SessionBindings {
         &mut self.session_bindings
-    }
-
-    fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {
-        std::sync::Arc::clone(&self.stats_handle)
-    }
-
-    fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
-        Session::session_time_zone(self)
-    }
-
-    fn active_resource_group(&self) -> &str {
-        &self.active_resource_group
     }
 
     fn activated_txn_start_ts(&mut self) -> i64 {
@@ -231,10 +216,6 @@ impl tidb_executor::show::exec::ShowExec for Session {
 
     fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError> {
         Session::require_show_stats_privilege(self, table)
-    }
-
-    fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore> {
-        Session::region_store(self)
     }
 
     fn table_storage_statistics_catalog(
@@ -326,9 +307,6 @@ impl tidb_executor::bind_exec::SqlBindExec for Session {
 }
 
 impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
-    fn hypo_indexes(&self) -> std::sync::Arc<tidb_executor::ddl::HypoIndexes> {
-        std::sync::Arc::clone(&self.hypo_indexes)
-    }
 
     fn set_hypo_indexes(&mut self, indexes: std::sync::Arc<tidb_executor::ddl::HypoIndexes>) {
         self.hypo_indexes = indexes;
@@ -348,9 +326,6 @@ impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
 }
 
 impl tidb_executor::admin::AdminExec for Session {
-    fn pushdown_blacklists(&self) -> &tidb_executor::blacklist::PushdownBlacklists {
-        &self.pushdown_blacklists
-    }
 
     fn all_ddl_jobs(
         &mut self,

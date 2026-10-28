@@ -24,6 +24,7 @@
 //! bootstraps -- is `CANCEL`, which is the default honoured here.
 #![cfg(test)]
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 

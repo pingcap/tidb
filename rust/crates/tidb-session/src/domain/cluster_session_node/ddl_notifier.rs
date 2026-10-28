@@ -24,10 +24,7 @@ use tidb_ddl_notifier::{
     Store, PRIORITY_QUEUE_HANDLER_ID, STATS_META_HANDLER_ID,
 };
 
-use super::{
-    table_and_partition_ids, ClusterServerSession, ClusterSessionFactory,
-    ClusterStatsSessionContext,
-};
+use super::{table_and_partition_ids, ClusterServerSession, ClusterStatsSessionContext, Domain};
 use crate::domain::session_api::QuerySession;
 
 fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
@@ -199,10 +196,7 @@ fn finish_stats_handler(
     Ok(())
 }
 
-pub(super) fn build_notifier(
-    factory: &Arc<ClusterSessionFactory>,
-    stats_lease: Duration,
-) -> Arc<DdlNotifier> {
+pub(super) fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNotifier> {
     let notifier = Arc::new(DdlNotifier::new(
         Arc::new(ClusterNotifierSessionPool::new(
             factory.advanced_sys_session_pool(),

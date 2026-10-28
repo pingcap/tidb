@@ -22,6 +22,7 @@
 //! with no front end has none of it, which is why every check falls back to
 //! "unrestricted" rather than "denied".
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::privilege::PrivilegeTypeExt;
 use std::sync::Arc;
 

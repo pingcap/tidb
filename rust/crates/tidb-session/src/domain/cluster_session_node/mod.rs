@@ -166,6 +166,9 @@
 //! [`StatementSnapshot`]: tidb_cluster::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_cluster::cluster_table_storage::SessionTransaction
 
+use crate::store_session::{sql_query_error, StoreTxnOps};
+use crate::statement_lifecycle::CatalogFollowing as _;
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedExec;
 use tidb_executor::compiler::PreparedAstCompile;
 use std::borrow::Cow;
@@ -254,13 +257,11 @@ mod ddl_job_history_store;
 mod ddl_notifier;
 pub mod gc_worker;
 use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
-use crate::store_session::StoreSession;
 #[cfg(test)]
 use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
 #[cfg(test)]
 use tidb_cluster::cluster_table_storage::LockKeysOutcome;
 #[cfg(test)]
-use crate::StmtResult;
 #[cfg(test)]
 const ERR_WRITE_CONFLICT: u16 = tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
@@ -934,11 +935,14 @@ impl crate::DataLockWaitsProvider for ClusterDataLockWaits {
     }
 }
 
-/// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
-pub struct ClusterSessionFactory {
+/// Go `domain.Domain`: the node's schema image and its follower, the
+/// statistics handle, the DDL and transaction clients, the privilege and
+/// process registries and the background workers -- shared by every session
+/// it opens, one cluster-backed [`Session`] per authenticated connection.
+pub struct Domain {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
-    binding_session_factory: Weak<ClusterSessionFactory>,
+    binding_session_factory: Weak<Domain>,
     /// The `SHOW STATUS` providers this domain registered as it started its
     /// DDL and binding handle, unregistered when it closes.
     statistics: Vec<Arc<dyn crate::statusvar::Statistics>>,
@@ -957,7 +961,7 @@ pub struct ClusterSessionFactory {
     sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::domain::cluster_analyze_seam`].
-    analyze: Arc<dyn ClusterAnalyze>,
+    analyze: std::sync::RwLock<Arc<dyn ClusterAnalyze>>,
     /// The route a persisted statistics-lock operation takes.
     stats_lock: Arc<dyn ClusterStatsLock>,
     /// The cluster catalog, republished whole by the reload thread and by a
@@ -1079,7 +1083,19 @@ pub struct ClusterSessionFactory {
         std::sync::OnceLock<Arc<Mutex<tidb_stats_handle_autoanalyze_refresher::Refresher>>>,
 }
 
-impl ClusterSessionFactory {
+impl Domain {
+    /// The domain's ANALYZE client.
+    pub(crate) fn analyze(&self) -> Arc<dyn ClusterAnalyze> {
+        Arc::clone(&self.analyze.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Replaces the domain's ANALYZE client.
+    pub(crate) fn set_analyze(&self, analyze: Arc<dyn ClusterAnalyze>) {
+        *self.analyze.write().unwrap_or_else(std::sync::PoisonError::into_inner) = analyze;
+    }
+}
+
+impl Domain {
     /// Install the one domain notification queue shared by every session.
     pub fn with_global_config_syncer(
         mut self,
@@ -1164,7 +1180,7 @@ impl ClusterSessionFactory {
             ddl,
             accounts,
             sysvars,
-            analyze,
+            analyze: std::sync::RwLock::new(analyze),
             stats_lock,
             catalog,
             privileges,
@@ -1290,7 +1306,7 @@ impl ClusterSessionFactory {
             cancellation: crate::domain::session_api::ConnectionCancellation::default(),
             close: crate::domain::session_api::ConnectionClose::default(),
         })?;
-        session.store.session.set_restricted_sql(true);
+        session.session.set_restricted_sql(true);
         Ok(session)
     }
 
@@ -2299,7 +2315,7 @@ struct AutoAnalyzeWorker {
 }
 
 impl AutoAnalyzeWorker {
-    fn start(factory: &Arc<ClusterSessionFactory>, stats_lease: Duration) -> Self {
+    fn start(factory: &Arc<Domain>, stats_lease: Duration) -> Self {
         let stop = Arc::new(UsageWorkerStop {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
@@ -2342,7 +2358,7 @@ impl Drop for AutoAnalyzeWorker {
 }
 
 impl AnalyzeJobsCleanupWorker {
-    fn start(factory: &Arc<ClusterSessionFactory>, stats_lease: Duration) -> Self {
+    fn start(factory: &Arc<Domain>, stats_lease: Duration) -> Self {
         let stop = Arc::new(UsageWorkerStop {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
@@ -2478,7 +2494,7 @@ impl UsageWorkerStop {
 }
 
 impl StatsUsageWorkers {
-    fn start(factory: &Arc<ClusterSessionFactory>, lease: crate::domain::node_config::StatsLease) -> Self {
+    fn start(factory: &Arc<Domain>, lease: crate::domain::node_config::StatsLease) -> Self {
         let stop = Arc::new(UsageWorkerStop {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
@@ -2489,7 +2505,7 @@ impl StatsUsageWorkers {
             Weak::clone(&weak),
             Arc::clone(&stop),
             Duration::from_secs(30 * 60),
-            ClusterSessionFactory::gc_index_usage,
+            Domain::gc_index_usage,
         )];
         let mut flush_on_drop = false;
         if let crate::domain::node_config::StatsLease::Positive(lease) = lease {
@@ -2543,7 +2559,7 @@ impl Drop for StatsUsageWorkers {
     }
 }
 
-impl Drop for ClusterSessionFactory {
+impl Drop for Domain {
     fn drop(&mut self) {
         // Go `ddl.close` and `Domain.Close`: `variable.UnregisterStatistics`.
         for statistics in &self.statistics {
@@ -3341,10 +3357,10 @@ impl Drop for HistoricalStatsRuntime {
 
 fn spawn_usage_worker(
     name: &str,
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
     stop: Arc<UsageWorkerStop>,
     interval: Duration,
-    action: fn(&ClusterSessionFactory) -> Result<(), String>,
+    action: fn(&Domain) -> Result<(), String>,
 ) -> std::thread::JoinHandle<()> {
     let worker_name = name.to_owned();
     let log_name = worker_name.clone();
@@ -3489,12 +3505,12 @@ fn stats_physical_ids(table: &tidb_model::table_info::TableInfo, dynamic: bool) 
     ids
 }
 
-impl QuerySessionFactory for ClusterSessionFactory {
+impl QuerySessionFactory for Domain {
     type Session = ClusterServerSession;
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         let mut opened = self.open_storage_session(context.connection_id)?;
-        let session = &mut opened.store.session;
+        let session = &mut opened.session;
         let identity = &context.identity;
         session.set_restricted_sql(identity.is_internal());
         session.set_user(
@@ -3614,7 +3630,7 @@ impl crate::GlobalIdGenerator for ClusterGlobalIds {
     }
 }
 
-impl ClusterSessionFactory {
+impl Domain {
     // No authentication identity, process-list entry, or user transaction is
     // copied into internal storage work. Its MDL holds nest in the caller's
     // connection scope, while its storage and transaction are independent.
@@ -3872,16 +3888,19 @@ impl ClusterSessionFactory {
             .map_err(map_error)?;
 
         Ok(ClusterServerSession {
-            store: StoreSession::new(
-                session,
-                TxnManager::new(
+            domain: self
+                .binding_session_factory
+                .upgrade()
+                .expect("a domain opens sessions from behind its shared Arc"),
+            session: session,
+            txn: TxnManager::new(
                     Arc::clone(&self.transactions),
                     Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
                     connection_id,
                     buffer.clone(),
                 ),
-                slot,
-                catalog_follower::CatalogFollower::new(
+            slot: slot,
+            follower: catalog_follower::CatalogFollower::new(
                     Arc::clone(&self.catalog),
                     storage,
                     Arc::clone(&self.auto_ids),
@@ -3889,7 +3908,7 @@ impl ClusterSessionFactory {
                     loaded.schema_version,
                     built.skipped,
                 ),
-                Box::new({
+            commit_hooks: Box::new({
                     let bindings = self.bindings.clone();
                     let schema_validator = self.schema_validator.clone();
                     move |session, schema_version| {
@@ -3901,20 +3920,9 @@ impl ClusterSessionFactory {
                         })
                     }
                 }),
-            ),
-            bindings: self.bindings.clone(),
-            global_vars: self.global_vars.clone(),
+            activate_statement_txn: false,
             buffer,
-            transactions: Arc::clone(&self.transactions),
-            ddl: Arc::clone(&self.ddl),
-            analyze: Arc::clone(&self.analyze),
-            catalog: Arc::clone(&self.catalog),
-            stats: Arc::clone(&self.stats),
-            auto_ids: Arc::clone(&self.auto_ids),
-            schema_pins: Arc::clone(&self.schema_pins),
             connection_id: connection_id,
-            schema_validator: self.schema_validator.clone(),
-            historical_stats_worker: Arc::clone(&self.historical_stats_worker),
             ok_packet: WriteOutcome::default(),
             parked_local_infile: None,
         })
@@ -3970,7 +3978,7 @@ struct SystemSessionExecution<'a> {
 impl Drop for SystemSessionExecution<'_> {
     fn drop(&mut self) {
         self.session.connection_id = self.connection_id;
-        self.session.store.session.set_connection_id(self.connection_id);
+        self.session.session.set_connection_id(self.connection_id);
     }
 }
 
@@ -4050,7 +4058,7 @@ impl ClusterStatsSessionState {
         let track_guard = if let Some(track) = option.track_sys_proc.as_ref() {
             let process = self.with_session(|session| {
                 session
-                    .store.session
+                    .session
                     .system_process()
                     .ok_or_else(|| stats_session_error("system session has no process owner"))
             })?;
@@ -4074,7 +4082,7 @@ impl ClusterStatsSessionState {
                 execution.session.connection_id = option.track_sys_proc_id;
                 execution
                     .session
-                    .store.session
+                    .session
                     .set_connection_id(option.track_sys_proc_id);
             }
             execution
@@ -4243,7 +4251,7 @@ impl ClusterStatsSessionContext {
     fn set_var(&self, name: &str, value: impl Into<String>) {
         let value = value.into();
         self.with_session(
-            |session| match session.store.session.set_internal_system_var(name, value) {
+            |session| match session.session.set_internal_system_var(name, value) {
                 Ok(()) => Ok(()),
                 Err(error) if error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE) => {
                     Ok(())
@@ -4275,7 +4283,7 @@ impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterSt
     fn enable_analyze_snapshot(&self) -> bool {
         self.with_session(|session| {
             session
-                .store.session
+                .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
                 .map(|value| tidb_vardef::option_values::tidb_opt_on(&value))
@@ -4308,7 +4316,7 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     }
 
     fn txn_valid(&self) -> Result<bool, tidb_sqlexec::SqlExecError> {
-        self.with_session(|session| Ok(session.store.txn.explicit.is_some()))
+        self.with_session(|session| Ok(session.txn.explicit.is_some()))
     }
 
     fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
@@ -4378,7 +4386,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
     fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
         self.with_session(|session| {
-            match session.store.session.set_internal_system_var(
+            match session.session.set_internal_system_var(
                 tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
                 value,
             ) {
@@ -4405,7 +4413,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     fn partition_prune_mode(&self) -> String {
         self.with_session(|session| {
             session
-                .store.session
+                .session
                 .vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
                 .map_err(|error| stats_session_error(format!("{error:?}")))
@@ -4444,7 +4452,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     fn set_time_zone(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
         self.with_session(|session| {
             session
-                .store.session
+                .session
                 .set_internal_system_var("time_zone", value)
                 .map_err(|error| stats_session_error(format!("{error:?}")))
         })
@@ -4453,7 +4461,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     fn location(&self) -> String {
         self.with_session(|session| {
             session
-                .store.session
+                .session
                 .vars()
                 .get_system("time_zone")
                 .map_err(|error| stats_session_error(format!("{error:?}")))
@@ -4468,7 +4476,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
     fn transaction_start_ts(&self, active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {
         self.with_session(|session| {
-            if let Some(transaction) = session.store.txn.explicit.as_ref() {
+            if let Some(transaction) = session.txn.explicit.as_ref() {
                 return Ok(transaction.start_ts());
             }
             if active {
@@ -4482,13 +4490,13 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 }
 
 struct ClusterPriorityQueueSource {
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
     stats_lease: Duration,
     session_pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
 }
 
 impl ClusterPriorityQueueSource {
-    fn factory(&self) -> Result<Arc<ClusterSessionFactory>, String> {
+    fn factory(&self) -> Result<Arc<Domain>, String> {
         self.factory
             .upgrade()
             .ok_or_else(|| "cluster session factory is stopped".to_owned())
@@ -4758,12 +4766,12 @@ fn sql_string_literal(value: &str) -> String {
 }
 
 pub struct WorkloadRepositorySessionPool {
-    factory: std::sync::Weak<ClusterSessionFactory>,
+    factory: std::sync::Weak<Domain>,
     next_connection_id: std::sync::atomic::AtomicU64,
 }
 
 impl WorkloadRepositorySessionPool {
-    pub fn new(factory: &Arc<ClusterSessionFactory>) -> Self {
+    pub fn new(factory: &Arc<Domain>) -> Self {
         Self {
             factory: Arc::downgrade(factory),
             next_connection_id: std::sync::atomic::AtomicU64::new(1_u64 << 62),
@@ -4872,7 +4880,7 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
 
     fn schema_exists(&self, schema: &str) -> bool {
         self.session
-            .store.session
+            .session
             .shared_catalog()
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -4884,7 +4892,7 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
         schema: &str,
         table: &str,
     ) -> Result<tidb_workloadrepo::TableInfo, String> {
-        let catalog = self.session.store.session.shared_catalog();
+        let catalog = self.session.session.shared_catalog();
         let catalog = catalog.lock().unwrap_or_else(|error| error.into_inner());
         let entry = catalog
             .table_in(schema, table)
@@ -4932,7 +4940,7 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
 }
 
 struct InternalBindingWriter {
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
     bindings: Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>,
     connection_id: u64,
 }
@@ -4955,9 +4963,9 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
             .open_storage_session(self.connection_id)
             .map_err(to_driver)?;
         internal
-            .store.session
+            .session
             .set_global_binding_cache(self.bindings.cache());
-        internal.store.session.enable_privilege_bypass();
+        internal.session.enable_privilege_bypass();
         internal
             .execute_internal("BEGIN PESSIMISTIC")
             .map_err(to_driver)?;
@@ -4965,7 +4973,7 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
             // Use Go's shared record-lock statement so binding writers on
             // different nodes serialize through the same storage transaction.
             internal.execute_internal(crate::binding_utils::LOCK_BIND_INFO_SQL)?;
-            let resource_group = internal.store.session.current_resource_group().to_owned();
+            let resource_group = internal.session.current_resource_group().to_owned();
             let changed = internal.with_prelocked_statement(
                 StatementReadShape::LockingRead,
                 &resource_group,
@@ -4993,39 +5001,28 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
 
 /// One connection's wide-SQL session over cluster storage.
 pub struct ClusterServerSession {
+    /// Go `domain.GetDomain(sctx)`: the node's domain this session runs in.
+    domain: Arc<Domain>,
     /// The session over the store: its variables, its transaction manager,
     /// the snapshot slot its tables read through and the catalog follower.
-    store: StoreSession<catalog_follower::CatalogFollower>,
-    bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
-    /// Process-global variables consulted while persisting statistics deltas.
-    global_vars: GlobalSysvars,
+    /// The session variables and the in-process statement machinery.
+    session: Session,
+    /// Go `sessiontxn.TxnManager` with its `LazyTxn`.
+    txn: TxnManager,
+    /// The slot every table of `session` reads through; rebound per statement.
+    slot: crate::statement_lifecycle::SnapshotSlot,
+    /// The catalog the session follows.
+    follower: catalog_follower::CatalogFollower,
+    /// Whether the running write is one whose transaction Go's executor
+    /// builder activates before it runs (`updateForUpdateTS` ->
+    /// `GetStmtForUpdateTS`).
+    activate_statement_txn: bool,
+    commit_hooks: crate::store_session::CommitHooksFactory,
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
     buffer: MutationBuffer,
-    transactions: Arc<dyn ClusterTransactions>,
-    /// The route a stored-schema change takes; see [`ClusterDdl`].
-    ddl: Arc<dyn ClusterDdl>,
-    /// The route an `ANALYZE TABLE` takes; see
-    /// [`crate::domain::cluster_analyze_seam`].
-    analyze: Arc<dyn ClusterAnalyze>,
-    /// The node's catalog, which this connection follows.
-    catalog: Arc<SharedClusterCatalog>,
-    /// The node's statistics, republished on its own cadence by the stats
-    /// reload thread -- an `ANALYZE` changes these without changing the
-    /// schema version, so they are followed separately.
-    stats: Arc<SharedStats>,
-    /// The node's auto-increment allocators, needed on every catalog rebuild
-    /// so the rebuilt tables keep the ranges the old ones had reserved.
-    auto_ids: Arc<dyn TableAutoIds>,
-    /// The node's MDL gate; statements and the explicit transaction register
-    /// the catalog version they run on. See [`schema_sync::SchemaPinRegistry`].
-    schema_pins: Arc<schema_sync::SchemaPinRegistry>,
     /// This connection's id, the registry's key.
     connection_id: u64,
-    /// The node's schema validator; see [`ClusterSessionFactory`].
-    schema_validator: Option<Arc<SchemaValidator>>,
-    /// The domain-global mailbox successful ANALYZE results enqueue into.
-    historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `QueryCtx.AffectedRows` / `LastInsertID` of the last statement
     /// [`QuerySession::execute_stmt`] answered without a result set.
     ok_packet: WriteOutcome,
@@ -5051,10 +5048,10 @@ impl Drop for ClusterServerSession {
         // runs through the cluster job, never the in-process catalog the
         // driver session would otherwise edit when it drops.
         if tidb_config::config_tree::config::table_lock_enabled() {
-            if let Some(statement) = self.store.session.cluster_unlock_tables_statement() {
+            if let Some(statement) = self.session.cluster_unlock_tables_statement() {
                 if self
-                    .ddl
-                    .execute(&statement, &self.store.session.ddl_statement_context())
+                    .domain.ddl
+                    .execute(&statement, &self.session.ddl_statement_context())
                     .is_err()
                 {
                     // Go `session.Close` logs the connection, not the error.
@@ -5062,11 +5059,11 @@ impl Drop for ClusterServerSession {
                         "release table lock failed",
                         &[tidb_log::Field::new(
                             "conn",
-                            tidb_log::Value::U64(self.store.session.connection_id()),
+                            tidb_log::Value::U64(self.session.connection_id()),
                         )],
                     );
                 }
-                self.store.session.finish_cluster_lock_job(&statement);
+                self.session.finish_cluster_lock_job(&statement);
             }
         }
     }
@@ -5178,10 +5175,218 @@ impl CommitHooks for NodeCommitHooks {
 }
 
 impl ClusterServerSession {
-    /// The borrowed context one statement runs in; see [`StatementLifecycle`].
-    fn lifecycle(&mut self) -> StatementLifecycle<'_> {
-        self.store.lifecycle()
+
+    /// What a commit reads off the server, for the schema version the session
+    /// is following now.
+    #[must_use]
+    pub fn commit_hooks(&self) -> Box<dyn CommitHooks> {
+        (self.commit_hooks)(&self.session, self.follower.schema_version())
     }
+
+    /// The borrowed context one statement runs in.
+    pub fn lifecycle(&mut self) -> StatementLifecycle<'_> {
+        let hooks = self.commit_hooks();
+        StatementLifecycle {
+            session: &mut self.session,
+            txn: &mut self.txn,
+            slot: &self.slot,
+            follower: &mut self.follower,
+            hooks,
+            activate_statement_txn: self.activate_statement_txn,
+        }
+    }
+
+    /// The `SimpleExec` transaction statements (`BEGIN`, `COMMIT`,
+    /// `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT`) over this session's
+    /// transaction manager: [`Session::control_transaction_stmt`] with the
+    /// store half through [`StoreTxnOps`].
+    pub fn control_transaction_stmt(&mut self, stmt: &Stmt) -> Result<Option<bool>, SqlQueryError> {
+        let hooks = self.commit_hooks();
+        let mut ops = StoreTxnOps {
+            txn: &mut self.txn,
+            slot: &self.slot,
+            follower: &mut self.follower,
+            hooks,
+        };
+        self.session
+            .control_transaction_stmt(stmt, &mut ops)
+            .map_err(sql_query_error)
+    }
+
+    /// Go `sessiontxn.NewTxnInStmt` for the executor of the running
+    /// statement: [`Session::new_txn_in_stmt`] over this session's
+    /// transaction manager, when a transaction is open.
+    pub fn new_txn_in_stmt(&mut self) -> Result<(), SqlQueryError> {
+        if self.txn.explicit.is_none() && !self.session.in_transaction() {
+            return Ok(());
+        }
+        let hooks = self.commit_hooks();
+        let mut ops = StoreTxnOps {
+            txn: &mut self.txn,
+            slot: &self.slot,
+            follower: &mut self.follower,
+            hooks,
+        };
+        self.session
+            .new_txn_in_stmt(&mut ops)
+            .map_err(sql_query_error)
+    }
+
+    /// Rebinds the session's tables to the latest catalog, unless a
+    /// transaction has pinned the one it started with.
+    pub fn rebuild_catalog_if_stale(&mut self) {
+        self.follower.rebuild_if_stale(&mut self.session, &self.txn);
+    }
+
+    /// Go `PrepareTxnCtx` for the statement about to run: follows the catalog,
+    /// then enters the `autocommit = 0` transaction (pending: it takes a
+    /// timestamp at the first statement that activates it).
+    pub fn prepare_statement_context(
+        &mut self,
+        resource_group: &str,
+        read_only: bool,
+    ) -> Result<(), SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        if read_only && self.txn.explicit.is_none() && !self.session.in_transaction() {
+            let vars = self.session.vars();
+            if vars.snapshot_ts() != 0
+                || vars
+                    .get_system("tidb_read_staleness")
+                    .is_ok_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
+            {
+                return Ok(());
+            }
+        }
+        self.txn.enter_if_autocommit_off(
+            &self.session,
+            resource_group,
+            self.follower.schema_version(),
+        );
+        // Go `SetOptionsOnTxnActive` reads the session values when the
+        // transaction activates, so a pending one follows each statement's.
+        if let Some(transaction) = &self.txn.explicit {
+            transaction
+                .set_activation_options(TxnManager::statement_transaction_options(&self.session));
+        }
+        Ok(())
+    }
+
+    /// Runs one client statement after refreshing the catalog and opening any
+    /// implicit transaction. A pessimistic statement's locking point reads
+    /// lock inside execution with returned row values (Go
+    /// `PointGetExecutor.getAndLock`, `InitReturnValues` /
+    /// `SetPessimisticLockCache`), through `TableStorage::lock_keys_for_read`.
+    pub fn with_prelocked_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        resource_group: &str,
+        is_dml: bool,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
+        self.prepare_statement_context(
+            resource_group,
+            shape != StatementReadShape::AutocommitWrite,
+        )?;
+        self.lifecycle()
+            .with_bound_statement(shape, resource_group, true, is_dml, run)
+    }
+
+    /// [`Self::with_prelocked_statement`] for work the CLIENT did not ask to
+    /// run: the PREPARE probe, which executes a query only to learn its result
+    /// columns.
+    ///
+    /// The one thing it must not do is open the transaction `autocommit = 0`
+    /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
+    /// (`pkg/session/session.go:3171`), but with a nil statement and through
+    /// `EnterNewTxnBeforeStmt`, which leaves the transaction *pending*: no
+    /// timestamp is spent and the first statement that really reads is what
+    /// takes one. Captured: `@@tidb_current_ts` is `0` after a PREPARE under
+    /// `autocommit = 0`, and a read issued after another session's commit sees
+    /// the NEW value. An already-open transaction is read through as usual.
+    pub fn probe_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        resource_group: &str,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        self.lifecycle()
+            .with_bound_statement(shape, resource_group, false, false, run)
+    }
+
+    /// Whether Go's executor builder activates `stmt`'s transaction before
+    /// the statement runs: `buildInsert` (INSERT and REPLACE), `buildUpdate`
+    /// and `buildDelete` call `updateForUpdateTS`, whose
+    /// `GetStmtForUpdateTS` activates it. A text `EXECUTE` builds the
+    /// statement it names.
+    #[must_use]
+    pub fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
+        let stmt = match stmt {
+            Stmt::Session(session) => match session.as_ref() {
+                tidb_ast::SessionStmt::Execute { name, .. } => {
+                    match self.session.prepared_statement_node(name) {
+                        Some(prepared) => prepared,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            },
+            stmt => stmt,
+        };
+        matches!(
+            stmt,
+            Stmt::Dml(dml) if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_)
+                    | tidb_ast::DmlStmt::Update(_)
+                    | tidb_ast::DmlStmt::Delete(_)
+            )
+        )
+    }
+
+    /// Runs an ordinary write statement (INSERT, UPDATE, DELETE and the like)
+    /// through the statement lifecycle and answers its affected-row count and
+    /// last insert id.
+    pub fn run_ordinary_write(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<(u64, u64), SqlQueryError> {
+        let owned = sql.to_owned();
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        // A write declares nothing. Its read-before-write reaches the snapshot
+        // as the same `get` a point-get SELECT issues, which is exactly why the
+        // declaration is made from the statement rather than from the read.
+        //
+        // Go's pessimistic point write folds its row read INTO its lock inside
+        // execution (`PointGetExecutor.getAndLock`,
+        // `pkg/executor/point_get.go:612-624`): the executor locks the keys its
+        // plan names through `TableStorage::lock_keys_for_read`, so nothing is
+        // classified or locked here before the statement compiles.
+        self.activate_statement_txn = self.activates_txn_at_build(stmt);
+        let attempt = self.with_prelocked_statement(
+            StatementReadShape::Unknown,
+            &resource_group,
+            true,
+            move |session| match session
+                .run_parsed(stmt.clone(), &owned)
+                .map_err(sql_query_error)?
+            {
+                crate::StmtResult::Affected(count) => Ok(count),
+                crate::StmtResult::Done(_) => Ok(0),
+                crate::StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                )),
+            },
+        );
+        self.activate_statement_txn = false;
+        let affected_rows = attempt?;
+        self.session.add_statement_read_keys(affected_rows);
+        Ok((affected_rows, self.session.statement_insert_id()))
+    }
+}
+
+impl ClusterServerSession {
 
     /// The statement lifecycle proper; see
     /// [`StatementLifecycle::with_bound_statement`].
@@ -5255,7 +5460,7 @@ impl ClusterServerSession {
     /// the locking read's lock). A row the session already filed for the
     /// same error is not filed twice.
     fn record_statement_failure(&mut self, error: SqlQueryError) -> SqlQueryError {
-        self.store.session
+        self.session
             .record_ddl_failure(error.code, error.message.clone(), error.identity);
         error
     }
@@ -5277,11 +5482,11 @@ impl ClusterServerSession {
         if control.is_some() {
             // Go `TiDBContext.checkSandBoxMode` gates every statement of a
             // session admitted with an expired password, BEGIN included.
-            self.store
+            self
                 .session
                 .check_sandbox_mode(sql)
                 .map_err(map_error)?;
-            self.store.session.restore_statement_variables();
+            self.session.restore_statement_variables();
         }
         // Go `ExecStmt.handleNoDelayExecutor` -> `SimpleExec.Next`: the
         // statement's own work. The commit a COMMIT or ROLLBACK leaves to
@@ -5291,7 +5496,7 @@ impl ClusterServerSession {
         // point: `Session::control_transaction` sets `in_transaction` for any
         // BEGIN spelling, so honoring the refusal afterwards would leave the
         // session inside a transaction that this node never opened -- no
-        // `self.store.txn.explicit`, so every following statement reads at a fresh
+        // `self.txn.explicit`, so every following statement reads at a fresh
         // timestamp, its writes stay in the buffer, and its COMMIT publishes
         // without a conflict check. The read-only node already refuses here
         // (`real_tikv_node`); this one used to fall through an empty arm.
@@ -5310,19 +5515,19 @@ impl ClusterServerSession {
             control,
             Some(TransactionControl::Commit | TransactionControl::Rollback { .. })
         ) {
-            self.store.session.reset_transaction_scope();
+            self.session.reset_transaction_scope();
         }
         // Go `SimpleExec.Next`: the statement itself, the store half through
         // the session's transaction manager -- `BEGIN`'s implicit commit and
         // activation, `ROLLBACK`'s `RollbackTxn`, the savepoints' membuffer
         // checkpoints.
-        let state = match self.store.control_transaction_stmt(stmt) {
+        let state = match self.control_transaction_stmt(stmt) {
             Ok(state) => state,
             Err(error) => {
                 // A failed statement that has ended the session's transaction
                 // must not leave the store transaction for the next
                 // statement's `commit_if_session_left_transaction` to publish.
-                if self.store.txn.explicit.is_some() && !self.store.session.in_transaction() {
+                if self.txn.explicit.is_some() && !self.session.in_transaction() {
                     self.discard_explicit()?;
                 }
                 return Err(error);
@@ -5338,7 +5543,7 @@ impl ClusterServerSession {
                 // `doCommitWithRetry` opens its region only over a valid
                 // transaction.
                 drop(simple_exec.take());
-                let _commit_txn = CommitTxnRegions::begin(self.store.txn.explicit.is_some());
+                let _commit_txn = CommitTxnRegions::begin(self.txn.explicit.is_some());
                 self.commit_explicit()?;
             }
             Some(TransactionControl::Rollback) => {
@@ -5355,7 +5560,7 @@ impl ClusterServerSession {
         // publish, so the process row still carried the previous statement's
         // status (`in transaction; autocommit` after a `ROLLBACK`). Refresh it
         // from the live session state, Go's OK-packet status word.
-        self.store.session.refresh_process_status();
+        self.session.refresh_process_status();
         Ok(Some(in_transaction))
     }
 
@@ -5364,17 +5569,13 @@ impl ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let (affected_rows, last_insert_id) = self.store.run_ordinary_write(sql, stmt)?;
+        let (affected_rows, last_insert_id) = self.run_ordinary_write(sql, stmt)?;
         Ok(WriteOutcome {
             affected_rows,
             last_insert_id,
         })
     }
 
-    /// See [`StoreSession::activates_txn_at_build`].
-    fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
-        self.store.activates_txn_at_build(stmt)
-    }
 
     fn observe_routed_write(
         &mut self,
@@ -5382,10 +5583,10 @@ impl ClusterServerSession {
         stmt: &Stmt,
         execute: impl FnOnce(&mut Self) -> Result<WriteOutcome, SqlQueryError>,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        self.store.session.begin_routed_statement_observation(sql, stmt);
-        self.store.session.observe_precompiled_privilege_tables();
+        self.session.begin_routed_statement_observation(sql, stmt);
+        self.session.observe_precompiled_privilege_tables();
         let result = execute(self);
-        self.store.session.finish_routed_statement_observation_with_error(
+        self.session.finish_routed_statement_observation_with_error(
             result.is_ok(),
             result.as_ref().map_or(0, |outcome| outcome.affected_rows),
             result.as_ref().err().map(|error| error.error_string()),
@@ -5394,8 +5595,8 @@ impl ClusterServerSession {
     }
 
     fn execute_timed<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(|error| {
-            self.store.session.record_parse_failure(&error);
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
             map_error(error)
         })?;
         self.execute_parsed(sql, &stmt)
@@ -5476,44 +5677,12 @@ impl ClusterServerSession {
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
-        &self.store.follower.skipped
+        &self.follower.skipped
     }
 
-    /// Runs one client statement after refreshing the catalog and opening any
-    /// implicit transaction; see [`StoreSession::with_prelocked_statement`].
-    fn with_prelocked_statement<T>(
-        &mut self,
-        shape: StatementReadShape,
-        resource_group: &str,
-        is_dml: bool,
-        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
-    ) -> Result<T, SqlQueryError> {
-        self.store
-            .with_prelocked_statement(shape, resource_group, is_dml, run)
-    }
 
-    fn prepare_statement_context(
-        &mut self,
-        resource_group: &str,
-        read_only: bool,
-    ) -> Result<(), SqlQueryError> {
-        self.store
-            .prepare_statement_context(resource_group, read_only)
-    }
 
-    /// See [`StoreSession::probe_statement`].
-    fn probe_statement<T>(
-        &mut self,
-        shape: StatementReadShape,
-        resource_group: &str,
-        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
-    ) -> Result<T, SqlQueryError> {
-        self.store.probe_statement(shape, resource_group, run)
-    }
 
-    fn rebuild_catalog_if_stale(&mut self) {
-        self.store.rebuild_catalog_if_stale();
-    }
 
     /// The unguarded rebuild: `BEGIN` calls this directly because the session
     /// already reports in-transaction by the time the transaction opens, and
@@ -5521,16 +5690,15 @@ impl ClusterServerSession {
     /// (`domain.GetSnapshotInfoSchema(startTS)`) — a table committed before
     /// `BEGIN` is visible to every statement of the new transaction.
     fn rebuild_catalog_now(&mut self) {
-        self.store.follower.rebuild(&mut self.store.session);
+        self.follower.rebuild(&mut self.session);
     }
 
     /// Go `Compile` then `executorBuilder.build`: the plan the statement
     /// compiles to (preprocess, `PlanBuilder.Build`, `CheckPrivilege`) picks
     /// the executor this node runs it with ([`Self::route_for`]).
     fn compile_route(&mut self, stmt: &tidb_ast::Stmt) -> Result<StatementRoute, SqlQueryError> {
-        self.store.session.restore_statement_variables();
+        self.session.restore_statement_variables();
         let executor = self
-            .store
             .session
             .compile_statement(stmt)
             .map_err(map_error)?;
@@ -5554,7 +5722,7 @@ impl ClusterServerSession {
             tidb_ast::AdminStmt::SetBdrRole(_)
                 | tidb_ast::AdminStmt::UnsetBdrRole
                 | tidb_ast::AdminStmt::ShowBdrRole
-        )) && !self.store.session.has_bdr_role_store()
+        )) && !self.session.has_bdr_role_store()
         {
             return Err(SqlQueryError::unknown(
                 "ADMIN SET/UNSET/SHOW BDR ROLE needs this node's TiKV meta store",
@@ -5563,11 +5731,11 @@ impl ClusterServerSession {
         match executor {
             // Go `SimpleExec.Next` switches on the statement node.
             CompiledExecutor::Simple => {
-                if let Some(targets) = self.store.session.flush_stats_delta_targets(stmt) {
+                if let Some(targets) = self.session.flush_stats_delta_targets(stmt) {
                     return Ok(StatementRoute::FlushStatsDelta(targets));
                 }
                 if let Some(physical_ids) =
-                    self.store.session.drop_stats_ids(stmt).map_err(map_error)?
+                    self.session.drop_stats_ids(stmt).map_err(map_error)?
                 {
                     return Ok(StatementRoute::DropStats(physical_ids));
                 }
@@ -5575,7 +5743,7 @@ impl ClusterServerSession {
             }
             CompiledExecutor::LoadStats => Ok(StatementRoute::LoadStats),
             CompiledExecutor::Analyze => {
-                match prepare_cluster_analyze_parsed(stmt, self.store.session.current_database()) {
+                match prepare_cluster_analyze_parsed(stmt, self.session.current_database()) {
                     Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
                     Ok(_) => Err(SqlQueryError::unknown(
                         "this node runs ANALYZE TABLE for a named table only",
@@ -5588,7 +5756,7 @@ impl ClusterServerSession {
             CompiledExecutor::StatsLock => {
                 match prepare_cluster_stats_lock_parsed(
                     stmt,
-                    self.store.session.current_database(),
+                    self.session.current_database(),
                 ) {
                     Ok(Some(statement)) => Ok(StatementRoute::StatsLock(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
@@ -5604,7 +5772,7 @@ impl ClusterServerSession {
             // transaction first and then meets the DDL executor's checks
             // ([`Self::run_ddl_exec`]).
             CompiledExecutor::Ddl => match stmt {
-                Stmt::Ddl(ddl) => match self.store.session.ddl_exec_next(ddl) {
+                Stmt::Ddl(ddl) => match self.session.ddl_exec_next(ddl) {
                     crate::ddl_exec::DdlExecNext::Job
                     | crate::ddl_exec::DdlExecNext::DropTableJob { .. } => {
                         Ok(StatementRoute::DdlExec)
@@ -5628,7 +5796,7 @@ impl ClusterServerSession {
         if let Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::CleanupTableLock(cleanup) = ddl.as_ref() {
                 let statement = self
-                    .store.session
+                    .session
                     .cluster_cleanup_table_lock_statement(&cleanup.tables)
                     .map_err(map_error)?;
                 return Ok(LoweredDdl::one(statement.unwrap_or(
@@ -5644,18 +5812,18 @@ impl ClusterServerSession {
         // a DROP that also names LOCAL temporary tables runs the job
         // for the rest and then drops them.
         if let Stmt::Ddl(ddl) = stmt {
-            match self.store.session.ddl_exec_next(ddl) {
+            match self.session.ddl_exec_next(ddl) {
                 crate::ddl_exec::DdlExecNext::Job => {}
                 crate::ddl_exec::DdlExecNext::DropTableJob { persistent, local } => {
                     let persistent = Stmt::Ddl(tidb_ast::NodeBox::new(
                         tidb_ast::DdlStmt::DropTable(Box::new(persistent)),
                     ));
-                    let context = self.store.session.ddl_statement_context();
+                    let context = self.session.ddl_statement_context();
                     let ddl_context: tidb_ddl::cluster_ddl::DdlContext =
                         std::sync::Arc::new(context.clone());
                     let statement = prepare_cluster_ddl_parsed(
                         &persistent,
-                        self.store.session.current_database(),
+                        self.session.current_database(),
                         &ddl_context,
                     )
                     .map_err(|error| SqlQueryError::from(error.to_mysql_error()))?
@@ -5671,7 +5839,7 @@ impl ClusterServerSession {
         }
         // The DDL executor's target checks; the ALTER spec walk's own
         // refusals are the lowering's (`cluster_ddl`).
-        self.store.session.ddl_target_checks(stmt).map_err(map_error)?;
+        self.session.ddl_target_checks(stmt).map_err(map_error)?;
         // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
         // `enable-table-lock` on: the planner's privilege check, then
         // `executor.LockTables`' checks against this node's catalog
@@ -5681,14 +5849,14 @@ impl ClusterServerSession {
                 match &**ddl {
                     tidb_ast::DdlStmt::LockTables(locks) => {
                         return self
-                            .store.session
+                            .session
                             .cluster_lock_tables_statement(locks)
                             .map(LoweredDdl::one)
                             .map_err(map_error);
                     }
                     tidb_ast::DdlStmt::UnlockTables => {
                         return Ok(LoweredDdl::one(
-                            self.store.session.cluster_unlock_tables_statement().unwrap_or(
+                            self.session.cluster_unlock_tables_statement().unwrap_or(
                                 DdlStatement::AcceptedNoOp {
                                     schema: String::new(),
                                     table: String::new(),
@@ -5713,7 +5881,7 @@ impl ClusterServerSession {
                 // missing one is 1146 and no current database 1046.
                 tidb_ast::DdlStmt::LockTables(locks) => {
                     for lock in locks.iter() {
-                        self.store.session
+                        self.session
                             .require_table_exists(&lock.table)
                             .map_err(map_error)?;
                     }
@@ -5756,7 +5924,7 @@ impl ClusterServerSession {
                 // DROP reads `mysql.user` for an account bound to the
                 // group (Go `MatchUserResourceGroupName`), so the
                 // admission reads through a statement snapshot.
-                let resource_group = self.store.session.current_resource_group().to_owned();
+                let resource_group = self.session.current_resource_group().to_owned();
                 let statement = self.probe_statement(
                     StatementReadShape::Unknown,
                     &resource_group,
@@ -5784,7 +5952,7 @@ impl ClusterServerSession {
         // needs the same statement-snapshot lifecycle the PREPARE
         // probe uses — work the client did not ask to run, reading
         // at a fresh timestamp and unbinding afterwards.
-        let resource_group = self.store.session.current_resource_group().to_owned();
+        let resource_group = self.session.current_resource_group().to_owned();
         let resolved = self.probe_statement(
             StatementReadShape::Unknown,
             &resource_group,
@@ -5799,11 +5967,11 @@ impl ClusterServerSession {
                 info: Box::new(info),
             }));
         }
-        let context = self.store.session.ddl_statement_context();
+        let context = self.session.ddl_statement_context();
         let ddl_context: tidb_ddl::cluster_ddl::DdlContext = std::sync::Arc::new(context.clone());
         match prepare_cluster_ddl_parsed(
             stmt,
-            self.store.session.current_database(),
+            self.session.current_database(),
             &ddl_context,
         ) {
             Ok(Some(statement)) => {
@@ -5811,21 +5979,21 @@ impl ClusterServerSession {
                 // constraint, Go ddl/create_table.go:1470) belong to
                 // this statement; Go appends them to the session's
                 // own context, so drain the lowering context's here.
-                self.store.session.begin_routed_statement_warnings();
-                self.store.session.drain_context_warnings(&context);
+                self.session.begin_routed_statement_warnings();
+                self.session.drain_context_warnings(&context);
                 Ok(LoweredDdl::one(statement))
             }
             Ok(None) => {
                 if let Some(parts) = job_sequence_parts(stmt) {
-                    self.store.session.begin_routed_statement_warnings();
-                    self.store.session.drain_context_warnings(&context);
+                    self.session.begin_routed_statement_warnings();
+                    self.session.drain_context_warnings(&context);
                     return Ok(LoweredDdl::Sequence { parts, context });
                 }
                 // Go's executor refuses a cached table before any
                 // shape this node does not plan.
                 tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
-                    &self.catalog.load(),
-                    self.store.session.current_database(),
+                    &self.domain.catalog.load(),
+                    self.session.current_database(),
                     stmt,
                 )
                 .map_err(|error| SqlQueryError::from(error))?;
@@ -5839,11 +6007,11 @@ impl ClusterServerSession {
             // refusal) survive it: go's failed DDL leaves both in
             // the warning buffer.
             Err(refusal) => {
-                self.store.session.begin_routed_statement_warnings();
-                self.store.session.drain_context_warnings(&context);
+                self.session.begin_routed_statement_warnings();
+                self.session.drain_context_warnings(&context);
                 tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
-                    &self.catalog.load(),
-                    self.store.session.current_database(),
+                    &self.domain.catalog.load(),
+                    self.session.current_database(),
                     stmt,
                 )
                 .map_err(|error| SqlQueryError::from(error))?;
@@ -5865,10 +6033,10 @@ impl ClusterServerSession {
         stmt: &Stmt,
     ) -> Result<WriteOutcome, SqlQueryError> {
         if Session::simple_exec_new_txn_in_stmt(stmt) {
-            self.store.new_txn_in_stmt()?;
+            self.new_txn_in_stmt()?;
             self.record_new_txn_in_stmt();
         }
-        self.store
+        self
             .session
             .run_parsed(stmt.clone(), sql)
             .map_err(map_error)?;
@@ -6026,7 +6194,7 @@ impl ClusterServerSession {
     }
 
     fn notifier_transaction(&self) -> Result<&dyn OpenClusterTransaction, SqlQueryError> {
-        self.store.txn.explicit
+        self.txn.explicit
             .as_deref()
             .ok_or_else(|| SqlQueryError::unknown("DDL notifier handler has no active transaction"))
     }
@@ -6039,9 +6207,9 @@ impl ClusterServerSession {
         retired_ids: &[i64],
         adjust_global: bool,
     ) -> Result<(), SqlQueryError> {
-        let row_ids = Arc::clone(&self.auto_ids);
+        let row_ids = Arc::clone(&self.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let version = transaction.start_ts();
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -6054,7 +6222,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
-                    self.store.session.lock_wait_timeout(),
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
@@ -6127,7 +6295,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
-                    self.store.session.lock_wait_timeout(),
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
@@ -6153,15 +6321,15 @@ impl ClusterServerSession {
         ids: &[i64],
         best_effort: bool,
     ) -> Result<(), SqlQueryError> {
-        let row_ids = Arc::clone(&self.auto_ids);
+        let row_ids = Arc::clone(&self.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let version = transaction.start_ts();
         for &physical_id in ids {
             let refreshed = transactions::stage_pessimistic_statement(
                 transaction,
                 &self.buffer,
-                self.store.session.lock_wait_timeout(),
+                self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                     let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
@@ -6204,9 +6372,9 @@ impl ClusterServerSession {
         partition_id: i64,
         standalone_table_id: i64,
     ) -> Result<(), SqlQueryError> {
-        let row_ids = Arc::clone(&self.auto_ids);
+        let row_ids = Arc::clone(&self.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let snapshot = transaction
             .snapshot_for(false)
             .map_err(SqlQueryError::unknown)?;
@@ -6243,7 +6411,7 @@ impl ClusterServerSession {
         transactions::stage_pessimistic_statement(
             transaction,
             &self.buffer,
-            self.store.session.lock_wait_timeout(),
+            self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
@@ -6269,9 +6437,9 @@ impl ClusterServerSession {
         table: &tidb_model::table_info::TableInfo,
         columns: &[tidb_model::ColumnInfo],
     ) -> Result<(), SqlQueryError> {
-        let row_ids = Arc::clone(&self.auto_ids);
+        let row_ids = Arc::clone(&self.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let version = transaction.start_ts();
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -6308,7 +6476,7 @@ impl ClusterServerSession {
                 let inserted = transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
-                    self.store.session.lock_wait_timeout(),
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let (inserted, plan) =
@@ -6334,7 +6502,7 @@ impl ClusterServerSession {
                     {
                         transactions::stage_pessimistic_statement(
                             transaction,
-                            &self.buffer, self.store.session.lock_wait_timeout(),
+                            &self.buffer, self.session.lock_wait_timeout(),
                             |snapshot, _| {
                                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
@@ -6359,7 +6527,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
-                    self.store.session.lock_wait_timeout(),
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
@@ -6392,12 +6560,12 @@ impl ClusterServerSession {
         new_table_id: i64,
     ) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         for target in tidb_exec::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
             transactions::stage_pessimistic_statement(
                 transaction,
                 &self.buffer,
-                self.store.session.lock_wait_timeout(),
+                self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                     let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_table_id(
@@ -6418,13 +6586,13 @@ impl ClusterServerSession {
 
     fn stage_stats_version_refresh(&self) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let version = transaction.start_ts();
         for target in tidb_exec::cluster_stats_write::STATS_VERSION_TABLES {
             transactions::stage_pessimistic_statement(
                 transaction,
                 &self.buffer,
-                self.store.session.lock_wait_timeout(),
+                self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                     let plan = tidb_exec::cluster_stats_write::plan_update_stats_table_version(
@@ -6432,7 +6600,7 @@ impl ClusterServerSession {
                         &catalog,
                         target,
                         version,
-                        Some(self.auto_ids.as_ref()),
+                        Some(self.domain.auto_ids.as_ref()),
                     )
                     .map_err(|error| error.to_string())?;
                     Ok(((), plan.mutations))
@@ -6451,14 +6619,14 @@ impl ClusterServerSession {
         physical_id: i64,
         version: u64,
     ) -> Result<(), String> {
-        let row_ids = Arc::clone(&self.auto_ids);
+        let row_ids = Arc::clone(&self.domain.auto_ids);
         let enabled = self
-            .global_vars
+            .domain.global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
             .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
         if !enabled
             || !self
-                .stats
+                .domain.stats
                 .load()
                 .get(&physical_id)
                 .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
@@ -6469,7 +6637,7 @@ impl ClusterServerSession {
         let (modify_count, count) = transactions::stage_pessimistic_statement(
             transaction,
             staged,
-            self.store.session.lock_wait_timeout(),
+            self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let (counts, plan) =
@@ -6487,7 +6655,7 @@ impl ClusterServerSession {
         transactions::stage_pessimistic_statement(
             transaction,
             staged,
-            self.store.session.lock_wait_timeout(),
+            self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
@@ -6508,7 +6676,7 @@ impl ClusterServerSession {
     }
 
     fn dynamic_partition_pruning(&self) -> Result<bool, SqlQueryError> {
-        self.global_vars
+        self.domain.global_vars
             .get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
             .map(|mode| mode == "dynamic")
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
@@ -6523,8 +6691,8 @@ impl ClusterServerSession {
     ) -> Result<DdlStatement, SqlQueryError> {
         let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
         let lowered =
-            prepare_cluster_ddl_parsed(part, self.store.session.current_database(), &ddl_context);
-        self.store.session.drain_context_warnings(context);
+            prepare_cluster_ddl_parsed(part, self.session.current_database(), &ddl_context);
+        self.session.drain_context_warnings(context);
         match lowered {
             Ok(Some(statement)) => Ok(statement),
             Ok(None) => Err(unplanned_ddl()),
@@ -6563,7 +6731,6 @@ impl ClusterServerSession {
                     .map(|statement| statement.path)
                     .unwrap_or_default();
                 let data = self
-                    .store
                     .session
                     .read_client_local_file(&path)
                     .map_err(map_error)?;
@@ -6590,11 +6757,11 @@ impl ClusterServerSession {
     /// the catalog, lower it and run its job(s) -- a refusal from here on
     /// leaves the earlier writes committed, as Go's does.
     fn run_ddl_exec(&mut self, sql: &str, parsed: &Stmt) -> Result<WriteOutcome, SqlQueryError> {
-        self.store.session
+        self.session
             .begin_ddl_statement(parsed)
             .map_err(map_error)?;
         // Go `DDLExec.Next`'s `NewTxnInStmt` (`executor/ddl.go:151`).
-        self.store.new_txn_in_stmt()?;
+        self.new_txn_in_stmt()?;
         self.record_new_txn_in_stmt();
         match self.lower_ddl_exec(parsed)? {
             LoweredDdl::Jobs(statements) => {
@@ -6610,7 +6777,7 @@ impl ClusterServerSession {
             }
             LoweredDdl::DropTableJob { statement, local } => {
                 self.run_ddl_job(sql, parsed, &statement)?;
-                self.store
+                self
                     .session
                     .drop_local_temporary_tables(&local)
                     .map_err(map_error)?;
@@ -6643,7 +6810,6 @@ impl ClusterServerSession {
         // the service that publishes to the cluster.
         let service = Arc::clone(&self.domain_services().ddl);
         let created = self
-            .store
             .session
             .run_ddl_statement(sql, parsed, statement, service.as_ref())
             .map_err(map_error)?;
@@ -6676,7 +6842,7 @@ impl ClusterServerSession {
         labels: &[String],
     ) -> Result<(), SqlQueryError> {
         const CHECK_PENDING_TABLES_LIMIT: usize = 100;
-        let catalog = self.catalog.load();
+        let catalog = self.domain.catalog.load();
         let (schema, tables) =
             tidb_ddl::cluster_ddl::alter_schema::schema_tiflash_replica_tables(&catalog, name)
                 .map_err(|error| map_error(crate::ddl_exec::ddl_error(&error)))?;
@@ -6688,14 +6854,13 @@ impl ClusterServerSession {
         let total = tables.len();
         let (mut succeeded, mut failed, mut skipped, mut one_fail) = (0_usize, 0_usize, 0_usize, 0_i64);
         let threshold = self
-            .store
             .session
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_BATCH_PENDING_TIFLASH_COUNT)
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(4000);
-        let killer = self.store.session.sql_killer();
+        let killer = self.session.sql_killer();
         let (mut origin_version, mut pending_count, mut force_check) = (0_i64, 0_u32, false);
         for table in tables {
             if tidb_ddl_build::ddl_executor::is_session_done(&killer).0 {
@@ -6715,7 +6880,7 @@ impl ClusterServerSession {
             }
             if let Err(error) = tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, table)
             {
-                self.store.session.append_warning(
+                self.session.append_warning(
                     tidb_util::context::WarningLevel::Note,
                     error.code,
                     error.message,
@@ -6757,7 +6922,7 @@ impl ClusterServerSession {
         } else {
             String::new()
         };
-        self.store.session.set_statement_message(format!(
+        self.session.set_statement_message(format!(
             "In total {total} tables: {succeeded} succeed, {failed} failed{fail_stmt}, {skipped} skipped"
         ));
         Ok(())
@@ -6781,7 +6946,7 @@ impl ClusterServerSession {
             if tidb_ddl_build::ddl_executor::is_session_done(killer).0 {
                 return (true, origin_version, pending_count, false);
             }
-            let latest = self.catalog.load();
+            let latest = self.domain.catalog.load();
             if latest.schema_version != origin_version {
                 origin_version = latest.schema_version;
                 pending_count =
@@ -6795,10 +6960,10 @@ impl ClusterServerSession {
         (false, origin_version, pending_count, true)
     }
 
-    /// The services [`ClusterSessionFactory::attach_connection`] installed on
+    /// The services [`Domain::attach_connection`] installed on
     /// this connection's session.
     fn domain_services(&self) -> &crate::domain_services::DomainServices {
-        self.store
+        self
             .session
             .domain_services()
             .expect("attach_connection installs the domain's services")
@@ -6811,8 +6976,8 @@ impl ClusterServerSession {
     /// `@@tidb_last_txn_info` (start only: nothing was written through it).
     /// `@@tidb_current_ts` is 0 again by the next statement, as in Go.
     pub(super) fn record_new_txn_in_stmt(&mut self) {
-        if let Ok(start_ts) = self.transactions.fresh_timestamp() {
-            self.store.session.record_started_txn_info(start_ts);
+        if let Ok(start_ts) = self.domain.transactions.fresh_timestamp() {
+            self.session.record_started_txn_info(start_ts);
         }
     }
 
@@ -6823,13 +6988,13 @@ impl ClusterServerSession {
         {
             return;
         }
-        let regions = self.store.session.region_store();
+        let regions = self.session.region_store();
         let scatter_scope = self
-            .store.session
+            .session
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION)
             .unwrap_or_default();
-        let loaded = self.catalog.load();
+        let loaded = self.domain.catalog.load();
         for id in created {
             let found = loaded
                 .databases
@@ -6858,20 +7023,20 @@ impl ClusterServerSession {
         // check preceded `Compile`, which checked its privileges);
         // Session::run then owns the session-local table operation and
         // observation, its compile taking the node's plan.
-        self.store.session
+        self.session
             .validate_snapshot_write(parsed)
             .map_err(map_error)?;
-        if !self.store.session.ddl_preserves_transaction(parsed) {
-            self.store.new_txn_in_stmt()?;
+        if !self.session.ddl_preserves_transaction(parsed) {
+            self.new_txn_in_stmt()?;
         }
         match self
-            .store.session
+            .session
             .run_parsed(parsed.clone(), sql)
             .map_err(map_error)?
         {
             crate::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
                 affected_rows,
-                last_insert_id: self.store.session.statement_insert_id(),
+                last_insert_id: self.session.statement_insert_id(),
             }),
             crate::StmtResult::Done(_) => Ok(WriteOutcome {
                 affected_rows: 0,
@@ -6886,11 +7051,11 @@ impl ClusterServerSession {
 
 impl QuerySession for ClusterServerSession {
     fn migration_session(&mut self) -> Option<&mut crate::Session> {
-        Some(&mut self.store.session)
+        Some(&mut self.session)
     }
 
     fn record_parse_failure(&mut self, error: &SqlQueryError) {
-        self.store.session.record_parse_failure_coded(
+        self.session.record_parse_failure_coded(
             error.code,
             error.message.clone(),
             error.identity,
@@ -6898,10 +7063,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn metrics_resource_group(&self) -> &str {
-        self.store.session.current_resource_group()
+        self.session.current_resource_group()
     }
     fn metrics_statement_resource_group(&self) -> &str {
-        self.store.session.active_resource_group()
+        self.session.active_resource_group()
     }
 
     /// Go `handleQuery`'s one `ParseSQL`: the connection parses each
@@ -6912,7 +7077,7 @@ impl QuerySession for ClusterServerSession {
     /// the buffer uncleared, so a failed DDL's error rows leaked into every
     /// later `SHOW WARNINGS`.
     fn parse_statement(&mut self, sql: &str) -> Result<Stmt, SqlQueryError> {
-        self.store
+        self
             .session
             .parse_at_statement_boundary(sql)
             .map_err(map_error)
@@ -6927,7 +7092,7 @@ impl QuerySession for ClusterServerSession {
         // statement's counts and any file exchange it left unfinished end here.
         self.ok_packet = WriteOutcome::default();
         self.parked_local_infile = None;
-        self.store.session.clear_local_infile();
+        self.session.clear_local_infile();
         // Go `LoadDataExec` / `LoadStatsExec`: the statement runs far enough
         // to be admitted, then parks its file request on the session.
         if let Some(path) = self.local_infile_path_parsed(sql, stmt)? {
@@ -6941,7 +7106,7 @@ impl QuerySession for ClusterServerSession {
         }
         // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
         // builds the prepared plan as its body).
-        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
+        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.execute_stmt(&body_sql, &body);
         }
         if self.control_transaction_parsed(sql, stmt)?.is_some() {
@@ -6978,7 +7143,7 @@ impl QuerySession for ClusterServerSession {
                 if matches!(stmt, Stmt::Ddl(_))
                     || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406)
                 {
-                    self.store
+                    self
                         .session
                         .record_ddl_failure(error.code, error.message.clone(), error.identity);
                 }
@@ -7010,13 +7175,13 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
-        self.store.session.finish_txn_write_throughput(cost);
+        self.session.finish_txn_write_throughput(cost);
     }
 
     /// The session's own `tidb_slow_log_threshold`, in milliseconds.
     fn slow_log_threshold(&self) -> Option<std::time::Duration> {
         let raw = self
-            .store.session
+            .session
             .vars()
             .get_system("tidb_slow_log_threshold")
             .ok()?;
@@ -7028,44 +7193,44 @@ impl QuerySession for ClusterServerSession {
         &mut self,
         attributes: std::collections::BTreeMap<String, String>,
     ) {
-        self.store.session.set_connection_attributes(attributes);
+        self.session.set_connection_attributes(attributes);
     }
 
     fn query_cancellation(&self) -> Option<Arc<dyn crate::domain::session_api::ActiveQueryCancellation>> {
-        Some(Arc::new(self.store.session.begin_query_cancellation()))
+        Some(Arc::new(self.session.begin_query_cancellation()))
     }
 
     fn sql_killer(&self) -> Option<Arc<tidb_util::sqlkiller::SqlKiller>> {
-        Some(self.store.session.sql_killer())
+        Some(self.session.sql_killer())
     }
 
     fn should_install_connection_alive(&self, stmt: &Stmt) -> bool {
-        let session = &self.store.session;
+        let session = &self.session;
         crate::domain::session_api::should_install_connection_alive(stmt, |name| {
             session.prepared_statement_node(name)
         })
     }
 
     fn wait_timeout(&self) -> std::time::Duration {
-        self.store.session.wait_timeout()
+        self.session.wait_timeout()
     }
 
     /// This session's own `@@max_allowed_packet`; see the trait's own doc for
     /// why Go rebinds the packet reader from it on every packet.
     fn max_allowed_packet(&self) -> Option<usize> {
-        Some(self.store.session.max_allowed_packet() as usize)
+        Some(self.session.max_allowed_packet() as usize)
     }
 
     fn try_consume_long_data(&mut self, bytes: i64) -> bool {
-        self.store.session.try_consume_long_data(bytes)
+        self.session.try_consume_long_data(bytes)
     }
 
     fn release_long_data(&mut self, bytes: i64) {
-        self.store.session.release_long_data(bytes);
+        self.session.release_long_data(bytes);
     }
 
     fn connection_id(&self) -> u64 {
-        self.store.session.connection_id()
+        self.session.connection_id()
     }
 
     fn split_statements(
@@ -7073,34 +7238,34 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         client_multi_statements: bool,
     ) -> Result<Vec<String>, SqlQueryError> {
-        self.store.session
+        self.session
             .split_statements(sql, client_multi_statements)
             .map_err(map_error)
     }
 
     fn flush_multi_statement_warning(&mut self) {
-        self.store.session.flush_multi_statement_warning();
+        self.session.flush_multi_statement_warning();
     }
 
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet. The driver session owns the transaction state this tier
     /// acts on, so the wire word and the tier's behaviour cannot disagree.
     fn wire_status(&self) -> WireStatus {
-        WireStatus::of_session(&self.store.session)
+        WireStatus::of_session(&self.session)
     }
 
     /// The OK/EOF packet's warning count, read off the same buffer
     /// `SHOW WARNINGS` reports (Go `ctx.WarningCount()`).
     fn warning_count(&self) -> u16 {
-        self.store.session.wire_warning_count()
+        self.session.wire_warning_count()
     }
 
     fn statement_info(&self) -> Vec<u8> {
-        self.store.session.statement_message().as_bytes().to_vec()
+        self.session.statement_message().as_bytes().to_vec()
     }
 
     fn warning_codes(&self) -> Vec<u16> {
-        self.store.session
+        self.session
             .warnings()
             .iter()
             .map(|warning| warning.code())
@@ -7110,11 +7275,11 @@ impl QuerySession for ClusterServerSession {
     /// Go `clientConn.initResultEncoder`'s read: this session's
     /// `@@character_set_results`.
     fn result_charset(&self) -> Cow<'_, str> {
-        self.store.session.result_charset()
+        self.session.result_charset()
     }
 
     fn input_charset(&self) -> Cow<'_, str> {
-        self.store.session.input_charset()
+        self.session.input_charset()
     }
 
     /// The catalog is refreshed first so a schema another node created since
@@ -7123,23 +7288,23 @@ impl QuerySession for ClusterServerSession {
     /// Go leaves `CurrentDB` empty when the handshake carried no schema; see
     /// the trait's own doc.
     fn deselect_database(&mut self) {
-        self.store.session.deselect_database();
+        self.session.deselect_database();
     }
 
     fn set_collation(&mut self, collation_id: u8) -> Result<(), SqlQueryError> {
-        self.store.session
+        self.session
             .set_collation(i32::from(collation_id))
             .map_err(SqlQueryError::unknown)
     }
 
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        self.store.session.select_database(name).map_err(map_error)
+        self.session.select_database(name).map_err(map_error)
     }
 
     fn close_prepared(&mut self, statement: &PreparedGeneral) {
         if let Some(prepared) = statement.prepared_ast() {
-            self.store.session.close_prepared(prepared);
+            self.session.close_prepared(prepared);
         }
     }
 
@@ -7149,20 +7314,20 @@ impl QuerySession for ClusterServerSession {
         // for `ROLLBACK` means publishing the buffer this connection is about
         // to discard. It is applied at EXECUTE, through
         // [`Self::control_transaction`].
-        let parsed = self.store.session.parse_statement(sql).map_err(map_error)?;
-        self.store.session.restore_statement_variables();
+        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
+        self.session.restore_statement_variables();
         if classify_transaction_control_stmt(&parsed).is_some() {
             return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
         }
         let prepared_ast = self
-            .store.session
+            .session
             .prepare_ast_parsed(sql, parsed)
             .map_err(map_error)?;
-        self.store.session
+        self.session
             .note_prepared_plan_cache_refusal(prepared_ast.statement())
             .map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
-        let kind = self.store.session.statement_kind_parsed(prepared_ast.statement());
+        let kind = self.session.statement_kind_parsed(prepared_ast.statement());
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
@@ -7170,16 +7335,15 @@ impl QuerySession for ClusterServerSession {
             // (a FLUSH STATS_DELTA's missing tables, lowering notes) are
             // Go's execution-time ones: PREPARE shows only its plan-cache
             // note, and EXECUTE routes the statement again.
-            let warnings_before = self.store.session.warnings().len();
+            let warnings_before = self.session.warnings().len();
             // Go's PREPARE preprocesses and builds the statement; its
             // privileges are EXECUTE's.
             let executor = self
-                .store
                 .session
                 .compile_statement_for_prepare(prepared_ast.statement())
                 .map_err(map_error)?;
             self.route_for(prepared_ast.statement(), executor)?;
-            self.store.session.truncate_warnings(warnings_before);
+            self.session.truncate_warnings(warnings_before);
             // Keep ordinary DML's parsed tree as well.  The MySQL binary
             // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
             // executes that handle thousands of times; throwing this tree
@@ -7206,7 +7370,7 @@ impl QuerySession for ClusterServerSession {
         let probe: Vec<tidb_datatype::Datum> =
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
         let bound_probe = prepared_ast.bind(&probe).map_err(map_error)?;
-        let result_columns = match self.store.session.plan_bound_prepared_columns(bound_probe) {
+        let result_columns = match self.session.plan_bound_prepared_columns(bound_probe) {
             Ok(columns) => crate::domain::pipeline_session::select_columns(&columns),
             // A variable error (Go's `variable` package) is the statement's
             // own failure and is reported at prepare time.
@@ -7233,13 +7397,13 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        self.store.session.restore_statement_variables();
+        self.session.restore_statement_variables();
         let process_statement = self
-            .store.session
+            .session
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
-        // and leave `self.store.txn.explicit` unopened -- the two pieces of transaction
+        // and leave `self.txn.explicit` unopened -- the two pieces of transaction
         // state disagreeing, with every following statement reading at a fresh
         // timestamp and a racing writer never detected. Routed here the state
         // cannot diverge, whoever calls this.
@@ -7250,9 +7414,9 @@ impl QuerySession for ClusterServerSession {
         // transaction-control route.
         if statement.template().is_none() && classify_transaction_control(statement.sql()).is_some()
         {
-            self.store.session.set_binary_prepared_execution(true);
+            self.session.set_binary_prepared_execution(true);
             let result = self.control_transaction(statement.sql());
-            self.store.session.set_binary_prepared_execution(false);
+            self.session.set_binary_prepared_execution(false);
             result?;
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
@@ -7268,12 +7432,12 @@ impl QuerySession for ClusterServerSession {
             // prepare_general retains only text for dedicated routes. Parse
             // once and use the same completion/durability owner as COM_QUERY.
             let parsed = self
-                .store.session
+                .session
                 .parse_statement(statement.sql())
                 .map_err(map_error)?;
-            self.store.session.set_binary_prepared_execution(true);
+            self.session.set_binary_prepared_execution(true);
             let result = self.execute_write_parsed(statement.sql(), &parsed);
-            self.store.session.set_binary_prepared_execution(false);
+            self.session.set_binary_prepared_execution(false);
             if let Some(outcome) = result? {
                 return Ok(GeneralExecuteOutcome::Write(outcome));
             }
@@ -7286,7 +7450,7 @@ impl QuerySession for ClusterServerSession {
         let retained = statement.template();
         let (effective_template, binding_sql) = retained.map_or((None, None), |template| {
             let (effective, binding_sql) =
-                self.store.session.prepared_statement_with_binding(template);
+                self.session.prepared_statement_with_binding(template);
             (Some(effective), binding_sql)
         });
         let effective = effective_template.as_deref();
@@ -7296,9 +7460,9 @@ impl QuerySession for ClusterServerSession {
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
         let resource_group = match effective {
-            Some(template) => self.store.session.statement_resource_group(template).into_owned(),
+            Some(template) => self.session.statement_resource_group(template).into_owned(),
             None => self
-                .store.session
+                .session
                 .statement_resource_group_sql(statement.sql())
                 .map_err(map_error)?,
         };
@@ -7307,7 +7471,7 @@ impl QuerySession for ClusterServerSession {
             effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))),
         )?;
         let cache_allowed = effective.is_some_and(|template| {
-            self.store.session
+            self.session
                 .prepared_plan_cache_allowed_for_statement(template)
         });
         // Bind the retained point plan once and use that same plan's
@@ -7318,7 +7482,7 @@ impl QuerySession for ClusterServerSession {
             .then(|| statement.point_get_plan())
             .flatten()
             .and_then(|plan| {
-                self.store.session.bind_cached_prepared_point_get_for_binding(
+                self.session.bind_cached_prepared_point_get_for_binding(
                     &plan,
                     &params,
                     binding_sql.as_deref(),
@@ -7336,7 +7500,7 @@ impl QuerySession for ClusterServerSession {
             None
         } else {
             statement.select_plan().and_then(|plan| {
-                self.store.session.bind_cached_prepared_select_for_statement(
+                self.session.bind_cached_prepared_select_for_statement(
                     &plan,
                     &params,
                     effective.expect("cacheable prepared SELECT retains a statement"),
@@ -7349,7 +7513,7 @@ impl QuerySession for ClusterServerSession {
             .then(|| statement.dml_plan())
             .flatten()
             .and_then(|plan| {
-                self.store.session.bind_cached_prepared_dml_for_statement(
+                self.session.bind_cached_prepared_dml_for_statement(
                     &plan,
                     &params,
                     effective.expect("cacheable prepared DML retains a statement"),
@@ -7373,24 +7537,24 @@ impl QuerySession for ClusterServerSession {
             // fresh for-update snapshot and lock-value cache on every replay.
             // Classify this execution's values, not the unbound PREPARE
             // markers: a complete point key may use MaxTS even on cache hits.
-            self.store.session.statement_read_shape_bound(
+            self.session.statement_read_shape_bound(
                 bound_template.as_ref().expect("cached SELECT is bound"),
             )
         } else if direct_dml {
             StatementReadShape::AutocommitWrite
         } else {
             bound_template.as_ref().map_or_else(
-                || self.store.session.statement_read_shape(&sql, &params),
-                |bound| self.store.session.statement_read_shape_bound(bound),
+                || self.session.statement_read_shape(&sql, &params),
+                |bound| self.session.statement_read_shape_bound(bound),
             )
         };
         let is_write = match effective {
-            Some(template) => self.store.session.statement_kind_parsed(template) == StmtKind::Write,
-            None => self.store.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
+            Some(template) => self.session.statement_kind_parsed(template) == StmtKind::Write,
+            None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
         };
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
             // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
-            self.store.session.initialize_statement_exec_details(&sql);
+            self.session.initialize_statement_exec_details(&sql);
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
                 let opened = (|| {
@@ -7441,11 +7605,11 @@ impl QuerySession for ClusterServerSession {
         // attempt. Retain one observation until commit/retry has completed.
         let observed_write = is_write && effective.is_some();
         if let Some(stmt) = effective.filter(|_| is_write) {
-            self.store.session
+            self.session
                 .begin_prepared_routed_statement_observation(&sql, stmt);
         }
-        self.store.session.set_binary_prepared_execution(true);
-        self.store.activate_statement_txn =
+        self.session.set_binary_prepared_execution(true);
+        self.activate_statement_txn =
             is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
         let attempt = self.with_prelocked_statement(shape, &resource_group, is_write, |session| {
             if direct_dml {
@@ -7475,14 +7639,14 @@ impl QuerySession for ClusterServerSession {
                 session.run_with_params(&sql, &params).map_err(map_error)
             }
         });
-        self.store.activate_statement_txn = false;
-        self.store.session.set_binary_prepared_execution(false);
+        self.activate_statement_txn = false;
+        self.session.set_binary_prepared_execution(false);
         if observed_write {
             let affected_rows = match &attempt {
                 Ok(StmtOutput::Affected(count)) => *count,
                 _ => 0,
             };
-            self.store.session.finish_routed_statement_observation_with_error(
+            self.session.finish_routed_statement_observation_with_error(
                 attempt.is_ok(),
                 affected_rows,
                 attempt.as_ref().err().map(|error| error.error_string()),
@@ -7494,10 +7658,10 @@ impl QuerySession for ClusterServerSession {
                 StmtOutput::Affected(count) => *count,
                 StmtOutput::Rows { .. } | StmtOutput::Done(_) => 0,
             };
-            self.store.session.add_statement_read_keys(affected_rows);
+            self.session.add_statement_read_keys(affected_rows);
         }
         let result_authority = matches!(&output, StmtOutput::Rows { .. })
-            .then(|| self.store.session.result_materialization_authority());
+            .then(|| self.session.result_materialization_authority());
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
@@ -7510,13 +7674,13 @@ impl QuerySession for ClusterServerSession {
                     result_authority.expect("a row result carries materialization authority"),
                 )
                 .with_statement_status(
-                    self.store.session.wire_warning_count(),
-                    WireStatus::of_session(&self.store.session),
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
                 )
                 .with_statement_output(
-                    self.store.session.statement_affected_rows(),
-                    self.store.session.statement_insert_id(),
-                    self.store.session.statement_message().as_bytes().to_vec(),
+                    self.session.statement_affected_rows(),
+                    self.session.statement_insert_id(),
+                    self.session.statement_message().as_bytes().to_vec(),
                 );
                 GeneralExecuteOutcome::Rows(match process_statement {
                     Some(statement) => result.with_process_statement(statement),
@@ -7525,7 +7689,7 @@ impl QuerySession for ClusterServerSession {
             }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
-                last_insert_id: self.store.session.statement_insert_id(),
+                last_insert_id: self.session.statement_insert_id(),
             }),
             StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
@@ -7541,7 +7705,7 @@ impl QuerySession for ClusterServerSession {
 /// statement's kind.
 impl ClusterServerSession {
     pub(crate) fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         self.local_infile_path_parsed(sql, &stmt)
     }
 
@@ -7570,7 +7734,7 @@ impl ClusterServerSession {
         sql: &str,
         data: &[u8],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         self.execute_local_infile_parsed(sql, &stmt, data)
     }
 
@@ -7582,7 +7746,7 @@ impl ClusterServerSession {
         // The executor is built against the current schema, as the write
         // door builds every statement.
         self.rebuild_catalog_if_stale();
-        self.store.session.accept_local_infile(stmt).map_err(map_error)
+        self.session.accept_local_infile(stmt).map_err(map_error)
     }
 
     pub(crate) fn execute_local_infile_parsed(
@@ -7591,15 +7755,15 @@ impl ClusterServerSession {
         stmt: &Stmt,
         data: &[u8],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        self.store.session.clear_statement_message();
+        self.session.clear_statement_message();
         if matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::LoadData(_)))
         {
             // The load is an ordinary write over the client's bytes.
-            self.store.session.set_local_infile_data(data.to_vec());
+            self.session.set_local_infile_data(data.to_vec());
             let outcome = self.observe_routed_write(sql, stmt, |node| {
                 node.execute_ordinary_write_parsed(sql, stmt)
             });
-            self.store.session.clear_local_infile();
+            self.session.clear_local_infile();
             return outcome;
         }
         if prepare_cluster_load_stats_parsed(stmt).is_none() {
@@ -7616,7 +7780,7 @@ impl ClusterServerSession {
     /// statement's OK-packet status flag agree with the in-process tier); this
     /// adds what the state means for cluster storage.
     pub(crate) fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         self.control_transaction_parsed(sql, &stmt)
     }
 
@@ -7632,13 +7796,13 @@ impl ClusterServerSession {
             observed.then(|| tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt"));
         if observed {
             compile_simple_statement(sql);
-            self.store.session.begin_routed_statement_observation(sql, stmt);
+            self.session.begin_routed_statement_observation(sql, stmt);
         }
         let result = self
             .control_transaction_parsed_inner(sql, stmt)
             .map_err(|error| self.record_statement_failure(error));
         if observed {
-            self.store.session.finish_routed_statement_observation_with_error(
+            self.session.finish_routed_statement_observation_with_error(
                 result.is_ok(),
                 0,
                 result.as_ref().err().map(|error| error.error_string()),
@@ -7651,8 +7815,8 @@ impl ClusterServerSession {
         &mut self,
         sql: &str,
     ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(|error| {
-            self.store.session.record_parse_failure(&error);
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
             map_error(error)
         })?;
         self.execute_write_parsed(sql, &stmt)
@@ -7697,7 +7861,7 @@ impl ClusterServerSession {
         // builds the prepared plan as its body). The DDL must take this
         // node's cluster route; the session would apply it to its own
         // in-process catalog, where no other statement can see it.
-        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
+        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.execute_write_parsed(&body_sql, &body);
         }
         // A transaction statement an internal session runs as SQL (Go's
@@ -7721,20 +7885,20 @@ impl ClusterServerSession {
     fn begin_statement(&mut self) {
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.store.txn.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit.as_ref() {
             transaction.note_statement();
         }
         // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
         // for every statement no transaction continues into: neither this
         // node's explicit transaction nor one the session itself opened.
-        if self.store.txn.explicit.is_none() {
-            self.store.session.start_statement_transaction_scope();
+        if self.txn.explicit.is_none() {
+            self.session.start_statement_transaction_scope();
         }
-        self.store.session.clear_statement_message();
+        self.session.clear_statement_message();
         // No plan the previous statement compiled outlives it.
-        self.store.session.clear_precompiled_statement();
+        self.session.clear_precompiled_statement();
         // A statement without a query result leaves no result field names.
-        self.store.session.last_result_output_names.clear();
+        self.session.last_result_output_names.clear();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
@@ -7748,26 +7912,26 @@ impl ClusterServerSession {
     /// (`session.go:2485`), and starts with `checkSEMStmt`, as Go's
     /// `PlanBuilder.Build` does for every statement.
     fn compile(&mut self, sql: &str, stmt: &Stmt) -> Result<CompiledStatement, SqlQueryError> {
-        self.store
+        self
             .session
             .validate_statement_read_only_in_staleness(stmt)
             .map_err(map_error)?;
-        self.store
+        self
             .session
             .check_sem_stmt(sql, stmt)
             .map_err(map_error)?;
-        self.store.session.restore_statement_variables();
+        self.session.restore_statement_variables();
         // Go `buildDDL` builds a CREATE VIEW body, whose non-correlated
         // subqueries `Build` evaluates (`EvalSubqueryFirstRow`), so that one
         // DDL compiles with a statement snapshot to read through.
         let executor = if matches!(stmt, Stmt::Ddl(ddl) if matches!(**ddl, tidb_ast::DdlStmt::CreateView(_)))
         {
-            let resource_group = self.store.session.current_resource_group().to_owned();
+            let resource_group = self.session.current_resource_group().to_owned();
             self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
                 session.compile_statement(stmt).map_err(map_error)
             })?
         } else {
-            self.store
+            self
                 .session
                 .compile_statement(stmt)
                 .map_err(map_error)?
@@ -7786,7 +7950,7 @@ impl ClusterServerSession {
         {
             return Ok(CompiledStatement::Set);
         }
-        if self.store.session.statement_kind_parsed(stmt) == StmtKind::Write {
+        if self.session.statement_kind_parsed(stmt) == StmtKind::Write {
             return Ok(CompiledStatement::Write);
         }
         if matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Trace(_)))
@@ -7835,8 +7999,8 @@ impl ClusterServerSession {
     }
 
     pub(crate) fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(|error| {
-            self.store.session.record_parse_failure(&error);
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
             map_error(error)
         })?;
         self.execute_parsed(sql, &stmt)
@@ -7856,7 +8020,7 @@ impl ClusterServerSession {
             }
         }
         // See `execute_write_parsed`: a prepared DDL body takes the DDL route.
-        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
+        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.execute_parsed(&body_sql, &body);
         }
         // A transaction statement takes the connection's transaction door,
@@ -7872,16 +8036,16 @@ impl ClusterServerSession {
         let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.store.txn.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit.as_ref() {
             transaction.note_statement();
         }
         // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
         // for every statement no transaction continues into: neither this
         // node's explicit transaction nor one the session itself opened.
-        if self.store.txn.explicit.is_none() {
-            self.store.session.start_statement_transaction_scope();
+        if self.txn.explicit.is_none() {
+            self.session.start_statement_transaction_scope();
         }
-        self.store.session.clear_statement_message();
+        self.session.clear_statement_message();
         // Refresh before access-shape classification. Waiting until the
         // statement lifecycle would allow a stale point shape to select MaxTS
         // before the executor sees the current schema.
@@ -7889,14 +8053,13 @@ impl ClusterServerSession {
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        self.store.session.clear_precompiled_statement();
-        self.store
+        self.session.clear_precompiled_statement();
+        self
             .session
             .validate_statement_read_only_in_staleness(stmt)
             .map_err(map_error)?;
-        self.store.session.restore_statement_variables();
+        self.session.restore_statement_variables();
         let executor = self
-            .store
             .session
             .compile_statement(stmt)
             .map_err(map_error)?;
@@ -7929,16 +8092,15 @@ impl ClusterServerSession {
         // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
         // statement below can reach storage -- and before `ExecuteStmt`
         // publishes the process info, which takes the digest computed here.
-        self.store.session.initialize_statement_exec_details(sql);
-        let process_statement = match self.store.session.pending_statement_digest(sql) {
+        self.session.initialize_statement_exec_details(sql);
+        let process_statement = match self.session.pending_statement_digest(sql) {
             Some(digest) => self
-                .store
                 .session
                 .retain_process_statement_with_digest(sql, &digest),
-            None => self.store.session.retain_process_statement(sql),
+            None => self.session.retain_process_statement(sql),
         };
-        let resource_group = self.store.session.statement_resource_group(stmt).into_owned();
-        let shape = self.store.session.statement_read_shape_bound(stmt);
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        let shape = self.session.statement_read_shape_bound(stmt);
         let result = self.open_statement_result(shape, &resource_group, |session| {
             session
                 .open_record_set_parsed(stmt.clone(), sql)
@@ -7971,7 +8133,7 @@ struct ClusterAccountService {
     accounts: Arc<dyn ClusterAccountWriter>,
     /// The node, whose domain pool Go's executor takes its system session
     /// from (`GetSysSession`).
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
 }
 
 impl crate::stored_state_service::AccountService for ClusterAccountService {
@@ -8007,7 +8169,7 @@ struct AccountSystemSession(ClusterServerSession);
 /// statement takes an internal session of this node (`getInternalSession`)
 /// and runs in that session's own autocommit transaction.
 struct NodeRestrictedSql {
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
 }
 
 impl crate::restricted_sql::RestrictedSqlExecutor for NodeRestrictedSql {

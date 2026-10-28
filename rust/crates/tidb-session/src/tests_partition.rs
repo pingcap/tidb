@@ -35,6 +35,7 @@
 
 #![cfg(test)]
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::show_create;
 use crate::*;
 

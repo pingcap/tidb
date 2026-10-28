@@ -5,7 +5,7 @@
 //! reads the catalog, the accounts, the global variables and the statistics
 //! out of the cluster, spawns the reloader thread and etcd watch that keep
 //! each of them following a Go peer's changes, builds the
-//! [`ClusterSessionFactory`](crate::cluster_session_node::ClusterSessionFactory) every connection
+//! [`Domain`](crate::cluster_session_node::Domain) every connection
 //! is opened from, and serves the MySQL port until shutdown. It mirrors the
 //! bootstrap half of Go's `pkg/session/session.go` (`BootstrapSession` and
 //! the `domain.Domain` reload loops it starts) rather than the statement
@@ -49,7 +49,7 @@ const TRANSACTION_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 use crate::domain::session_api::SqlQueryError;
 
 use crate::domain::cluster_session_node::{
-    ClusterSessionFactory, RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT,
+    Domain, RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT,
 };
 
 /// The coprocessor read deadline is a statement-runtime budget, not the
@@ -62,7 +62,7 @@ const COPROCESSOR_QUERY_TIMEOUT: Duration = Duration::from_secs(300);
 /// closes last, and the background workers in the order they are retired.
 pub struct ClusterStack {
     /// The session factory (Go `session.CreateSession` over the domain).
-    pub factory: Arc<ClusterSessionFactory>,
+    pub factory: Arc<Domain>,
     /// The node's accounts.
     pub users: Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
     /// The workload repository, stopped before the workers retire.
@@ -512,7 +512,7 @@ pub fn cluster_session_stack(
             .map_err(|error| {
                 RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
             })?;
-    let factory = ClusterSessionFactory::new(
+    let factory = Domain::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,
         // so their admission deadline must tolerate store-side latency rather

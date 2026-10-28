@@ -14,7 +14,7 @@
 
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
-use super::{ClusterServerSession, ClusterSessionFactory, InternalBindingWriter, QuerySession};
+use super::{ClusterServerSession, Domain, InternalBindingWriter, QuerySession};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Weak,
@@ -26,11 +26,11 @@ use crate::binding_arm::GlobalBindingWriter;
 use crate::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
 
 pub(super) struct BindingSessions {
-    factory: Weak<ClusterSessionFactory>,
+    factory: Weak<Domain>,
     next_id: AtomicU64,
 }
 impl BindingSessions {
-    pub(super) fn new(factory: &Arc<ClusterSessionFactory>) -> Self {
+    pub(super) fn new(factory: &Arc<Domain>) -> Self {
         Self {
             factory: Arc::downgrade(factory),
             next_id: AtomicU64::new(1_u64 << 61),
@@ -44,7 +44,7 @@ impl BindingSessions {
         let mut session = factory
             .open_storage_session(self.next_id.fetch_add(2, Ordering::Relaxed))
             .map_err(|e| e.message)?;
-        session.store.session.enable_privilege_bypass();
+        session.session.enable_privilege_bypass();
         Ok(BindingRunner { session })
     }
 }

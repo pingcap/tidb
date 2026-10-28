@@ -81,8 +81,6 @@ fn text(value: impl Into<String>) -> Datum {
 /// Go `RecommendIndexExec` (`executor/recommend_index.go`) and the
 /// advisor's session optimizer.
 pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
-    /// Go `SessionVars.HypoIndexes`.
-    fn hypo_indexes(&self) -> Arc<HypoIndexes>;
     /// Replaces `SessionVars.HypoIndexes`.
     fn set_hypo_indexes(&mut self, indexes: Arc<HypoIndexes>);
     /// The statement's warnings, to restore after a what-if plan.

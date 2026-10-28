@@ -5,7 +5,7 @@
 //! reads the catalog, the accounts, the global variables and the statistics
 //! out of the cluster, spawns the reloader thread and etcd watch that keep
 //! each of them following a Go peer's changes, builds the
-//! [`ClusterSessionFactory`](crate::cluster_session_node::ClusterSessionFactory) every connection
+//! [`Domain`](crate::cluster_session_node::Domain) every connection
 //! is opened from, and serves the MySQL port until shutdown. It mirrors the
 //! bootstrap half of Go's `pkg/session/session.go` (`BootstrapSession` and
 //! the `domain.Domain` reload loops it starts) rather than the statement

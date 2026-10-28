@@ -165,3 +165,42 @@ pub fn statement_kind_of(stmt: &tidb_ast::Stmt) -> StatementKind {
         _ => StatementKind::Other,
     }
 }
+
+/// Go `ResetContextOfStmt`'s `sc.Priority` assignment: the statement's own
+/// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier. SELECT reads it from
+/// `SelectStmtOpts`, UPDATE/DELETE from `ResetUpdateStmtCtx`/`ResetDeleteStmtCtx`,
+/// and INSERT from its own arm; every other statement leaves the zero value.
+/// A `WITH` prefix is unwrapped because Go sets the priority on the mutation
+/// the CTE belongs to.
+pub fn statement_priority_of(stmt: &tidb_ast::Stmt) -> tidb_ast::StatementPriority {
+    fn dml_priority(dml: &tidb_ast::DmlStmt) -> tidb_ast::StatementPriority {
+        match dml {
+            tidb_ast::DmlStmt::Insert(insert) => insert.priority,
+            tidb_ast::DmlStmt::Update(update) => update.priority,
+            tidb_ast::DmlStmt::Delete(delete) => delete.priority,
+            // Go's `*ast.LoadDataStmt` arm has a dedicated `LowPriority` word
+            // rather than the shared `stmt.Priority` field.
+            tidb_ast::DmlStmt::LoadData(load) if load.low_priority => {
+                tidb_ast::StatementPriority::Low
+            }
+            _ => tidb_ast::StatementPriority::None,
+        }
+    }
+    match stmt {
+        tidb_ast::Stmt::Query(query) => match &**query {
+            tidb_ast::QueryStmt::Select(select) => select.priority,
+            tidb_ast::QueryStmt::SetOpr(_) => tidb_ast::StatementPriority::None,
+        },
+        tidb_ast::Stmt::Dml(dml) => dml_priority(dml),
+        _ => tidb_ast::StatementPriority::None,
+    }
+}
+
+/// Go `ResetContextOfStmt`'s `sc.NotFillCache = !SelectStmtOpts.SQLCache`.
+/// Only a SELECT carries the modifier; every other statement leaves it false.
+pub fn statement_not_fill_cache(stmt: &tidb_ast::Stmt) -> bool {
+    matches!(
+        stmt,
+        tidb_ast::Stmt::Query(query) if matches!(&**query, tidb_ast::QueryStmt::Select(select) if select.sql_no_cache)
+    )
+}

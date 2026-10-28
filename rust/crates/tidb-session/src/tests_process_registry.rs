@@ -15,6 +15,7 @@
 
 //! The process registry's tests that run over a session.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::Arc;
 
 use tidb_executor::process::*;

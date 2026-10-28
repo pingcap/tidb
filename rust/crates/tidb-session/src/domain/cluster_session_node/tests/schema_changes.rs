@@ -577,7 +577,7 @@ fn a_ddl_implicitly_commits_the_open_transaction() {
     assert_eq!(node.rows(), 1, "the DDL committed the open transaction");
     assert_eq!(node.publications.load(Ordering::Acquire), 1);
     assert!(
-        !session.store.session.in_transaction(),
+        !session.session.in_transaction(),
         "the implicit commit ends the transaction"
     );
     // And the new table is usable straight away, which it could not be if
@@ -614,7 +614,7 @@ fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them
         "CREATE command denied to user 'low'@'%' for table 'blocked'"
     );
     assert!(
-        normal.store.session.in_transaction(),
+        normal.session.in_transaction(),
         "a denied DDL must not implicitly commit the caller's transaction"
     );
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);

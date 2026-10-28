@@ -22,10 +22,10 @@
 //! `KvTable` would abandon the ids it still held and reserve a fresh range
 //! from the meta key, leaving a `DEFAULT_AUTO_ID_STEP`-sized hole in the ids
 //! every time the schema version moved. This registry is where the allocator
-//! outlives the table objects, and [`ClusterSessionFactory`] holds exactly
+//! outlives the table objects, and [`Domain`] holds exactly
 //! one.
 //!
-//! [`ClusterSessionFactory`]: crate::domain::cluster_session_node::ClusterSessionFactory
+//! [`Domain`]: crate::domain::cluster_session_node::Domain
 //! [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
 
 use std::collections::HashMap;

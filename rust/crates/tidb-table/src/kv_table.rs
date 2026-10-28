@@ -2741,8 +2741,7 @@ impl KvTable {
                 .as_ref()
                 .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
         };
-        let original =
-            (!self.store.has_external_statement_rollback()).then(|| self.store.clone_box());
+        let stage = self.store.staging();
         let result = (|| -> Result<(), KvTableError> {
             for physical_id in physical_ids {
                 let (low, high) = crate::kv_table::index_key_bounds(physical_id, index_id);
@@ -2759,11 +2758,10 @@ impl KvTable {
             Ok(())
         })();
         if let Err(error) = result {
-            if let Some(original) = original {
-                self.store = original;
-            }
+            self.store.cleanup(stage);
             return Err(error);
         }
+        self.store.release(stage);
         self.indexes_mut().remove(position);
         self.remove_partial_index_condition(index_id);
         Ok(true)
@@ -4161,76 +4159,65 @@ impl KvTable {
                     owned_old.as_deref()
                 }
             };
-            match &old {
-                Some(old) if new_handle == *handle && old_physical_id == new_physical_id => {
-                    // The row keeps its key, so every entry whose indexed
-                    // columns and payload did not change would be rewritten to
-                    // its own current bytes. Go skips those rewrites
-                    // (`SkipWriteUntouchedIndices`, see
-                    // `rewrite_changed_index_entries`); this port does too.
-                    if let Err(error) = self.rewrite_changed_index_entries(
-                        old,
-                        row,
-                        handle,
-                        new_physical_id,
-                        &zone,
-                        lazy_dup_check,
-                        pessimistic,
-                        check_in_prewrite,
-                        ctx.writes_untouched_indices(),
-                    ) {
-                        // Cluster sessions restore their native statement
-                        // checkpoint; only the in-process backend needs repair.
-                        if !self.store.has_external_statement_rollback() {
-                            self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                            self.write_index_entries(
-                                old,
-                                handle,
-                                old_physical_id,
-                                &zone,
-                                false,
-                                false,
-                                false,
-                            )?;
+            // Go leaves a failed index rewrite to the statement's membuffer
+            // stage (`StmtRollback`); this stage gives a store that is not
+            // under one (a bare in-process store) the same rollback.
+            let stage = self.store.staging();
+            let rewritten = (|| -> Result<(), KvTableError> {
+                match &old {
+                    Some(old) if new_handle == *handle && old_physical_id == new_physical_id => {
+                        // The row keeps its key, so every entry whose indexed
+                        // columns and payload did not change would be rewritten to
+                        // its own current bytes. Go skips those rewrites
+                        // (`SkipWriteUntouchedIndices`, see
+                        // `rewrite_changed_index_entries`); this port does too.
+                        if let Err(error) = self.rewrite_changed_index_entries(
+                            old,
+                            row,
+                            handle,
+                            new_physical_id,
+                            &zone,
+                            lazy_dup_check,
+                            pessimistic,
+                            check_in_prewrite,
+                            ctx.writes_untouched_indices(),
+                        ) {
+                            return Err(error);
                         }
-                        return Err(error);
+                    }
+                    Some(old) => {
+                        self.delete_index_entries(old, handle, old_physical_id, &zone)?;
+                        if let Err(error) = self.write_index_entries(
+                            row,
+                            &new_handle,
+                            new_physical_id,
+                            &zone,
+                            lazy_dup_check,
+                            pessimistic,
+                            check_in_prewrite,
+                        ) {
+                            return Err(error);
+                        }
+                    }
+                    None => {
+                        self.write_index_entries(
+                            row,
+                            &new_handle,
+                            new_physical_id,
+                            &zone,
+                            lazy_dup_check,
+                            pessimistic,
+                            check_in_prewrite,
+                        )?;
                     }
                 }
-                Some(old) => {
-                    self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                    if let Err(error) = self.write_index_entries(
-                        row,
-                        &new_handle,
-                        new_physical_id,
-                        &zone,
-                        lazy_dup_check,
-                        pessimistic,
-                        check_in_prewrite,
-                    ) {
-                        if !self.store.has_external_statement_rollback() {
-                            self.write_index_entries(
-                                old,
-                                handle,
-                                old_physical_id,
-                                &zone,
-                                false,
-                                false,
-                                false,
-                            )?;
-                        }
-                        return Err(error);
-                    }
-                }
-                None => {
-                    self.write_index_entries(
-                        row,
-                        &new_handle,
-                        new_physical_id,
-                        &zone,
-                        lazy_dup_check,
-                        pessimistic,
-                        check_in_prewrite,
-                    )?;
+                Ok(())
+            })();
+            match rewritten {
+                Ok(()) => self.store.release(stage),
+                Err(error) => {
+                    self.store.cleanup(stage);
+                    return Err(error);
                 }
             }
         }

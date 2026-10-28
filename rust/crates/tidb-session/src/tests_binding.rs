@@ -24,6 +24,7 @@
 //! either the ROWS the bound plan returns or the ACCESS PATH it chose, over a
 //! fixture where the two differ visibly.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::{query_text, scalar_text};
 use crate::*;
 

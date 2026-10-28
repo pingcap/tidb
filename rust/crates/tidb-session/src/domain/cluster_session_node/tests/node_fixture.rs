@@ -264,12 +264,12 @@ pub(super) struct MockNode {
     /// The session factories its connections came from, alive as long as
     /// the node: Go's domain owns the internal-session pool its restricted
     /// SQL draws from for its whole life.
-    pub(super) factories: std::sync::Mutex<Vec<Arc<ClusterSessionFactory>>>,
+    pub(super) factories: std::sync::Mutex<Vec<Arc<Domain>>>,
 }
 
 impl MockNode {
     /// Keeps `factory` alive for the node's lifetime.
-    pub(super) fn keep(&self, factory: &Arc<ClusterSessionFactory>) {
+    pub(super) fn keep(&self, factory: &Arc<Domain>) {
         self.factories
             .lock()
             .expect("factories")
@@ -477,7 +477,7 @@ fn open_session_on_with_context_and_seams_and_usage(
     Arc<tidb_stats_handle_usage::StatsUsageHandle>,
 ) {
     let cluster = Arc::clone(&node.cluster);
-    let factory = ClusterSessionFactory::new(
+    let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
         ddl,
         accounts,

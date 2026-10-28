@@ -22,6 +22,7 @@
 //! the client's bytes to [`crate::Session::set_local_infile_data`] and runs
 //! the statement, whose dispatch arm takes them.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::{LoadDataOnDuplicate, LoadDataStmt, Stmt};
 use tidb_executor::load_data::LoadDataExec;
 
@@ -100,7 +101,7 @@ impl crate::Session {
             .with_statement_priority(crate::classify::statement_priority_of(stmt))
             .with_statement_class(tidb_executor::StatementClass::LoadData);
         let current_db = self.vars.current_db.clone();
-        let result = self.with_staged_catalog_for_path(&load.table, &current_db, |catalog| {
+        let result = self.with_staged_catalog(|catalog| {
             tidb_executor::load_data::run_load_data(
                 &prepared,
                 &data,

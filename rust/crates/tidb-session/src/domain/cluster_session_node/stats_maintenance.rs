@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use super::{ClusterSessionFactory, UsageWorkerStop};
+use super::{Domain, UsageWorkerStop};
 use crate::domain::node_config::StatsLease;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,12 +35,12 @@ enum Tick {
 pub struct StatsMaintenanceWorker {
     stop: Arc<UsageWorkerStop>,
     thread: Option<JoinHandle<()>>,
-    factory: Option<Arc<ClusterSessionFactory>>,
+    factory: Option<Arc<Domain>>,
 }
 
 impl StatsMaintenanceWorker {
     pub fn start(
-        factory: &Arc<ClusterSessionFactory>,
+        factory: &Arc<Domain>,
         stats_lease: StatsLease,
         schema_lease: Duration,
         initialization: tidb_exec::stats_watch::AsyncStatsLoaderInit,

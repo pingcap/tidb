@@ -27,6 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -240,81 +241,9 @@ pub trait GlobalIdGenerator: Send + Sync {
 pub use tidb_executor::admin::BdrRoleStore;
 
 pub use tidb_executor::table_size_stats::TableStorageStatsProvider;
+pub use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 
-/// The statement-owned policy a server needs to retain an eager result set.
-///
-/// It is captured before `SET_VAR` overlays are restored, so a prepared
-/// cursor uses the same quota, OOM action, temporary-storage decision, and
-/// chunk bound as the statement that produced its rows.
-#[derive(Clone)]
-pub struct ResultMaterializationAuthority {
-    current_tso: Option<tidb_executor::CurrentTso>,
-    start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
-    memory: tidb_executor::StatementMemory,
-    init_chunk_size: usize,
-    max_chunk_size: usize,
-}
 
-impl ResultMaterializationAuthority {
-    /// Builds a cursor-retention policy captured by a non-pipeline session.
-    ///
-    /// Production callers should pass the statement's actual memory policy
-    /// and the statement's chunk-size bounds; this constructor exists so an
-    /// external server-session implementation can support prepared cursors
-    /// without a crate-private back door.
-    #[must_use]
-    pub fn new(
-        memory: tidb_executor::StatementMemory,
-        init_chunk_size: usize,
-        max_chunk_size: usize,
-    ) -> Self {
-        Self {
-            memory,
-            init_chunk_size,
-            max_chunk_size,
-            start_ts_guard: None,
-            current_tso: None,
-        }
-    }
-
-    /// Retains the snapshot across transaction completion until result/cursor close.
-    #[must_use]
-    pub fn with_start_ts(mut self, start_ts: u64) -> Self {
-        self.start_ts_guard = (start_ts != 0 && start_ts != u64::MAX)
-            .then(|| Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(start_ts)));
-        self
-    }
-
-    /// Tracks lazy activation as well as an already opened eager snapshot.
-    #[must_use]
-    pub fn with_current_tso(self, current: tidb_executor::CurrentTso) -> Self {
-        let mut authority = self.with_start_ts(current.value() as u64);
-        authority.current_tso = Some(current);
-        authority
-    }
-
-    /// Transfers the lazy activation handle to the cursor materializer.
-    pub fn take_current_tso(&mut self) -> Option<tidb_executor::CurrentTso> {
-        self.current_tso.take()
-    }
-
-    /// Transfers the pin to the connection-owned cursor without releasing it.
-    pub fn take_start_ts_guard(&mut self) -> Option<Arc<tidb_txnkv::StartTsGuard>> {
-        self.start_ts_guard.take()
-    }
-
-    /// Consumes the authority into its retained memory policy and chunk bounds.
-    #[must_use]
-    pub fn into_parts(self) -> (tidb_executor::StatementMemory, usize, usize) {
-        (self.memory, self.init_chunk_size, self.max_chunk_size)
-    }
-
-    /// The statement tracker retained by this authority.
-    #[must_use]
-    pub(crate) fn statement_memory(&self) -> tidb_executor::StatementMemory {
-        self.memory.clone()
-    }
-}
 
 /// A process-wide catalog shared by every session, as Go's domain-owned
 /// `infoschema` is shared by every session of a TiDB instance.
@@ -392,7 +321,7 @@ impl SharedCatalog {
 /// not opened one yet.
 #[derive(Default)]
 pub struct DomainMap {
-    domains: Mutex<HashMap<String, SharedCatalog>>,
+    domains: Mutex<HashMap<String, Arc<crate::domain::cluster_session_node::Domain>>>,
 }
 
 /// A nil-store lookup found no domain that could be reused.
@@ -408,11 +337,16 @@ impl std::fmt::Display for NoAvailableDomain {
 impl std::error::Error for NoAvailableDomain {}
 
 impl DomainMap {
-    /// Gets or creates the shared catalog for `store_uuid`.
+    /// Go `domainMap.Get`: the domain of the store `store_uuid` names, booted
+    /// by `open` the first time the store is asked for.
     ///
     /// `None` never creates an entry. It returns an existing one when
     /// available, matching the enterprise-plugin compatibility path in Go.
-    pub fn get(&self, store_uuid: Option<&str>) -> Result<SharedCatalog, NoAvailableDomain> {
+    pub fn get(
+        &self,
+        store_uuid: Option<&str>,
+        open: impl FnOnce() -> Arc<crate::domain::cluster_session_node::Domain>,
+    ) -> Result<Arc<crate::domain::cluster_session_node::Domain>, NoAvailableDomain> {
         let mut domains = self
             .domains
             .lock()
@@ -420,10 +354,8 @@ impl DomainMap {
         let Some(store_uuid) = store_uuid else {
             return domains.values().next().cloned().ok_or(NoAvailableDomain);
         };
-        Ok(SharedCatalog::clone(
-            domains
-                .entry(store_uuid.to_owned())
-                .or_insert_with(|| SharedCatalog::new(Catalog::new())),
+        Ok(Arc::clone(
+            domains.entry(store_uuid.to_owned()).or_insert_with(open),
         ))
     }
 }
@@ -1186,6 +1118,7 @@ mod account_password;
 pub use tidb_bindinfo::binding;
 mod binding_arm;
 mod compiler_session;
+mod stmt_ctx_session;
 mod execute_prepared;
 pub use binding_arm::GlobalBindingWriter;
 pub use tidb_bindinfo::binding_cache;
@@ -1224,7 +1157,7 @@ use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 mod resource_group;
 pub use tidb_variable::session_vars;
-mod stmt_ctx;
+pub use tidb_executor::stmt_ctx_build as stmt_ctx;
 mod table_lock;
 mod temptable;
 pub use table_lock::ClusterDdlLockEffect;
@@ -1248,7 +1181,7 @@ mod variables;
 pub use tidb_variable::varsutil;
 mod warnings;
 pub(crate) use classify::{
-    statement_kind_of, statement_not_fill_cache, statement_priority_of, StatementKind,
+    statement_kind_of, statement_priority_of, StatementKind,
 };
 pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
@@ -3029,6 +2962,7 @@ impl Session {
 
 #[cfg(test)]
 mod session_source_tests {
+    use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
     use tidb_executor::compiler::PreparedAstCompile;
     use super::{
         approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap,
@@ -3038,12 +2972,19 @@ mod session_source_tests {
     // Go pkg/session/tidb_test.go::TestDomapHandleNil.
     #[test]
     fn test_domap_handle_nil() {
+        use std::sync::Arc;
+        let store = crate::domain::mock_store::MockStoreDomain::create().unwrap();
         let domains = DomainMap::default();
-        assert!(matches!(domains.get(None), Err(NoAvailableDomain)));
+        let unused = || -> Arc<crate::domain::cluster_session_node::Domain> {
+            unreachable!("a nil store opens no domain")
+        };
+        assert!(matches!(domains.get(None, unused), Err(NoAvailableDomain)));
 
-        let opened = domains.get(Some("store-a")).unwrap();
-        let available = domains.get(None).unwrap();
-        assert!(opened.ptr_eq(&available));
+        let opened = domains
+            .get(Some("store-a"), || Arc::clone(store.domain()))
+            .unwrap();
+        let available = domains.get(None, unused).unwrap();
+        assert!(Arc::ptr_eq(&opened, &available));
     }
 
     // Go pkg/session/session_test.go::TestMemArbitratorSession.
@@ -3356,6 +3297,8 @@ mod tests_planner_results;
 mod tests_positional_orderby;
 #[cfg(test)]
 mod tests_prepared_plan_cache;
+#[cfg(test)]
+mod tests_stmt_ctx_build;
 #[cfg(test)]
 mod tests_compiler_plan_cacheable_checker;
 #[cfg(test)]

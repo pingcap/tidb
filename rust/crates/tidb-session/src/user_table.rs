@@ -34,6 +34,7 @@
 //!    not reach the privilege cache until `FLUSH PRIVILEGES`, Go's own
 //!    behavior.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 
 /// Go `sysSession.GetSQLExecutor()` as an account executor uses it: the
@@ -180,18 +181,7 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         Session::lock_catalog(self)
     }
 
-    fn with_catalog_mut<T>(
-        &mut self,
-        body: impl FnOnce(&mut tidb_executor::Catalog) -> Result<T, DriverError>,
-    ) -> Result<T, DriverError> {
-        Session::with_catalog_mut(self, body)
-    }
-
     fn user_resource_group_attribute(&self, name: &str, is_role: bool) -> Result<String, DriverError> {
         Session::user_resource_group_attribute(self, name, is_role)
-    }
-
-    fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
-        Session::statement_context(self, is_dml)
     }
 }

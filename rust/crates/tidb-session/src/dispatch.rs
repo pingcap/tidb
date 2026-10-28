@@ -21,6 +21,7 @@
 //! DDL's implicit commit), then transaction control and `SET`, then the parsed
 //! dispatch over query/DML/DDL.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedExec;
 use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use tidb_executor::compiler::PlanCacheableChecker;
@@ -1964,10 +1965,7 @@ impl Session {
                             self.write_sli.set_invalid();
                         }
                         let result = self.retrieving_memory_tables(&ctx, |session| {
-                            session.with_staged_catalog_for_path(
-                                &insert.table,
-                                &current_db,
-                                |catalog| {
+                            session.with_staged_catalog(|catalog| {
                                     // Go executes the statement the protocol BOUND
                                     // (`pkg/server`'s `statement`/`executableParams`
                                     // carry the values): re-parsing `sql` here would
@@ -2024,12 +2022,9 @@ impl Session {
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_executor::StatementClass::Update);
                         let output = match &update.kind {
-                            tidb_ast::UpdateKind::Single(table_ref) => self
+                            tidb_ast::UpdateKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {
-                                    session.with_staged_catalog_for_path(
-                                        &table_ref.name,
-                                        &current_db,
-                                        |catalog| {
+                                    session.with_staged_catalog(|catalog| {
                                             // Bound AST, not SQL text: the text still
                                             // carries the markers the binary protocol
                                             // already replaced. See the INSERT arm.
@@ -2079,12 +2074,9 @@ impl Session {
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_executor::StatementClass::Delete);
                         let output = match &delete.kind {
-                            tidb_ast::DeleteKind::Single(table_ref) => self
+                            tidb_ast::DeleteKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {
-                                    session.with_staged_catalog_for_path(
-                                        &table_ref.name,
-                                        &current_db,
-                                        |catalog| {
+                                    session.with_staged_catalog(|catalog| {
                                             // Bound AST, not SQL text -- see the
                                             // UPDATE arm.
                                             Ok(StmtOutput::Affected(

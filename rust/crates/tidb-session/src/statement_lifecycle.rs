@@ -24,6 +24,7 @@
 //! down; a lock conflict rolls the STATEMENT back and re-executes it at the
 //! advanced `for_update_ts`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

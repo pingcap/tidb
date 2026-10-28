@@ -35,8 +35,6 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         include_local: bool,
         body: impl FnOnce(&mut crate::Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError>;
-    /// Go `domain.GetDomain(ctx).InfoSchema()`: the domain's latest image.
-    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<crate::Catalog>>;
     /// Go `GlobalBindingHandle`'s bindings, loaded from the domain's cache
     /// or the binding storage.
     fn load_global_bindings(
@@ -44,12 +42,6 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     ) -> Result<tidb_bindinfo::binding::SessionBindings, DriverError>;
     /// Go `SessionBindingHandle`: the session's own bindings.
     fn session_bindings_mut(&mut self) -> &mut tidb_bindinfo::binding::SessionBindings;
-    /// Go `domain.GetDomain(ctx).StatsHandle()`.
-    fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle>;
-    /// Go `SessionVars.Location()`, as the statement pinned it.
-    fn session_time_zone(&self) -> crate::SessionTimeZone;
-    /// Go `SessionVars.ResourceGroupName`.
-    fn active_resource_group(&self) -> &str;
     /// Go `e.Ctx().Txn(true)`'s start timestamp (`fetchShowMasterStatus`).
     fn activated_txn_start_ts(&mut self) -> i64;
     /// The account table and the session's identity, `None` for a session
@@ -70,8 +62,6 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         -> Result<(), DriverError>;
     /// Go `buildShow`'s SELECT check on the `mysql` stats table.
     fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError>;
-    /// Go `tikv.Storage`'s region cache and PD client.
-    fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore>;
     /// Go `infoschema`'s `TableSizeStats` image: the statement's catalog
     /// with the table-size cache folded in.
     fn table_storage_statistics_catalog(

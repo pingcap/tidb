@@ -81,8 +81,8 @@ impl PendingSysvarChange for BackoffSysvarChange {
     }
 }
 
-fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> ClusterSessionFactory {
-    ClusterSessionFactory::new(
+fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
+    Domain::new(
         Arc::new(MockTransactions(Arc::clone(&node.cluster))),
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
@@ -108,7 +108,7 @@ fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
         "tidb_opt_fix_control".to_owned(),
         "invalid".to_owned(),
     )]);
-    let invalid_factory = factory_with_globals(&node, invalid_globals);
+    let invalid_factory = factory_with_globals(&node, invalid_globals).shared();
     let Err(error) = invalid_factory.open_session(session_context(51)) else {
         panic!("an invalid persisted fix-control row must refuse the cluster session");
     };
@@ -127,7 +127,7 @@ fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
         "tidb_opt_fix_control".to_owned(),
         "52592:ON".to_owned(),
     )]);
-    let valid_factory = factory_with_globals(&node, valid_globals);
+    let valid_factory = factory_with_globals(&node, valid_globals).shared();
     let session = valid_factory
         .open_session(session_context(52))
         .expect("a valid persisted fix-control row opens normally");
@@ -203,8 +203,8 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
     use tidb_datatype::Datum;
 
     let node = MockNode::start();
-    let factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([]));
-    let other_factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([]));
+    let factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([])).shared();
+    let other_factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([])).shared();
     let mut first = factory.open_session(session_context(61)).unwrap();
     let mut peer = factory.open_session(session_context(62)).unwrap();
     let mut other = other_factory.open_session(session_context(63)).unwrap();
@@ -256,7 +256,8 @@ fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
     let node = MockNode::start();
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let factory = factory_with_globals(&node, node.sysvars.live.clone())
-        .with_global_config_syncer(Arc::clone(&syncer));
+        .with_global_config_syncer(Arc::clone(&syncer))
+        .shared();
     let mut first = factory.open_session(session_context(61)).unwrap();
     let mut second = factory.open_session(session_context(62)).unwrap();
     first
@@ -292,7 +293,8 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
             "tidb_enable_instance_plan_cache".to_owned(),
             "ON".to_owned(),
         )]),
-    );
+    )
+    .shared();
     let mut first = factory.open_session(session_context(71)).unwrap();
     let mut peer = factory.open_session(session_context(72)).unwrap();
     for session in [&mut first, &mut peer] {

@@ -31,8 +31,9 @@
 //! and rewrites stored accounts, `INSERT` is `Write`-shaped and changes nothing
 //! stored outside this process.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedExec;
-use tidb_ast::{DmlStmt, QueryStmt, StatementPriority, Stmt};
+use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::DriverError;
@@ -53,44 +54,9 @@ pub enum StmtKind {
     Write,
 }
 
-pub(crate) use tidb_executor::sessionctx::{statement_kind_of, StatementKind};
-
-/// Go `ResetContextOfStmt`'s `sc.Priority` assignment: the statement's own
-/// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier. SELECT reads it from
-/// `SelectStmtOpts`, UPDATE/DELETE from `ResetUpdateStmtCtx`/`ResetDeleteStmtCtx`,
-/// and INSERT from its own arm; every other statement leaves the zero value.
-/// A `WITH` prefix is unwrapped because Go sets the priority on the mutation
-/// the CTE belongs to.
-pub(crate) fn statement_priority_of(stmt: &Stmt) -> StatementPriority {
-    fn dml_priority(dml: &DmlStmt) -> StatementPriority {
-        match dml {
-            DmlStmt::Insert(insert) => insert.priority,
-            DmlStmt::Update(update) => update.priority,
-            DmlStmt::Delete(delete) => delete.priority,
-            // Go's `*ast.LoadDataStmt` arm has a dedicated `LowPriority` word
-            // rather than the shared `stmt.Priority` field.
-            DmlStmt::LoadData(load) if load.low_priority => StatementPriority::Low,
-            _ => StatementPriority::None,
-        }
-    }
-    match stmt {
-        Stmt::Query(query) => match &**query {
-            QueryStmt::Select(select) => select.priority,
-            QueryStmt::SetOpr(_) => StatementPriority::None,
-        },
-        Stmt::Dml(dml) => dml_priority(dml),
-        _ => StatementPriority::None,
-    }
-}
-
-/// Go `ResetContextOfStmt`'s `sc.NotFillCache = !SelectStmtOpts.SQLCache`.
-/// Only a SELECT carries the modifier; every other statement leaves it false.
-pub(crate) fn statement_not_fill_cache(stmt: &Stmt) -> bool {
-    matches!(
-        stmt,
-        Stmt::Query(query) if matches!(&**query, QueryStmt::Select(select) if select.sql_no_cache)
-    )
-}
+pub(crate) use tidb_executor::sessionctx::{
+    statement_kind_of, statement_priority_of, StatementKind,
+};
 
 /// Whether the plan Go builds for this statement has a non-empty schema, so
 /// that the connection answers with a result set rather than an OK packet

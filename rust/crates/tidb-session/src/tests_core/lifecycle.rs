@@ -1,6 +1,7 @@
 //! A session from SQL strings alone, and the statement routing that gets
 //! each kind to its executor -- Go `pkg/session`'s `ExecuteStmt`.
 
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 use std::sync::Arc;
