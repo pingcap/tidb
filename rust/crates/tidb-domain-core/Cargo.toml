@@ -1,0 +1,24 @@
+[package]
+name = "tidb-domain-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB domain: Go pkg/domain's Domain and the cluster services it owns (Rust rewrite)."
+
+[dependencies]
+tidb-cluster = { path = "../tidb-cluster" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-error = { path = "../tidb-error" }
+tidb-exec = { path = "../tidb-exec" }
+tidb-log = { path = "../tidb-log" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }
+tidb-variable = { path = "../tidb-variable" }
+tikv-client.workspace = true
+
+[lints]
+workspace = true

@@ -1163,7 +1163,7 @@ mod table_lock;
 mod temptable;
 pub use table_lock::ClusterDdlLockEffect;
 pub use tidb_executor::table_privilege;
-pub mod cluster_transactions;
+pub use tidb_domain_core::cluster_transactions;
 pub mod domain;
 pub mod lazy_transaction;
 pub mod statement_lifecycle;

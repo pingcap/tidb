@@ -3792,6 +3792,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-domain-core"
+version = "0.0.0"
+dependencies = [
+ "tidb-cluster",
+ "tidb-codec",
+ "tidb-error",
+ "tidb-exec",
+ "tidb-executor",
+ "tidb-log",
+ "tidb-proto",
+ "tidb-txnkv",
+ "tidb-util",
+ "tidb-variable",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-driver-error"
 version = "0.0.0"
 dependencies = [
@@ -4590,6 +4607,7 @@ dependencies = [
  "tidb-ddl-session",
  "tidb-distsql",
  "tidb-domain",
+ "tidb-domain-core",
  "tidb-dxf",
  "tidb-errmsg",
  "tidb-error",

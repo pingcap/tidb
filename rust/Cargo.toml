@@ -90,6 +90,7 @@ members = [
     "crates/tidb-ddl",
     "crates/tidb-stmtsummary",
     "crates/tidb-server",
+    "crates/tidb-domain-core",
     "crates/tidb-session",
     "crates/tidb-variable",
     "crates/tidb-kv",
