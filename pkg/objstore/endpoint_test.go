@@ -41,24 +41,37 @@ func (r rejectEndpointTransport) RoundTrip(*http.Request) (*http.Response, error
 }
 
 func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
-	for _, scheme := range []string{"azure", "gcs"} {
+	for _, tc := range []struct {
+		scheme            string
+		rejectDuringParse bool
+	}{
+		{"azure", false},
+		{"gcs", false},
+		{"s3", true},
+		{"ks3", true},
+		{"oss", true},
+	} {
 		for _, endpoint := range []string{
 			"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
 			"https://FAKE_USER:FAKE_PASS@host:badport/path?sig=FAKE_SIGNATURE",
 			"https://FAKE_USER:FAKE_PASS@host/path\n?sig=FAKE_SIGNATURE",
 		} {
-			t.Run(scheme+"/"+url.QueryEscape(endpoint), func(t *testing.T) {
+			t.Run(tc.scheme+"/"+url.QueryEscape(endpoint), func(t *testing.T) {
 				// Given a valid storage URL with an escaped, malformed endpoint.
-				backend, err := ParseBackend(scheme+"://bucket/prefix?account-name=fake&sas-token=FAKE_SAS&endpoint="+url.QueryEscape(endpoint), nil)
-				require.NoError(t, err)
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				defer cancel()
+				backend, err := ParseBackend(tc.scheme+"://bucket/prefix?account-name=fake&sas-token=FAKE_SAS&endpoint="+url.QueryEscape(endpoint), nil)
+				if tc.rejectDuringParse {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
 
-				// When constructing the real SDK-backed storage.
-				_, err = New(ctx, backend, &storeapi.Options{
-					NoCredentials: true,
-					HTTPClient:    &http.Client{Transport: rejectEndpointTransport{t: t}},
-				})
+					// When the parser accepts the backend, construct the real SDK-backed storage.
+					_, err = New(ctx, backend, &storeapi.Options{
+						NoCredentials: true,
+						HTTPClient:    &http.Client{Transport: rejectEndpointTransport{t: t}},
+					})
+				}
 
 				// Then no error representation can recover the endpoint credentials.
 				require.Error(t, err)
