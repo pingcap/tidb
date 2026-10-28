@@ -62,7 +62,7 @@ impl<'s> ClusterServerSession<'s> {
         let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
         let authority = self.session.result_materialization_authority();
         Ok(QueryResult::new(Box::new(MaterializedResultSetSource::new(
-            crate::domain::pipeline_session::select_columns(&columns),
+            crate::domain::pipeline_session::select_fields(&columns),
             rows,
         )))
         .with_cursor_materialization(field_types, authority)

@@ -280,18 +280,18 @@ impl super::NodeConn {
 /// The rows and column types of an opened result, closed afterwards as the
 /// connection's writer closes it.
 fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_executor::MysqlError> {
-    let infos = source.columns()?;
+    let fields = source.fields()?;
     let native = source.field_types().to_vec();
-    let columns = infos
+    let columns = fields
         .iter()
         .enumerate()
-        .map(|(index, info)| {
+        .map(|(index, field)| {
             let field_type = native
                 .get(index)
-                .filter(|_| native.len() == infos.len())
+                .filter(|_| native.len() == fields.len())
                 .cloned()
-                .unwrap_or_else(|| column_field_type(info));
-            (info.name.clone(), field_type)
+                .unwrap_or_else(|| crate::domain::pipeline_session::field_type_of(&field.field_type));
+            (field.name.clone(), field_type)
         })
         .collect();
     let mut rows = Vec::new();
@@ -305,16 +305,6 @@ fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_exe
     source.finish()?;
     source.close()?;
     Ok(StmtOutput::Rows { columns, rows })
-}
-
-/// The field type a column definition packet describes.
-fn column_field_type(info: &tidb_protocol::ColumnInfo) -> tidb_datatype::FieldType {
-    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::from_mysql_type(
-        info.type_code,
-    ))
-    .with_flags(u32::from(info.flag))
-    .with_flen(i64::from(info.column_length))
-    .with_decimal(i64::from(info.decimal))
 }
 
 fn driver_error(error: SqlQueryError) -> tidb_executor::DriverError {

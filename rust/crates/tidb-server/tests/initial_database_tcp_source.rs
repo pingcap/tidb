@@ -33,6 +33,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::HashSet;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -40,9 +41,8 @@ use std::sync::Arc;
 use sha1::{Digest, Sha1};
 use tidb_datatype::Datum;
 use tidb_protocol::{
-    ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_QUERY, COM_QUIT,
-    DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
-};
+    PacketReader, PacketWriter, COM_INIT_DB, COM_QUERY, COM_QUIT,
+    DEFAULT_MAX_ALLOWED_PACKET, };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
     QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError,
@@ -76,19 +76,22 @@ impl ResultSetSource for Rows {
         Ok(vec![vec![Datum::Int(7)]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(vec![ColumnInfo {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(vec![ResultFieldMetadata {
             schema: SCHEMA.to_owned(),
             table: "rows".to_owned(),
             org_table: "rows".to_owned(),
             name: "id".to_owned(),
             org_name: "id".to_owned(),
-            column_length: 20,
-            charset: 63,
-            flag: 0x0001,
-            decimal: 0,
-            type_code: TYPE_LONGLONG,
+            empty_org_name: false,
             default_value: None,
+            field_type: ResultFieldTypeMetadata {
+                code: tidb_datatype::FieldTypeCode::LongLong,
+                flags: 0x0001,
+                flen: Some(20),
+                decimal: Some(0),
+                collation: tidb_datatype::Collation::Binary,
+            },
         }])
     }
 

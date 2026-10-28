@@ -26,7 +26,7 @@ use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_protocol::ColumnInfo;
+use tidb_exec::ResultFieldMetadata;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
@@ -356,7 +356,7 @@ pub struct PreparedGeneral {
     /// instead of normalizing the text again.
     digest: String,
     parameter_count: usize,
-    result_columns: Vec<ColumnInfo>,
+    result_fields: Vec<ResultFieldMetadata>,
     /// The session owns the parse, cache candidate and execution readiness.
     prepared_ast: Option<crate::PreparedAst>,
 }
@@ -364,13 +364,13 @@ pub struct PreparedGeneral {
 impl PreparedGeneral {
     /// Creates one from its statement text and the metadata a PREPARE reports.
     #[must_use]
-    pub fn new(sql: String, parameter_count: usize, result_columns: Vec<ColumnInfo>) -> Self {
+    pub fn new(sql: String, parameter_count: usize, result_fields: Vec<ResultFieldMetadata>) -> Self {
         let digest = tidb_parser::normalize_digest(&sql).1.to_string();
         Self {
             sql,
             digest,
             parameter_count,
-            result_columns,
+            result_fields,
             prepared_ast: None,
         }
     }
@@ -379,7 +379,7 @@ impl PreparedGeneral {
     #[must_use]
     pub fn with_prepared_ast(
         prepared_ast: crate::PreparedAst,
-        result_columns: Vec<ColumnInfo>,
+        result_fields: Vec<ResultFieldMetadata>,
     ) -> Self {
         Self {
             sql: prepared_ast.sql().to_owned(),
@@ -387,7 +387,7 @@ impl PreparedGeneral {
                 .1
                 .to_string(),
             parameter_count: prepared_ast.parameter_count(),
-            result_columns,
+            result_fields,
             prepared_ast: Some(prepared_ast),
         }
     }
@@ -413,8 +413,8 @@ impl PreparedGeneral {
     /// Result metadata sent at prepare time; empty for a statement that
     /// answers with an OK packet.
     #[must_use]
-    pub fn result_columns(&self) -> &[ColumnInfo] {
-        &self.result_columns
+    pub fn result_fields(&self) -> &[ResultFieldMetadata] {
+        &self.result_fields
     }
 
     /// The parse retained at prepare time, when this statement came through
@@ -646,22 +646,8 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
         self.inner.next_batch(max_rows)
     }
 
-    fn supports_text_batch(&self) -> bool {
-        self.inner.supports_text_batch()
-    }
-
-    fn next_text_batch(
-        &mut self,
-        max_rows: usize,
-    ) -> Result<
-        Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>,
-        tidb_executor::MysqlError,
-    > {
-        self.inner.next_text_batch(max_rows)
-    }
-
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        self.inner.columns()
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        self.inner.fields()
     }
 
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
@@ -714,22 +700,8 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
         self.inner.next_batch(max_rows)
     }
 
-    fn supports_text_batch(&self) -> bool {
-        self.inner.supports_text_batch()
-    }
-
-    fn next_text_batch(
-        &mut self,
-        max_rows: usize,
-    ) -> Result<
-        Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>,
-        tidb_executor::MysqlError,
-    > {
-        self.inner.next_text_batch(max_rows)
-    }
-
-    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
-        self.inner.columns()
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        self.inner.fields()
     }
 
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {

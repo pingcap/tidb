@@ -197,7 +197,8 @@ impl CursorState {
         }
         self.columns = result
             .source()
-            .columns()
+            .fields()
+            .map(|fields| crate::column_convert::convert_column_infos(&fields))
             .map_err(|error| SqlQueryError::from(error))?;
         if self.columns.len() != self.field_types.len() {
             return Err(SqlQueryError::unknown(format!(
@@ -329,7 +330,7 @@ mod tests {
     use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
-    use crate::pipeline_session::select_columns;
+    use crate::pipeline_session::select_fields;
 
     #[derive(Default)]
     struct SourceLifecycle {
@@ -339,7 +340,7 @@ mod tests {
 
     struct CountingRows {
         current_tso: tidb_executor::CurrentTso,
-        columns: Vec<tidb_protocol::ColumnInfo>,
+        fields: Vec<tidb_exec::ResultFieldMetadata>,
         rows: VecDeque<Vec<Datum>>,
         lifecycle: Arc<Mutex<SourceLifecycle>>,
     }
@@ -355,8 +356,8 @@ mod tests {
                 .collect())
         }
 
-        fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
-            Ok(self.columns.clone())
+        fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+            Ok(self.fields.clone())
         }
 
         fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
@@ -406,7 +407,7 @@ mod tests {
         let current_tso = tidb_executor::CurrentTso::default();
         let source = CountingRows {
             current_tso: current_tso.clone(),
-            columns: select_columns(&[("v".to_owned(), fields[0].clone())]),
+            fields: select_fields(&[("v".to_owned(), fields[0].clone())]),
             rows: (0..64).map(|value| vec![Datum::Int(value)]).collect(),
             lifecycle: Arc::clone(&lifecycle),
         };

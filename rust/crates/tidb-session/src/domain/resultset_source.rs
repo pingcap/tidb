@@ -15,8 +15,7 @@
 //! Server-facing result-set source contracts.
 
 use tidb_datatype::Datum;
-use tidb_exec::distsql_recordset::{DistSqlRecordSet, TextResultBatch};
-use tidb_protocol::ColumnInfo;
+use tidb_exec::ResultFieldMetadata;
 
 /// Statement values read at the metadata/terminal boundary, not before Next.
 pub struct StatementStatus<'a> {
@@ -75,25 +74,9 @@ pub trait ResultSetSource {
     fn next_batch(&mut self, max_rows: usize)
         -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>;
 
-    /// Whether this source can retain a typed chunk while the text writer
-    /// formats rows directly from borrowed cells. Row-oriented sources keep
-    /// the default `false` and use [`Self::next_batch`].
-    fn supports_text_batch(&self) -> bool {
-        false
-    }
-
-    /// Pulls one typed chunk for the Go-shaped text writer. `None` means the
-    /// source is exhausted; unsupported sources must leave this method at its
-    /// default and report `supports_text_batch() == false`.
-    fn next_text_batch(
-        &mut self,
-        _max_rows: usize,
-    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
-        Ok(None)
-    }
-
-    /// Returns metadata after the first pull has established dynamic schema.
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError>;
+    /// Go `RecordSet.Fields()`: the result fields, read after the first pull
+    /// has established a dynamic schema.
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError>;
 
     /// Finishes statement execution once rows are drained.
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError>;
@@ -176,23 +159,12 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
         self.timed(|inner| inner.next_batch(max_rows))
     }
 
-    fn supports_text_batch(&self) -> bool {
-        self.inner.supports_text_batch()
-    }
-
-    fn next_text_batch(
-        &mut self,
-        max_rows: usize,
-    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
-        self.timed(|inner| inner.next_text_batch(max_rows))
-    }
-
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        let columns = self.timed(|inner| inner.columns());
-        if let Ok(columns) = &columns {
-            self.column_count = columns.len();
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        let fields = self.timed(|inner| inner.fields());
+        if let Ok(fields) = &fields {
+            self.column_count = fields.len();
         }
-        columns
+        fields
     }
 
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
@@ -209,37 +181,5 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
 
     fn add_result_chunk_cells(&mut self, cells: i64) {
         self.inner.add_result_chunk_cells(cells);
-    }
-}
-
-impl ResultSetSource for DistSqlRecordSet {
-    fn next_batch(
-        &mut self,
-        max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
-        DistSqlRecordSet::next_batch(self, max_rows).map_err(tidb_executor::MysqlError::from)
-    }
-
-    fn supports_text_batch(&self) -> bool {
-        true
-    }
-
-    fn next_text_batch(
-        &mut self,
-        max_rows: usize,
-    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
-        DistSqlRecordSet::next_text_batch(self, max_rows).map_err(tidb_executor::MysqlError::from)
-    }
-
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(DistSqlRecordSet::columns(self).to_vec())
-    }
-
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
-        DistSqlRecordSet::finish(self).map_err(tidb_executor::MysqlError::from)
-    }
-
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
-        DistSqlRecordSet::close(self).map_err(tidb_executor::MysqlError::from)
     }
 }

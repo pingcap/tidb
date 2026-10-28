@@ -15904,8 +15904,8 @@ fn result_column_flags_follow_gos_null_and_binary_stamps() {
         ("SELECT GREATEST(a, b) FROM t", 4224),
     ] {
         let mut result = session.node_conn().execute(sql).unwrap();
-        let columns = crate::domain::resultset_source::ResultSetSource::columns(result.source()).unwrap();
-        assert_eq!(columns[0].flag, flag, "{sql}");
+        let fields = crate::domain::resultset_source::ResultSetSource::fields(result.source()).unwrap();
+        assert_eq!(fields[0].field_type.flags, flag, "{sql}");
     }
 }
 
@@ -16823,10 +16823,10 @@ fn result_columns_keep_the_names_the_query_wrote() {
         let mut result = session.node_conn().execute(sql).expect("the query runs");
         let source = result.source();
         let columns = source
-            .columns()
-            .expect("columns")
+            .fields()
+            .expect("fields")
             .into_iter()
-            .map(|column| column.name)
+            .map(|field| field.name)
             .collect();
         let _ = source.next_batch(8);
         columns

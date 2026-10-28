@@ -101,7 +101,7 @@ mod tests {
         result.finish().unwrap();
         let mut req = result.new_chunk().expect("an executor's chunk");
         assert_eq!(req.num_cols(), 1);
-        assert_eq!(result.columns().unwrap().len(), 1);
+        assert_eq!(result.fields().unwrap().len(), 1);
         assert_eq!(result.next_chunk(&mut req).unwrap_err().code, 1317);
         result.close().unwrap();
         result.close().unwrap();

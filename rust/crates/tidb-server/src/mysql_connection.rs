@@ -2556,7 +2556,7 @@ fn run_connection_commands<S: QuerySession>(
                             session.current_database().to_owned()
                         })
                         .unwrap_or_default();
-                    let result_columns = statement.result_columns().to_vec();
+                    let result_columns = crate::column_convert::convert_column_infos(statement.result_fields());
                     let parameter_count = statement.parameter_count();
                     let statement_id = match prepared.insert(statement) {
                         Ok(statement_id) => statement_id,

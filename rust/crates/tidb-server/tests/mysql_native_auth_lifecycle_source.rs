@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::VecDeque;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -12,9 +13,8 @@ use std::sync::{Arc, Mutex};
 use sha1::{Digest, Sha1};
 use tidb_datatype::Datum;
 use tidb_protocol::{
-    ColumnInfo, PacketReader, PacketWriter, COM_PING, COM_QUERY, COM_QUIT,
-    DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
-};
+    PacketReader, PacketWriter, COM_PING, COM_QUERY, COM_QUIT,
+    DEFAULT_MAX_ALLOWED_PACKET, };
 use tidb_server::{
     serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation,
     ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory,
@@ -101,19 +101,22 @@ impl ResultSetSource for Rows {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(vec![ColumnInfo {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(vec![ResultFieldMetadata {
             schema: "campaign21".to_owned(),
             table: "rows".to_owned(),
             org_table: "rows".to_owned(),
             name: "id".to_owned(),
             org_name: "id".to_owned(),
-            column_length: 20,
-            charset: 63,
-            flag: 0x0003,
-            decimal: 0,
-            type_code: TYPE_LONGLONG,
+            empty_org_name: false,
             default_value: None,
+            field_type: ResultFieldTypeMetadata {
+                code: tidb_datatype::FieldTypeCode::LongLong,
+                flags: 0x0003,
+                flen: Some(20),
+                decimal: Some(0),
+                collation: tidb_datatype::Collation::Binary,
+            },
         }])
     }
 

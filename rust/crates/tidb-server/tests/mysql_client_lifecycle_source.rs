@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::VecDeque;
 use std::fs;
 use std::net::{TcpListener, TcpStream};
@@ -16,7 +17,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{OomAction, StatementMemory};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
-    ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
+    PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
     COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
     COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
@@ -59,33 +60,39 @@ impl ResultSetSource for Rows {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
         Ok(vec![
-            ColumnInfo {
+            ResultFieldMetadata {
                 schema: "campaign20".to_owned(),
                 table: "rows".to_owned(),
                 org_table: "rows".to_owned(),
                 name: "amount".to_owned(),
                 org_name: "balance".to_owned(),
-                column_length: 20,
-                charset: 63,
-                flag: 0x0001,
-                decimal: 0,
-                type_code: TYPE_LONGLONG,
+                empty_org_name: false,
                 default_value: None,
+                field_type: ResultFieldTypeMetadata {
+                    code: FieldTypeCode::LongLong,
+                    flags: 0x0001,
+                    flen: Some(20),
+                    decimal: Some(0),
+                    collation: tidb_datatype::Collation::Binary,
+                },
             },
-            ColumnInfo {
+            ResultFieldMetadata {
                 schema: "campaign20".to_owned(),
                 table: "rows".to_owned(),
                 org_table: "rows".to_owned(),
                 name: "id".to_owned(),
                 org_name: "id".to_owned(),
-                column_length: 20,
-                charset: 63,
-                flag: 0x0003,
-                decimal: 0,
-                type_code: TYPE_LONGLONG,
+                empty_org_name: false,
                 default_value: None,
+                field_type: ResultFieldTypeMetadata {
+                    code: FieldTypeCode::LongLong,
+                    flags: 0x0003,
+                    flen: Some(20),
+                    decimal: Some(0),
+                    collation: tidb_datatype::Collation::Binary,
+                },
             },
         ])
     }
@@ -434,19 +441,22 @@ fn load_stats_requires_client_local_files() {
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
-fn prepared_balance_column() -> ColumnInfo {
-    ColumnInfo {
+fn prepared_balance_column() -> ResultFieldMetadata {
+    ResultFieldMetadata {
         schema: "campaign27".to_owned(),
         table: "rows".to_owned(),
         org_table: "rows".to_owned(),
         name: "balance".to_owned(),
         org_name: "balance".to_owned(),
-        column_length: 20,
-        charset: 63,
-        flag: 0x0001,
-        decimal: 0,
-        type_code: TYPE_LONGLONG,
+        empty_org_name: false,
         default_value: None,
+        field_type: ResultFieldTypeMetadata {
+            code: FieldTypeCode::LongLong,
+            flags: 0x0001,
+            flen: Some(20),
+            decimal: Some(0),
+            collation: tidb_datatype::Collation::Binary,
+        },
     }
 }
 
@@ -479,7 +489,7 @@ impl ResultSetSource for PreparedRows {
             .unwrap_or_default())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
         Ok(vec![prepared_balance_column()])
     }
 
@@ -552,7 +562,7 @@ impl QuerySession for PreparedSession {
             .lock()
             .unwrap()
             .extend(integers.iter().copied());
-        if statement.result_columns().is_empty() {
+        if statement.result_fields().is_empty() {
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 1,
                 last_insert_id: 0,
@@ -616,7 +626,7 @@ impl ResultSetSource for CursorEncodingRows {
         Ok(vec![vec![Datum::Bytes(b"not-an-integer".to_vec())]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
         // Deliberately inconsistent with the exact Varchar FieldType below:
         // materialization remains valid, while binary FETCH must reject this
         // datum/metadata pair before advancing the cursor.
@@ -785,19 +795,22 @@ impl ResultSetSource for CursorReaderFailureRows {
             .collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(vec![ColumnInfo {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(vec![ResultFieldMetadata {
             schema: "test".to_owned(),
             table: "reader_failure".to_owned(),
             org_table: "reader_failure".to_owned(),
             name: "v".to_owned(),
             org_name: "v".to_owned(),
-            column_length: 4096,
-            charset: 63,
-            flag: 0,
-            decimal: 0,
-            type_code: TYPE_BLOB,
+            empty_org_name: false,
             default_value: None,
+            field_type: ResultFieldTypeMetadata {
+                code: FieldTypeCode::Blob,
+                flags: 0,
+                flen: Some(4096),
+                decimal: Some(0),
+                collation: tidb_datatype::Collation::Binary,
+            },
         }])
     }
 
@@ -860,18 +873,21 @@ impl QuerySession for CursorReaderFailureSession {
         Ok(PreparedGeneral::new(
             sql.to_owned(),
             0,
-            vec![ColumnInfo {
+            vec![ResultFieldMetadata {
                 schema: "test".to_owned(),
                 table: "reader_failure".to_owned(),
                 org_table: "reader_failure".to_owned(),
                 name: "v".to_owned(),
                 org_name: "v".to_owned(),
-                column_length: 4096,
-                charset: 63,
-                flag: 0,
-                decimal: 0,
-                type_code: TYPE_BLOB,
+                empty_org_name: false,
                 default_value: None,
+                field_type: ResultFieldTypeMetadata {
+                    code: FieldTypeCode::Blob,
+                    flags: 0,
+                    flen: Some(4096),
+                    decimal: Some(0),
+                    collation: tidb_datatype::Collation::Binary,
+                },
             }],
         ))
     }

@@ -19,7 +19,6 @@ use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport,
     ResponseChannel, SelectInput, StoreType, TransportRequest, WarningCollector,
 };
-use tidb_exec::distsql_recordset::DistSqlRecordSet;
 
 struct OneResponse(Option<ResponseChannel<prost::bytes::Bytes>>);
 
@@ -67,14 +66,17 @@ fn injected_query_runtime_feeds_the_existing_recordset_consumer() {
         )
         .unwrap();
     let iter = result.into_select_iter(Vec::new());
-    let mut recordset = DistSqlRecordSet::new(iter, Vec::new());
+    let mut iter = iter;
+    let mut rows = Vec::new();
+    while let Some(row) = iter.next_row().unwrap() {
+        rows.push(row.row);
+    }
     assert_eq!(
-        recordset.next_batch(32).unwrap(),
+        rows,
         vec![
             vec![tidb_datatype::Datum::Int(1)],
             vec![tidb_datatype::Datum::Int(2)]
         ]
     );
-    assert!(recordset.next_batch(32).unwrap().is_empty());
-    recordset.close().unwrap();
+    iter.close();
 }

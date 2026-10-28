@@ -9,6 +9,7 @@
 //! panics ends ITS connection, and the server lives to serve the next one.
 //! Recovery writes through the retained PacketIO before transport/session cleanup.
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,7 @@ use tidb_datatype::{Datum, FieldTypeCode};
 
 use sha1::{Digest, Sha1};
 use tidb_protocol::{
-    ColumnInfo, CompressionAlgorithm, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
+    CompressionAlgorithm, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
     COM_PING, COM_QUERY, COM_QUIT, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
@@ -100,19 +101,22 @@ impl ResultSetSource for PanickingRows {
         Ok(vec![vec![Datum::Int(7)]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(vec![ColumnInfo {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(vec![ResultFieldMetadata {
             schema: String::new(),
             table: String::new(),
             org_table: String::new(),
             name: "value".into(),
             org_name: "value".into(),
-            column_length: 20,
-            charset: 63,
-            flag: 0,
-            decimal: 0,
-            type_code: FieldTypeCode::LongLong.mysql_type(),
+            empty_org_name: false,
             default_value: None,
+            field_type: ResultFieldTypeMetadata {
+                code: FieldTypeCode::LongLong,
+                flags: 0,
+                flen: Some(20),
+                decimal: Some(0),
+                collation: tidb_datatype::Collation::Binary,
+            },
         }])
     }
 

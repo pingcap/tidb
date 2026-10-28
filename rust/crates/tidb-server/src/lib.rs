@@ -40,6 +40,7 @@ pub use tidb_session::domain::cluster_stats_lock_seam;
 pub use tidb_session::domain::cluster_sysvar_seam;
 pub(crate) use tidb_session::domain::configured_user_store;
 mod client_socket;
+pub mod column_convert;
 pub mod connection_resultset;
 mod connection_writers;
 mod cursor_state;

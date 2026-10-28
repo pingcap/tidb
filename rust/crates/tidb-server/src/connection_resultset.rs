@@ -243,7 +243,8 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         finish_attempted: false,
     })?;
     let columns = source
-        .columns()
+        .fields()
+        .map(|fields| crate::column_convert::convert_column_infos(&fields))
         .map_err(|message| binary_failure(message, sink, false))?;
     let mut options = options;
     if let Some(status) = source.statement_status() {
@@ -636,8 +637,8 @@ mod tests {
             std::thread::sleep(self.pull_delay);
             self.inner.next_batch(max_rows)
         }
-        fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
-            self.inner.columns()
+        fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+            self.inner.fields()
         }
         fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             self.inner.finish()
@@ -658,7 +659,7 @@ mod tests {
     /// `AddResultChunkCells` gets the written rows times the columns.
     #[test]
     fn writer_reports_write_time_without_pulls_and_result_cells() {
-        let columns = crate::pipeline_session::select_columns(&[
+        let columns = crate::pipeline_session::select_fields(&[
             (
                 "a".to_owned(),
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),

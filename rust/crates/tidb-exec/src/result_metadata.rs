@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped result-field metadata conversion.
-//!
-//! This leaf ports the metadata-only part of Go's
-//! `pkg/server/internal/column/convert.go::ConvertColumnInfo`.  It deliberately
-//! does not know how an executor resolves a `ResultField`; the caller supplies
-//! the already resolved display/original names and the source field type.
-//! Wiring this leaf into the connected server path belongs to the executor
-//! steward after typed expression metadata is available.
+//! Source-shaped result fields (Go `resolve.ResultField`) and the executor's
+//! `colNames2ResultFields`. Their wire form, Go `ConvertColumnInfo`, is the
+//! server's (`tidb-server::column_convert`).
 
-use tidb_datatype::{Charset, Collation, FieldTypeCode};
+use tidb_datatype::{Collation, FieldTypeCode};
 pub use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
-use tidb_protocol::{ColumnDefault, ColumnInfo, TYPE_VAR_STRING};
+use tidb_protocol::ColumnDefault;
 
 /// The source's MySQL `NotFixedDec` marker.
 pub const NOT_FIXED_DEC: u8 = 31;
@@ -182,151 +177,4 @@ fn truncate_alias_part(value: &str) -> String {
         end -= 1;
     }
     value[..end].to_owned()
-}
-
-/// Converts one resolved result field to protocol column metadata.
-///
-/// The arithmetic and type remapping mirror `ConvertColumnInfo` exactly for
-/// the dependency-closed type/collation registry currently present in the
-/// Rust workspace. Typed Datum formatting, session charset conversion, and
-/// executor-side field resolution remain outside this leaf.
-pub fn convert_result_field(field: &ResultFieldMetadata) -> ColumnInfo {
-    let code = field.field_type.code;
-    let type_code = if code == FieldTypeCode::Varchar {
-        // Keep old clients compatible, as Go's server conversion does.
-        TYPE_VAR_STRING
-    } else {
-        code.mysql_type()
-    };
-    let org_name = if field.empty_org_name {
-        String::new()
-    } else {
-        field.org_name.clone()
-    };
-
-    ColumnInfo {
-        schema: field.schema.clone(),
-        table: field.table.clone(),
-        org_table: field.org_table.clone(),
-        name: field.name.clone(),
-        org_name,
-        column_length: column_length(&field.field_type),
-        charset: charset_default_collation_id(field.field_type.collation),
-        flag: field.field_type.flags,
-        decimal: decimal_places(&field.field_type),
-        type_code,
-        default_value: field.default_value.clone(),
-    }
-}
-
-/// Converts adapter output into the column vector accepted by
-/// `Session::execute_framed_query_text_result_set`.
-///
-/// This is the narrow connection between source-shaped executor fields and
-/// the existing framed result-set path. It does not execute SQL, infer a
-/// schema, or derive metadata from `Datum` values; callers still own the
-/// resolved field list and protocol options.
-pub fn columns_from_adapted_fields(fields: &[AdaptedResultField]) -> Vec<ColumnInfo> {
-    fields
-        .iter()
-        .map(|field| convert_result_field(&field.as_result_field()))
-        .collect()
-}
-
-fn column_length(field: &ResultFieldTypeMetadata) -> u32 {
-    let code = field.code;
-    let Some(flen) = field.flen else {
-        // Go converts the `-1` returned for an unknown type to uint32.  The
-        // known source table below covers every type currently represented by
-        // `FieldTypeCode`; retaining MAX for an unknown value keeps that cast
-        // observable instead of inventing a new zero-length protocol field.
-        return default_field_length(code);
-    };
-
-    let mut length = flen;
-    if code == FieldTypeCode::NewDecimal {
-        // `ConvertColumnInfo` reserves one byte for a sign and another byte
-        // when the decimal has a fractional part.
-        length = length.wrapping_add(1);
-        if field.decimal.is_some_and(|decimal| decimal > 0) {
-            length = length.wrapping_add(1);
-        }
-    } else if code.is_string() || matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) {
-        length = length.wrapping_mul(max_bytes_per_character(field.collation));
-    }
-    length
-}
-
-fn decimal_places(field: &ResultFieldTypeMetadata) -> u8 {
-    match field.decimal {
-        Some(decimal) => decimal,
-        None if field.code == FieldTypeCode::Duration => 0,
-        None => NOT_FIXED_DEC,
-    }
-}
-
-fn max_bytes_per_character(collation: Collation) -> u32 {
-    match collation.charset() {
-        tidb_datatype::Charset::Binary
-        | tidb_datatype::Charset::Ascii
-        | tidb_datatype::Charset::Latin1 => 1,
-        tidb_datatype::Charset::Utf8 => 3,
-        tidb_datatype::Charset::Utf8Mb4 => 4,
-        tidb_datatype::Charset::Gbk => 2,
-        tidb_datatype::Charset::Gb18030 => 4,
-    }
-}
-
-/// Returns the protocol ID Go emits for a field's character set.
-///
-/// `ConvertColumnInfo` calls `mysql.CharsetNameToID`, so a column declared
-/// with `utf8mb4_general_ci` still carries `utf8mb4_bin` (46) in the wire
-/// column definition. The protocol field is the charset's default collation,
-/// not the column's selected collation. Keep this mapping independent of the
-/// new-collation compatibility switch: Go's charset constants do not change
-/// when that switch changes.
-fn charset_default_collation_id(collation: Collation) -> u16 {
-    match collation.charset() {
-        Charset::Binary => 63,
-        Charset::Ascii => 65,
-        Charset::Latin1 => 47,
-        Charset::Utf8 => 83,
-        Charset::Utf8Mb4 => 46,
-        Charset::Gbk => 28,
-        Charset::Gb18030 => 248,
-    }
-}
-
-fn default_field_length(code: FieldTypeCode) -> u32 {
-    match code {
-        FieldTypeCode::Bit => 1,
-        FieldTypeCode::Tiny => 4,
-        FieldTypeCode::Short => 6,
-        FieldTypeCode::Int24 => 9,
-        FieldTypeCode::Long => 11,
-        FieldTypeCode::LongLong => 20,
-        FieldTypeCode::Double => 22,
-        FieldTypeCode::Float => 12,
-        FieldTypeCode::NewDecimal => 10,
-        FieldTypeCode::Duration => 10,
-        FieldTypeCode::Date => 10,
-        FieldTypeCode::Timestamp | FieldTypeCode::Datetime => 19,
-        FieldTypeCode::Year => 4,
-        FieldTypeCode::String => 1,
-        FieldTypeCode::Varchar | FieldTypeCode::VarString => 5,
-        FieldTypeCode::TinyBlob => 255,
-        FieldTypeCode::Blob => 65_535,
-        FieldTypeCode::MediumBlob => 16_777_215,
-        FieldTypeCode::LongBlob | FieldTypeCode::Json => u32::MAX,
-        FieldTypeCode::Null => 0,
-        // The Go lookup returns -1 for these entries and ConvertColumnInfo
-        // casts that value to uint32.
-        FieldTypeCode::Unspecified
-        | FieldTypeCode::NewDate
-        | FieldTypeCode::Enum
-        | FieldTypeCode::Set
-        | FieldTypeCode::Geometry
-        | FieldTypeCode::VectorFloat32
-        | FieldTypeCode::Unknown(_) => u32::MAX,
-    }
 }

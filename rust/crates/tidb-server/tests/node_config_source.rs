@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use tidb_server::{run_configured_node, NodeConfig, NodeConfigError, RunConfiguredNodeError};
+use tidb_server::{run_configured_node, NodeConfigError, RunConfiguredNodeError};
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
 
 fn required() -> Vec<&'static str> {

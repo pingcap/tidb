@@ -14,6 +14,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::VecDeque;
 
 use tidb_datatype::{
@@ -21,7 +22,7 @@ use tidb_datatype::{
     MysqlSet, Time, TimeType, VectorFloat32,
 };
 use tidb_protocol::{
-    append_length_encoded_bytes, ColumnInfo, ResultSetOptions, TYPE_BIT, TYPE_DATETIME,
+    append_length_encoded_bytes, ResultSetOptions, TYPE_BIT, TYPE_DATETIME,
     TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON, TYPE_LONG,
     TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_VAR_STRING,
     TYPE_YEAR, UNSIGNED_FLAG,
@@ -34,7 +35,7 @@ use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteEr
 struct Source {
     events: VecDeque<Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>>,
     log: Vec<&'static str>,
-    columns: Option<Vec<ColumnInfo>>,
+    columns: Option<Vec<ResultFieldMetadata>>,
     columns_calls: usize,
     finish_error: Option<String>,
     close_calls: usize,
@@ -50,11 +51,9 @@ impl Source {
             .unwrap_or_else(|| vec![column()])
             .iter()
             .map(|column| {
-                let mut field = tidb_datatype::FieldType::new(
-                    tidb_datatype::FieldTypeCode::from_mysql_type(column.type_code),
-                );
-                field.add_flags(u32::from(column.flag));
-                field.set_decimal(i64::from(column.decimal));
+                let mut field = tidb_datatype::FieldType::new(column.field_type.code);
+                field.add_flags(u32::from(column.field_type.flags));
+                field.set_decimal(column.field_type.decimal.map_or(-1, i64::from));
                 field
             })
             .collect();
@@ -99,7 +98,7 @@ impl ResultSetSource for Source {
         self.events.pop_front().unwrap_or(Ok(Vec::new()))
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
         self.log.push("columns");
         self.columns_calls += 1;
         Ok(self.columns.clone().unwrap_or_else(|| vec![column()]))
@@ -170,28 +169,30 @@ impl ResultSetSink for Sink {
     }
 }
 
-fn column() -> ColumnInfo {
-    ColumnInfo {
+fn column() -> ResultFieldMetadata {
+    ResultFieldMetadata {
         schema: String::new(),
         table: String::new(),
         org_table: String::new(),
         name: "a".to_owned(),
         org_name: String::new(),
-        column_length: 11,
-        charset: 63,
-        flag: 0,
-        decimal: 0,
-        type_code: TYPE_LONG,
+        empty_org_name: true,
         default_value: None,
+        field_type: ResultFieldTypeMetadata {
+            code: tidb_datatype::FieldTypeCode::Long,
+            flags: 0,
+            flen: Some(11),
+            decimal: Some(0),
+            collation: tidb_datatype::Collation::Binary,
+        },
     }
 }
 
-fn typed_column(type_code: u8, decimal: u8) -> ColumnInfo {
-    ColumnInfo {
-        type_code,
-        decimal,
-        ..column()
-    }
+fn typed_column(type_code: u8, decimal: u8) -> ResultFieldMetadata {
+    let mut field = column();
+    field.field_type.code = tidb_datatype::FieldTypeCode::from_mysql_type(type_code);
+    field.field_type.decimal = Some(decimal);
+    field
 }
 
 #[test]
@@ -573,7 +574,7 @@ fn unsupported_column_type_fails_before_a_row_packet_is_written() {
 #[test]
 fn text_rows_connect_every_supported_datum_family_to_the_wire_formatter() {
     let mut unsigned = typed_column(TYPE_LONGLONG, 0);
-    unsigned.flag = UNSIGNED_FLAG;
+    unsigned.field_type.flags = UNSIGNED_FLAG;
     let columns = vec![
         typed_column(TYPE_LONG, 0),
         unsigned,

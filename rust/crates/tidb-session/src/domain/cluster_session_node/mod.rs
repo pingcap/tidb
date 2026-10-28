@@ -3978,7 +3978,7 @@ impl ClusterStatsSessionState {
                 .execute(sql)
                 .map_err(|error| stats_session_error(error.message))?;
             let source = result.source();
-            let columns = source.columns()?;
+            let fields = source.fields()?;
             let mut rows = Vec::new();
             loop {
                 let batch = source.next_batch(1024)?;
@@ -3989,7 +3989,7 @@ impl ClusterStatsSessionState {
             }
             source.finish()?;
             source.close()?;
-            Ok((rows, stats_result_fields(columns)))
+            Ok((rows, stats_result_fields(fields)))
         })
     }
 
@@ -4052,31 +4052,22 @@ impl ClusterStatsSessionState {
 }
 
 fn stats_result_fields(
-    columns: Vec<tidb_protocol::ColumnInfo>,
+    fields: Vec<tidb_exec::ResultFieldMetadata>,
 ) -> Vec<tidb_resolve::ResultFieldRef> {
-    columns
+    fields
         .into_iter()
-        .map(|column| {
-            let mut field_type = tidb_datatype::FieldType::new(
-                tidb_datatype::FieldTypeCode::from_mysql_type(column.type_code),
-            );
-            field_type.set_flags(u32::from(column.flag));
-            field_type.set_flen(i64::from(column.column_length));
-            field_type.set_decimal(i64::from(column.decimal));
-            field_type.set_collation_name(tidb_datatype::collation_id_to_name(i32::from(
-                column.charset,
-            )));
+        .map(|field| {
             let model_column = tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                name: tidb_ast::CiString::new(column.org_name.clone()),
-                field_type,
+                name: tidb_ast::CiString::new(field.org_name.clone()),
+                field_type: crate::domain::pipeline_session::field_type_of(&field.field_type),
                 ..tidb_model::ColumnInfo::default()
             });
             tidb_model::GoShared::new(tidb_resolve::ResultField {
                 column: Some(model_column),
-                column_as_name: tidb_ast::CiString::new(column.name),
-                empty_org_name: column.org_name.is_empty(),
-                table_as_name: tidb_ast::CiString::new(column.table),
-                db_name: tidb_ast::CiString::new(column.schema),
+                column_as_name: tidb_ast::CiString::new(field.name),
+                empty_org_name: field.empty_org_name,
+                table_as_name: tidb_ast::CiString::new(field.table),
+                db_name: tidb_ast::CiString::new(field.schema),
                 ..tidb_resolve::ResultField::default()
             })
         })
@@ -5713,7 +5704,7 @@ impl<'s> ClusterServerSession<'s> {
         let (spans, started) = recorder.finish();
         let (columns, result_rows) = crate::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;
-        let columns = crate::domain::pipeline_session::select_columns(&columns);
+        let columns = crate::domain::pipeline_session::select_fields(&columns);
         Ok(QueryResult::new(Box::new(
             crate::domain::pipeline_session::MaterializedResultSetSource::new(columns, result_rows),
         )))
@@ -6958,7 +6949,7 @@ impl<'s> ClusterServerSession<'s> {
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
         let bound_probe = prepared_ast.bind(&probe).map_err(map_error)?;
         let result_columns = match self.session.plan_bound_prepared_columns(bound_probe) {
-            Ok(columns) => crate::domain::pipeline_session::select_columns(&columns),
+            Ok(columns) => crate::domain::pipeline_session::select_fields(&columns),
             // A variable error (Go's `variable` package) is the statement's
             // own failure and is reported at prepare time.
             Err(error)
@@ -7255,7 +7246,7 @@ impl<'s> ClusterServerSession<'s> {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
                 let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                    crate::domain::pipeline_session::select_columns(&columns),
+                    crate::domain::pipeline_session::select_fields(&columns),
                     rows,
                 )))
                 .with_cursor_materialization(

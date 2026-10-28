@@ -397,7 +397,7 @@ fn preparing_a_range_only_plans_metadata() {
         let statement = session
             .node_conn().prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
             .expect("prepare");
-        assert_eq!(statement.result_columns().len(), 1);
+        assert_eq!(statement.result_fields().len(), 1);
     });
     assert_eq!(
         opens,

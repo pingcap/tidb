@@ -150,7 +150,7 @@ impl<'s> ClusterServerSession<'s> {
                 }
                 let source = match output {
                     StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
-                        crate::domain::pipeline_session::select_columns(&columns),
+                        crate::domain::pipeline_session::select_fields(&columns),
                         rows,
                     ),
                     StmtOutput::Affected(count) => {
@@ -206,8 +206,8 @@ impl ResultSetSource for ClusterRecordSet<'_> {
             .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
             .collect())
     }
-    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(crate::domain::pipeline_session::result_set_columns(
+    fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(crate::domain::pipeline_session::result_set_fields(
             self.state.columns(),
             self.state.output_names(),
         ))

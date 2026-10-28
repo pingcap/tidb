@@ -228,10 +228,10 @@ pub(crate) fn query_rows(session: &mut Session, sql: &str) -> (Vec<String>, Vec<
     let mut result = execute_stmt(session, sql).unwrap_or_else(|| panic!("{sql} answers rows"));
     let source = result.source();
     let columns = source
-        .columns()
+        .fields()
         .unwrap()
         .into_iter()
-        .map(|column| column.name)
+        .map(|field| field.name)
         .collect();
     let mut rows = Vec::new();
     loop {
@@ -272,11 +272,11 @@ pub(crate) fn execute_binary(
         GeneralExecuteOutcome::Rows(mut result) => {
             let source = result.source();
             let columns = source
-                .columns()
+                .fields()
                 .unwrap()
                 .into_iter()
                 .zip(source.field_types().to_vec())
-                .map(|(column, field_type)| (column.name, field_type))
+                .map(|(field, field_type)| (field.name, field_type))
                 .collect();
             let mut rows = Vec::new();
             loop {

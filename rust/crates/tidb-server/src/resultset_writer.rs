@@ -14,12 +14,13 @@
 
 //! Incremental MySQL result-set writer lifecycle.
 
-use tidb_datatype::Datum;
-use tidb_protocol::resultset_stream::ResultSetStream;
+use tidb_chunk::row::Row;
+use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_protocol::resultset_stream::{ResultSetStream, ResultSetStreamError, TextRowWriter};
+use tidb_protocol::TextScalar;
 use tidb_protocol::{PacketWriter, ResultSetOptions};
 
 use crate::resultset_source::ResultSetSource;
-use tidb_exec::distsql_recordset::TextResultBatch;
 
 /// A packet sink that can report whether a failed write may have escaped.
 pub trait ResultSetSink {
@@ -152,20 +153,6 @@ pub(crate) struct TrackedResultSetWriteError {
     pub(crate) finish_attempted: bool,
 }
 
-enum PendingResultBatch {
-    Rows(Vec<Vec<Datum>>),
-    Text(Box<dyn TextResultBatch>),
-}
-
-impl PendingResultBatch {
-    fn is_empty(&self) -> bool {
-        match self {
-            Self::Rows(rows) => rows.is_empty(),
-            Self::Text(batch) => batch.is_empty(),
-        }
-    }
-}
-
 /// Pulls and writes a result set without buffering all rows.
 pub fn write_result_set<S: ResultSetSource, W: ResultSetSink>(
     source: &mut S,
@@ -187,38 +174,22 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         return write_chunk_result_set(source, sink, options, chunk);
     }
     let batch_size = batch_size.max(1);
-    let text_batches = source.supports_text_batch();
-    let mut batch = if text_batches {
-        source
-            .next_text_batch(batch_size)
-            .map_err(|message| TrackedResultSetWriteError {
-                error: ResultSetWriteError {
-                    cause: message.into(),
-                    retryable: true,
-                    bytes_escaped: false,
-                },
-                finish_attempted: false,
-            })?
-            .map(PendingResultBatch::Text)
-    } else {
-        Some(PendingResultBatch::Rows(
-            source
-                .next_batch(batch_size)
-                .map_err(|message| TrackedResultSetWriteError {
-                    error: ResultSetWriteError {
-                        cause: message.into(),
-                        retryable: true,
-                        bytes_escaped: false,
-                    },
-                    finish_attempted: false,
-                })?,
-        ))
-    };
+    let mut batch = source
+        .next_batch(batch_size)
+        .map_err(|message| TrackedResultSetWriteError {
+            error: ResultSetWriteError {
+                cause: message.into(),
+                retryable: true,
+                bytes_escaped: false,
+            },
+            finish_attempted: false,
+        })?;
 
     // Go deliberately calls Next before Columns because lazy execution can
     // finalize field metadata during the first pull.
     let columns = source
-        .columns()
+        .fields()
+        .map(|fields| crate::column_convert::convert_column_infos(&fields))
         .map_err(|message| tracked_after_pull(message, sink, false))?;
     let mut options = options;
     if let Some(status) = source.statement_status() {
@@ -246,7 +217,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     // still owed to the client: skipping the loop left the buffered metadata
     // unflushed forever and the client waiting on bytes that never come
     // (the regression `88ff511` shipped).
-    if batch.as_ref().map_or(true, PendingResultBatch::is_empty) {
+    if batch.is_empty() {
         source
             .finish()
             .map_err(|message| tracked_after_pull(message, sink, true))?;
@@ -278,36 +249,20 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         // transport write, then flush once at the batch boundary so the
         // client still sees progressive delivery while the source fetches
         // its next chunk.
-        let mut payloads = match batch.take().expect("non-empty result batch") {
-            PendingResultBatch::Rows(rows) => {
-                let mut payloads = Vec::with_capacity(rows.len());
-                for row in rows {
-                    let payload = stream
-                        .row_packet_datums_owned(row)
-                        .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
-                    payloads.push(payload);
-                }
-                payloads
-            }
-            PendingResultBatch::Text(text) => text
-                .write_rows(&mut stream)
-                .map_err(|message| tracked_after_pull(message, sink, false))?,
-        };
+        let rows = std::mem::take(&mut batch);
+        let mut payloads = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload = stream
+                .row_packet_datums_owned(row)
+                .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+            payloads.push(payload);
+        }
         // Prefetch the NEXT batch before writing this one: when it comes
         // back empty this batch is the last, and the terminal packet can join
         // its coalesced write instead of forcing a second segment. A small
         // result set therefore leaves as ONE transport write, which is what
         // Go's buffered connection gives a small SELECT.
-        batch = match if text_batches {
-            source
-                .next_text_batch(batch_size)
-                .map(|batch| batch.map(PendingResultBatch::Text))
-        } else {
-            source
-                .next_batch(batch_size)
-                .map(PendingResultBatch::Rows)
-                .map(Some)
-        } {
+        batch = match source.next_batch(batch_size) {
             Ok(batch) => batch,
             Err(message) => {
                 // Rows this batch already formatted still belong to the wire:
@@ -319,7 +274,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 return Err(tracked_after_pull(message, sink, false));
             }
         };
-        if batch.as_ref().map_or(true, PendingResultBatch::is_empty) {
+        if batch.is_empty() {
             if let Err(message) = source.finish() {
                 // The same duty to the wire when finishing fails mid-stream.
                 sink.write_payloads_owned(payloads)
@@ -338,18 +293,13 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         sink.write_payloads_owned(payloads)
             .map_err(|error| payloads_failed(error, sink))?;
         flush_sink(sink).map_err(|error| tracked(error, false))?;
-        if batch.as_ref().map_or(true, PendingResultBatch::is_empty) {
+        if batch.is_empty() {
             return Ok(ResultSetWriteOutcome {
                 rows_written: stream.row_count(),
                 packets_written: sink.packets_written(),
             });
         }
     }
-
-    Ok(ResultSetWriteOutcome {
-        rows_written: stream.row_count(),
-        packets_written: sink.packets_written(),
-    })
 }
 
 /// One reusable chunk and one row buffer, in Go writeChunks order.
@@ -370,7 +320,8 @@ fn write_chunk_result_set<S: ResultSetSource, W: ResultSetSink>(
             finish_attempted: false,
         })?;
     let columns = source
-        .columns()
+        .fields()
+        .map(|fields| crate::column_convert::convert_column_infos(&fields))
         .map_err(|error| tracked_after_pull(error, sink, false))?;
     if let Some(status) = source.statement_status() {
         status.apply(&mut options);
@@ -389,7 +340,7 @@ fn write_chunk_result_set<S: ResultSetSource, W: ResultSetSink>(
                 .text_row_with_buffer(std::mem::take(&mut payload))
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
             for (column, field) in source.field_types().iter().enumerate() {
-                tidb_exec::distsql_recordset::append_chunk_cell(&mut writer, row, column, field)
+                append_chunk_cell(&mut writer, row, column, field)
                     .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
             }
             payload = writer
@@ -481,4 +432,119 @@ fn failed_after_pull<W: ResultSetSink>(
         retryable: false,
         bytes_escaped: sink.packets_written() > 0,
     }
+}
+
+/// Appends one typed chunk cell with Go `DumpTextRow` formatting.
+fn append_chunk_cell(
+    writer: &mut TextRowWriter<'_>,
+    row: Row<'_>,
+    column: usize,
+    field_type: &FieldType,
+) -> Result<(), ResultSetStreamError> {
+    if row.is_null(column) {
+        return writer.append(TextScalar::Null);
+    }
+    let value = match field_type.code() {
+        FieldTypeCode::Tiny | FieldTypeCode::Short | FieldTypeCode::Int24 | FieldTypeCode::Long => {
+            TextScalar::Signed(row.get_int64(column))
+        }
+        FieldTypeCode::LongLong => {
+            if field_type.is_unsigned() {
+                TextScalar::Unsigned(row.get_uint64(column))
+            } else {
+                TextScalar::Signed(row.get_int64(column))
+            }
+        }
+        FieldTypeCode::Year => TextScalar::Signed(row.get_int64(column)),
+        FieldTypeCode::Float => TextScalar::Float {
+            value: f64::from(row.get_float32(column)),
+            bit_size: 32,
+        },
+        FieldTypeCode::Double => TextScalar::Float {
+            value: row.get_float64(column),
+            bit_size: 64,
+        },
+        FieldTypeCode::NewDecimal => {
+            // Go `DumpTextRow` calls `MyDecimal.String()`, which rounds to the
+            // value's result fraction before writing.  Keep the raw MyDecimal
+            // layout and use its source-shaped clone/round/ToString boundary;
+            // reconstructing a value-layer Decimal here would allocate a
+            // second digit representation for every decimal cell.
+            return writer.append_my_decimal(&row.get_my_decimal(column));
+        }
+        FieldTypeCode::Varchar
+        | FieldTypeCode::VarString
+        | FieldTypeCode::String
+        | FieldTypeCode::Blob
+        | FieldTypeCode::TinyBlob
+        | FieldTypeCode::MediumBlob
+        | FieldTypeCode::LongBlob
+        | FieldTypeCode::Bit => {
+            let bytes = row.get_bytes(column);
+            return writer.append(TextScalar::Bytes(bytes.as_ref()));
+        }
+        FieldTypeCode::Json => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_json(column).to_string(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Enum => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_enum(column).name_bytes().to_vec(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Set => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_set(column).name_bytes().to_vec(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_time(column).to_string(),
+                OwnedTextKind::Temporal,
+            )
+        }
+        FieldTypeCode::Duration => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_duration(column, field_type.decimal()).to_string(),
+                OwnedTextKind::Temporal,
+            )
+        }
+        FieldTypeCode::VectorFloat32 => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_vector_float32(column).to_string(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        _ => TextScalar::Bytes(&[]),
+    };
+    writer.append(value)
+}
+
+#[derive(Clone, Copy)]
+enum OwnedTextKind {
+    Bytes,
+    Temporal,
+}
+
+fn append_owned_chunk_text(
+    writer: &mut TextRowWriter<'_>,
+    value: impl Into<Vec<u8>>,
+    kind: OwnedTextKind,
+) -> Result<(), ResultSetStreamError> {
+    let value = value.into();
+    let scalar = match kind {
+        OwnedTextKind::Bytes => TextScalar::Bytes(&value),
+        OwnedTextKind::Temporal => TextScalar::Temporal(&value),
+    };
+    writer.append(scalar)
 }

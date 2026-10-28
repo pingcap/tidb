@@ -72,7 +72,6 @@ pub use tidb_util::tiflashcompute as tiflash_compute;
 pub mod mpp_client;
 pub use tidb_ddl::tiflash_replica_manager;
 pub use tidb_cluster::configure_deadlock_history;
-pub mod distsql_recordset;
 pub use tidb_util::execdetails::exec_details;
 pub mod explain;
 pub mod hint_updatable_vars;
@@ -95,7 +94,6 @@ pub mod real_tikv_privileges;
 pub use tidb_cluster::real_tikv_read;
 pub mod real_tikv_stats;
 pub mod real_tikv_stats_lock;
-pub mod recordset_lifecycle;
 mod result_metadata;
 pub use tidb_util::execdetails::runtime_stats;
 pub use tidb_executor::select_result_stats;
@@ -115,8 +113,7 @@ pub mod warning_publication;
 pub use tidb_executor::wide_scan_selection;
 
 pub use result_metadata::{
-    col_names_to_result_fields, columns_from_adapted_fields, convert_result_field,
-    AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
+    col_names_to_result_fields, AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
     ResultFieldTypeMetadata, MAX_ALIAS_IDENTIFIER_LEN, NOT_FIXED_DEC, NOT_NULL_FLAG, UNSIGNED_FLAG,
 };
 pub use warning_publication::{

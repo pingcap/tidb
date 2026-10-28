@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex};
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_protocol::{
-    ColumnInfo, PacketReader, PacketWriter, BINARY_DEFAULT_COLLATION_ID, COM_PING, COM_QUERY,
+    PacketReader, PacketWriter, COM_PING, COM_QUERY,
     COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
@@ -239,19 +240,22 @@ impl ResultSetSource for BlockingResultSet {
         Err("query cancelled by connection shutdown".into())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(vec![ColumnInfo {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(vec![ResultFieldMetadata {
             schema: "campaign21".to_owned(),
             table: "rows".to_owned(),
             org_table: "rows".to_owned(),
             name: "id".to_owned(),
             org_name: "id".to_owned(),
-            column_length: 20,
-            charset: BINARY_DEFAULT_COLLATION_ID,
-            flag: 0x0003,
-            decimal: 0,
-            type_code: FieldTypeCode::LongLong.mysql_type(),
+            empty_org_name: false,
             default_value: None,
+            field_type: ResultFieldTypeMetadata {
+                code: FieldTypeCode::LongLong,
+                flags: 0x0003,
+                flen: Some(20),
+                decimal: Some(0),
+                collation: tidb_datatype::Collation::Binary,
+            },
         }])
     }
 

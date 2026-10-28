@@ -12,17 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The wire forms of a statement's results that the node's connection path
-//! shares: prepared-statement parameters bound to datums, result-set column
-//! metadata (Go `ConvertColumnInfo`), and the materialized and record-set
-//! result sources the connection layer drains.
+//! A statement's results as the node's connection path shares them:
+//! prepared-statement parameters bound to datums, result fields (Go
+//! `recordSet.Fields()`), and the materialized and record-set result sources
+//! the connection layer drains.
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
-use tidb_exec::{
-    col_names_to_result_fields, convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata,
-};
-use tidb_protocol::ColumnInfo;
+use tidb_exec::{col_names_to_result_fields, ResultFieldMetadata, ResultFieldTypeMetadata};
 
 use crate::SessionRecordSet;
 
@@ -87,38 +84,34 @@ pub fn prepared_parameters(
         .collect()
 }
 
-/// Converts a `(name, FieldType)` output schema with no plan names to
-/// protocol column metadata: no schema or table, and `org_name` mirroring the
-/// display name.
-pub fn select_columns(columns: &[(String, FieldType)]) -> Vec<ColumnInfo> {
+/// The result fields of a `(name, FieldType)` output schema with no plan
+/// names: no schema or table, and `org_name` mirroring the display name.
+pub fn select_fields(columns: &[(String, FieldType)]) -> Vec<ResultFieldMetadata> {
     columns
         .iter()
-        .map(|(name, field_type)| {
-            convert_result_field(&ResultFieldMetadata {
-                schema: String::new(),
-                table: String::new(),
-                org_table: String::new(),
-                name: name.clone(),
-                org_name: name.clone(),
-                empty_org_name: false,
-                default_value: None,
-                field_type: result_field_type(field_type),
-            })
+        .map(|(name, field_type)| ResultFieldMetadata {
+            schema: String::new(),
+            table: String::new(),
+            org_table: String::new(),
+            name: name.clone(),
+            org_name: name.clone(),
+            empty_org_name: false,
+            default_value: None,
+            field_type: result_field_type(field_type),
         })
         .collect()
 }
 
-/// Go `tidbResultSet.Columns()`: `ConvertColumnInfo` over
-/// `recordSet.Fields()`, which `colNames2ResultFields` derives from the
+/// Go `recordSet.Fields()`, which `colNames2ResultFields` derives from the
 /// statement's output names and current database. A computed column has no
 /// table and an empty `OrgName`. Without one name per column the result has
-/// no fields to convert and takes [`select_columns`]' shape.
-pub fn result_set_columns(
+/// no fields to derive and takes [`select_fields`]' shape.
+pub fn result_set_fields(
     columns: &[(String, FieldType)],
     (output_names, current_db): (&[tidb_datatype::FieldNameMetadata], &str),
-) -> Vec<ColumnInfo> {
+) -> Vec<ResultFieldMetadata> {
     if output_names.len() != columns.len() {
-        return select_columns(columns);
+        return select_fields(columns);
     }
     let schema = columns
         .iter()
@@ -132,7 +125,7 @@ pub fn result_set_columns(
             // result, which the integration results pin.
             let mut field = field.as_result_field();
             name.clone_into(&mut field.name);
-            convert_result_field(&field)
+            field
         })
         .collect()
 }
@@ -148,6 +141,17 @@ fn result_field_type(field_type: &FieldType) -> ResultFieldTypeMetadata {
     }
 }
 
+/// The field type a result field carries back: [`result_field_type`]'s
+/// inverse.
+pub fn field_type_of(metadata: &ResultFieldTypeMetadata) -> FieldType {
+    let mut field_type = FieldType::new(metadata.code);
+    field_type.set_flags(u32::from(metadata.flags));
+    field_type.set_flen(metadata.flen.map_or(UNSPECIFIED_LENGTH, i64::from));
+    field_type.set_decimal(metadata.decimal.map_or(UNSPECIFIED_LENGTH, i64::from));
+    field_type.set_collation_name(metadata.collation.name());
+    field_type
+}
+
 const fn length_to_option(length: i64) -> Option<i64> {
     if length == UNSPECIFIED_LENGTH {
         None
@@ -161,7 +165,7 @@ const fn length_to_option(length: i64) -> Option<i64> {
 pub fn affected_rows_source(count: u64) -> MaterializedResultSetSource {
     let field_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
     MaterializedResultSetSource::new(
-        select_columns(&[("affected_rows".to_owned(), field_type)]),
+        select_fields(&[("affected_rows".to_owned(), field_type)]),
         vec![vec![Datum::UInt(count)]],
     )
 }
@@ -212,8 +216,8 @@ impl ResultSetSource for PreparedRecordSet<'_> {
             .collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(result_set_columns(
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(result_set_fields(
             self.state.columns(),
             self.state.output_names(),
         ))
@@ -239,16 +243,16 @@ impl ResultSetSource for PreparedRecordSet<'_> {
 /// A fully materialized result-set source: the pipeline returns complete row
 /// vectors, so batching only replays them to the incremental wire writer.
 pub struct MaterializedResultSetSource {
-    columns: Vec<ColumnInfo>,
+    fields: Vec<ResultFieldMetadata>,
     rows: std::vec::IntoIter<Vec<Datum>>,
 }
 
 impl MaterializedResultSetSource {
-    /// Wraps already-computed columns and rows.
+    /// Wraps already-computed fields and rows.
     #[must_use]
-    pub fn new(columns: Vec<ColumnInfo>, rows: Vec<Vec<Datum>>) -> Self {
+    pub fn new(fields: Vec<ResultFieldMetadata>, rows: Vec<Vec<Datum>>) -> Self {
         Self {
-            columns,
+            fields,
             rows: rows.into_iter(),
         }
     }
@@ -262,8 +266,8 @@ impl ResultSetSource for MaterializedResultSetSource {
         Ok(self.rows.by_ref().take(max_rows.max(1)).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
-        Ok(self.columns.clone())
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+        Ok(self.fields.clone())
     }
 
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
