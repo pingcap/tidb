@@ -124,7 +124,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 }
 
 // UpdateTableStatsMeta refreshes table metadata, preserving cached histograms and pseudo state
-// when the schema is unchanged. Missing entries and schema changes are loaded from storage.
+// when the schema and histogram watermark are current. Otherwise, it loads stats from storage.
 func (s *StatsCacheImpl) UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
 	if len(tableIDs) == 0 {
 		return nil
@@ -222,16 +222,17 @@ func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, m
 		// If the table is not updated, we can skip it.
 
 		oldTbl, ok := s.Get(physicalID)
-		if ok && oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		cachedStatsCurrent := ok && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
+			oldTbl.LastStatsHistVersion >= latestHistUpdateVersion
+		if cachedStatsCurrent && oldTbl.Version >= version {
 			continue
 		}
-		updateMetaOnly := metaOnly && ok && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS
+		updateMetaOnly := metaOnly && cachedStatsCurrent
 		var tbl *statistics.Table
 		if updateMetaOnly {
 			// A partition ANALYZE always flushes the logical table's row count,
 			// but it may not persist a new global histogram. Preserve the cached
-			// histogram and pseudo state only when the cached schema is current.
+			// histogram and pseudo state only if no schema or histogram update was missed.
 			tbl = oldTbl.CopyAs(statistics.MetaOnly)
 		} else {
 			needLoadColAndIdxStats := true

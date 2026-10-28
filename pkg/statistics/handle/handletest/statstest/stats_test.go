@@ -370,29 +370,36 @@ func TestStatsCache(t *testing.T) {
 	unchangedTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("meta_unchanged"))
 	require.NoError(t, err)
 	unchangedInfo := unchangedTable.Meta()
-	pseudoStats := statistics.PseudoTable(unchangedInfo, false, true)
-	pseudoStats.TblInfoUpdateTS = unchangedInfo.UpdateTS
+	handle.WaitForAsyncUpdates()
+	currentStats, ok := handle.Get(unchangedInfo.ID)
+	require.True(t, ok)
+	// Retain a known-current histogram watermark while testing preservation of
+	// pseudo state and an uninitialized analyze snapshot in metadata-only mode.
+	pseudoStats := currentStats.CopyAs(statistics.MetaOnly)
+	pseudoStats.Pseudo = true
+	pseudoStats.LastAnalyzeVersion = 0
 	handle.Put(unchangedInfo.ID, pseudoStats)
 	handle.WaitForAsyncUpdates()
 	// Rows are ordered by version, so the changed schema is processed first.
-	testKit.MustExec("update mysql.stats_meta set version = 300 where table_id = ?", tableInfo.ID)
-	testKit.MustExec("update mysql.stats_meta set version = 301 where table_id = ?", unchangedInfo.ID)
 	cacheVersion := handle.MaxTableStatsVersion()
+	changedVersion, unchangedVersion := cacheVersion+1, cacheVersion+2
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", changedVersion, tableInfo.ID)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unchangedVersion, unchangedInfo.ID)
 
 	require.NoError(t, handle.UpdateTableStatsMeta(context.Background(), is, tableInfo.ID, unchangedInfo.ID))
-	statsTbl, ok := handle.Get(tableInfo.ID)
+	statsTbl, ok = handle.Get(tableInfo.ID)
 	require.True(t, ok)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, tableInfo.UpdateTS, statsTbl.TblInfoUpdateTS)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(newColID, false))
-	require.Equal(t, uint64(300), statsTbl.Version)
+	require.Equal(t, changedVersion, statsTbl.Version)
 	unchangedStats, ok := handle.Get(unchangedInfo.ID)
 	require.True(t, ok)
 	require.True(t, unchangedStats.Pseudo)
-	require.Equal(t, uint64(301), unchangedStats.Version)
+	require.Equal(t, unchangedVersion, unchangedStats.Version)
 	require.Equal(t, unchangedInfo.UpdateTS, unchangedStats.TblInfoUpdateTS)
 	require.Same(t, pseudoStats.GetCol(unchangedInfo.Columns[0].ID), unchangedStats.GetCol(unchangedInfo.Columns[0].ID))
-	require.Zero(t, unchangedStats.LastStatsHistVersion)
+	require.Equal(t, pseudoStats.LastStatsHistVersion, unchangedStats.LastStatsHistVersion)
 	require.Zero(t, unchangedStats.LastAnalyzeVersion)
 	require.Equal(t, cacheVersion, handle.MaxTableStatsVersion())
 }

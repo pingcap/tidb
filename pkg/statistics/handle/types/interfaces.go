@@ -227,8 +227,8 @@ type StatsCache interface {
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
 	// UpdateTableStatsMeta refreshes the count and modify count for the requested tables.
-	// It preserves cached histograms and pseudo state when the cached schema is current.
-	// Missing entries and schema changes are initialized from storage.
+	// It preserves cached histograms and pseudo state when the schema and histogram watermark are current.
+	// Otherwise, it initializes stats from storage.
 	UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error
 
 	// MemConsumed returns its memory usage.
@@ -360,6 +360,11 @@ type StatsReadWriter interface {
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool, source string) (err error)
+
+	// SaveColOrIdxStatsToStorageWithStatus also reports a known committed histogram
+	// transaction, even if subsequent slow-save bookkeeping returns an error.
+	SaveColOrIdxStatsToStorageWithStatus(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool, source string) (persisted bool, err error)
 
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
 	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)

@@ -402,7 +402,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		saveErr := statsHandle.SaveColOrIdxStatsToStorage(gid,
+		persisted, saveErr := statsHandle.SaveColOrIdxStatsToStorageWithStatus(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
@@ -414,14 +414,13 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)
+		updated = updated || persisted
 		if saveErr != nil {
 			if firstErr == nil {
 				firstErr = saveErr
 			}
 			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
 				zap.Int64("histID", hg.ID), zap.Error(saveErr), zap.Int64("tableID", gid))
-		} else {
-			updated = true
 		}
 	}
 	return updated, firstErr
