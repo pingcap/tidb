@@ -352,6 +352,8 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
 
 mod domain;
 pub use domain::*;
+mod sessions;
+pub use sessions::*;
 
 /// The store half of Go's `session`: the fields `session.go` keeps beside
 /// `sessionVars` for a session over a store -- its domain, its `txn`
