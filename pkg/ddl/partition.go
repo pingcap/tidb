@@ -2952,6 +2952,24 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	pt.Partition.DDLState = model.StateNone
 	pt.Partition.DDLAction = model.ActionNone
 
+	// Column and index IDs are encoded in row and index keys. Dropped column
+	// values stay in the row, and dropped index keys are removed asynchronously
+	// under the physical table ID, which exchange moves between the tables.
+	// Other partitions also keep the partitioned table's historical IDs, so
+	// both sides take the max instead of swapping.
+	// Foreign key and check constraint IDs are not part of the KV encoding.
+	// They are updated here as well so every table-level ID allocator is
+	// handled the same way.
+	// See https://github.com/pingcap/tidb/issues/72478.
+	maxColumnID := max(pt.MaxColumnID, nt.MaxColumnID)
+	maxIndexID := max(pt.MaxIndexID, nt.MaxIndexID)
+	maxForeignKeyID := max(pt.MaxForeignKeyID, nt.MaxForeignKeyID)
+	maxConstraintID := max(pt.MaxConstraintID, nt.MaxConstraintID)
+	pt.MaxColumnID, nt.MaxColumnID = maxColumnID, maxColumnID
+	pt.MaxIndexID, nt.MaxIndexID = maxIndexID, maxIndexID
+	pt.MaxForeignKeyID, nt.MaxForeignKeyID = maxForeignKeyID, maxForeignKeyID
+	pt.MaxConstraintID, nt.MaxConstraintID = maxConstraintID, maxConstraintID
+
 	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		return ver, errors.Trace(err)
