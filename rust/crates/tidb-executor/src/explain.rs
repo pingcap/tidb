@@ -3277,6 +3277,39 @@ pub fn process_plan_info(
     process_plan_info_with_brief(statement_context, physical, catalog, true)
 }
 
+/// The encoded and binary plans of `physical`: the ordinary tree rendered once
+/// for both codecs.
+fn plan_encodings(
+    statement_context: &crate::StmtContext,
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+) -> (String, String) {
+    let full = physical_explain_roots(
+        None,
+        statement_context,
+        statement_context,
+        false,
+        physical,
+        catalog,
+        None,
+        false,
+        &[],
+    );
+    let mut encoded = String::new();
+    for root in &full {
+        encode_observed_operator(root, 0, &mut encoded);
+    }
+    let encoded_plan = if encoded.is_empty() {
+        String::new()
+    } else {
+        tidb_util::plancodec::compress(encoded.as_bytes())
+    };
+    (
+        encoded_plan,
+        binary_plan_from_roots(statement_context, physical, catalog, full),
+    )
+}
+
 /// Derives and publishes the process-info fields for `physical`, rendering
 /// the brief binary plan only when this statement publishes one.
 pub fn publish_physical_process_info(
@@ -3306,29 +3339,23 @@ pub fn process_plan_info_with_brief(
     catalog: &Catalog,
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
-    // Render the ordinary tree once for both codecs. Prepared execution may
-    // suppress process-list publication but still supplies summary samples.
-    let full = physical_explain_roots(
-        None,
-        statement_context,
-        statement_context,
-        false,
-        physical,
-        catalog,
-        None,
-        false,
-        &[],
-    );
-    let mut encoded = String::new();
-    for root in &full {
-        encode_observed_operator(root, 0, &mut encoded);
-    }
-    let encoded_plan = if encoded.is_empty() {
-        String::new()
+    let stored = std::sync::Arc::new(physical.deep_clone());
+    // The process list reads the brief binary plan while the statement runs,
+    // so a statement that publishes one renders its encodings now. Every
+    // other reader is the statement's summary and slow log, which render them
+    // only when they sample or write the plan (Go `LazyInfo`).
+    let (encoded_plan, binary, plan_source) = if with_brief {
+        let (encoded, binary) = plan_encodings(statement_context, physical, catalog);
+        (encoded, binary, None)
     } else {
-        tidb_util::plancodec::compress(encoded.as_bytes())
+        let ctx = statement_context.clone().without_process_plan_info();
+        let catalog = catalog.clone();
+        let plan = std::sync::Arc::clone(&stored);
+        let source = crate::PlanSource(std::sync::Arc::new(move || {
+            Some(plan_encodings(&ctx, &plan, &catalog))
+        }));
+        (String::new(), String::new(), Some(source))
     };
-    let binary = binary_plan_from_roots(statement_context, physical, catalog, full);
     let (normalized_plan, plan_digest) = match statement_context.cached_plan_digest() {
         Some(cached) => cached
             .get_or_init(|| normalize_physical_plan(statement_context, physical, catalog))
@@ -3360,7 +3387,8 @@ pub fn process_plan_info_with_brief(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
         ),
-        plan: Some(crate::StoredPlan(std::sync::Arc::new(physical.deep_clone()))),
+        plan: Some(crate::StoredPlan(stored)),
+        plan_source,
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(
