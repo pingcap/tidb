@@ -24,8 +24,8 @@
 //! bootstraps -- is `CANCEL`, which is the default honoured here.
 #![cfg(test)]
 
+use crate::domain::resultset_source::ResultSetSource;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 
 fn ordered_session() -> Session {
@@ -65,21 +65,21 @@ fn cursor_authority_is_captured_before_set_var_restoration() {
     session.run("SET @@tidb_init_chunk_size = 16").unwrap();
     session.run("SET @@tidb_max_chunk_size = 128").unwrap();
 
-    let (output, authority) = session
-        .run_with_params_and_result_authority(
-            "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
-             SET_VAR(tidb_init_chunk_size=8) \
-             SET_VAR(tidb_max_chunk_size=64) */ 1",
-            &[],
-        )
-        .unwrap();
-    assert!(matches!(output, StmtOutput::Rows { .. }));
-    let (memory, init_chunk_size, max_chunk_size) = authority
-        .expect("a row result carries cursor authority")
-        .into_parts();
-    assert_eq!(memory.quota(), 97);
-    assert_eq!(init_chunk_size, 8);
-    assert_eq!(max_chunk_size, 64);
+    let mut result = crate::tests_support::execute_stmt(
+        &mut session,
+        "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
+         SET_VAR(tidb_init_chunk_size=8) \
+         SET_VAR(tidb_max_chunk_size=64) */ 1",
+    )
+    .expect("a query answers a result set");
+    let authority = result
+        .take_cursor_materialization()
+        .expect("a row result carries cursor authority");
+    assert_eq!(authority.memory.quota(), 97);
+    assert_eq!(authority.init_chunk_size, 8);
+    assert_eq!(authority.max_chunk_size, 64);
+    result.source().close().unwrap();
+    drop(result);
 
     assert_eq!(
         crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_quota_query").as_deref(),
@@ -105,20 +105,20 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
     let sql = "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
                SET_VAR(tidb_init_chunk_size=8) \
                SET_VAR(tidb_max_chunk_size=64) */ 1";
-    let prepared = session.prepare_ast(sql).unwrap();
-    let bound = prepared.bind(&[]).unwrap();
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
     {
-        let StatementExecution::Rows(mut result) = session
-            .execute_bound_record_set_for(bound, &prepared)
-            .unwrap()
+        use crate::domain::session_api::{GeneralExecuteOutcome, QuerySession};
+        let GeneralExecuteOutcome::Rows(mut result) =
+            QuerySession::execute_general(&mut session, &prepared, &[]).unwrap()
         else {
             panic!("SELECT must retain its executor");
         };
-        let mut chunk = result.new_chunk();
+        let result = result.source();
+        let mut chunk = result.new_chunk().expect("an executor's chunk");
         // Go exec.newExecutorChunkAllocator captures the statement's variables.
         assert_eq!(chunk.capacity(), 8);
         assert_eq!(chunk.required_rows(), 64);
-        result.next(&mut chunk).unwrap();
+        result.next_chunk(&mut chunk).unwrap();
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 1);
         result.close().unwrap();

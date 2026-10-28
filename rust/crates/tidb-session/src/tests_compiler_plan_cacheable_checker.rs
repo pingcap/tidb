@@ -21,9 +21,9 @@ use tidb_executor::compiler::PlanCacheableChecker;
 use crate::Session;
 
 fn verdict(session: &mut Session, sql: &str) -> Result<(), String> {
-    // A node session's catalog catches up with its node first, as
-    // every statement and PREPARE through the node does.
-    session.refresh_node_catalog().expect("refresh catalog");
+    // The session's catalog catches up with its node first, as every
+    // statement and PREPARE does.
+    session.node_conn().refresh_catalog();
     let mut statement = session.parse_statement(sql).expect("parse");
     let catalog = session.lock_catalog().expect("catalog");
     session.prepared_statement_cacheable(&mut statement, &catalog)

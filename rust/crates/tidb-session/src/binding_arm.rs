@@ -353,11 +353,6 @@ impl Session {
     /// physically removed after peers can observe them. The Domain binding
     /// owner invokes this through the shared internal writer and lock row.
     pub fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
-        // A session on a node asks that node's binding owner, which writes
-        // the store's table; this session's own catalog is not it.
-        if let Some(node) = &self.node {
-            return node.gc_global_bindings();
-        }
         let cutoff = self.global_binding_timestamp_offset(-30);
         self.bind_info_exec(
             "DELETE FROM mysql.bind_info WHERE status = ? AND update_time < ?",

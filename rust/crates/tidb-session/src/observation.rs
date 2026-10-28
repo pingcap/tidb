@@ -279,17 +279,30 @@ impl Session {
         &self,
         requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) {
+        self.observe_statement_tables(
+            requests
+                .iter()
+                .map(|request| (request.database.as_str(), request.table.as_str())),
+        );
+    }
+
+    /// Go `StmtCtx.Tables`: the `db`.`table` pairs the statement reads,
+    /// which its summary reports.
+    pub(crate) fn observe_statement_tables<'a>(
+        &self,
+        names: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) {
         let Some(observation) = &self.statement_observation else {
             return;
         };
         let mut tables = Vec::new();
-        for request in requests {
-            if request.database.is_empty() && request.table.is_empty() {
+        for (db, table) in names {
+            if db.is_empty() && table.is_empty() {
                 continue;
             }
             let entry = tidb_stmtsummary::statement_summary::TableEntry {
-                db: request.database.clone(),
-                table: request.table.clone(),
+                db: db.to_owned(),
+                table: table.to_owned(),
             };
             if !tables.contains(&entry) {
                 tables.push(entry);

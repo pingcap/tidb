@@ -10,7 +10,6 @@
 //! pins both the denial and its POSITIVE control -- the same statement run
 //! once the grant exists.
 
-use tidb_executor::compiler::PreparedAstCompile;
 use crate::tests_support::*;
 use crate::*;
 
@@ -122,17 +121,19 @@ fn prepared_joined_update_resolves_targets_again_after_ddl() {
     boot.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
     boot.run("GRANT UPDATE ON test.t TO 'bob'@'%'").unwrap();
     let sql = "UPDATE t JOIN v ON t.a=v.id SET b=?";
-    let binary = bob.prepare_ast(sql).unwrap();
+    let binary = crate::tests_support::prepare_binary(&mut bob, sql);
     bob.run("PREPARE s FROM 'UPDATE t JOIN v ON t.a=v.id SET b=?'")
         .unwrap();
     bob.run("SET @b=30").unwrap();
     boot.run("ALTER TABLE t RENAME COLUMN b TO old_b").unwrap();
     boot.run("ALTER TABLE v RENAME COLUMN x TO b").unwrap();
     assert_eq!(denied(&mut bob, "EXECUTE s USING @b").0, 8121);
-    let bound =
-        tidb_executor::bind_statement(binary.statement().clone(), &[Datum::Int(30)]).unwrap();
-    match bob.execute_bound_record_set_for(bound, &binary) {
-        Err(error) => assert_eq!(error.to_mysql_error().code, 8121),
+    match crate::domain::session_api::QuerySession::execute_general(
+        &mut bob,
+        &binary,
+        &[tidb_protocol::PreparedValue::SignedLongLong(30)],
+    ) {
+        Err(error) => assert_eq!(error.code, 8121),
         Ok(_) => panic!("binary EXECUTE must check the newly resolved write table"),
     }
     assert_eq!(row_text(boot.run("SELECT b FROM v")), vec![vec!["20"]]);
@@ -176,11 +177,11 @@ fn prepared_joined_update_privileges_allow_parameterized_derived_sources() {
     let (_, mut boot, mut bob) = scoped();
     boot.run("GRANT SELECT, UPDATE ON test.t TO 'bob'@'%'")
         .unwrap();
-    let prepared = bob
-        .prepare_ast("UPDATE t JOIN (SELECT ? AS id) d ON t.a=d.id SET b=?")
-        .unwrap();
-    let bound = prepared.bind(&[Datum::Int(1), Datum::Int(30)]).unwrap();
-    bob.execute_bound_record_set_for(bound, &prepared).unwrap();
+    let prepared = crate::tests_support::prepare_binary(
+        &mut bob,
+        "UPDATE t JOIN (SELECT ? AS id) d ON t.a=d.id SET b=?",
+    );
+    crate::tests_support::execute_binary(&mut bob, &prepared, &[1, 30]);
     assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["30"]]);
 }
 

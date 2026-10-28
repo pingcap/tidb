@@ -16,7 +16,6 @@
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
 //! [`crate::prepared_plan_cache`] for what is and is not modelled.
 
-use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use tidb_datatype::Datum;
 
@@ -24,7 +23,7 @@ use crate::tests_support::row_text;
 use crate::Session;
 
 #[test]
-fn binary_prepared_result_authority_path_reuses_select_plan() {
+fn binary_prepared_execution_reuses_select_plan() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE authority_cache (id BIGINT PRIMARY KEY, v BIGINT)")
@@ -32,31 +31,14 @@ fn binary_prepared_result_authority_path_reuses_select_plan() {
     session
         .run("INSERT INTO authority_cache VALUES (1,10),(2,20)")
         .unwrap();
-    let prepared = session
-        .prepare_ast("SELECT id,v,v FROM authority_cache WHERE id=?")
-        .unwrap();
+    let prepared = crate::tests_support::prepare_binary(
+        &mut session,
+        "SELECT id,v,v FROM authority_cache WHERE id=?",
+    );
     for (id, expected_hit) in [(1, 0), (2, 1)] {
-        let (output, authority) = if id == 1 {
-            session
-                .run_prepared_with_result_authority(&prepared, &[Datum::Int(id)])
-                .unwrap()
-        } else {
-            let cached = session
-                .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(id)])
-                .unwrap();
-            let execution = session
-                .execute_prepared_record_set_for(&cached, &prepared)
-                .unwrap();
-            let crate::StatementExecution::Rows(result) = execution else {
-                panic!("expected an open cached SELECT");
-            };
-            let authority = result.session().result_materialization_authority();
-            (
-                crate::tests_support::collect_record_set(crate::StatementExecution::Rows(result)),
-                Some(authority),
-            )
-        };
-        let crate::StmtOutput::Rows { rows, .. } = output else {
+        let crate::StmtOutput::Rows { rows, .. } =
+            crate::tests_support::execute_binary(&mut session, &prepared, &[id])
+        else {
             panic!("expected rows");
         };
         assert_eq!(
@@ -67,7 +49,6 @@ fn binary_prepared_result_authority_path_reuses_select_plan() {
                 Datum::Int(id * 10)
             ]]
         );
-        assert!(authority.is_some());
         assert_eq!(
             session.run("SELECT @@last_plan_from_cache").unwrap(),
             crate::StmtResult::Rows(vec![vec![Datum::Int(expected_hit)]])
@@ -76,10 +57,7 @@ fn binary_prepared_result_authority_path_reuses_select_plan() {
     session
         .run("SET tidb_enable_prepared_plan_cache=OFF")
         .unwrap();
-    let (_, authority) = session
-        .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
-        .unwrap();
-    assert!(authority.is_some());
+    crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
     assert_eq!(
         session.run("SELECT @@last_plan_from_cache").unwrap(),
         crate::StmtResult::Rows(vec![vec![Datum::Int(0)]])
@@ -1485,7 +1463,7 @@ fn held_prepared_execution_reuses_published_digest() {
         .run("INSERT INTO digest_reuse VALUES (1,10)")
         .unwrap();
     let sql = "SELECT v FROM digest_reuse WHERE id=?";
-    let prepared = session.prepare_ast(sql).unwrap();
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
     let registry = crate::process::ProcessRegistry::default();
     session.attach_process(
         91,
@@ -1495,10 +1473,8 @@ fn held_prepared_execution_reuses_published_digest() {
     let hold = session
         .retain_process_statement_with_digest(sql, &digest)
         .unwrap();
-    let output = session
-        .run_prepared_with_result_authority(&prepared, &[Datum::new_int(1)])
-        .unwrap();
-    assert!(matches!(output.0, crate::StmtOutput::Rows { .. }));
+    let output = crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
+    assert!(matches!(output, crate::StmtOutput::Rows { .. }));
     // Statement summary now legitimately materializes normalized SQL too.
     // Assert the published PREPARE identity, not a zero-normalizer-call count.
     assert_eq!(
@@ -2909,4 +2885,29 @@ fn a_prepared_plan_over_a_dirty_table_is_a_separate_cache_entry() {
     session.run("ROLLBACK").unwrap();
     observed.push(hit(&mut session));
     assert_eq!(observed, ["0", "1", "0", "0", "1", "1", "1"]);
+}
+
+/// Go `PrepareExec` plans against the latest schema outside a transaction:
+/// a binary PREPARE on a connection names a table another connection
+/// created after this one's last statement.
+#[test]
+fn binary_prepare_sees_a_table_created_by_another_connection() {
+    let mut session = Session::new();
+    let mut peer = Session::with_catalog(session.shared_catalog());
+    peer.run("CREATE TABLE created_by_peer (id INT PRIMARY KEY)")
+        .unwrap();
+    peer.run("INSERT INTO created_by_peer VALUES (7)").unwrap();
+    let prepared =
+        crate::tests_support::prepare_binary(&mut session, "SELECT id FROM created_by_peer WHERE id = ?");
+    // The point plan PREPARE retains is planned over the new table.
+    assert!(prepared
+        .prepared_ast()
+        .and_then(|ast| ast.point_get_plan())
+        .is_some());
+    let crate::StmtOutput::Rows { rows, .. } =
+        crate::tests_support::execute_binary(&mut session, &prepared, &[7])
+    else {
+        panic!("expected rows");
+    };
+    assert_eq!(rows, vec![vec![Datum::Int(7)]]);
 }

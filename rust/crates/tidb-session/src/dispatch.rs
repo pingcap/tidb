@@ -688,24 +688,6 @@ impl Session {
         )
     }
 
-    /// Executes a bound PREPARE tree, keeping a query open until its result closes.
-    pub fn execute_bound_record_set_for<'a>(
-        &'a mut self,
-        stmt: Stmt,
-        prepared: &crate::PreparedAst,
-    ) -> Result<crate::StatementExecution<'a>, DriverError> {
-        // On a node a write commits through the node, as Go's
-        // `ExecutePreparedStmt` does on its store; privileges are checked
-        // there against the schema the bound statement resolves to now.
-        if !matches!(stmt, Stmt::Query(_)) {
-            if self.node.is_some() {
-                let output = self.node_conn().run_bound_prepared_write(stmt, prepared);
-                return Ok(crate::StatementExecution::Complete(output?));
-            }
-        }
-        Ok(self.open_bound_record_set_for(stmt, prepared)?.attach(self))
-    }
-
     /// Opens a bound PREPARE tree for a front end that owns session teardown.
     pub fn open_bound_record_set_for(
         &mut self,
@@ -732,6 +714,7 @@ impl Session {
     ) -> Result<Option<crate::OpenedStatement>, DriverError> {
         self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(sql)?;
+        self.observe_statement_node(statement, true);
         let result = (|| {
             self.set_statement_arbitration_key(sql);
             let cache_hit = execution.cache_hit();
@@ -744,6 +727,7 @@ impl Session {
             self.apply_set_var_hints(statement)?;
             self.activate_statement_resource_group(statement);
             let plan = execution.plan();
+            self.observe_statement_tables([plan.names()]);
             self.require_named_table_privilege(
                 plan.names().0,
                 plan.names().1,
@@ -762,6 +746,9 @@ impl Session {
             }
             let ctx = self.prepared_point_get_context();
             let stmt_ctx = self.statement_context_for_stmt(statement, false);
+            // Go `ExecStmt.Exec` observes the statement's execution begin for
+            // every plan it runs, the point-get fast plan included.
+            self.notify_before_executor_first_run();
             let result = self.with_catalog_mut(|catalog| {
                 tidb_executor::open_prepared_point_get(&execution, catalog, &ctx, &stmt_ctx)
             })?;
@@ -1289,29 +1276,6 @@ impl Session {
             dml_plan,
         )?
         .collect(self)
-    }
-
-    /// Executes a parsed statement while retaining ordinary query chunks and
-    /// session state until the returned record set closes.
-    pub fn execute_record_set_parsed<'a>(
-        &'a mut self,
-        stmt: Stmt,
-        sql: &str,
-    ) -> Result<crate::StatementExecution<'a>, DriverError> {
-        // A node session streams a plain read outside a transaction over a
-        // committed snapshot bound for it (Go's record set holds the
-        // statement open until Close); anything that writes, locks, or must
-        // see a transaction's own writes runs through the node connection.
-        if self.node.is_some()
-            && !(crate::classify::statement_kind_of(&stmt)
-                == crate::classify::StatementKind::Select
-                && !self.in_transaction()
-                && self.statement_read_shape_bound(&stmt)
-                    != tidb_executor::access_path::StatementReadShape::LockingRead)
-        {
-            return self.run_with_columns_parsed(stmt, sql).map(crate::StatementExecution::Complete);
-        }
-        Ok(self.open_record_set_parsed(stmt, sql)?.attach(self))
     }
 
     /// Opens a parsed statement for a front end that retains its own snapshot.

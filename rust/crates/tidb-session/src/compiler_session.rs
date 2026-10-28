@@ -55,8 +55,14 @@ impl tidb_executor::compiler::CompilerSession for Session {
     }
 
 
+    /// The session's catalog catches up with its node's schema when the
+    /// store half is home; inside a running statement the connection has
+    /// already done it.
     fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {
-        Session::refresh_node_catalog(self)
+        if self.node.is_some() {
+            self.node_conn().refresh_catalog();
+        }
+        Ok(())
     }
 
     fn historical_read_ts(&self) -> Option<u64> {

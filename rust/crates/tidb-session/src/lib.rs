@@ -2110,6 +2110,38 @@ impl Session {
         Ok(tidb_executor::parsed_parameter_count(&self.parse(sql)?))
     }
 
+    /// Go `ExecStmt.Exec` for one statement inside the `ExecuteStmt` the
+    /// connection is running: the statement's executor over this session,
+    /// in the transaction context and snapshot the connection prepared.
+    pub(crate) fn exec_statement_parsed(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(sql, false, move |session| {
+            session.execute_statement_owned(stmt, sql)
+        })
+        .map(|(output, _)| output)
+    }
+
+    /// [`Self::exec_statement_parsed`] over the text of a statement whose
+    /// markers take `params`.
+    pub(crate) fn exec_statement_with_params(
+        &mut self,
+        sql: &str,
+        params: &[Datum],
+    ) -> Result<StmtOutput, DriverError> {
+        // The count is checked even when no values were sent, so a statement
+        // with an unbound marker is Go's ErrWrongParamCount.
+        if params.is_empty() && self.parameter_count(sql)? == 0 {
+            return self
+                .run_with_columns_using(sql, false, |session| session.execute_statement(sql))
+                .map(|(output, _)| output);
+        }
+        let bound = tidb_executor::bind_statement(self.parse(sql)?, params)?;
+        self.exec_statement_parsed(bound, sql)
+    }
+
     /// Runs one statement with its prepared-statement parameters bound.
     ///
     /// Go installs the execute-time values on the parsed statement's own
@@ -2129,107 +2161,6 @@ impl Session {
         }
         let bound = tidb_executor::bind_statement(self.parse(sql)?, params)?;
         self.run_with_columns_parsed(bound, sql)
-    }
-
-    /// Runs one parameterized statement and returns the exact policy needed
-    /// to retain a row result after the statement completes.
-    ///
-    /// The authority is present only for [`StmtOutput::Rows`]. It is captured
-    /// inside the statement lifecycle before `SET_VAR` restoration; a server
-    /// must not reconstruct it from post-statement session variables.
-    pub fn run_with_params_and_result_authority(
-        &mut self,
-        sql: &str,
-        params: &[Datum],
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        if params.is_empty() && self.parameter_count(sql)? == 0 {
-            return self.run_with_columns_internal(sql, true);
-        }
-        let bound = tidb_executor::bind_statement(self.parse(sql)?, params)?;
-        self.run_with_columns_using(sql, true, move |session| {
-            session.execute_statement_owned(bound, sql)
-        })
-    }
-
-    /// Executes the retained PREPARE tree and captures its result policy
-    /// before the statement lifecycle restores session hints.
-    pub fn run_prepared_with_result_authority(
-        &mut self,
-        prepared: &PreparedAst,
-        params: &[Datum],
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
-        self.restore_statement_variables();
-        let statement = prepared.bind(params)?;
-        let (effective_statement, binding_sql) =
-            self.prepared_statement_with_binding(prepared.statement());
-        let mut effective_statement = effective_statement.into_owned();
-        self.rewrite_fts_for_planning(&mut effective_statement)?;
-        if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
-            if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
-                self.bind_cached_prepared_select_for_statement(
-                    plan,
-                    params,
-                    &effective_statement,
-                    binding_sql.as_deref(),
-                )
-            }) {
-                let result = self.execute_prepared_select_internal(
-                    &cached,
-                    prepared.sql(),
-                    prepared.privilege_requests(),
-                    true,
-                );
-                // The nested statement boundary consumes the binding flag.
-                if binding_sql.is_some() {
-                    self.vars.found_in_binding = true;
-                }
-                return result;
-            }
-        }
-        self.run_with_columns_using(prepared.sql(), true, |session| {
-            session.execute_prepared_ast(prepared.sql(), statement, prepared.privilege_requests())
-        })
-    }
-
-    /// Opens a prepared statement while retaining a lazy query record set for
-    /// the wire front end. The collected variant above is kept for callers
-    /// that need an owned row vector; COM_STMT_EXECUTE uses this door so a
-    /// SELECT can stream executor chunks directly to the client.
-    pub fn open_prepared_with_result_authority(
-        &mut self,
-        prepared: &PreparedAst,
-        params: &[Datum],
-    ) -> Result<(OpenedStatement, Option<ResultMaterializationAuthority>), DriverError> {
-        self.bind_node_snapshot_for_open_statement()?;
-        self.restore_statement_variables();
-        let statement = prepared.bind(params)?;
-        let (effective_statement, binding_sql) =
-            self.prepared_statement_with_binding(prepared.statement());
-        let mut effective_statement = effective_statement.into_owned();
-        self.rewrite_fts_for_planning(&mut effective_statement)?;
-        if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
-            if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
-                self.bind_cached_prepared_select_for_statement(
-                    plan,
-                    params,
-                    &effective_statement,
-                    binding_sql.as_deref(),
-                )
-            }) {
-                let opened = self.open_prepared_record_set_for(&cached, prepared)?;
-                if binding_sql.is_some() {
-                    self.vars.found_in_binding = true;
-                }
-                let authority = matches!(opened, OpenedStatement::Rows(_) | OpenedStatement::Complete(StmtOutput::Rows { .. }))
-                    .then(|| self.result_materialization_authority());
-                return Ok((opened, authority));
-            }
-        }
-        let opened = self.open_bound_record_set_for(statement, prepared)?;
-        let authority = matches!(opened, OpenedStatement::Rows(_) | OpenedStatement::Complete(StmtOutput::Rows { .. }))
-            .then(|| self.result_materialization_authority());
-        Ok((opened, authority))
     }
 
     /// Plans a bound prepared query for its result metadata without opening
@@ -2329,13 +2260,7 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        if self.node.is_some() {
-            return self.node_conn().run_parsed_statement_output(sql, stmt);
-        }
-        self.run_with_columns_using(sql, false, move |session| {
-            session.execute_statement_owned(stmt, sql)
-        })
-        .map(|(output, _)| output)
+        self.node_conn().run_parsed_statement_output(sql, stmt)
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
@@ -2482,11 +2407,7 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        if self.node.is_some() {
-            return self.run_on_node(sql);
-        }
-        self.run_with_columns_internal(sql, false)
-            .map(|(output, _)| output)
+        self.node_conn().run_statement_output(sql)
     }
 
     /// A statement opened directly on a node-backed session (rather than run
@@ -2500,13 +2421,9 @@ impl Session {
 
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)` for a session on a
     /// store: its domain's stats cache reloads what `mysql.stats_meta` says
-    /// changed. The in-process tier publishes statistics eagerly, so there
-    /// it has nothing to do.
+    /// changed.
     pub fn update_stats_cache(&mut self) -> Result<(), DriverError> {
-        match &self.node {
-            Some(node) => node.update_stats_cache(),
-            None => Ok(()),
-        }
+        self.node().update_stats_cache()
     }
 
     /// Go testkit's `dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
@@ -2610,30 +2527,6 @@ impl Session {
             .as_ref()
             .expect("a session on the store")
             .delete_key_for_test(key)
-    }
-
-    /// Brings a node session's catalog up to the node's latest schema, as
-    /// every statement through the node does first; a no-op elsewhere.
-    pub(crate) fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {
-        if self.node.is_some() {
-            self.node_conn().refresh_catalog();
-        }
-        Ok(())
-    }
-
-    /// One statement through this session's node connection.
-    fn run_on_node(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        self.node_conn().run_statement_output(sql)
-    }
-
-    fn run_with_columns_internal(
-        &mut self,
-        sql: &str,
-        capture_result_authority: bool,
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        self.run_with_columns_using(sql, capture_result_authority, |session| {
-            session.execute_statement(sql)
-        })
     }
 
     fn run_with_columns_using(

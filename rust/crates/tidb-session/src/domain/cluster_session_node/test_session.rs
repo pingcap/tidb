@@ -159,42 +159,6 @@ impl<'s> ClusterServerSession<'s> {
         self.run_parsed_statement_output(sql, stmt)
     }
 
-    /// A bound prepared write, as [`Self::execute_general`] runs one for
-    /// COM_STMT_EXECUTE: inside the store's statement attempt, with the
-    /// retained definition supplying the parameter values the plan reads.
-    pub(crate) fn run_bound_prepared_write(
-        &mut self,
-        bound: Stmt,
-        prepared: &crate::PreparedAst,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        self.rebuild_catalog_if_stale();
-        let resource_group = self.session.statement_resource_group(&bound).into_owned();
-        let shape = self.session.statement_read_shape_bound(&bound);
-        self.session
-            .begin_prepared_routed_statement_observation(prepared.sql(), &bound);
-        self.session.set_binary_prepared_execution(true);
-        self.node.activate_statement_txn = self.activates_txn_at_build(&bound);
-        let attempt = self.with_prelocked_statement(shape, &resource_group, true, |session| {
-            session
-                .run_parsed_bound_owned_for(bound.clone(), prepared)
-                .map_err(super::map_error)
-        });
-        self.node.activate_statement_txn = false;
-        self.session.set_binary_prepared_execution(false);
-        let affected_rows = match &attempt {
-            Ok(StmtOutput::Affected(count)) => *count,
-            _ => 0,
-        };
-        self.session.finish_routed_statement_observation_with_error(
-            attempt.is_ok(),
-            affected_rows,
-            attempt.as_ref().err().map(|error| error.error_string()),
-        );
-        let output = attempt.map_err(driver_error)?;
-        self.session.add_statement_read_keys(affected_rows);
-        Ok(output)
-    }
-
     /// Replaces the domain's analyzer this session's statements reach (its
     /// services' `analyze`, which `AnalyzeExec` runs through), for a test
     /// that observes or fails the analysis.
@@ -303,17 +267,6 @@ impl super::NodeConn {
         self.domain.transactions.fresh_timestamp()
     }
 
-    /// Go `Domain.globalBindHandleWorkerLoop`'s GC tick: the binding owner
-    /// deletes aged `deleted` tombstones through its internal session, on
-    /// the internal session's own clock.
-    pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {
-        match &self.domain.bindings {
-            Some(bindings) => bindings
-                .gc()
-                .map_err(tidb_executor::DriverError::unsupported),
-            None => Ok(()),
-        }
-    }
 }
 
 /// The rows and column types of an opened result, closed afterwards as the

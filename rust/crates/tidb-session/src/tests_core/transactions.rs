@@ -587,8 +587,10 @@ fn as_of_timestamp_reads_the_stores_history() {
     for cancel in [false, true] {
         let statement = session.parse_statement(sql).unwrap();
         {
-            let StatementExecution::Rows(mut result) =
-                session.execute_record_set_parsed(statement, sql).unwrap()
+            let StatementExecution::Rows(mut result) = session
+                .open_record_set_parsed(statement, sql)
+                .unwrap()
+                .attach(&mut session)
             else {
                 panic!("historical SELECT must retain its executor");
             };

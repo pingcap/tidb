@@ -5470,12 +5470,12 @@ impl<'s> ClusterServerSession<'s> {
             &resource_group,
             true,
             move |session| match session
-                .run_parsed(stmt.clone(), &owned)
+                .exec_statement_parsed(stmt.clone(), &owned)
                 .map_err(sql_query_error)?
             {
-                crate::StmtResult::Affected(count) => Ok(count),
-                crate::StmtResult::Done(_) => Ok(0),
-                crate::StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                StmtOutput::Affected(count) => Ok(count),
+                StmtOutput::Done(_) => Ok(0),
+                StmtOutput::Rows { .. } => Err(SqlQueryError::unknown(
                     "a write statement unexpectedly produced rows",
                 )),
             },
@@ -6129,7 +6129,7 @@ impl<'s> ClusterServerSession<'s> {
         }
         self
             .session
-            .run_parsed(stmt.clone(), sql)
+            .exec_statement_parsed(stmt.clone(), sql)
             .map_err(map_error)?;
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
@@ -7142,18 +7142,18 @@ impl<'s> ClusterServerSession<'s> {
         }
         match self
             .session
-            .run_parsed(parsed.clone(), sql)
+            .exec_statement_parsed(parsed.clone(), sql)
             .map_err(map_error)?
         {
-            crate::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
+            StmtOutput::Affected(affected_rows) => Ok(WriteOutcome {
                 affected_rows,
                 last_insert_id: self.session.statement_insert_id(),
             }),
-            crate::StmtResult::Done(_) => Ok(WriteOutcome {
+            StmtOutput::Done(_) => Ok(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,
             }),
-            crate::StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+            StmtOutput::Rows { .. } => Err(SqlQueryError::unknown(
                 "LOCAL temporary-table DDL unexpectedly returned rows",
             )),
         }
@@ -7445,6 +7445,11 @@ impl<'s> ClusterServerSession<'s> {
         if classify_transaction_control_stmt(&parsed).is_some() {
             return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
         }
+        // Go `PrepareExec` plans against the transaction's infoschema
+        // (`GetTxnInfoSchema`): the latest schema outside a transaction, so a
+        // table another connection created since this one's last statement
+        // resolves.
+        self.rebuild_catalog_if_stale();
         let prepared_ast = self
             .session
             .prepare_ast_parsed(sql, parsed)
@@ -7762,7 +7767,9 @@ impl<'s> ClusterServerSession<'s> {
                     )
                     .map_err(map_error)
             } else {
-                session.run_with_params(&sql, &params).map_err(map_error)
+                session
+                    .exec_statement_with_params(&sql, &params)
+                    .map_err(map_error)
             }
         });
         self.node.activate_statement_txn = false;

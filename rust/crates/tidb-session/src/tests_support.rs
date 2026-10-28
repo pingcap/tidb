@@ -1,7 +1,6 @@
 //! Shared test fixtures and helpers used across the tidb-session test modules.
 #![cfg(test)]
 
-use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 
 /// The single value a one-column, one-row query returns, as text.
@@ -205,25 +204,105 @@ pub(crate) fn window_session() -> Session {
 /// A result's column names and rows as text, matching how the captured
 /// Go output above prints them.
 pub(crate) fn query_text(session: &mut Session, sql: &str) -> (Vec<String>, Vec<Vec<String>>) {
-    let stmt = session.parse_statement(sql).unwrap();
-    let output = collect_record_set(session.execute_record_set_parsed(stmt, sql).unwrap());
-    match output {
-        StmtOutput::Rows { columns, rows } => (
-            columns.into_iter().map(|(name, _)| name).collect(),
-            rows.into_iter()
-                .map(|row| {
-                    row.iter()
-                        .map(|value| match value {
-                            Datum::Null => "<nil>".to_owned(),
-                            Datum::Int(v) => v.to_string(),
-                            other => datum_text(other).unwrap_or_default(),
-                        })
-                        .collect()
-                })
-                .collect(),
-        ),
-        other => panic!("expected rows, got {other:?}"),
+    let (columns, rows) = query_rows(session, sql);
+    (
+        columns,
+        rows.into_iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| match value {
+                        Datum::Null => "<nil>".to_owned(),
+                        Datum::Int(v) => v.to_string(),
+                        other => datum_text(other).unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// Go `session.ExecuteStmt` for one query, its record set drained through
+/// `Next` and closed: the column names and the rows.
+pub(crate) fn query_rows(session: &mut Session, sql: &str) -> (Vec<String>, Vec<Vec<Datum>>) {
+    use crate::domain::resultset_source::ResultSetSource;
+    let mut result = execute_stmt(session, sql).unwrap_or_else(|| panic!("{sql} answers rows"));
+    let source = result.source();
+    let columns = source
+        .columns()
+        .unwrap()
+        .into_iter()
+        .map(|column| column.name)
+        .collect();
+    let mut rows = Vec::new();
+    loop {
+        let batch = source.next_batch(1024).unwrap();
+        if batch.is_empty() {
+            break;
+        }
+        rows.extend(batch);
     }
+    source.finish().unwrap();
+    source.close().unwrap();
+    (columns, rows)
+}
+
+/// Go `clientConn.handleStmtPrepare`: the binary protocol's PREPARE.
+pub(crate) fn prepare_binary(
+    session: &mut Session,
+    sql: &str,
+) -> crate::domain::session_api::PreparedGeneral {
+    use crate::domain::session_api::QuerySession;
+    QuerySession::prepare_general(session, sql).unwrap()
+}
+
+/// Go `clientConn.handleStmtExecute` with integer parameters: the rows of a
+/// query, drained and closed, or the affected count of a write.
+pub(crate) fn execute_binary(
+    session: &mut Session,
+    prepared: &crate::domain::session_api::PreparedGeneral,
+    params: &[i64],
+) -> StmtOutput {
+    use crate::domain::resultset_source::ResultSetSource;
+    use crate::domain::session_api::{GeneralExecuteOutcome, QuerySession};
+    let values: Vec<_> = params
+        .iter()
+        .map(|value| tidb_protocol::PreparedValue::SignedLongLong(*value))
+        .collect();
+    match QuerySession::execute_general(session, prepared, &values).unwrap() {
+        GeneralExecuteOutcome::Write(outcome) => StmtOutput::Affected(outcome.affected_rows),
+        GeneralExecuteOutcome::Rows(mut result) => {
+            let source = result.source();
+            let columns = source
+                .columns()
+                .unwrap()
+                .into_iter()
+                .zip(source.field_types().to_vec())
+                .map(|(column, field_type)| (column.name, field_type))
+                .collect();
+            let mut rows = Vec::new();
+            loop {
+                let batch = source.next_batch(1024).unwrap();
+                if batch.is_empty() {
+                    break;
+                }
+                rows.extend(batch);
+            }
+            source.finish().unwrap();
+            source.close().unwrap();
+            StmtOutput::Rows { columns, rows }
+        }
+    }
+}
+
+/// Go `session.ExecuteStmt`: one statement through the session, a query's
+/// record set left open for the caller.
+pub(crate) fn execute_stmt<'a>(
+    session: &'a mut Session,
+    sql: &str,
+) -> Option<crate::domain::session_api::QueryResult<'a>> {
+    use crate::domain::session_api::QuerySession;
+    let stmt = QuerySession::parse_statement(session, sql).unwrap();
+    QuerySession::execute_stmt(session, sql, &stmt).unwrap()
 }
 
 pub(crate) fn collect_record_set(execution: StatementExecution<'_>) -> StmtOutput {

@@ -664,11 +664,6 @@ impl Session {
     /// anything else, so a caller can answer with an OK packet carrying the
     /// right status flag without re-parsing.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
-        if self.node.is_none() {
-            return Err(DriverError::unsupported(
-                "transaction statements run on the store session",
-            ));
-        }
         self.node_conn().run_transaction_control(sql)
     }
 

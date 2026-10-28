@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! Regressions exercise completed SQL, never injected statement records.
+use crate::domain::resultset_source::ResultSetSource;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::PreparedAstCompile;
 use crate::*;
 use tidb_util::topsql_stmtstats::{global_aggregator, Collector, StatementStatsMap};
 
@@ -93,24 +93,21 @@ fn observation_batch_streaming_result_publishes_once_at_close() {
     session.set_user("root@%".into(), "root@localhost".into());
     let sql = "SELECT 123 AS observation_close";
     let before = summary_execution_count(sql);
-    let stmt = session.parse_statement(sql).unwrap();
-    let StatementExecution::Rows(mut result) =
-        session.execute_record_set_parsed(stmt, sql).unwrap()
-    else {
-        panic!("query result expected");
-    };
+    let mut result =
+        crate::tests_support::execute_stmt(&mut session, sql).expect("query result expected");
     assert_eq!(summary_execution_count(sql), before);
-    let mut chunk = result.new_chunk();
-    result.next(&mut chunk).unwrap();
-    result.next(&mut chunk).unwrap();
-    result.finish().unwrap();
+    let source = result.source();
+    let mut chunk = source.new_chunk().expect("an executor's chunk");
+    source.next_chunk(&mut chunk).unwrap();
+    source.next_chunk(&mut chunk).unwrap();
+    source.finish().unwrap();
     assert_eq!(
         summary_execution_count(sql),
         before,
         "executor finish precedes record-set close"
     );
-    result.close().unwrap();
-    result.close().unwrap();
+    source.close().unwrap();
+    source.close().unwrap();
     drop(result);
     assert_eq!(summary_execution_count(sql), before + 1);
 }
@@ -228,11 +225,9 @@ fn observation_batch_prepared_execution_records_original_sql() {
     let mut session = Session::new();
     session.set_user("root@%".into(), "root@localhost".into());
     let sql = "SELECT ? AS observation_prepared";
-    let prepared = session.prepare_ast(sql).unwrap();
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
     let before = summary_execution_count(sql);
-    session
-        .run_prepared_with_result_authority(&prepared, &[Datum::Int(42)])
-        .unwrap();
+    crate::tests_support::execute_binary(&mut session, &prepared, &[42]);
     assert_eq!(summary_execution_count(sql), before + 1);
 }
 
@@ -447,13 +442,12 @@ fn observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call() {
     session
         .run("INSERT INTO observation_prepared_table VALUES (1)")
         .unwrap();
-    let sql = "SELECT id FROM observation_prepared_table WHERE id=?";
-    let prepared = session.prepare_ast(sql).unwrap();
+    // A range, not a point key: the retained physical SELECT is replayed.
+    let sql = "SELECT id FROM observation_prepared_table WHERE id>=?";
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
     session.statement_stats.take();
     for _ in 0..2 {
-        session
-            .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
-            .unwrap();
+        crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
     }
     let cached = session.vars.found_in_plan_cache;
     let data = session.statement_stats.take();
@@ -489,12 +483,8 @@ fn observation_batch_frontend_parse_is_transferred_and_not_reused() {
     let mut session = Session::new();
     session.set_user("root@%".into(), "root@localhost".into());
     let sql = "SELECT 902 AS observation_frontend_parse";
-    let stmt = session.parse_at_statement_boundary(sql).unwrap();
-    let opened = session.open_record_set_parsed(stmt, sql).unwrap();
-    let crate::StatementExecution::Rows(mut result) = opened.attach(&mut session) else {
-        panic!("rows expected");
-    };
-    result.close().unwrap();
+    let mut result = crate::tests_support::execute_stmt(&mut session, sql).expect("rows expected");
+    result.source().close().unwrap();
     drop(result);
     let (_, digest) = normalize_statement_digest(sql);
     let records =
@@ -509,12 +499,9 @@ fn observation_batch_frontend_parse_is_transferred_and_not_reused() {
     drop(record);
     assert!(parse > std::time::Duration::ZERO);
     assert!(session.pending_observation_parse.is_none());
-    let prepared = session
-        .prepare_ast("SELECT ? AS observation_no_parse")
-        .unwrap();
-    session
-        .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
-        .unwrap();
+    let prepared =
+        crate::tests_support::prepare_binary(&mut session, "SELECT ? AS observation_no_parse");
+    crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
     let (_, digest) = normalize_statement_digest("SELECT ? AS observation_no_parse");
     let records =
         tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
@@ -652,12 +639,9 @@ fn observation_plan_batch_binary_prepared_keeps_summary_plan() {
     session
         .run("CREATE TABLE observation_binary_prepared (id INT PRIMARY KEY)")
         .unwrap();
-    let sql = "SELECT id FROM observation_binary_prepared WHERE id=?";
-    let prepared = session.prepare_ast(sql).unwrap();
-    session.set_binary_prepared_execution(true);
-    session
-        .run_prepared_with_result_authority(&prepared, &[Datum::Int(72)])
-        .unwrap();
+    let sql = "SELECT id FROM observation_binary_prepared WHERE id>=?";
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
+    crate::tests_support::execute_binary(&mut session, &prepared, &[72]);
     let (encoded, binary) = observation_plan_samples(sql);
     assert!(
         !encoded.is_empty(),
@@ -691,18 +675,13 @@ fn observation_plan_toggle(sql: &str, begin_enabled: bool, end_enabled: bool) ->
     if begin_enabled {
         enable_top_sql();
     }
-    let stmt = session.parse_statement(sql).unwrap();
-    let StatementExecution::Rows(mut result) =
-        session.execute_record_set_parsed(stmt, sql).unwrap()
-    else {
-        panic!("expected rows")
-    };
+    let mut result = crate::tests_support::execute_stmt(&mut session, sql).expect("expected rows");
     if end_enabled {
         enable_top_sql();
     } else {
         disable_top_sql();
     }
-    result.close().unwrap();
+    result.source().close().unwrap();
     drop(result);
     disable_top_sql();
     session.statement_stats.take()
@@ -1133,4 +1112,45 @@ fn failed_statement_summary_counts_no_warning_for_its_error_row() {
         rows,
         vec![vec!["2".to_owned(), "1".to_owned(), "0".to_owned()]]
     );
+}
+
+/// A binary EXECUTE answered by the retained point plan is a statement like
+/// any other (Go `ExecStmt.Exec` / `FinishExecuteStmt`): it reaches the
+/// statement summary with the table it read, and Top SQL sees it begin.
+#[test]
+fn observation_binary_point_get_reaches_summary_and_top_sql() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    enable_top_sql();
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_point_get (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO observation_point_get VALUES (1)")
+        .unwrap();
+    let sql = "SELECT id FROM observation_point_get WHERE id=?";
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
+    session.statement_stats.take();
+    let before = summary_execution_count(sql);
+    crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
+    let data = session.statement_stats.take();
+    disable_top_sql();
+    assert_eq!(summary_execution_count(sql), before + 1);
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .expect("Top SQL observed the execution")
+        .1;
+    assert_eq!(item.exec_count, 1);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.table_names, "test.observation_point_get");
 }

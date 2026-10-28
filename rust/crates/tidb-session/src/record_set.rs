@@ -87,6 +87,7 @@ impl tidb_executor::record_set::RecordSetSession for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::resultset_source::ResultSetSource;
     use crate::tests_support::query_text;
 
     // Go pkg/executor/adapter_internal_test.go::TestRecordSetNewChunkAfterFinish
@@ -94,20 +95,14 @@ mod tests {
     #[test]
     fn record_set_after_finish() {
         let mut session = Session::new();
-        let stmt = session.parse_statement("SELECT 1").unwrap();
-        let StatementExecution::Rows(mut result) =
-            session.execute_record_set_parsed(stmt, "SELECT 1").unwrap()
-        else {
-            panic!("SELECT must return an opened executor");
-        };
+        let mut result = crate::tests_support::execute_stmt(&mut session, "SELECT 1")
+            .expect("SELECT must return an opened executor");
+        let result = result.source();
         result.finish().unwrap();
-        let mut req = result.new_chunk();
+        let mut req = result.new_chunk().expect("an executor's chunk");
         assert_eq!(req.num_cols(), 1);
-        assert_eq!(result.columns().len(), 1);
-        assert_eq!(
-            result.next(&mut req).unwrap_err().to_mysql_error().code,
-            1317
-        );
+        assert_eq!(result.columns().unwrap().len(), 1);
+        assert_eq!(result.next_chunk(&mut req).unwrap_err().code, 1317);
         result.close().unwrap();
         result.close().unwrap();
     }

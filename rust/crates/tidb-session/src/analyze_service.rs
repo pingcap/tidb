@@ -63,9 +63,6 @@ impl Session {
         tables: &[AnalyzeStatement],
         service: &dyn AnalyzeService,
     ) -> Result<(), DriverError> {
-        // Go plans against the domain's latest schema; a node session's
-        // catalog catches up with its node first (a no-op inside the node).
-        self.refresh_node_catalog()?;
         // `Compile` already checked every named table (`buildAnalyze`'s visit
         // infos), so `ANALYZE TABLE ok, no` stores nothing at all.
         // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
