@@ -301,7 +301,7 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
 /// what a generated column's stored expression carries in Go
 /// (`format.RestoreKeyWordLowercase` in `pkg/ddl/add_column.go`).
 pub(crate) fn restore_cast_type_kw(ty: &CastType, array: bool, lowercase: bool, out: &mut String) {
-    let mut kw = |name: &str, out: &mut String| {
+    let kw = |name: &str, out: &mut String| {
         if lowercase {
             out.push_str(&name.to_ascii_lowercase());
         } else {

@@ -28,8 +28,7 @@ use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
 use tidb_datatype::{
-    default_field_type_for_value, Datum, EvalType, FieldType, FieldTypeCode, FieldTypeValue,
-    TimeType,
+    Datum, EvalType, FieldType, FieldTypeCode,
 };
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal

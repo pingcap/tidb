@@ -158,18 +158,6 @@ fn collector_counter_vec(source: &str) -> Option<prometheus::CounterVec> {
         })
 }
 
-/// Publishes Go's per-store PreferLeader window through the shared registry.
-pub(crate) fn report_store_replica_flows(store_id: u64, flows: [u64; 2]) {
-    if let Some(metric) = collector_gauge_vec("TiKVPreferLeaderFlowsGauge") {
-        let store = store_id.to_string();
-        for (destination, count) in ["ToLeader", "ToFollower"].into_iter().zip(flows) {
-            metric
-                .with_label_values(&[destination, &store])
-                .set(count as f64);
-        }
-    }
-}
-
 fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
     tikv_client::metrics::global_metrics()
         .collector(source)
@@ -498,31 +486,3 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
         .collect()
 }
 
-/// Go defers per-command timing until every success/error return path completes.
-pub(crate) struct RequestDuration<'a> {
-    command: &'static str,
-    context: &'a tidb_proto::KvrpcContext,
-    started: std::time::Instant,
-}
-
-impl<'a> RequestDuration<'a> {
-    pub(crate) fn new(command: &'static str, context: &'a tidb_proto::KvrpcContext) -> Self {
-        Self {
-            command,
-            context,
-            started: std::time::Instant::now(),
-        }
-    }
-}
-
-impl Drop for RequestDuration<'_> {
-    fn drop(&mut self) {
-        observe_send_request_seconds(
-            self.command,
-            self.context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            self.context.stale_read,
-            &self.context.request_source,
-            self.started.elapsed().as_secs_f64(),
-        );
-    }
-}

@@ -48,7 +48,7 @@ use tidb_txnkv::transaction::StoreClient;
 
 use tidb_cluster::cluster_account_write::{plan_account_write, AccountWriteError};
 use tidb_cluster::cluster_auto_id::ClusterAutoIdStore;
-use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_cluster::cluster_catalog::load_cluster_catalog;
 use tidb_cluster::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;

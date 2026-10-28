@@ -435,15 +435,6 @@ fn all_describable(filters: &[Expression], ctx: &crate::StmtContext) -> bool {
         .all(|filter| describe_execution_condition(&filter, ctx).is_ok())
 }
 
-fn immutable_scan_constants(expression: &Expression) -> bool {
-    match expression {
-        Expression::Constant(constant) => constant.literal_value().is_some(),
-        Expression::ScalarFunction(function) => function.args.iter().all(immutable_scan_constants),
-        Expression::Column(_) => true,
-        Expression::CorrelatedColumn(_) => false,
-    }
-}
-
 /// Go `ExprToPB` reads the compiled function and its arguments. This immutable
 /// description adapter copies strict literals without rewriting or folding SQL.
 fn describe_compiled_condition(expression: &Expression) -> Option<ScanPredicate> {

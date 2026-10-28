@@ -710,14 +710,6 @@ fn string_scalar_in_with(
     }
 }
 
-fn string_scalar_in(
-    tested: tidb_expr::pushdown_catalog::PbScalar,
-    literals: Vec<Datum>,
-    negated: bool,
-) -> ScanPredicate {
-    string_scalar_in_with(tested, literals, negated, "utf8mb4_bin")
-}
-
 /// A string comparison travels, as the `*String` signature Go's
 /// `generateCmpSigs` picks for an `ETString` comparison.
 ///

@@ -365,20 +365,6 @@ pub(super) fn open_session_on_with_ddl(
     )
 }
 
-pub(super) fn open_session_on_with_accounts(
-    node: &MockNode,
-    accounts: Arc<dyn ClusterAccountWriter>,
-) -> ClusterServerSession {
-    open_session_on_with_seams(
-        node,
-        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
-        accounts,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
-        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-    )
-}
-
 pub(super) fn open_session_on_with_sysvars(
     node: &MockNode,
     sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,

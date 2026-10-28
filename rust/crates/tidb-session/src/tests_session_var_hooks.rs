@@ -128,7 +128,7 @@ fn session_getter_functions_read_live_defaults() {
 /// session copy or a stale catalog default.
 #[test]
 fn instance_scoped_getters_read_live_config_defaults() {
-    let mut session = Session::new();
+    let session = Session::new();
     let expected = [
         ("tidb_general_log", "OFF"),
         ("tidb_pprof_sql_cpu", "0"),

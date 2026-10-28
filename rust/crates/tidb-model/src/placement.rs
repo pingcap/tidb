@@ -149,7 +149,7 @@ impl PlacementSettings {
     #[must_use]
     pub fn to_clause(&self) -> String {
         let mut out = String::new();
-        let mut push_string = |out: &mut String, item: &str, value: &str| {
+        let push_string = |out: &mut String, item: &str, value: &str| {
             if value.is_empty() {
                 return;
             }
@@ -163,7 +163,7 @@ impl PlacementSettings {
         push_string(&mut out, "SCHEDULE", &self.schedule);
         push_string(&mut out, "CONSTRAINTS", &self.constraints);
         push_string(&mut out, "LEADER_CONSTRAINTS", &self.leader_constraints);
-        let mut push_int = |out: &mut String, item: &str, value: u64| {
+        let push_int = |out: &mut String, item: &str, value: u64| {
             if value == 0 {
                 return;
             }

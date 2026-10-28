@@ -24,7 +24,7 @@
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
 use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
+    Counter, CounterVec, Gauge, HistogramOpts, HistogramVec, Opts,
 };
 use std::sync::LazyLock;
 

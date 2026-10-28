@@ -21,13 +21,6 @@ use tidb_ast::{Expr, ImportIntoStmt, ImportSource, LoadDataOption, UnaryOp};
 
 use crate::DriverError;
 
-const ERR_LOAD_DATA_EMPTY_PATH: u16 = 8156;
-const ERR_LOAD_DATA_UNSUPPORTED_FORMAT: u16 = 8157;
-const ERR_UNKNOWN_OPTION: u16 = 8163;
-const ERR_INVALID_OPTION_VAL: u16 = 8164;
-const ERR_DUPLICATE_OPTION: u16 = 8165;
-const ERR_LOAD_DATA_UNSUPPORTED_OPTION: u16 = 8166;
-
 /// Go `supportedOptions`: whether the option takes a value.
 const SUPPORTED_OPTIONS: &[(&str, bool)] = &[
     ("character_set", true),

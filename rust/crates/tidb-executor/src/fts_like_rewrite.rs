@@ -202,13 +202,6 @@ fn build_fts_like(
     })
 }
 
-/// Go `isFTSWordByte`: ASCII alphanumerics and every non-ASCII byte.
-/// Underscore is NOT a word character -- MySQL's tokenizer treats it as a
-/// separator.
-fn is_fts_word_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c > 127
-}
-
 /// Go `buildFTSNaturalLanguageModeILikeExpression`: any word in any column
 /// matches, so the whole thing is one OR -- column-major, as Go's loops are.
 fn build_natural_language_mode(columns: &[Vec<String>], search: &str) -> Option<Expr> {

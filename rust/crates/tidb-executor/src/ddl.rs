@@ -232,7 +232,6 @@ pub use tidb_ddl_build::column_types::is_int_column_type;
 
 pub use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 
-
 use crate::driver::{Catalog, DriverError};
 use tidb_ast::{DdlStmt, Stmt};
 
@@ -468,38 +467,6 @@ impl Default for CreateTableSettings {
 /// The default schema an unqualified `CREATE TABLE` lands in.
 fn tidb_executor_default_database() -> &'static str {
     crate::driver::DEFAULT_DATABASE
-}
-
-/// Go `DDLExec`'s local-temporary-table guard, which it repeats verbatim in
-/// front of six statements (`pkg/executor/ddl.go:273`, `:349`, `:413`,
-/// `:425`, `:740`, `:763`): `getLocalTemporaryTable` and, if it matched,
-/// `ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs(<statement>)`.
-///
-/// The reason is structural rather than a policy choice: each of these
-/// statements is carried out by a DDL JOB, the job names its table by the id
-/// it has in the meta store, and a local temporary table is in no meta store.
-/// There is nothing for the job to find. `TRUNCATE` is deliberately NOT in
-/// the set -- Go serves it from the session instead
-/// (`temptable.TruncateLocalTemporaryTable`), so a local temporary table can
-/// be emptied.
-///
-/// `statement` is the spelling Go passes, upper case and spaced as the
-/// statement is written (`ALTER TABLE`, `CREATE INDEX`, ...).
-pub(crate) fn refuse_local_temporary_table_ddl(
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    statement: &'static str,
-) -> Result<(), DriverError> {
-    if matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
-        if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
-    {
-        return Err(DriverError::from(
-            tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
-                .generate_with_stack_by_args(&[(statement).into()]),
-        ));
-    }
-    Ok(())
 }
 
 /// A memory schema's table built from its `CREATE TABLE` text, as Go's

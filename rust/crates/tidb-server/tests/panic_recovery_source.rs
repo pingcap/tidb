@@ -22,7 +22,7 @@ use tidb_protocol::{
 };
 use tidb_server::{
     ConcurrentSqlNode, ConfiguredUserStore, NodeConfig, PreparedGeneral, QueryResult, QuerySession,
-    QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError, WriteOutcome,
+    QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

@@ -104,7 +104,7 @@ use tidb_datatype::{
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::{Columns, SessionTimeZone};
+use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
@@ -1067,65 +1067,6 @@ impl AggState {
         Some(value.map_or(0, |value| set.insert(value)))
     }
 
-    /// Folds a directly read typed value into Go's single-argument
-    /// `COUNT(DISTINCT)` set. The key is prepared by the caller using the
-    /// aggregate's specialized source rule (collation key, MyDecimal hash
-    /// key, or duration bits), and the datum is constructed only when a
-    /// parallel partial worker must retain a value for final set union.
-    fn update_count_distinct_fast(
-        &mut self,
-        key: Vec<u8>,
-        key_memory: bool,
-        make_value: impl FnOnce() -> Datum,
-    ) -> Option<i64> {
-        let typed_set = matches!(
-            self.partial,
-            Partial::CountDistinctString(_) | Partial::CountDistinctDecimal(_)
-        );
-        if !typed_set && !matches!(self.partial, Partial::Count(_)) {
-            return None;
-        }
-        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
-        let key = GoString::from_bytes(key);
-        if typed_set {
-            let delta = match &mut self.partial {
-                Partial::CountDistinctString(set) | Partial::CountDistinctDecimal(set) => {
-                    if set.contains(&key) {
-                        return Some(0);
-                    }
-                    set.insert(key).saturating_add(key_bytes)
-                }
-                _ => unreachable!("typed DISTINCT set checked above"),
-            };
-            return Some(delta);
-        }
-        let seen = self.seen.as_mut()?;
-        if seen.contains(&key) {
-            return Some(0);
-        }
-        let retained_key = self
-            .distinct_inputs
-            .is_some()
-            .then(|| key.as_bytes().to_vec());
-        let mut delta = seen.insert(key);
-        if key_memory {
-            delta = delta.saturating_add(key_bytes);
-        }
-        let retained_value = self.distinct_inputs.is_some().then(make_value);
-        if let Some(inputs) = &mut self.distinct_inputs {
-            inputs.push(DistinctInput {
-                key: retained_key.expect("parallel DISTINCT retains its key"),
-                value: retained_value,
-                extra: Vec::new(),
-                sort_key: Vec::new(),
-            });
-        }
-        if let Partial::Count(count) = &mut self.partial {
-            *count += 1;
-        }
-        Some(delta)
-    }
-
     /// Go `countPartial4Int.UpdatePartialResult`: a FINAL `COUNT` adds the
     /// partial count it is handed, read straight from its integer column.
     ///
@@ -1497,25 +1438,6 @@ pub(crate) fn append_group_key_part(
         }
         None => output.extend_from_slice(&tidb_codec::hash_code(datum)),
     }
-}
-
-/// Appends one value with Go `codec.HashGroupKey`, including field-type
-/// directed integer, decimal, time-zone, JSON and collation encoding.
-///
-/// Go's `HashGroupKey` appends each column's bytes onto the row's existing
-/// buffer with the statement time zone resolved once per chunk; callers pass
-/// that zone in so a row costs no allocation beyond the key it builds.
-fn append_hash_agg_group_key_part(
-    timezone: &SessionTimeZone,
-    expr: &Expression,
-    datum: &Datum,
-    output: &mut Vec<u8>,
-) -> Result<(), ExecError> {
-    let field_type = expr
-        .static_type()
-        .ok_or_else(|| ExecError::internal("HashAgg group expression has no field type"))?;
-    tidb_codec::append_hash_group_key_in_timezone(timezone, datum, field_type, output)
-        .map_err(|error| ExecError::internal(error.to_string()))
 }
 
 pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
@@ -2901,11 +2823,6 @@ pub struct StreamAggExec<C: Columns> {
 }
 
 impl<C: Columns> StreamAggExec<C> {
-    /// Go's builder only installs DefaultVal for a final aggregation.
-    pub(crate) fn with_default_row(mut self, enabled: bool) -> Self {
-        self.emit_default_row = enabled;
-        self
-    }
 
     /// Builds a one-group streaming aggregation over `child`.
     #[must_use]
@@ -3374,11 +3291,6 @@ pub struct HashAggExec<C: HashAggContext> {
 }
 
 impl<C: HashAggContext> HashAggExec<C> {
-    /// Go's builder only installs DefaultVal for a final aggregation.
-    pub(crate) fn with_default_row(mut self, enabled: bool) -> Self {
-        self.emit_default_row = enabled;
-        self
-    }
 
     /// Builds a hash aggregation of `agg_funcs` over `child`, grouped by
     /// `group_by` (empty for a global aggregate).

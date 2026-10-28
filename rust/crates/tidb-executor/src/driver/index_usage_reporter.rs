@@ -37,20 +37,6 @@ impl<'a> IndexUsageReporter<'a> {
         Self { collector }
     }
 
-    /// Go `ReportCopIndexUsageForHandle`.
-    pub(crate) fn report_cop_for_handle(
-        &self,
-        table: &KvTable,
-        stats: Option<&TableStatistics>,
-        kv_requests: u64,
-        accessed_rows: u64,
-    ) {
-        let Some(index_id) = cluster_index_id(table) else {
-            return;
-        };
-        self.report_cop_for_table(table, stats, index_id, kv_requests, accessed_rows);
-    }
-
     /// Go `ReportCopIndexUsageForTable`.
     pub(crate) fn report_cop_for_table(
         &self,

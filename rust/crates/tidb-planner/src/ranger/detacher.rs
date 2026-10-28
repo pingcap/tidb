@@ -242,8 +242,7 @@ pub fn detach_conds_for_column(
 use tidb_datatype::Datum;
 
 use super::points::{
-    range_point_cmp, ExpressionEvaluator, Point, PointBuilder, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT,
-    OP_NE, OP_NULL_EQ,
+    range_point_cmp, ExpressionEvaluator, Point, PointBuilder,
 };
 
 /// The session switches Go's `rangerctx.RangerContext` carries into the

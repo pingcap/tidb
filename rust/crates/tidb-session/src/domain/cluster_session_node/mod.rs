@@ -241,9 +241,6 @@ pub const STATS_OWNER_KEY: &str = "/tidb/stats/owner";
 /// Pinned Go `statistics/handle.StatsPrompt`.
 pub const STATS_OWNER_PROMPT: &str = "stats";
 
-/// Go `errno.ErrTableaccessDenied`.
-const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
-
 /// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
 /// for.
 
@@ -4021,10 +4018,6 @@ impl ClusterStatsSessionState {
         })
     }
 
-    fn connection_id(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
-        self.with_session(|session| Ok(session.connection_id))
-    }
-
     fn execute_auto_analyze(
         &self,
         sql: &str,
@@ -4260,9 +4253,6 @@ impl ClusterStatsSessionContext {
             .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0))))
     }
 
-    fn connection_id(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
-        self.state.connection_id()
-    }
 }
 
 impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterStatsSessionContext {
@@ -5174,7 +5164,6 @@ impl CommitHooks for NodeCommitHooks {
         })
     }
 }
-
 
 impl ClusterServerSession {
     /// The borrowed context one statement runs in; see [`StatementLifecycle`].

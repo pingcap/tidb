@@ -682,19 +682,6 @@ impl Catalog {
         Some(names)
     }
 
-    /// Database/table identities for schema-wide DDL and foreign-key checks.
-    pub(crate) fn table_paths(&self) -> Vec<(String, String)> {
-        self.databases
-            .values()
-            .flat_map(|database| {
-                database
-                    .tables
-                    .keys()
-                    .map(|name| (database.name.clone(), name.clone()))
-            })
-            .collect()
-    }
-
     /// Whether `database` exists (Go `is.SchemaExists`).
     #[must_use]
     pub fn has_database(&self, database: &str) -> bool {

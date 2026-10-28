@@ -228,8 +228,8 @@ fn string_operand_text(d: &Datum) -> String {
 
 pub(crate) fn eval_binary_full(
     op: BinaryOp,
-    mut l: Datum,
-    mut r: Datum,
+    l: Datum,
+    r: Datum,
     div_precision_increment: u32,
     collation: tidb_datatype::Collation,
     operands: Operands<'_>,

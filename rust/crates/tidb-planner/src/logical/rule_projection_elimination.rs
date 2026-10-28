@@ -572,7 +572,7 @@ mod tests {
 
 #[cfg(test)]
 mod apply_schema_tests {
-    use tidb_expr::schema::Schema;
+    
 
     use crate::find_best_task::LogicalJoinType;
     use crate::logical::join::LogicalJoin;

@@ -238,21 +238,6 @@ fn explain_constant(
     }
 }
 
-
-/// Splits an AST predicate into Go's CNF item list.
-pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    if let tidb_ast::Expr::Paren(inner) = expr {
-        collect_and(inner, out);
-        return;
-    }
-    if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) = expr {
-        collect_and(lhs, out);
-        collect_and(rhs, out);
-        return;
-    }
-    out.push(expr);
-}
-
 #[cfg(test)]
 mod tests {
     use super::{physical_expression_text_with_columns, ExpressionTextStyle};

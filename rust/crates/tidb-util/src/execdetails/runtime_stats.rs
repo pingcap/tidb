@@ -1604,7 +1604,7 @@ mod tests {
     /// strings byte for byte.
     #[test]
     fn cop_runtime_stats() {
-        let mut stats = RuntimeStatsColl::new(None);
+        let stats = RuntimeStatsColl::new(None);
         let table_scan_id = 1;
         let agg_id = 2;
         let table_reader_id = 3;
@@ -1688,7 +1688,7 @@ mod tests {
     /// for byte.
     #[test]
     fn cop_runtime_stats2() {
-        let mut stats = RuntimeStatsColl::new(None);
+        let stats = RuntimeStatsColl::new(None);
         let table_scan_id = 1;
         let scan_detail = CopScanDetail {
             total_keys: 15,
@@ -1940,14 +1940,14 @@ mod tests {
     #[test]
     fn root_runtime_stats() {
         let pid = 1;
-        let mut stmt_stats = RuntimeStatsColl::new(None);
+        let stmt_stats = RuntimeStatsColl::new(None);
         let basic1 = stmt_stats.get_basic_runtime_stats(pid, true).unwrap();
         let basic2 = stmt_stats.get_basic_runtime_stats(pid, true).unwrap();
         basic1.record_open(StdDuration::from_millis(10));
         basic1.record(StdDuration::from_secs(1), 20);
         basic2.record(StdDuration::from_secs(2), 30);
         basic2.record_close(StdDuration::from_millis(100));
-        let mut concurrency = RuntimeStatsWithConcurrencyInfo::default();
+        let concurrency = RuntimeStatsWithConcurrencyInfo::default();
         concurrency.set_concurrency_info(vec![ConcurrencyInfo::new("worker", 15)]);
         let commit_detail = CommitDetails {
             get_commit_ts_time: StdDuration::from_secs(1),

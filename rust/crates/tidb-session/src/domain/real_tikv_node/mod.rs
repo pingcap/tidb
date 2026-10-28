@@ -407,8 +407,8 @@ mod tests {
     use crate::domain::secure_transport::TransportKind;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use tidb_txnkv::retry::RegionBackoffKind;
-    use tidb_txnkv::transaction::TransactionCause;
+    
+    
 
     #[test]
     fn configured_account_policy_makes_skip_grant_table_a_real_login_authority() {

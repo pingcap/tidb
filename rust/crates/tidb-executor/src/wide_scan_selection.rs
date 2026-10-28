@@ -98,7 +98,7 @@ use crate::predicate_pushdown::{
 };
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
-    is_int_family_type, is_string_family_type, is_unsigned, logical_and_to_pb, logical_not_to_pb,
+    is_int_family_type, is_string_family_type, logical_and_to_pb, logical_not_to_pb,
     logical_or_to_pb, string_column_in_to_pb, string_comparison_to_pb, string_in_to_pb,
     string_like_to_pb, time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError,
     StringPbOperand, TimePbOperand,

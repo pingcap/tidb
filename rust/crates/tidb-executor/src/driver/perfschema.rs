@@ -24,7 +24,6 @@
 //! their rows per statement, as the `information_schema` tables do.
 
 use super::catalog::Catalog;
-use super::DriverError;
 use tidb_hack::GoCaseCompare;
 
 /// The database name Go registers these tables under.

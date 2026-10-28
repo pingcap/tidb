@@ -52,7 +52,6 @@
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::column::RawCells;
-use tidb_chunk::row::Row;
 use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 use tidb_util::serialization::{INT_LEN, UINT64_LEN};
 use tidb_util::{memory::Tracker, sqlkiller::SqlKiller};

@@ -2892,7 +2892,7 @@ fn a_prepared_plan_over_a_dirty_table_is_a_separate_cache_entry() {
         .run("PREPARE dirty_stmt FROM 'SELECT * FROM dirty_key WHERE b > ?'")
         .unwrap();
     session.run("SET @dirty_x = 0").unwrap();
-    let mut hit = |session: &mut Session| {
+    let hit = |session: &mut Session| {
         session.run("EXECUTE dirty_stmt USING @dirty_x").unwrap();
         cache_flag(session)
     };

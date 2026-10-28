@@ -624,7 +624,7 @@ fn issues49377_parenthesized_union_leaves() {
         &mut catalog,
         "insert into employee values (1, 'Furina', 1), (2, 'Klee', 1), (3, 'Eula', 1), (4, 'Diluc', 2), (5, 'Tartaglia', 2)",
     );
-    let mut sorted = |sql: &str| -> Vec<Vec<String>> {
+    let sorted = |sql: &str| -> Vec<Vec<String>> {
         let mut rows = rows_text(&select(&catalog, sql));
         rows.sort();
         rows

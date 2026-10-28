@@ -704,13 +704,6 @@ impl HexExt for str {
     }
 }
 
-fn eval_encrypt_bytes(origin: &Datum, params: &[&str], mode_value: &str) -> Datum {
-    let ctx = aes_context(mode_value);
-    let mut vals = vec![origin.clone()];
-    vals.extend(params.iter().map(|p| s(p)));
-    call("AES_ENCRYPT", &vals, &ctx)
-}
-
 fn eval_encrypt_args(origin: &Datum, params: &[Datum], mode_value: &str) -> Datum {
     let ctx = aes_context(mode_value);
     let mut vals = vec![origin.clone()];

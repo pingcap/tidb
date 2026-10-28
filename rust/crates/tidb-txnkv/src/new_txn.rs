@@ -353,7 +353,7 @@ mod tests {
             true,
             5,
             &GLOBAL_INNER_TXN_START_TS,
-            |(_txn): &mut MustFailTxn| Err::<(), MockTxnError>(MockTxnError::Retryable),
+            |_txn: &mut MustFailTxn| Err::<(), MockTxnError>(MockTxnError::Retryable),
             &mut no_sleep,
         );
         assert!(error.is_err());

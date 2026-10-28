@@ -1233,7 +1233,7 @@ mod tests {
     /// fields to pin `RecordCopStats`' merge-into-empty behavior.
     #[test]
     fn test_cop_runtime_stats_for_tiflash() {
-        let mut stats = RuntimeStatsColl::new(None);
+        let stats = RuntimeStatsColl::new(None);
         let table_scan_id = 1i64;
         let agg_id = 2i64;
         let table_reader_id = 3i64;
@@ -1416,7 +1416,7 @@ mod tests {
     /// type assertion collapses to the enum match.
     #[test]
     fn test_vector_search_stats() {
-        let mut stats = RuntimeStatsColl::new(None);
+        let stats = RuntimeStatsColl::new(None);
 
         let v = 1u64;
 
@@ -1444,7 +1444,7 @@ mod tests {
     /// assertion literals are byte-exact copies of the Go test's.
     #[test]
     fn test_columnar_scan_context_stats() {
-        let mut stats = RuntimeStatsColl::new(None);
+        let stats = RuntimeStatsColl::new(None);
         let exec_summary = mock_executor_execution_summary_for_tiflash_columnar(
             1,
             10,
@@ -1510,7 +1510,7 @@ mod tests {
                 .string()
         );
 
-        let mut zero_stats = RuntimeStatsColl::new(None);
+        let zero_stats = RuntimeStatsColl::new(None);
         let zero_exec_summary = mock_executor_execution_summary_for_tiflash_columnar(
             1,
             0,

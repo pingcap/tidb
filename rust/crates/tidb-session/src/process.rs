@@ -71,7 +71,6 @@ pub enum ProcessPlan {
     None,
 }
 
-
 /// One snapshot shared by SHOW and information_schema.PROCESSLIST.
 #[derive(Clone, Debug, Default)]
 pub struct ProcessRow {
@@ -202,9 +201,6 @@ struct ProcessEntry {
 type SharedProcessEntry = Arc<Mutex<ProcessEntry>>;
 
 impl ProcessEntry {
-    fn publish_statement(&mut self, sql: &str, state: &str) {
-        self.publish_statement_with_digest(sql, None, state);
-    }
 
     /// `digest` is the statement's known digest -- a prepared statement's,
     /// fixed at PREPARE like Go's `PlanCacheStmt.SQLDigest` -- or `None` to

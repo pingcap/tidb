@@ -27,7 +27,7 @@ use crate::string_fn::{
     unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
-use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
+use crate::time_fn::calendar::{date_add, date_diff, date_part, from_days, time_part};
 use crate::{BuildContext, Columns, Datum, EvalError, StringLengthFunction};
 
 /// Evaluates a builtin scalar function over its evaluated arguments.
@@ -1103,7 +1103,7 @@ mod tests {
 
     use std::cell::RefCell;
 
-    use super::*;
+    
 
     #[derive(Default)]
     struct PacketLimit {

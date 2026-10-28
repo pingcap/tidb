@@ -157,12 +157,6 @@ impl RegionBackoffBudget {
         Self::new(REGION_RETRY_MAX_SLEEP)
     }
 
-    /// A resolver borrows this exact owner, including earlier waits and schedules.
-    pub(crate) fn native_owner(&mut self) -> Arc<Mutex<RetryBackoffer>> {
-        self.finish_wait(true);
-        Arc::clone(&self.owner)
-    }
-
     /// Fork the source owner instead of copying a second accounting structure.
     #[must_use]
     pub fn fork(&mut self) -> Self {

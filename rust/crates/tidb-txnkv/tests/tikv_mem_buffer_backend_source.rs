@@ -258,7 +258,7 @@ fn buffer_snapshots_exclude_the_active_stage_and_pipelined_views_are_empty() {
 
     // Pipelined DML suppresses stable snapshot views through the driver.
     let mut driver = MemBufferDriver::new(backend, true);
-    let mut iterator = driver.snapshot_iter(&k("a"), None);
+    let iterator = driver.snapshot_iter(&k("a"), None);
     assert!(!iterator.valid());
     let mut getter = driver.snapshot_getter();
     assert_eq!(

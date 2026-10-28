@@ -372,7 +372,7 @@ impl Catalog {
     /// or without them (its `DetachLocalTemporaryTableInfoSchema`).
     fn build_planner_schema_view(&self, with_local_temporary: bool) -> PlannerSchemaView {
         use tidb_planner::plan_builder::catalog::{
-            SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView,
+            SourceColumn, SourceTable, SourceView,
         };
 
         let databases = self.databases.keys().cloned().collect();

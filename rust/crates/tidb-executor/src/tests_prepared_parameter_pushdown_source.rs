@@ -83,7 +83,7 @@ fn parameter_predicate_pushes_into_the_scan_and_keeps_the_cached_plan() {
         )
         .expect("binds");
     assert!(!execution.cache_hit(), "first execute misses the cache");
-    let mut catalog = catalog;
+    let catalog = catalog;
     let (_, rows) =
         run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).expect("runs");
     let firsts: Vec<i64> = rows

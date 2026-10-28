@@ -6287,7 +6287,7 @@ fn plan_persisted_create_tables_job_step(
                 Some("CREATE TABLES job carries a table with nil table_info".to_owned());
             break;
         };
-        let mut table_info = info_handle.read().clone();
+        let table_info = info_handle.read().clone();
         // Go `onCreateTables`: the submitter already allocated every
         // `TableInfo.ID` (the batch job's own TableID stays 0); the owner
         // keeps the submitted IDs verbatim.

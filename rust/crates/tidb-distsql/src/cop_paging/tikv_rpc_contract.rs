@@ -70,7 +70,7 @@ pub fn build_tikv_unary_request(
     let task = prepared.task();
     let mut replica_read_type = map_replica_read_type(metadata.replica_read.raw());
     let mut replica_read = replica_read_type != ClientReplicaReadType::Leader;
-    let mut stale_read = metadata.is_staleness;
+    let stale_read = metadata.is_staleness;
     if stale_read {
         replica_read_type = ClientReplicaReadType::Mixed;
         replica_read = false;

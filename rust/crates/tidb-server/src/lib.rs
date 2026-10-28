@@ -42,7 +42,6 @@ pub(crate) use tidb_session::domain::configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;
 mod cursor_state;
-pub(crate) use tidb_session::domain::global_config_sync;
 pub mod handshake;
 mod handshake_response;
 pub mod http_settings;
@@ -61,7 +60,6 @@ pub mod resultset_writer;
 pub(crate) use tidb_session::domain::secure_transport;
 pub mod server_metrics;
 pub use tidb_session::domain::serverinfo_etcd;
-pub(crate) use tidb_session::domain::session_transaction;
 mod shutdown_signal;
 pub mod signal_exit;
 pub(crate) use tidb_session::domain::session_api;
@@ -117,7 +115,6 @@ pub use native_password::{
 pub use node_config::{NodeConfig, NodeConfigError};
 pub use pipeline_session::MaterializedResultSetSource;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::SystemTime;
 
 pub use real_tikv_node::{run_with_process_shutdown, ProcessReadAuthority, RunConfiguredNodeError};
@@ -436,7 +433,6 @@ mod skip_grant_startup_tests {
     }
 }
 
-pub(crate) use tidb_session::domain::cluster_topology;
 
 #[cfg(test)]
 mod compute_topology_batch_tests {
@@ -604,6 +600,6 @@ pub(crate) fn isolate_process_globals() -> bool {
     true
 }
 pub(crate) use tidb_session::domain::{
-    join_host_port, log_mysql_listening, log_recovered_panic, log_status_listen,
+    log_mysql_listening, log_status_listen,
     log_status_listen_failed, open_spill_storage, zap_error, zap_stack, MemoryArbitratorAuthority,
 };

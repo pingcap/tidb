@@ -19,8 +19,7 @@ use std::io::Cursor;
 use tidb_protocol::PacketReader;
 use tidb_server::handshake::{
     negotiate_capabilities, parse_response, parse_response_header, CLIENT_CONNECT_ATTRS,
-    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
-    CLIENT_SSL, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
+    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
 };
 use tidb_server::handshake::{HandshakeError, InitialHandshake};
 

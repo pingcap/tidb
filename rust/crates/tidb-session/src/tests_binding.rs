@@ -755,7 +755,7 @@ fn cte_scope_batch_pinning_respects_definition_order_and_query_boundaries() {
         ("WITH t AS (SELECT 1 AS a) SELECT a FROM test.t", vec![vec!["test", "t"]]),
     ];
     for (sql, expected) in cases {
-        let mut session = Session::new();
+        let session = Session::new();
         let mut stmt = session.parse_statement(sql).unwrap();
         crate::binding::pin_current_database(&mut stmt, "test").unwrap();
         let actual = crate::binding::collect_table_names(&stmt);

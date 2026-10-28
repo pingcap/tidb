@@ -17,7 +17,7 @@
 //! through `TestLoadDataRestore`. The visitor row lives in the in-crate
 //! `tests_dml_package_source` module.
 
-use tidb_ast::{DdlStmt, Expr, JoinNode, QueryStmt, RestoreContext, Stmt};
+use tidb_ast::{DdlStmt, Expr, JoinNode, QueryStmt, Stmt};
 
 use crate::parser_ast_node_restore_source::{
     case, run_node_restore_test, run_node_restore_test_with_flags_stmt_change,

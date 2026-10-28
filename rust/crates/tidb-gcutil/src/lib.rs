@@ -168,7 +168,7 @@ fn format_tso_in_process_location(tso: u64) -> String {
 mod snapshot_validation_tests {
 
     use crate::{
-        check_gc_enable, validate_snapshot, validate_snapshot_with_gc_safe_point, Context, Error,
+        check_gc_enable, validate_snapshot, Context, Error,
     };
 
     /// A mock session context answering the mysql.tidb rows the GC utility reads.

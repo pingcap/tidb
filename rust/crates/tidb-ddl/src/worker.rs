@@ -1863,7 +1863,7 @@ mod schema_sync_tests {
             constraints: vec![constraint.clone()].into(),
             ..Default::default()
         };
-        let mut tx = opener.begin().unwrap();
+        let tx = opener.begin().unwrap();
         assert!(matches!(
             tx.commit(
                 vec![tidb_txnkv::transaction::BufferMutation::set(

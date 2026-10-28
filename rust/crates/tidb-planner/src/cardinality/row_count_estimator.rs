@@ -1995,10 +1995,10 @@ pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64
 #[cfg(test)]
 mod equal_cond_selectivity_tests {
     use super::{
-        EqualCondSelectivityInputs, EstimatorOptions, IndexStats, equal_row_count_on_index,
+        EqualCondSelectivityInputs, EstimatorOptions, IndexStats,
         get_equal_cond_selectivity, out_of_range_on_index,
     };
-    use tidb_datatype::{Collation, Datum};
+    use tidb_datatype::Datum;
 
     fn index(ndv: i64, num_columns: usize, unique: bool) -> IndexStats {
         IndexStats {

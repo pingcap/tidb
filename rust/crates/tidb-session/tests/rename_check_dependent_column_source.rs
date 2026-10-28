@@ -4,10 +4,6 @@
 
 use tidb_session::Session;
 
-fn error(session: &mut Session, sql: &str) -> String {
-    session.run(sql).expect_err(sql).to_string()
-}
-
 #[test]
 fn renaming_a_check_dependent_column_is_refused() {
     let mut session = Session::new();

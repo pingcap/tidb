@@ -643,17 +643,6 @@ fn read_rows<S: MetaSnapshot>(
     Ok(rows)
 }
 
-fn column_types(table: &TableInfo) -> BTreeMap<i64, tidb_datatype::FieldType> {
-    table
-        .cols()
-        .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            (column.id, column.field_type.clone())
-        })
-        .collect()
-}
-
 /// The text one stored column holds, in the spelling the loader reads it as.
 fn stored_text(values: &RowValues, column_id: i64) -> Result<String, AccountWriteError> {
     let bytes = match values.get(&column_id) {

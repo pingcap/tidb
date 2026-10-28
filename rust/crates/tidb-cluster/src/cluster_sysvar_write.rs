@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Datum, Time};
-use tidb_meta::{key, value};
+use tidb_meta::key;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -245,17 +245,6 @@ fn full_view(table: &TableInfo) -> SystemTableView {
         table,
         &columns,
     )
-}
-
-fn column_types(table: &TableInfo) -> BTreeMap<i64, tidb_datatype::FieldType> {
-    table
-        .cols()
-        .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            (column.id, column.field_type.clone())
-        })
-        .collect()
 }
 
 fn stored_text(values: &RowValues, column_id: i64) -> String {

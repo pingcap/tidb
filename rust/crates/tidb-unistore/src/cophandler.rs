@@ -47,7 +47,6 @@ use tidb_proto::tipb;
 use tidb_codec::table_key::RecordHandle;
 
 use crate::mvcc_store::MvccStore;
-use tidb_hack::{go_to_lower, go_to_upper};
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
 /// (`pkg/kv/kv.go:375-377`).
@@ -1460,52 +1459,6 @@ impl RegionAggregator {
     }
 }
 
-/// Go's `getValidFloatPrefix`: the longest leading prefix that scans as an
-/// optional-signed integer, decimal or exponent form. `None` when the
-/// prefix carries no digit at all (Go answers 0 with a truncation warning).
-fn numeric_prefix(text: &str, allow_float: bool) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut end = 0;
-    if end < chars.len() && (chars[end] == '+' || chars[end] == '-') {
-        end += 1;
-    }
-    let mut digits = 0;
-    while end < chars.len() && chars[end].is_ascii_digit() {
-        end += 1;
-        digits += 1;
-    }
-    let mut fraction = 0;
-    if allow_float && end < chars.len() && chars[end] == '.' {
-        let mut peek = end + 1;
-        while peek < chars.len() && chars[peek].is_ascii_digit() {
-            peek += 1;
-            fraction += 1;
-        }
-        if fraction > 0 {
-            end = peek;
-            digits += fraction;
-        }
-    }
-    if digits == 0 {
-        return None;
-    }
-    if allow_float && end < chars.len() && (chars[end] == 'e' || chars[end] == 'E') {
-        let mut exp_end = end + 1;
-        if exp_end < chars.len() && (chars[exp_end] == '+' || chars[exp_end] == '-') {
-            exp_end += 1;
-        }
-        let mut exp_digits = 0;
-        while exp_end < chars.len() && chars[exp_end].is_ascii_digit() {
-            exp_end += 1;
-            exp_digits += 1;
-        }
-        if exp_digits > 0 {
-            end = exp_end;
-        }
-    }
-    Some(chars[..end].iter().collect())
-}
-
 /// The datum a leaf answers for one row: the column value, or the literal.
 fn eval_datum(
     expr: &SimpleExpr,
@@ -1586,34 +1539,6 @@ impl TopNSpec {
             .collect()
     }
 
-    /// Go `topNSorter.Less` / `topNHeap.Less` (`topn.go:51-77`): per-key
-    /// datum comparison, negated for DESC. The heap's Enum special case and
-    /// Go's unstable `sort.Sort` are unreachable/narrowing here: computed
-    /// keys never arrive (leaf keys only), and a stable Rust sort is
-    /// deterministic where Go leaves ties unordered.
-    fn sort_rows(&self, rows: &mut [(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)]) {
-        rows.sort_by(|(_, left_keys), (_, right_keys)| {
-            for ((_, desc, collation), (left, right)) in self
-                .keys
-                .iter()
-                .zip(left_keys.iter().zip(right_keys.iter()))
-            {
-                let mut ordering = match compare_sort_keys(left, right, collation) {
-                    Ok(ordering) => ordering,
-                    // Unreachable: evaluate() gates the kinds this
-                    // comparator handles.
-                    Err(_) => std::cmp::Ordering::Equal,
-                };
-                if *desc {
-                    ordering = ordering.reverse();
-                }
-                if ordering != std::cmp::Ordering::Equal {
-                    return ordering;
-                }
-            }
-            std::cmp::Ordering::Equal
-        });
-    }
 }
 
 /// Go `types.Datum.Compare` (`pkg/types/datum.go`) over the datum kinds a

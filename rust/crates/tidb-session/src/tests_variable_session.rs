@@ -17,7 +17,6 @@
 
 use crate::session_vars::*;
 use crate::sysvar::*;
-use crate::vars::SessionVars;
 use tidb_vardef::{defaults, tidb_vars as names};
 
 #[test]

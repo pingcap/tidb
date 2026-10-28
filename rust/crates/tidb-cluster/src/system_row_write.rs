@@ -65,14 +65,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tidb_codec::table_key::encode_row_key_with_handle;
 #[cfg(test)]
-use tidb_datatype::{parse_enum, parse_set_name, FieldTypeCode, GoString};
+use tidb_datatype::{FieldTypeCode, GoString};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone, Time};
 use tidb_table::kv_table::{KvTable, TableHandle};
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 #[cfg(test)]
-use tidb_model::{GoAny, GoAnyView};
+use tidb_model::GoAny;
 use tidb_tablecodec::{
     IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
     TableInfo as CodecTableInfo,

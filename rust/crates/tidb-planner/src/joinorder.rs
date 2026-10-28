@@ -1950,7 +1950,7 @@ fn optimize_join_group(
 
 fn optimize_recursive(
     context: &RuleContext<'_>,
-    mut plan: LogicalPlan,
+    plan: LogicalPlan,
 ) -> Result<LogicalPlan, PlanError> {
     if matches!(plan, LogicalPlan::CTE(_)) {
         return Ok(plan);

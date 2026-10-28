@@ -73,11 +73,6 @@ impl CatalogFollower {
         }
     }
 
-    /// The schema version the session's tables were built from.
-    pub(super) fn schema_version(&self) -> i64 {
-        self.schema_version
-    }
-
     /// Rebinds the connection's tables to the node's current catalog.
     ///
     /// Not inside an open transaction: its statements read at one timestamp,

@@ -293,7 +293,7 @@ mod tests {
     /// the newest three and reports both evictions.
     #[test]
     fn put_evicts_the_oldest_and_initializes_the_go_default_capacity() {
-        let mut cache = LruPlanCache::<TestValue>::new(0, 0, 0.0);
+        let cache = LruPlanCache::<TestValue>::new(0, 0, 0.0);
         assert_eq!(cache.capacity, 100);
 
         let mut cache = LruPlanCache::<TestValue>::new(3, 0, 0.0);

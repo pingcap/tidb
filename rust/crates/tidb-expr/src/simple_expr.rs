@@ -1653,7 +1653,7 @@ mod tests {
             row_count_type.clone(),
             empty_args.clone(),
         ));
-        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
         let row = chunk.get_row(0);
         let value = node
             .eval(
@@ -1808,7 +1808,7 @@ mod tests {
                     FieldType::new(FieldTypeCode::LongLong),
                 ))],
             ));
-            let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+            let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
             let row = chunk.get_row(0);
             let value = node
                 .eval(&crate::context::NoColumns, row)
@@ -1826,7 +1826,7 @@ mod tests {
                 FieldType::new(FieldTypeCode::LongLong),
             ))],
         ));
-        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
         let row = chunk.get_row(0);
         assert!(node
             .eval(&crate::context::NoColumns, row)

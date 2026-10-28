@@ -1079,7 +1079,7 @@ mod tests {
             time,
             Time::new(CoreTime::default(), TimeType::DateTime, 6).expect("zero datetime"),
         ] {
-            let mut mut_row = MutRow::from_datums(&[j.clone(), Datum::Time(time)]);
+            let mut_row = MutRow::from_datums(&[j.clone(), Datum::Time(time)]);
             let row = mut_row.to_row();
             assert_eq!(row.get_json(0), json_value);
             assert_eq!(row.get_time(1), time);

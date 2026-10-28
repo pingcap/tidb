@@ -48,20 +48,6 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> crate::kv_table::KvTable {
     (**table).clone()
 }
 
-/// Analyzes one table image and publishes the result under `physical_id`,
-/// the exact publication step the in-process session's analyze arm runs
-/// (`tidb-session/src/analyze_arm.rs`).
-fn analyze_and_publish(
-    catalog: &mut Catalog,
-    table: &mut crate::kv_table::KvTable,
-    physical_id: i64,
-    options: &AnalyzeOptions,
-) {
-    let statistics = analyze_kv_table(table, &full_sample_options(options.clone()), None, &ctx())
-        .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
-    catalog.set_table_statistics(physical_id, Arc::new(statistics));
-}
-
 /// The fixture's tables have rows but no `mysql.stats_meta.count`, so Go's
 /// `getAdjustedSampleRate` would fall back to its 0.001 default and the
 /// Bernoulli collector would keep no sample at all. A real `ANALYZE` of a
@@ -71,20 +57,6 @@ fn full_sample_options(options: AnalyzeOptions) -> AnalyzeOptions {
     AnalyzeOptions {
         sample_rate: Some(1.0),
         ..options
-    }
-}
-
-/// Renders one datum the way Go's testkit prints a TEXT cell.
-fn cell(datum: &Datum) -> String {
-    match datum {
-        Datum::Null => "<nil>".to_owned(),
-        Datum::Int(value) => value.to_string(),
-        Datum::UInt(value) => value.to_string(),
-        Datum::Real(value) => format!("{value}"),
-        Datum::Decimal(value) => value.to_string(),
-        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
-        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        other => format!("{other:?}"),
     }
 }
 
@@ -369,7 +341,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
             &format!("insert into t values ({i}, {i}, 'hello')"),
         );
     }
-    let mut table = kv_table_of(&catalog, "t");
+    let table = kv_table_of(&catalog, "t");
     // This catalog allocated its own partition IDs.
     let partition_ids: Vec<i64> = table
         .partition()

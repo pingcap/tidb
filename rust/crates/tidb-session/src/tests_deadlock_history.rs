@@ -27,7 +27,7 @@ use tidb_stmtsummary::statement_summary::{
 use tidb_tablecodec::is_index_key;
 use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 
-use crate::{DriverError, Session, StmtOutput};
+use crate::{Session, StmtOutput};
 
 static GLOBAL_HISTORY_TEST: Mutex<()> = Mutex::new(());
 

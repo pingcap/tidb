@@ -802,7 +802,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // churn, exactly what Go never retains when a goroutine ends.
             dedicated_workers = dedicated_workers
                 .drain(..)
-                .filter_map(|mut handle| {
+                .filter_map(|handle| {
                     if handle.join.is_finished() {
                         // A panic already surfaced through the terminal guard,
                         // so the join outcome itself needs no handling: the

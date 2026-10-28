@@ -70,24 +70,6 @@ pub(crate) fn assert_err<T: std::fmt::Debug>(
     assert_eq!((error.code, error.message.as_str()), (code, message));
 }
 
-/// Records the code and message of a refusal under `site`, for
-/// rewriting variant assertions into [`assert_err`].
-pub(crate) fn harvest_err<T: std::fmt::Debug>(result: &Result<T, DriverError>, site: &str) {
-    use std::io::Write;
-    let Ok(path) = std::env::var("TIDB_HARVEST_ERR") else {
-        return;
-    };
-    let Err(error) = result else { return };
-    let error = error.clone().to_mysql_error();
-    let line = format!("{site}\t{}\t{:?}\n", error.code, error.message);
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .unwrap();
-    file.write_all(line.as_bytes()).unwrap();
-}
-
 /// The table-data requests a statement sent its store, by kind: what Go's
 /// tests read off the store's RPC client (a point get is one `Get`, a batch
 /// point get one `BatchGet`, a reader coprocessor requests).

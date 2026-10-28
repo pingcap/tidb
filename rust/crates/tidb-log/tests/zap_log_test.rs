@@ -8,7 +8,6 @@
 
 //! Transcreation of pinned `zap_log_test.go`.
 
-use chrono::NaiveDateTime;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -253,18 +253,6 @@ fn bind_statement_markers<N: tidb_ast::Visitable>(
     }
 }
 
-/// Bind a key predicate using the same marker-to-literal conversion as the
-/// complete statement. Marker positions remain absolute within the prepared
-/// statement; the wire executor validates its full parameter count first.
-pub(crate) fn bind_prelock_predicate(
-    predicate: &tidb_ast::Expr,
-    values: &[Datum],
-) -> Result<tidb_ast::Expr, DriverError> {
-    let mut predicate = predicate.clone();
-    bind_statement_markers(&mut predicate, values, &mut 0)?;
-    Ok(predicate)
-}
-
 /// Counts the markers without changing them.
 fn count_statement_markers(stmt: &mut Stmt, counted: &mut usize) {
     walk_markers(stmt, &mut |_| *counted += 1);

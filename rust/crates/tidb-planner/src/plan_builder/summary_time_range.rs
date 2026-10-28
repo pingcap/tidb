@@ -48,7 +48,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let to = Local::now();
             return query_time_range(to - default_duration, to);
         };
-        let mut parse = |text: &str| match parse_in_local(text) {
+        let parse = |text: &str| match parse_in_local(text) {
             Ok(time) => Some(time),
             Err(message) => {
                 self.ctx.append_warning(1105, &message);

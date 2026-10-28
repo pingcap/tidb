@@ -28,10 +28,8 @@
 //! a complete checksummed stream, cap inflation at the framed original length,
 //! and append TiDB's corruption warnings to the statement context.
 //!
-use std::io::Write;
 
-use flate2::write::ZlibEncoder;
-use flate2::{Compression, Decompress, FlushDecompress, Status};
+use flate2::{Decompress, FlushDecompress, Status};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};

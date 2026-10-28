@@ -286,7 +286,7 @@ mod tests {
 #[test]
 fn cast_char_binary_charset_truncates_bytes_not_chars() {
     use tidb_ast::CastType;
-    use tidb_datatype::FieldType;
+    
 
     fn eval_char(len: Option<u32>, charset: Option<&str>, value: &str) -> crate::Datum {
         crate::cast::eval_cast(

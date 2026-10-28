@@ -58,7 +58,7 @@ use tidb_executor::analyze::{
 };
 use tidb_executor::{DriverError, TableEntry};
 
-use crate::{Session, StmtOutput};
+use crate::Session;
 use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 

@@ -672,7 +672,7 @@ mod deferred_function_tests {
     use super::super::context::Columns;
     use super::*;
     use crate::context::NoColumns;
-    use crate::expression::{Constant, Expression, ScalarFunction};
+    use crate::expression::{Expression, ScalarFunction};
     use tidb_ast::CiString;
     use tidb_datatype::FieldType;
 

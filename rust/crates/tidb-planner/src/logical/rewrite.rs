@@ -1012,7 +1012,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 up.append(&mut extra);
                 (node, up)
             }
-            PendingPredicates::AttachBelow(mut extra) => {
+            PendingPredicates::AttachBelow(extra) => {
                 let children = node.base_mut().take_children();
                 let rebuilt = children
                     .into_iter()

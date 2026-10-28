@@ -17,17 +17,12 @@
 //! them (`tidb_session::domain::cluster_session_node::tests::node_fixture`).
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use sha1::{Digest, Sha1};
-use tidb_datatype::Datum;
-use tidb_session::domain::cluster_session_node::ClusterServerSession;
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
-use tidb_session::domain::resultset_source::ResultSetSource;
 use tidb_session::domain::session_api::{
-    ConnectionCancellation, ConnectionClose, QuerySession, SessionContext,
+    ConnectionCancellation, ConnectionClose, SessionContext,
 };
-use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 
 pub(crate) const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 pub(crate) const SALT: [u8; 20] = [7; 20];
@@ -78,54 +73,3 @@ pub(crate) fn session_context_with_identity(
     }
 }
 
-pub(crate) fn rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
-    use crate::sql_node::QuerySession as _;
-    let stmt = session.parse_statement(sql).expect("the query parses");
-    let mut result = session
-        .execute_stmt(sql, &stmt)
-        .expect("the query runs")
-        .expect("the query answers rows");
-    let source = result.source();
-    let mut rows = Vec::new();
-    loop {
-        let batch = source.next_batch(8).expect("batch");
-        if batch.is_empty() {
-            break;
-        }
-        rows.extend(batch);
-    }
-    source.finish().expect("finish");
-    source.close().expect("close");
-    rows
-}
-
-pub(crate) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    cop_backed_stack_with_stats_lease(None)
-}
-
-pub(crate) fn cop_backed_stack_with_stats_lease(
-    stats_lease: Option<tidb_session::domain::node_config::StatsLease>,
-) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    let mut config = tidb_session::domain::node_config::NodeConfig::parse([
-        "tidb-server",
-        "--store",
-        "unistore",
-        "--port",
-        "0",
-        // Parse-time requirement only: the test passes its own user store
-        // below, so the flag never has to name real rows.
-        "--auth-file",
-        "/dev/null",
-    ])
-    .expect("node config");
-    if let Some(stats_lease) = stats_lease {
-        config.stats_lease = stats_lease;
-    }
-    let users = Arc::new(
-        ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
-            .expect("configured user store"),
-    );
-    let stack =
-        unistore_cluster_session_stack(&config, &users, None, None).expect("unistore stack");
-    (stack, users)
-}

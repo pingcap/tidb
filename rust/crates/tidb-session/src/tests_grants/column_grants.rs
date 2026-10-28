@@ -3,7 +3,6 @@
 //! `mysql.columns_priv`.
 
 use crate::tests_support::*;
-use crate::*;
 
 /// CAPTURED (`pkg/executor/zz_dump_colgrant_test.go`): only
 /// `mysql.AllColumnPrivs` -- `SELECT`, `INSERT`, `UPDATE`, `REFERENCES` --

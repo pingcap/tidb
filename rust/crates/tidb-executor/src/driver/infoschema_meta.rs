@@ -28,9 +28,7 @@
 //! the only tier that can see sessions and privileges.
 
 use super::Catalog;
-use crate::column_default::ColumnDefault;
-use crate::{KvColumn, KvTable};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
+use tidb_datatype::{FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
 use tidb_hack::GoCaseCompare;
 
 /// Go's schema name for the virtual database.

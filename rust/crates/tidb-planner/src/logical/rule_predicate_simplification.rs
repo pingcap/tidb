@@ -825,7 +825,7 @@ mod tests {
             .with_collation_name("utf8mb4_general_ci");
         let col = Expression::Column(Column::new(1, string_type.clone()));
         let a = Expression::Constant(Constant::new(Datum::new_string("a"), string_type.clone()));
-        let mut explicit_b = Constant::new(
+        let explicit_b = Constant::new(
             Datum::new_string("b"),
             string_type.with_collation_name("utf8mb4_bin"),
         );

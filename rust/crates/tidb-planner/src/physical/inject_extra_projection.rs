@@ -609,7 +609,7 @@ mod tests {
     use crate::plan_base::PlanIdAllocator;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
+    use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
     use tidb_expr::expression::ScalarFunction;
 
     fn column(id: i64) -> Column {

@@ -26,22 +26,6 @@ use tidb_datatype::Datum;
 
 use crate::{DriverError, Session};
 
-/// Go `ddl.errCheckConstraintIsOff` is built with `errors.NewNoStackError`, so
-/// it carries no MySQL code of its own and `AppendWarning` files it under
-/// `ER_UNKNOWN_ERROR`. Captured through testkit's `SHOW WARNINGS`:
-/// `Warning | 1105 | tidb_enable_check_constraint is off`.
-pub(crate) const CHECK_CONSTRAINT_IS_OFF_CODE: u16 = 1105;
-/// See [`CHECK_CONSTRAINT_IS_OFF_CODE`]; the text is the variable name Go
-/// interpolates, not a sentence, so it is reproduced verbatim.
-pub(crate) const CHECK_CONSTRAINT_IS_OFF_MESSAGE: &str = "tidb_enable_check_constraint is off";
-
-/// Go `dbterror.ErrUnsupportedCreatePartition` (8200), the code a `LINEAR
-/// HASH`/`LINEAR KEY` clause is warned under while the table is built as a
-/// plain non-linear one. Captured through testkit's `SHOW WARNINGS`:
-/// `Warning | 8200 | LINEAR HASH is not supported, using non-linear HASH
-/// instead`.
-pub(crate) const UNSUPPORTED_CREATE_PARTITION_CODE: u16 = 8200;
-
 /// A statement warning, Go's `contextutil.SQLWarn`: the level and the error
 /// `StmtCtx` keeps, which `SHOW WARNINGS` reports as `Level | Code | Message`.
 pub use tidb_util::context::SqlWarn as SqlWarning;

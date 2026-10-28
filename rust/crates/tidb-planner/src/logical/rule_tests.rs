@@ -1978,7 +1978,7 @@ fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
     // (`count, offset = topN.Count, topN.Offset`) and `topnEliminated` drops
     // the root TopN entirely — the limit lands on the PRESERVED child.
     let allocator = PlanIdAllocator::new();
-    let mut left_schema = schema_of(&[1]);
+    let left_schema = schema_of(&[1]);
     let mut right_schema = schema_of(&[2]);
     right_schema.pk_or_uk = vec![vec![column(2)]];
     let left = DataSource::new(
@@ -1994,7 +1994,7 @@ fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
         LogicalJoinType::LeftOuter,
     ));
     join.set_children(vec![left, right]);
-    let mut join_ref = match &mut join {
+    let join_ref = match &mut join {
         LogicalPlan::Join(op) => op,
         _ => unreachable!(),
     };
@@ -2052,7 +2052,7 @@ fn topn_push_down_keeps_the_limit_above_a_left_join_with_a_wide_inner_side() {
         LogicalJoinType::LeftOuter,
     ));
     join.set_children(vec![left, right]);
-    let mut join_ref = match &mut join {
+    let join_ref = match &mut join {
         LogicalPlan::Join(op) => op,
         _ => unreachable!(),
     };

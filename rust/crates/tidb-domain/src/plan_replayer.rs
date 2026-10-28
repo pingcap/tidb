@@ -2185,7 +2185,7 @@ pub fn build_sql_meta_records(
 #[cfg(test)]
 mod dump_seed_tests {
     use super::*;
-    use std::collections::BTreeMap;
+    
 
     /// Go `dumpSQLMeta`: every task field lands in `sql_meta.toml` under its
     /// pinned key, with the historical-stats pair present only when the task
@@ -2472,7 +2472,7 @@ impl Visitor for TableNameExtractor<'_> {
 #[cfg(test)]
 pub(crate) mod table_name_extractor_tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     struct FakeSchema {
         tables: Vec<(String, String)>,              // (db, table), lowercased
@@ -2514,18 +2514,18 @@ pub(crate) mod table_name_extractor_tests {
 
     impl ExtractViewParser for RealParser {
         fn parse(&self, sql: &str) -> Result<Stmt, PlanReplayerError> {
-            use tidb_ast::Visitable as _;
+            
             tidb_parser::parse(sql)
                 .map_err(|error| PlanReplayerError::Other(error.compatibility_message(sql)))
         }
     }
 
     /// Adapts `&mut dyn Visitor` into the AST walker's visitor argument.
-    fn stmt_visit<'a>(visitor: &'a mut (dyn Visitor)) -> StmtWalk<'a> {
+    fn stmt_visit<'a>(visitor: &'a mut dyn Visitor) -> StmtWalk<'a> {
         StmtWalk(visitor)
     }
 
-    struct StmtWalk<'a>(&'a mut (dyn Visitor));
+    struct StmtWalk<'a>(&'a mut dyn Visitor);
 
     impl Visitor for StmtWalk<'_> {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {

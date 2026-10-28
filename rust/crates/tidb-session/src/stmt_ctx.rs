@@ -1943,10 +1943,10 @@ impl Session {
         // The publication outlives a failing statement, exactly as Go's
         // `StmtCtx.LastInsertID` does: `SELECT LAST_INSERT_ID(17), bad()`
         // fails and still moves the id (captured).
-        if let Some(published) = (*self
+        if let Some(published) = *self
             .published_last_insert_id
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
             self.vars.last_insert_id = published;
         }

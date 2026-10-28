@@ -409,8 +409,6 @@ struct HuffmanBitWriter {
     codegen_encoding: HuffmanEncoder,
 }
 
-const BUFFER_FLUSH_SIZE: usize = 240;
-
 impl HuffmanBitWriter {
     fn new() -> Self {
         Self {
@@ -794,8 +792,6 @@ struct Compressor {
     scratch: Vec<LiteralNode>,
 }
 
-const HASH_MATCH_LEN: usize = MAX_MATCH_LENGTH - 1;
-
 impl Compressor {
     /// go `initDeflate`.
     fn new_level6() -> Self {
@@ -875,44 +871,6 @@ impl Compressor {
         self.window[self.window_end..self.window_end + n].copy_from_slice(&b[..n]);
         self.window_end += n;
         n
-    }
-
-    /// go `fillWindow`: prime the hash chains for a dictionary (unused by
-    /// COMPRESS, kept for the transcription's completeness boundary).
-    fn fill_window(&mut self, b: &[u8]) {
-        if self.index != 0 || self.window_end != 0 {
-            return;
-        }
-        let b = if b.len() > WINDOW_SIZE {
-            &b[b.len() - WINDOW_SIZE..]
-        } else {
-            b
-        };
-        let n = b.len();
-        self.window[..n].copy_from_slice(b);
-        let loops = (n + 256 - MIN_MATCH_LENGTH) / 256;
-        for j in 0..loops {
-            let index = j * 256;
-            let end = (index + 256 + MIN_MATCH_LENGTH - 1).min(n);
-            if end <= index + MIN_MATCH_LENGTH - 1 {
-                continue;
-            }
-            let to_check = &self.window[index..end];
-            let dst_size = to_check.len() - MIN_MATCH_LENGTH + 1;
-            if dst_size == 0 {
-                continue;
-            }
-            let mut dst = [0u32; HASH_MATCH_LEN];
-            bulk_hash4(to_check, &mut dst[..dst_size]);
-            for (i, val) in dst.iter().take(dst_size).enumerate() {
-                let di = i + index;
-                let hh = &mut self.hash_head[(val & (HASH_MASK as u32)) as usize];
-                self.hash_prev[di & WINDOW_MASK] = *hh;
-                *hh = (di + self.hash_offset) as u32;
-            }
-        }
-        self.window_end = n;
-        self.index = n;
     }
 
     /// go `findMatch`.
@@ -995,7 +953,7 @@ impl Compressor {
             }
             if (self.index as isize) < self.max_insert_index {
                 let hash = hash4(&self.window[self.index..self.index + MIN_MATCH_LENGTH]);
-                let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+                let hh = &mut self.hash_head[hash as usize & HASH_MASK];
                 self.chain_head = *hh as i32;
                 self.hash_prev[self.index & WINDOW_MASK] = self.chain_head as u32;
                 *hh = (self.index + self.hash_offset) as u32;
@@ -1035,7 +993,7 @@ impl Compressor {
                 while index < new_index {
                     if (index as isize) < self.max_insert_index {
                         let hash = hash4(&self.window[index..index + MIN_MATCH_LENGTH]);
-                        let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+                        let hh = &mut self.hash_head[hash as usize & HASH_MASK];
                         self.hash_prev[index & WINDOW_MASK] = *hh;
                         *hh = (index + self.hash_offset) as u32;
                     }
@@ -1084,21 +1042,6 @@ fn hash4(b: &[u8]) -> u32 {
     ((u32::from(b[3]) | u32::from(b[2]) << 8 | u32::from(b[1]) << 16 | u32::from(b[0]) << 24)
         .wrapping_mul(HASHMUL))
         >> (32 - HASH_BITS)
-}
-
-/// go `bulkHash4`.
-fn bulk_hash4(b: &[u8], dst: &mut [u32]) {
-    if b.len() < MIN_MATCH_LENGTH {
-        return;
-    }
-    let mut hb =
-        u32::from(b[3]) | u32::from(b[2]) << 8 | u32::from(b[1]) << 16 | u32::from(b[0]) << 24;
-    dst[0] = (hb.wrapping_mul(HASHMUL)) >> (32 - HASH_BITS);
-    let end = b.len() - MIN_MATCH_LENGTH + 1;
-    for i in 1..end {
-        hb = (hb << 8) | u32::from(b[i + 3]);
-        dst[i] = (hb.wrapping_mul(HASHMUL)) >> (32 - HASH_BITS);
-    }
 }
 
 /// go `matchLen`.

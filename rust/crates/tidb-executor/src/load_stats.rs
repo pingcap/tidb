@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     fn canonical_table_dumps_back_to_go_json_shape() {
-        let mut coll = HistColl::new(41, 9, 2, 1, 1);
+        let coll = HistColl::new(41, 9, 2, 1, 1);
         let mut column_histogram =
             Histogram::new(1, 1, 1, 7, &FieldType::new(FieldTypeCode::LongLong), 1, 0);
         column_histogram.append_bucket(Datum::Int(10), Datum::Int(20), 8, 3);

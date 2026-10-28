@@ -368,13 +368,6 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 }
 
-/// One common column of a `NATURAL`/`USING` join: the row offset that stays
-/// visible under the shared name, and the one that is coalesced away.
-struct CommonColumn {
-    visible: usize,
-    redundant: usize,
-}
-
 /// The table a single-table `UPDATE`/`DELETE` targets.
 pub(crate) fn single_table_name(
     table_ref: &tidb_ast::TableRef,

@@ -2660,7 +2660,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
-        let mut catalog = catalog_of(fixture.table);
+        let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         let statement = tidb_parser::parse("SELECT b FROM t WHERE a BETWEEN ? AND ?").unwrap();
         let plan = Arc::new(

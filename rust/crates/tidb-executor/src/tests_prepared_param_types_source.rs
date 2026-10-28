@@ -107,7 +107,7 @@ fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
         !execution.cache_hit(),
         "first Int execute must miss the cache"
     );
-    let mut catalog = catalog;
+    let catalog = catalog;
     let (_, rows) =
         run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).expect("runs");
     assert_eq!(

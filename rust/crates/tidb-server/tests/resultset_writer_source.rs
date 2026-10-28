@@ -409,7 +409,7 @@ fn binary_rows_reuse_one_encoding_buffer_across_batches() {
             self.packets
         }
     }
-    let mut source = Source {
+    let source = Source {
         events: [
             Ok(vec![vec![Datum::Int(7)], vec![Datum::Int(8)]]),
             Ok(vec![vec![Datum::Int(9)], vec![Datum::Int(10)]]),

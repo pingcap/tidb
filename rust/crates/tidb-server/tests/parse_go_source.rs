@@ -15,7 +15,6 @@
 #![allow(missing_docs)]
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tidb_server::handshake::{
     parse_response, parse_response_body_into, parse_response_header_into,
     CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,

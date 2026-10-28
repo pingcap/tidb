@@ -1389,7 +1389,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<LogicalPlan, RewriteError> {
         let func_name = if use_min { "min" } else { "max" };
         let func_max_or_min = self.new_agg_func(func_name, vec![rexpr.clone()], false)?;
-        let mut col_max_or_min = self.env.new_plan_column(func_max_or_min.ret_type().clone());
+        let col_max_or_min = self.env.new_plan_column(func_max_or_min.ret_type().clone());
         // Go `colMaxOrMin.SetCoercibility(rexpr.Coercibility())`.
         col_max_or_min
             .collation
@@ -1639,7 +1639,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<(LogicalPlan, Column, Column), RewriteError> {
         let max_func = self.new_agg_func("max", vec![rexpr.clone()], false)?;
         let count_func = self.new_agg_func("count", vec![rexpr.clone()], true)?;
-        let mut max_col = self.env.new_plan_column(max_func.ret_type().clone());
+        let max_col = self.env.new_plan_column(max_func.ret_type().clone());
         // Go `maxResultCol.SetCoercibility(rexpr.Coercibility())`: the
         // comparison against MAX keeps the subquery operand's collation.
         max_col
