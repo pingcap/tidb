@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
@@ -20,6 +21,60 @@ type BackendOptions struct {
 	S3     S3BackendOptions     `json:"s3" toml:"s3"`
 	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
 	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
+}
+
+// Redacted returns a copy of the options with the credentials masked, so that
+// the options can be logged. The receiver is not modified.
+func (o BackendOptions) Redacted() BackendOptions {
+	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
+	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
+	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.S3.SseKmsContext = maskIfSet(o.S3.SseKmsContext)
+	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
+	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
+	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
+	// A SAS token or userinfo may be written into the endpoint.
+	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
+	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
+	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
+	return o
+}
+
+// maskIfSet masks a credential, leaving an unset one empty so that the
+// redacted output does not suggest that it is configured.
+func maskIfSet(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return ast.RedactedValue
+}
+
+// RedactURL masks the credentials in a storage URL or endpoint so that it can
+// be put into logs and error messages. An unparseable value is replaced by
+// ast.InvalidURLPlaceholder, userinfo and fragments are removed, and the query
+// of a URL with an unknown scheme is dropped, since ast.RedactURL cannot tell
+// which parameters are secret there. A value with neither "://" nor "?" is a
+// local path and is returned unchanged.
+func RedactURL(rawURL string) string {
+	// A plain local path has nothing to mask, and parsing it would escape or
+	// reject characters such as spaces and '%'.
+	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ast.InvalidURLPlaceholder
+	}
+	u.Fragment = ""
+	u.RawFragment = ""
+	rawURL = u.String()
+	switch strings.ToLower(u.Scheme) {
+	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "azure", "azblob":
+		return ast.RedactURL(rawURL)
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
 }
 
 // ParseRawURL parse raw url to url object.
@@ -90,7 +145,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			s3Options = options.S3
 		}
-		ExtractQueryParameters(u, &s3Options)
+		if err := ExtractQueryParameters(u, &s3Options); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -109,7 +166,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			gcsOptions = options.GCS
 		}
-		ExtractQueryParameters(u, &gcsOptions)
+		if err := ExtractQueryParameters(u, &gcsOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := gcsOptions.apply(gcs); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -125,7 +184,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			azblobOptions = options.Azblob
 		}
-		ExtractQueryParameters(u, &azblobOptions)
+		if err := ExtractQueryParameters(u, &azblobOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := azblobOptions.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -143,7 +204,17 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // serialization.
 //
 // All of the URL's query parameters will be removed after calling this method.
-func ExtractQueryParameters(u *url.URL, options any) {
+// It returns an error, leaving the options unchanged, if the query cannot be
+// decoded.
+func ExtractQueryParameters(u *url.URL, options any) error {
+	// URL.Query skips parameters it cannot decode, which would silently drop
+	// options such as sse-kms-context.
+	values, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		// The decoder error may quote part of the query.
+		return errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL query failed: invalid format")
+	}
+
 	type field struct {
 		index int
 		kind  reflect.Kind
@@ -161,7 +232,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 	}
 
 	// Then, read content from the URL into the options.
-	for key, params := range u.Query() {
+	for key, params := range values {
 		if len(params) == 0 {
 			continue
 		}
@@ -184,6 +255,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 
 	// Clean up the URL finally.
 	u.RawQuery = ""
+	return nil
 }
 
 // FormatBackendURL obtains the raw URL which can be used the reconstruct the

@@ -16,14 +16,19 @@ package task
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // TestCheckSnapshotRestoreMode verifies that --rename is only rejected for raw
@@ -65,4 +70,22 @@ func TestCheckSnapshotRestoreMode(t *testing.T) {
 		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
 		require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
 	})
+}
+
+func TestCheckpointStorageLogRedaction(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	defer restoreLogger()
+	contextJSON := `{"tenant":"context-value"}`
+	cfg := &RestoreConfig{
+		// A missing bucket stops the test before any storage request.
+		CheckpointStorage: "s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
+	}
+	require.Error(t, cfg.newStorageCheckpointMetaManagerPITR(context.Background(), 1, 2))
+	entries := logs.FilterMessage("creating storage checkpoint meta managers for PiTR").All()
+	require.Len(t, entries, 1)
+	logged, err := json.Marshal(entries[0].ContextMap())
+	require.NoError(t, err)
+	require.NotContains(t, string(logged), "context-value")
+	require.Contains(t, cfg.CheckpointStorage, "context-value")
 }
