@@ -4644,7 +4644,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
             panic!("rebuilt executor table is storage-backed");
         };
         assert!(table
-            .columns
+            .columns()
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case("e"))
             .expect("executor virtual column exists")
@@ -24220,7 +24220,7 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .store
         .session
         .with_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
-            Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store.client().is_some()),
+            Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
             _ => Ok(false),
         })
         .expect("catalog");

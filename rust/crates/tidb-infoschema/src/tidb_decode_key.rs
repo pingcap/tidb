@@ -57,10 +57,10 @@ pub struct TidbDecodeKeySnapshot {
 impl TidbDecodeKeySnapshot {
     pub fn insert_table(&mut self, table: &KvTable) {
         let metadata = DecodeTable {
-            logical_id: table.table_id,
+            logical_id: table.table_id(),
             partitioned: table.partition().is_some(),
             columns: table
-                .columns
+                .columns()
                 .iter()
                 .enumerate()
                 .map(|(offset, column)| DecodeColumn {
@@ -81,7 +81,7 @@ impl TidbDecodeKeySnapshot {
                 .collect(),
             use_new_collation: table.use_new_collation(),
         };
-        self.tables.insert(table.table_id, metadata.clone());
+        self.tables.insert(table.table_id(), metadata.clone());
         if let Some(partition) = table.partition() {
             for definition in &partition.definitions {
                 self.tables.insert(definition.id, metadata.clone());

@@ -384,7 +384,7 @@ fn column_of(tk: &TestKit, table: &str, column: &str) -> KvColumn {
         panic!("table {table} is not a KV table");
     };
     table
-        .columns
+        .columns()
         .iter()
         .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
         .expect("column exists")
@@ -412,12 +412,12 @@ fn column_ids(tk: &TestKit, table: &str) -> Vec<i64> {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
-    table.columns.iter().map(|column| column.id).collect()
+    table.columns().iter().map(|column| column.id).collect()
 }
 
 fn column_names(tk: &TestKit, table: &str) -> Vec<String> {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
-    table.columns.iter().map(|column| column.name.clone()).collect()
+    table.columns().iter().map(|column| column.name.clone()).collect()
 }

@@ -589,7 +589,7 @@ mod tests {
             panic!("expected a kv table");
         };
         let column = kv
-            .columns
+            .columns()
             .iter()
             .find(|c| c.name == column)
             .expect("column exists");
@@ -664,7 +664,7 @@ mod tests {
             panic!("expected a kv table");
         };
         let has_charset = |column: &str| {
-            kv.columns
+            kv.columns()
                 .iter()
                 .find(|c| c.name == column)
                 .unwrap()

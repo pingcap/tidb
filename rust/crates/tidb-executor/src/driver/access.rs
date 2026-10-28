@@ -366,7 +366,7 @@ impl PreparedPointGetPlan {
         matches!(
             catalog.get_by_key(&self.table_key),
             Some(TableEntry::Kv(table))
-                if table.table_id == self.table_id && table.partition().is_none()
+                if table.table_id() == self.table_id && table.partition().is_none()
         )
     }
 }
@@ -741,7 +741,7 @@ impl PreparedPlanCacheEnvironment {
                     crate::access_cost::get_latest_version_from_stats_table(
                         &self.stats_handle.0,
                         catalog,
-                        table.table_id,
+                        table.table_id(),
                         self.stats_hash_objective.determinate,
                     )
                 }
@@ -1435,7 +1435,7 @@ pub fn build_prepared_point_get_plan(
             current_database,
             database,
             table_name,
-            table.table_id,
+            table.table_id(),
             common_handle_offsets.clone(),
             handle_offset,
             table,
@@ -1553,7 +1553,7 @@ pub fn build_prepared_point_get_plan(
         database: database.to_owned(),
         table: table_name.to_owned(),
         table_key: CatalogTableKey::new(database, table_name),
-        table_id: table.table_id,
+        table_id: table.table_id(),
         parameter_orders,
         pin_types: pin_offsets
             .iter()
@@ -2036,7 +2036,7 @@ impl Executor for PreparedPointGetExecutor {
             // builds its reporter without `LoadTableStats`: no `UsedStatsInfo`
             // entry, so the read counts against `math.MaxInt32` rows.
             .report_point(
-                table.table_id,
+                table.table_id(),
                 None,
                 index_id,
                 after.0.wrapping_sub(before.0),
@@ -2133,7 +2133,7 @@ fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
                 return column;
             }
             let id = table
-                .columns
+                .columns()
                 .get(*offset)
                 .map_or(tidb_model::column::EXTRA_HANDLE_ID, |column| column.id);
             let mut column = Column::new(id, field_type.clone());
@@ -2452,7 +2452,7 @@ fn build_fast_point_physical_plan(
                     .key_values
                     .iter()
                     .map(|values| {
-                        let mut row = vec![Datum::Null; table.columns.len()];
+                        let mut row = vec![Datum::Null; table.columns().len()];
                         for (offset, value) in offsets.iter().zip(values) {
                             *row.get_mut(*offset)? = value.clone();
                         }
@@ -2494,7 +2494,7 @@ fn build_fast_point_physical_plan(
         return Ok(Some(tidb_planner::physical::PhysicalPlan::BatchPointGet(
             tidb_planner::physical::PhysicalBatchPointGet {
                 base,
-                table_id: table.table_id,
+                table_id: table.table_id(),
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
                 access_cols: None,
                 unsigned_handle: table.unsigned_pk_handle(),
@@ -2613,7 +2613,7 @@ fn build_fast_point_physical_plan(
     Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
         tidb_planner::physical::PhysicalPointGet {
             base,
-            table_id: table.table_id,
+            table_id: table.table_id(),
             // Go `PointGetPlan.PartitionNames`: a global index applies them
             // to the partition its entry records.
             partition: ((global_index && !table_ref.partitions.is_empty())
@@ -2686,14 +2686,14 @@ fn overflow_plans_table_dual(
 }
 
 fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
-    let mut offsets = (0..table.columns.len()).collect::<Vec<_>>();
+    let mut offsets = (0..table.columns().len()).collect::<Vec<_>>();
     let mut columns = table
-        .columns
+        .columns()
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect::<Vec<_>>();
     if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
-        offsets.push(table.columns.len());
+        offsets.push(table.columns().len());
         columns.push((
             tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
@@ -3395,7 +3395,7 @@ impl NameValuePair {
 }
 
 fn index_key_part_name(table: &KvTable, offset: usize) -> String {
-    let Some(column) = table.columns.get(offset) else {
+    let Some(column) = table.columns().get(offset) else {
         return String::new();
     };
     match &column.generated {

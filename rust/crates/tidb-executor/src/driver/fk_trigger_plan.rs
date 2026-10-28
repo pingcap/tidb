@@ -58,7 +58,7 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
         };
         Some(FkTable {
             columns: table
-                .columns
+                .columns()
                 .iter()
                 .map(|column| FkColumn {
                     name: column.name.clone(),

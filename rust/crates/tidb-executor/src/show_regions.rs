@@ -65,7 +65,7 @@ fn resolve<'a>(
                 name if name.is_empty() => table_name.to_owned(),
                 name => name,
             },
-            id: table.table_id,
+            id: table.table_id(),
             table: Some(table),
         },
         TableEntry::View(view) => Target {

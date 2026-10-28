@@ -233,7 +233,7 @@ impl TemporaryTableOverlay {
             let Some(table) = catalog.temporary_overlay_table_mut(&database, &name) else {
                 continue;
             };
-            let id = table.table_id;
+            let id = table.table_id();
             // Go `TxnCtx.TemporaryTables`: the transaction's rows and its
             // own allocator, created at its first touch of the table.
             let incoming = self
@@ -639,7 +639,7 @@ impl Session {
                 |(current_database, current_name, current_table)| {
                     current_database == &database
                         && current_name == &name
-                        && current_table.table_id == table.table_id
+                        && current_table.table_id() == table.table_id()
                 },
             ) {
                 current.2 = table;

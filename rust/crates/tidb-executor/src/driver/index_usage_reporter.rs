@@ -46,7 +46,7 @@ impl<'a> IndexUsageReporter<'a> {
         kv_requests: u64,
         accessed_rows: u64,
     ) {
-        self.report_cop(table.table_id, index_id, stats, kv_requests, accessed_rows);
+        self.report_cop(table.table_id(), index_id, stats, kv_requests, accessed_rows);
     }
 
     /// Go `ReportCopIndexUsage`.
@@ -97,7 +97,7 @@ impl<'a> IndexUsageReporter<'a> {
         kv_requests: u64,
         rows: u64,
     ) {
-        self.report_point(table.table_id, stats, index_id, kv_requests, rows);
+        self.report_point(table.table_id(), stats, index_id, kv_requests, rows);
     }
 
     /// Go `ReportPointGetIndexUsage`: reporting owns IDs and counters, not

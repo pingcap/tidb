@@ -505,7 +505,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                     &index,
                     &row,
                     &tidb_executor::kv_table::TableHandle::Int(2),
-                    table.table_id,
+                    table.table_id(),
                     &tidb_datatype::SessionTimeZone::utc(),
                 )
                 .expect("wrong index key")
@@ -607,7 +607,7 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                     Ok(entries[0].0.clone())
                 } else {
                     Ok(tidb_codec::table_key::encode_row_key_with_handle(
-                        table.table_id,
+                        table.table_id(),
                         &tidb_codec::table_key::RecordHandle::Int(2),
                     ))
                 }

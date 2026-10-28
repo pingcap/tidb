@@ -396,7 +396,7 @@ pub fn check_table(
                     indexed.iter().zip(&recorded).enumerate()
                 {
                     let column_offset = index.column_offsets[position];
-                    let column = &table.columns[column_offset];
+                    let column = &table.columns()[column_offset];
                     // Go `compareData` cuts the decoded index value to its key
                     // part's prefix too (`tablecodec.TruncateIndexValue`): a
                     // column the entry restores from the common handle comes
@@ -546,7 +546,7 @@ pub fn check_index_ranges(
         .column_offsets
         .iter()
         .map(|offset| {
-            let column = &table.columns[*offset];
+            let column = &table.columns()[*offset];
             (column.name.clone(), column.field_type.clone())
         })
         .collect();

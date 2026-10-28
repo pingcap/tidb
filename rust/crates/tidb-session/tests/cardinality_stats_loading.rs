@@ -61,11 +61,11 @@ fn subset_index_cardinality_after_async_statistics_load() {
             panic!("not KV")
         };
         let column_ids = table
-            .columns
+            .columns()
             .iter()
             .map(|column| column.id)
             .collect::<Vec<_>>();
-        (table.table_id, column_ids, table.indexes()[0].id)
+        (table.table_id(), column_ids, table.indexes()[0].id)
     };
     let queued = || {
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
@@ -201,7 +201,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
-        table.table_id
+        table.table_id()
     };
     let parsed = tidb_parser::parse("CREATE TABLE t(a INT,b INT)").unwrap();
     let tidb_ast::Stmt::Ddl(ddl) = parsed else {
@@ -373,7 +373,7 @@ fn datetime_range_overflow_survives_async_statistics_load() {
         let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
-        (table.table_id, table.columns[0].id)
+        (table.table_id(), table.columns()[0].id)
     };
     let sql = "SELECT * FROM t WHERE col BETWEEN '8499-1-23 2:14:38' AND '9961-7-23 18:35:26'";
     assert!(rows(&mut session, sql).is_empty());

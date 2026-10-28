@@ -43,14 +43,14 @@ impl tidb_cluster::cluster_privilege_load::PrivilegeTables for SessionPrivilegeT
         let stored = std::sync::Arc::make_mut(stored);
         let view = tidb_cluster::mysql_system_tables::SystemTableView::from_columns(
             &name,
-            stored.table_id,
+            stored.table_id(),
             stored
-                .columns
+                .columns()
                 .iter()
                 .map(|column| (column.name.clone(), column.id, column.field_type.clone())),
             columns,
         );
-        let ids: Vec<i64> = stored.columns.iter().map(|column| column.id).collect();
+        let ids: Vec<i64> = stored.columns().iter().map(|column| column.id).collect();
         let rows = stored
             .scan_rows_with_context(&self.decode)
             .map_err(

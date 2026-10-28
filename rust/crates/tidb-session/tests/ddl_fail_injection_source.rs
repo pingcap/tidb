@@ -54,7 +54,7 @@ fn modify_column_refusals_and_reorders_match_go() {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", "t") else {
         panic!("expected a storage-backed table");
     };
-    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+    let names: Vec<String> = table.columns().iter().map(|column| column.name.clone()).collect();
     assert_eq!(names, vec!["bb", "a", "c"]);
     assert_eq!(table.indexes().len(), 3, "Go: three indexes survive the change");
     tk.must_query("select * from t").check(["2 1 3", "22 11 33"]);

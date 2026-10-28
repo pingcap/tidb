@@ -225,6 +225,6 @@ fn any_value_comparison_leaves_the_column_flag_untouched() {
         .expect("Go runs this query against the empty table");
     assert!(rows.is_empty());
     let table = kv_table_of(&catalog, "t");
-    let flag = table.columns[0].field_type.flags();
+    let flag = table.columns()[0].field_type.flags();
     assert_eq!(flag, 0, "Go requires GetFlag() == 0 after the query");
 }

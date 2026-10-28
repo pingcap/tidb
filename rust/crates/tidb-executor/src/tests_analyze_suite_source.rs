@@ -283,7 +283,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        (table.table_id, ids)
+        (table.table_id(), ids)
     };
     assert_eq!(partition_ids.len(), 4);
 

@@ -67,7 +67,7 @@ pub(crate) fn materialize_generated_for_write(
     policy: GeneratedWrite,
     planned: Option<&[Option<Expression>]>,
 ) -> Result<(), DriverError> {
-    let columns = table.columns.as_slice();
+    let columns = table.columns();
     row.resize(row.len().max(columns.len()), Datum::Null);
     let convert = |column: &crate::kv_table::KvColumn, value| {
         let mut value = match policy {

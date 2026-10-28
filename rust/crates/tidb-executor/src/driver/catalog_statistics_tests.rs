@@ -59,8 +59,8 @@
         let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
             panic!("fixture is not a KV table")
         };
-        let table_id = table.table_id;
-        let column_id = table.columns[0].id;
+        let table_id = table.table_id();
+        let column_id = table.columns()[0].id;
         let statistics = tidb_planner::table_statistics::TableStatistics {
             pseudo: false,
             row_count: 10,
@@ -104,7 +104,7 @@
         let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
             panic!("fixture is not a KV table")
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let partition_ids = table
             .partition()
             .map(|partition| {
@@ -116,7 +116,7 @@
             })
             .unwrap_or_default();
         let column_ids = table
-            .columns
+            .columns()
             .iter()
             .map(|column| column.id)
             .collect::<Vec<_>>();
@@ -569,7 +569,7 @@
         let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let column_id = catalog
             .kv_table_by_id(table_id)
-            .and_then(|table| table.columns.iter().map(|column| column.id).max())
+            .and_then(|table| table.columns().iter().map(|column| column.id).max())
             .expect("fixture columns")
             + 1;
         let loader = Arc::new(RecordingLoader::default());
@@ -738,7 +738,7 @@
             panic!("fixture is not a KV table")
         };
         let (table_id, column_id, index_id) =
-            (table.table_id, table.columns[0].id, table.indexes()[0].id);
+            (table.table_id(), table.columns()[0].id, table.indexes()[0].id);
         let statistics = |meta_version: u64, row_count: i64, column_version: u64| {
             let histogram = |id, last_update_version| tidb_stats::Histogram {
                 id,
@@ -890,15 +890,15 @@
         let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
             panic!("fixture is not a KV table")
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let a = table
-            .columns
+            .columns()
             .iter()
             .find(|column| column.name == "a")
             .unwrap()
             .id;
         let v = table
-            .columns
+            .columns()
             .iter()
             .find(|column| column.name == "v")
             .unwrap()
@@ -1029,12 +1029,12 @@
             panic!("fixture is not a KV table")
         };
         let column = table
-            .columns
+            .columns()
             .iter()
             .find(|column| column.name == column_name)
             .expect("fixture column");
         tidb_model::TableItemID {
-            table_id: table.table_id,
+            table_id: table.table_id(),
             id: column.id,
             is_index: false,
             is_sync_load_failed: false,
@@ -1295,7 +1295,7 @@
         assert_eq!(
             static_usage
                 .table_partition_ids
-                .get(&table.table_id)
+                .get(&table.table_id())
                 .expect("static expansion")
                 .iter()
                 .copied()

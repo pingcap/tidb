@@ -1792,7 +1792,7 @@ mod tests {
                 panic!("KV table")
             };
             (
-                table.table_id,
+                table.table_id(),
                 table
                     .indexes()
                     .iter()

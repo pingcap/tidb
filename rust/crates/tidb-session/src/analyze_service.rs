@@ -140,7 +140,7 @@ impl Session {
             else {
                 continue;
             };
-            ids.push(table.table_id);
+            ids.push(table.table_id());
             if let Some(partition) = table.partition() {
                 ids.extend(partition.definitions.iter().map(|definition| definition.id));
             }

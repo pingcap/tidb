@@ -362,7 +362,7 @@ use tidb_txnkv::Key;
                         &non_unique,
                         &updated,
                         &handle,
-                        table.table_id,
+                        table.table_id(),
                         &ctx.session_zone(),
                     )
                     .unwrap()

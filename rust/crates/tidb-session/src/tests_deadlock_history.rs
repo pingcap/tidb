@@ -137,7 +137,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
                 .into_iter()
                 .find(|key| is_index_key(key))
                 .expect("the inserted row must have one secondary-index key");
-            Ok((table.table_id, index_key, db_id))
+            Ok((table.table_id(), index_key, db_id))
         })
         .unwrap();
     let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(1));

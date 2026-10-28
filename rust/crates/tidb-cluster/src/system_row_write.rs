@@ -170,7 +170,7 @@ impl TableWriter {
     /// columns).
     fn row(&self, values: &RowValues, whole: bool) -> Result<Vec<Datum>, RowEncodeError> {
         self.table
-            .columns
+            .columns()
             .iter()
             .map(|column| match values.get(&column.id) {
                 Some(value) => Ok(collated_value(

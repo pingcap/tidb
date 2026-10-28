@@ -232,7 +232,7 @@ impl CacheableChecker<'_> {
         }
         if !self.context.enable_generated_columns
             && table
-                .columns
+                .columns()
                 .iter()
                 .any(|column| column.generated.is_some())
         {

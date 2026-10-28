@@ -55,12 +55,12 @@ impl KvTablePartitionMaintenance for KvTable {
         decode_context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let previous_read_partitions = self
-            .partition
+            .partition()
             .is_some()
-            .then(|| self.read_partitions.replace(vec![physical_id]));
+            .then(|| self.read_partitions_mut().replace(vec![physical_id]));
         let rows = self.scan_rows_with_handles_recomputed(decode_context);
         if let Some(previous) = previous_read_partitions {
-            self.read_partitions = previous;
+            *self.read_partitions_mut() = previous;
         }
         rows
     }

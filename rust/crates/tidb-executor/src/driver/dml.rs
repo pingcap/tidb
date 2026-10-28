@@ -362,7 +362,7 @@ fn physical_dml_plan_with_cache_mode(
             .first()
             .map(|spec| catalog.get_in(&spec.database, &spec.table))
         {
-            for _ in 0..table.columns.len() {
+            for _ in 0..table.columns().len() {
                 column_ids.alloc();
             }
         }

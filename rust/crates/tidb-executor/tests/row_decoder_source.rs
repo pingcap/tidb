@@ -113,7 +113,7 @@ fn assert_point_chunks(
         storage
             .set(
                 tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
-                    table.table_id,
+                    table.table_id(),
                     &handle,
                 )),
                 bytes.clone(),
@@ -122,13 +122,13 @@ fn assert_point_chunks(
     }
     table.replace_storage(Box::new(storage));
     let types = table
-        .columns
+        .columns()
         .iter()
         .map(|column| column.field_type.clone())
         .collect::<Vec<_>>();
     let schema = tidb_expr::schema::Schema::new(
         table
-            .columns
+            .columns()
             .iter()
             .map(|column| tidb_expr::column::Column::new(column.id, column.field_type.clone()))
             .collect(),
@@ -738,7 +738,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         .unwrap();
 
     // Stored reads preserve the value written under the old expression.
-    let rewritten = generated_column("a + 2", true, &table.columns[..1], &zone);
+    let rewritten = generated_column("a + 2", true, &table.columns()[..1], &zone);
     table.columns_mut()[1].generated = Some(rewritten);
     let read = table
         .get_row_by_handle_with_context(&handle, &RowDecodeContext::for_query(&statement))

@@ -644,7 +644,7 @@ fn tidb_index_usage_records_a_clustered_point_read() {
         else {
             panic!("usage_point must be a stored table");
         };
-        (table.table_id, 0)
+        (table.table_id(), 0)
     };
     assert_eq!(
         row_text(session.run("SELECT v FROM usage_point WHERE id = 1")),
@@ -721,7 +721,7 @@ fn tidb_index_usage_sizes_a_determinate_read_by_the_analyze_count() {
             .find(|index| index.name.eq_ignore_ascii_case("ia"))
             .expect("ia")
             .id;
-        (table.table_id, index_id)
+        (table.table_id(), index_id)
     };
     assert_eq!(
         row_text(
@@ -785,7 +785,7 @@ fn tidb_index_usage_sizes_a_prepared_point_read_without_statistics() {
         else {
             panic!("usage_prepared_point must be a stored table");
         };
-        table.table_id
+        table.table_id()
     };
     let sql = "SELECT a FROM usage_prepared_point WHERE id = ?";
     let prepared = session.prepare_ast(sql).unwrap();
@@ -893,7 +893,7 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
             .iter()
             .find(|index| index.name.eq_ignore_ascii_case("primary"))
             .map_or(0, |index| index.id);
-        (table.table_id, primary_id)
+        (table.table_id(), primary_id)
     };
     let int_key = table_index("usage_cluster_int");
     let common_key = table_index("usage_cluster_common");
@@ -1093,7 +1093,7 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
         else {
             panic!("usage_partition_local must be a stored table");
         };
-        (table.table_id, table.indexes()[0].id)
+        (table.table_id(), table.indexes()[0].id)
     };
     let range_sql = "SELECT id FROM usage_partition_local WHERE id >= 30";
     let selection_sql = "SELECT id FROM usage_partition_local WHERE id - 95 >= 0 AND id >= 90";
@@ -1250,7 +1250,7 @@ fn tidb_index_usage_records_real_data_reads() {
                 .unwrap_or_else(|| panic!("missing {name} index"))
                 .id
         };
-        (table.table_id, index_id("idx_1"), index_id("idx_2"))
+        (table.table_id(), index_id("idx_1"), index_id("idx_2"))
     };
 
     let cases = vec![
@@ -1411,7 +1411,7 @@ fn tidb_index_usage_records_a_partitioned_global_index_point_read() {
             .find(|index| index.name.eq_ignore_ascii_case("idx_id"))
             .expect("global index metadata");
         assert!(index.unique && index.global);
-        (table.table_id, index.id)
+        (table.table_id(), index.id)
     };
     let plan = row_text(
         session

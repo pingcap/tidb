@@ -53,7 +53,7 @@ fn index_names(tk: &TestKit, table: &str) -> Vec<String> {
 
 fn column_order(tk: &TestKit, table: &str) -> Vec<String> {
     table_meta(tk, table)
-        .columns
+        .columns()
         .iter()
         .map(|column| column.name.clone())
         .collect()

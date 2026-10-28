@@ -55,7 +55,7 @@ impl LabelRuleTable {
     pub fn from_kv(table: &KvTable) -> Self {
         Self {
             name: table.name().go_to_lower(),
-            id: table.table_id,
+            id: table.table_id(),
             partitions: table.partition().map_or_else(Vec::new, |partition| {
                 partition
                     .definitions

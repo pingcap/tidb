@@ -76,7 +76,7 @@ impl KvTablePartitionReorg for KvTable {
         let mut records: Vec<(Vec<u8>, TableHandle, Vec<Datum>, Vec<u8>)> = Vec::new();
         let mut task_done = false;
         {
-            let mut iter = self.store.iter(
+            let mut iter = self.store_mut().iter(
                 Some(&Key::from_bytes(start.to_vec())),
                 Some(&Key::from_bytes(end.to_vec())),
             )?;
@@ -161,7 +161,7 @@ impl KvTablePartitionReorg for KvTable {
                 target,
                 &handle.record_handle(),
             ));
-            self.store.set(key, value).map_err(KvTableError::from)?;
+            self.store_mut().set(key, value).map_err(KvTableError::from)?;
             batch.added += 1;
         }
         Ok(batch)
@@ -173,7 +173,7 @@ impl KvTablePartitionReorg for KvTable {
         row: &[Datum],
         ctx: &dyn tidb_expr::Columns,
     ) -> Result<bool, KvTableError> {
-        let partition = self.partition.as_ref().expect("validated by DDL");
+        let partition = self.partition().expect("validated by DDL");
         if let PartitionKind::Hash = partition.kind {
             let num = partition.num();
             if num == 1 {
@@ -182,7 +182,7 @@ impl KvTablePartitionReorg for KvTable {
             let value = tidb_table::generated_column::eval_over_dependencies(
                 &partition.expr,
                 &partition.dependencies,
-                &*self.columns,
+                &*self.columns(),
                 row,
                 ctx,
             )

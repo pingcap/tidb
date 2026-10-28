@@ -64,7 +64,7 @@
         let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "pv").unwrap() else {
             panic!("pv")
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let directory = Arc::clone(&catalog.table_id_names);
         let original = catalog.clone();
         let snapshot = catalog.clone();
@@ -154,7 +154,7 @@
         for definition in &partitioned.partition().unwrap().definitions {
             assert!(catalog.kv_table_by_id(definition.id).is_none());
             let physical = catalog.physical_kv_table_by_id(definition.id).unwrap();
-            assert_eq!(physical.table_id, partitioned.table_id);
+            assert_eq!(physical.table_id(), partitioned.table_id());
             assert_eq!(physical.record_physical_ids(), vec![definition.id]);
             assert_eq!(
                 catalog.physical_kv_table_database_by_id(definition.id),
@@ -169,7 +169,7 @@
         let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
             panic!("pv")
         };
-        Arc::make_mut(table).table_id = 9000;
+        Arc::make_mut(table).set_table_id(9000);
         assert!(catalog.kv_table_by_id(table_id).is_none());
         assert_eq!(catalog.kv_table_by_id(9000).unwrap().name(), "pv");
         let restored = snapshot;
@@ -194,7 +194,7 @@
         let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "od").unwrap() else {
             panic!("od")
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name(), "od");
         let directory = Arc::clone(&catalog.table_id_names);
         assert!(directory.get().is_some(), "the lookup above built it");
@@ -262,7 +262,7 @@
             };
             table.record_key_is_staged(
                 ctx.staged_writes(),
-                table.table_id,
+                table.table_id(),
                 &crate::kv_table::TableHandle::Int(handle),
             )
         };

@@ -693,7 +693,7 @@ pub(crate) fn multi_dml_physical_plan(
     let mut specs: BTreeMap<(i64, String, String), FkPlanSpec> = BTreeMap::new();
     let mut add_target = |database: String, table: String, column: Option<String>| {
         let identity = match catalog.get_in(&database, &table) {
-            Some(TableEntry::Kv(table)) => (table.table_id, String::new(), String::new()),
+            Some(TableEntry::Kv(table)) => (table.table_id(), String::new(), String::new()),
             _ => (0, database.go_to_lower(), table.go_to_lower()),
         };
         let spec = specs.entry(identity).or_insert_with(|| FkPlanSpec {

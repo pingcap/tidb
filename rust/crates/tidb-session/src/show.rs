@@ -345,7 +345,7 @@ const NOT_NULL_FLAG: u32 = 1;
 /// `information_schema.COLUMNS`: PRI for a primary key, UNI for a column that
 /// is the whole of a unique index, MUL for one that leads a non-unique index.
 pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> String {
-    if table.columns[offset]
+    if table.columns()[offset]
         .field_type
         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
     {
@@ -418,7 +418,7 @@ impl Session {
                     }
                     let row = |partition: Option<String>, group_id: String| AffinityRow {
                         db_lower: go_to_lower(&database),
-                        table_id: table.table_id,
+                        table_id: table.table_id(),
                         db: database.clone(),
                         table: table.name(),
                         partition,
@@ -427,7 +427,7 @@ impl Session {
                     match affinity.level.as_str() {
                         "table" => infos.push(row(
                             None,
-                            tidb_ddl::ddl_affinity::get_table_affinity_group_id(table.table_id),
+                            tidb_ddl::ddl_affinity::get_table_affinity_group_id(table.table_id()),
                         )),
                         "partition" => {
                             for definition in
@@ -436,7 +436,7 @@ impl Session {
                                 infos.push(row(
                                     Some(definition.name.clone()),
                                     tidb_ddl::ddl_affinity::get_partition_affinity_group_id(
-                                        table.table_id,
+                                        table.table_id(),
                                         definition.id,
                                     ),
                                 ));
@@ -1003,7 +1003,7 @@ impl Session {
                         }
                     };
                     // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
-                    let statistics = catalog.table_statistics_in(&stats_handle, table.table_id);
+                    let statistics = catalog.table_statistics_in(&stats_handle, table.table_id());
                     Ok(show_index_rows(&table_name, table, |column_id| {
                         statistics
                             .as_ref()

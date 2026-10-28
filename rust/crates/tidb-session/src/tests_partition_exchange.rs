@@ -405,7 +405,7 @@ fn a_marked_standalone_table_takes_only_rows_of_the_partition() {
                     panic!("pt is not stored as bytes");
                 };
                 let p0 = pt.partition().expect("pt is partitioned").definitions[0].id;
-                (pt.table_id, p0)
+                (pt.table_id(), p0)
             };
             let Some(tidb_executor::TableEntry::Kv(nt)) = catalog.table_mut_in("test", "nt") else {
                 panic!("nt is not stored as bytes");

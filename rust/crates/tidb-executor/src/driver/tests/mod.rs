@@ -119,7 +119,7 @@ fn scale_analyzed_tpcc_table(
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let requested = column_ndvs
             .iter()
             .copied()

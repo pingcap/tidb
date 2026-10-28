@@ -609,7 +609,7 @@ impl KvTableReader for KvTable {
         zone: &SessionTimeZone,
         limit: usize,
     ) -> Result<Vec<TableHandle>, KvTableError> {
-        if self.partition.is_some() {
+        if self.partition().is_some() {
             return Err(KvTableError::Decode(
                 "foreign keys do not support partitioned tables".into(),
             ));
@@ -631,12 +631,12 @@ impl KvTableReader for KvTable {
                 .collect());
         };
         let index = self
-            .indexes
+            .indexes()
             .iter()
             .find(|index| index.id == index_id)
             .ok_or_else(|| KvTableError::Decode("foreign key index is missing".into()))?;
         if index.clustered_primary {
-            let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+            let encoded = tidb_codec::Encoder::new(self.use_new_collation())
                 .encode_key_in_timezone(zone, values)
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
             let handle = tidb_txnkv::CommonHandle::new(encoded)
@@ -650,11 +650,11 @@ impl KvTableReader for KvTable {
                     .collect());
             }
             let low = Key::from_bytes(encode_row_key_with_handle(
-                self.table_id,
+                self.table_id(),
                 &handle.record_handle(),
             ));
             let high = low.prefix_next();
-            let mut iter = self.store.iter(Some(&low), Some(&high))?;
+            let mut iter = self.store_mut().iter(Some(&low), Some(&high))?;
             let mut handles = Vec::new();
             while iter.valid() && handles.len() < limit {
                 handles.push(TableHandle::Common(
@@ -703,12 +703,12 @@ impl KvTableReader for KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         let decoder = RowDecoder::for_table_read(
-            self.columns.clone(),
-            self.pk_handle_offset,
-            self.common_handle_offsets.clone(),
-            self.common_handle_prefix_lengths.clone(),
+            self.columns_arc().clone(),
+            self.pk_handle_offset(),
+            self.common_handle_offsets().to_vec(),
+            self.common_handle_prefix_lengths().to_vec(),
             keep,
-            self.use_new_collation,
+            self.use_new_collation(),
             context.clone(),
         )?;
         note_decoded_column_ids(decoder.decoded_column_ids());
@@ -720,11 +720,11 @@ impl KvTableReader for KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         RowDecoder::for_recomputed_read(
-            self.columns.clone(),
-            self.pk_handle_offset,
-            self.common_handle_offsets.clone(),
-            self.common_handle_prefix_lengths.clone(),
-            self.use_new_collation,
+            self.columns_arc().clone(),
+            self.pk_handle_offset(),
+            self.common_handle_offsets().to_vec(),
+            self.common_handle_prefix_lengths().to_vec(),
+            self.use_new_collation(),
             context.clone(),
         )
     }
@@ -814,7 +814,7 @@ impl KvTableReader for KvTable {
                 )));
             }
         }
-        let entries = self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        let entries = self.store_mut().batch_get(&keys).map_err(KvTableError::from)?;
         // Each handle owns a contiguous window of physical keys. Preserve
         // handle order and the first matching partition without a second
         // key/handle collection or a tree lookup for every output row.
@@ -823,18 +823,18 @@ impl KvTableReader for KvTable {
         // point path so each returned record avoids rebuilding the general
         // RowDecoder's dependency maps and full table row.
         let prepared = self
-            .pk_handle_offset
-            .filter(|_| self.common_handle_offsets.is_empty())
+            .pk_handle_offset()
+            .filter(|_| self.common_handle_offsets().is_empty())
             .and_then(|pk_offset| {
                 let keep = keep?;
                 if keep.iter().any(|offset| {
-                    self.columns[*offset].generated.is_some()
-                        || self.columns[*offset].origin_default.is_some()
+                    self.columns()[*offset].generated.is_some()
+                        || self.columns()[*offset].origin_default.is_some()
                 }) {
                     return None;
                 }
                 PreparedPointGetRowDecoder::new_with_handles(
-                    &self.columns,
+                    &self.columns(),
                     Some(pk_offset),
                     &[],
                     keep,
@@ -1154,7 +1154,7 @@ impl KvTableReader for KvTable {
         schema_version: u64,
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
-        let common_handle = !self.common_handle_offsets.is_empty();
+        let common_handle = !self.common_handle_offsets().is_empty();
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
         if common_handle && common_primary.is_none() {
             return Ok(None);
@@ -1194,11 +1194,11 @@ impl KvTableReader for KvTable {
         let mut columns: Vec<PushdownScanColumn> = keep
             .iter()
             .map(|offset| {
-                let column = &self.columns[*offset];
+                let column = &self.columns()[*offset];
                 PushdownScanColumn {
                     id: column.id,
                     field_type: column.field_type.clone(),
-                    is_handle: self.pk_handle_offset == Some(*offset),
+                    is_handle: self.pk_handle_offset() == Some(*offset),
                     origin_default: column.origin_default.clone(),
                 }
             })
@@ -1211,7 +1211,7 @@ impl KvTableReader for KvTable {
         // needs a handle is planned only over a dirty table. An ordered
         // partitioned integer read still merges its per-partition streams by
         // handle, so it keeps the column whatever the caller asked.
-        let retain_identity = retain_identity || (self.partition.is_some() && keep_order);
+        let retain_identity = retain_identity || (self.partition().is_some() && keep_order);
         let mut common_identity =
             common_primary
                 .as_ref()
@@ -1222,7 +1222,7 @@ impl KvTableReader for KvTable {
                         .iter()
                         .enumerate()
                         .map(|(part, offset)| {
-                            let column = &self.columns[*offset];
+                            let column = &self.columns()[*offset];
                             let position = columns
                                 .iter()
                                 .position(|kept| kept.id == column.id)
@@ -1245,23 +1245,23 @@ impl KvTableReader for KvTable {
                     RemoteCommonHandle {
                         parts,
                         zone: context.zone().clone(),
-                        use_new_collation: self.use_new_collation,
+                        use_new_collation: self.use_new_collation(),
                     }
                 });
         let handle_index = if common_handle {
             None
         } else {
             match self
-                .pk_handle_offset
+                .pk_handle_offset()
                 .and_then(|offset| keep.iter().position(|kept| *kept == offset))
             {
                 Some(index) => Some(index),
                 None if !retain_identity => None,
                 None => {
-                    columns.push(match self.pk_handle_offset {
+                    columns.push(match self.pk_handle_offset() {
                         Some(offset) => PushdownScanColumn {
-                            id: self.columns[offset].id,
-                            field_type: self.columns[offset].field_type.clone(),
+                            id: self.columns()[offset].id,
+                            field_type: self.columns()[offset].field_type.clone(),
                             is_handle: true,
                             origin_default: None,
                         },
@@ -1307,9 +1307,9 @@ impl KvTableReader for KvTable {
         // (`getSnapshotRow` encodes the record key under `_tidb_tid`), and so
         // does the staged-row merge below.
         let dirty_partitioned =
-            self.partition.is_some() && self.has_dirty_content(&statement.staged_writes);
+            self.partition().is_some() && self.has_dirty_content(&statement.staged_writes);
         let response_physical_id_index =
-            ((physical_id || dirty_partitioned) && self.partition.is_some()).then(|| {
+            ((physical_id || dirty_partitioned) && self.partition().is_some()).then(|| {
                 columns.push(PushdownScanColumn {
                     id: tidb_model::column::EXTRA_PHYS_TBL_ID,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -1329,7 +1329,7 @@ impl KvTableReader for KvTable {
             .as_ref()
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
-            .filter_map(|offset| self.columns.get(*offset))
+            .filter_map(|offset| self.columns().get(*offset))
             .map(|column| column.id)
             .collect();
         let primary_prefix_column_ids: Vec<i64> = common_primary
@@ -1341,7 +1341,7 @@ impl KvTableReader for KvTable {
                     .iter()
                     .enumerate()
                     .filter_map(|(position, offset)| {
-                        let column = self.columns.get(*offset)?;
+                        let column = self.columns().get(*offset)?;
                         let prefix = index.prefix_length(position);
                         (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
                     })
@@ -1355,7 +1355,7 @@ impl KvTableReader for KvTable {
         // Go's `SetTableHandles` supplies hints only for the single grouped
         // handle request. A straddling unsigned range is split into two
         // requests above, so do not attach hints to those unrelated groups.
-        let partitioned = self.partition.is_some();
+        let partitioned = self.partition().is_some();
         let physical_ids = self.record_physical_ids();
         let request_range_hints = if !partitioned && groups.len() == 1 {
             range_hints.filter(|hints| hints.len() == groups[0].len())
@@ -1416,11 +1416,11 @@ impl KvTableReader for KvTable {
         } else {
             groups
                 .into_iter()
-                .map(|ranges| (self.table_id, ranges))
+                .map(|ranges| (self.table_id(), ranges))
                 .collect()
         };
         for (physical_id, ranges) in request_groups {
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &build_request(physical_id, ranges))
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &build_request(physical_id, ranges))
             else {
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -1586,7 +1586,7 @@ impl KvTableReader for KvTable {
             width: output_offsets.map_or(keep.len(), <[usize]>::len),
             handle_index: response_handle_index,
             common_identity,
-            table_id: self.table_id,
+            table_id: self.table_id(),
             physical_id_index: response_physical_id_index,
             merge_staged,
             unordered_shadowed,
@@ -1652,13 +1652,13 @@ impl KvTableReader for KvTable {
             // Partition readers need distinct physical metadata, with storage
             // cloning retaining the backend's shared transaction/snapshot.
             let mut physical;
-            let table = if self.partition.is_none() && id == self.table_id {
+            let table = if self.partition().is_none() && id == self.table_id() {
                 &mut *self
             } else {
                 physical = self.clone();
-                physical.table_id = id;
-                physical.partition = None;
-                physical.read_partitions = None;
+                physical.set_table_id(id);
+                *physical.partition_mut() = None;
+                *physical.read_partitions_mut() = None;
                 &mut physical
             };
             let Some(reader) = table.build_physical_table_reader(
@@ -1694,13 +1694,13 @@ impl KvTableReader for KvTable {
         let keep = scan_keep;
         let materialization = if keep
             .iter()
-            .any(|offset| crate::generated_column::is_virtual(&self.columns[*offset]))
+            .any(|offset| crate::generated_column::is_virtual(&self.columns()[*offset]))
         {
             Some(RemoteRowMaterialization::new(
                 self,
                 keep,
                 context,
-                self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty(),
+                self.pk_handle_offset().is_none() && self.common_handle_offsets().is_empty(),
             )?)
         } else {
             None
@@ -2012,7 +2012,7 @@ impl KvTableReader for KvTable {
         // results are chained for the final aggregation. An ORDERED partial
         // result over several partitions would need them merged, so it stays
         // local.
-        let partitioned = self.partition.is_some();
+        let partitioned = self.partition().is_some();
         if self.has_dirty_content(&statement.staged_writes)
             || (partitioned && keep_order && self.record_physical_ids().len() > 1)
         {
@@ -2035,7 +2035,7 @@ impl KvTableReader for KvTable {
                 })
                 .collect()
         } else {
-            vec![(self.table_id, ranges)]
+            vec![(self.table_id(), ranges)]
         };
         if request_groups.is_empty() {
             return Ok(None);
@@ -2043,11 +2043,11 @@ impl KvTableReader for KvTable {
         let columns: Vec<PushdownScanColumn> = keep
             .iter()
             .map(|offset| {
-                let column = &self.columns[*offset];
+                let column = &self.columns()[*offset];
                 PushdownScanColumn {
                     id: column.id,
                     field_type: column.field_type.clone(),
-                    is_handle: self.pk_handle_offset == Some(*offset),
+                    is_handle: self.pk_handle_offset() == Some(*offset),
                     origin_default: column.origin_default.clone(),
                 }
             })
@@ -2066,7 +2066,7 @@ impl KvTableReader for KvTable {
             .as_ref()
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
-            .filter_map(|offset| self.columns.get(*offset))
+            .filter_map(|offset| self.columns().get(*offset))
             .map(|column| column.id)
             .collect();
         let primary_prefix_column_ids: Vec<i64> = common_primary
@@ -2078,7 +2078,7 @@ impl KvTableReader for KvTable {
                     .iter()
                     .enumerate()
                     .filter_map(|(position, offset)| {
-                        let column = self.columns.get(*offset)?;
+                        let column = self.columns().get(*offset)?;
                         let prefix = index.prefix_length(position);
                         (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
                     })
@@ -2115,7 +2115,7 @@ impl KvTableReader for KvTable {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2175,7 +2175,7 @@ impl KvTableReader for KvTable {
         if self.has_dirty_content(&statement.staged_writes) {
             return Ok(None);
         }
-        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
+        let Some(index) = self.indexes().iter().find(|index| index.id == index_id) else {
             return Ok(None);
         };
         // A local index of a partitioned table is one request per pruned
@@ -2183,10 +2183,10 @@ impl KvTableReader for KvTable {
         // `PartitionTableReader` builds them; a GLOBAL index lives under the
         // logical id and is one request. An ORDERED partial result over
         // several partitions would need them merged, so it stays local.
-        let physical_ids = if self.partition.is_some() && !index.global {
+        let physical_ids = if self.partition().is_some() && !index.global {
             self.record_physical_ids()
         } else {
-            vec![self.table_id]
+            vec![self.table_id()]
         };
         if keep_order && physical_ids.len() > 1 {
             return Ok(None);
@@ -2202,7 +2202,7 @@ impl KvTableReader for KvTable {
         let mut columns: Vec<PushdownScanColumn> = index
             .column_offsets
             .iter()
-            .filter_map(|offset| self.columns.get(*offset))
+            .filter_map(|offset| self.columns().get(*offset))
             .map(|column| PushdownScanColumn {
                 id: column.id,
                 field_type: column.field_type.clone(),
@@ -2217,8 +2217,8 @@ impl KvTableReader for KvTable {
         // included, exactly like `pushdown_index_handle_cursor`'s schema --
         // because TiKV subtracts their count from the executor width before
         // decoding the record handle.
-        for offset in &self.common_handle_offsets {
-            let Some(column) = self.columns.get(*offset) else {
+        for offset in self.common_handle_offsets() {
+            let Some(column) = self.columns().get(*offset) else {
                 return Ok(None);
             };
             columns.push(PushdownScanColumn {
@@ -2349,9 +2349,9 @@ impl KvTableReader for KvTable {
             }
         }
         let primary_column_ids: Vec<i64> = self
-            .common_handle_offsets
+            .common_handle_offsets()
             .iter()
-            .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+            .filter_map(|offset| self.columns().get(*offset).map(|column| column.id))
             .collect();
         let mut streams = Vec::with_capacity(physical_ids.len());
         for physical_id in physical_ids {
@@ -2385,7 +2385,7 @@ impl KvTableReader for KvTable {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2422,7 +2422,7 @@ impl KvTableReader for KvTable {
         zone: &SessionTimeZone,
     ) -> Result<Vec<Datum>, KvTableError> {
         let index = self
-            .indexes
+            .indexes()
             .iter()
             .find(|index| index.id == index_id)
             .ok_or_else(|| KvTableError::Decode("index filter has no index".to_owned()))?;
@@ -2432,13 +2432,13 @@ impl KvTableReader for KvTable {
         let offsets: Vec<_> = index
             .column_offsets
             .iter()
-            .chain(&self.common_handle_offsets)
+            .chain(self.common_handle_offsets())
             .copied()
             .collect();
         let columns: Vec<_> = offsets
             .iter()
             .map(|offset| {
-                let column = &self.columns[*offset];
+                let column = &self.columns()[*offset];
                 tidb_codec::ColumnInfo {
                     id: column.id,
                     is_pk_handle: false,
@@ -2448,11 +2448,11 @@ impl KvTableReader for KvTable {
             })
             .collect();
         let encoded = tidb_tablecodec::decode_index_kv(
-            self.use_new_collation,
+            self.use_new_collation(),
             key,
             value,
             index.column_offsets.len(),
-            if self.common_handle_offsets.is_empty() {
+            if self.common_handle_offsets().is_empty() {
                 tidb_tablecodec::HandleStatus::NotNeeded
             } else {
                 tidb_tablecodec::HandleStatus::Default
@@ -2460,7 +2460,7 @@ impl KvTableReader for KvTable {
             &columns,
         )
         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-        let mut row = vec![Datum::Null; self.columns.len()];
+        let mut row = vec![Datum::Null; self.columns().len()];
         for (position, ((offset, column), value)) in
             offsets.iter().zip(&columns).zip(encoded).enumerate()
         {
@@ -2484,16 +2484,16 @@ impl KvTableReader for KvTable {
                 tidb_tablecodec::decode_column_value(&value, &column.field_type, Some(zone))
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
         }
-        if self.common_handle_offsets.is_empty() {
+        if self.common_handle_offsets().is_empty() {
             super::row_decoder::fill_handle_columns(
-                &self.columns,
-                self.pk_handle_offset,
+                &self.columns(),
+                self.pk_handle_offset(),
                 &[],
                 &[],
                 &mut row,
                 handle,
                 zone,
-                self.use_new_collation,
+                self.use_new_collation(),
             )?;
         }
         Ok(row)
@@ -2530,7 +2530,7 @@ impl KvTableReader for KvTable {
         // and a covering prefix read of bmsql_oorder_idx1 plus the ecasdb
         // max(dtlno) stream answer correctly against the real backend again.
         if self.has_dirty_content(&statement.staged_writes)
-            || self.partition.is_some()
+            || self.partition().is_some()
             || ranges.is_empty()
         {
             return Ok(None);
@@ -2538,7 +2538,7 @@ impl KvTableReader for KvTable {
         if scan_extra_handle_slot.is_some_and(|slot| slot > scan_keep.len()) {
             return Ok(None);
         }
-        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
+        let Some(index) = self.indexes().iter().find(|index| index.id == index_id) else {
             return Ok(None);
         };
         // The compact layout is the source's current schema after column
@@ -2563,16 +2563,16 @@ impl KvTableReader for KvTable {
             .copied()
             .map(Some)
             .collect::<Vec<_>>();
-        for offset in &self.common_handle_offsets {
+        for offset in self.common_handle_offsets() {
             table_offsets.push(Some(*offset));
         }
-        if let Some(offset) = self.pk_handle_offset {
+        if let Some(offset) = self.pk_handle_offset() {
             // InitSchema also appends an integer handle already present in
             // the index. TiKV subtracts this trailing slot from the width to
             // determine how many declared index datums to decode.
             table_offsets.push(Some(offset));
         }
-        if self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty() {
+        if self.pk_handle_offset().is_none() && self.common_handle_offsets().is_empty() {
             table_offsets.push(None);
         }
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
@@ -2580,7 +2580,7 @@ impl KvTableReader for KvTable {
             let Some(offset) = offset else {
                 return true;
             };
-            let Some(column) = self.columns.get(*offset) else {
+            let Some(column) = self.columns().get(*offset) else {
                 return false;
             };
             let full_length = |length| {
@@ -2591,7 +2591,7 @@ impl KvTableReader for KvTable {
             if position < index.column_offsets.len() {
                 return full_length(index.prefix_length(position));
             }
-            if self.pk_handle_offset == Some(*offset) {
+            if self.pk_handle_offset() == Some(*offset) {
                 return true;
             }
             // Go's indexCoveringColumn requires a complete value; a
@@ -2603,7 +2603,7 @@ impl KvTableReader for KvTable {
                     .position(|part| part == offset)
                     .is_some_and(|part| full_length(primary.prefix_length(part)))
             }) && !(self.common_handle_version() == 0
-                && self.use_new_collation
+                && self.use_new_collation()
                 && column.field_type.eval_type() == tidb_datatype::EvalType::String
                 && !column
                     .field_type
@@ -2691,11 +2691,11 @@ impl KvTableReader for KvTable {
             .enumerate()
             .map(|(_position, offset)| {
                 if let Some(offset) = offset {
-                    let column = self.columns.get(*offset)?;
+                    let column = self.columns().get(*offset)?;
                     Some(PushdownScanColumn {
                         id: column.id,
                         field_type: column.field_type.clone(),
-                        is_handle: self.pk_handle_offset == Some(*offset),
+                        is_handle: self.pk_handle_offset() == Some(*offset),
                         origin_default: column.origin_default.clone(),
                     })
                 } else {
@@ -2715,13 +2715,13 @@ impl KvTableReader for KvTable {
         let Some(columns) = columns else {
             return Ok(None);
         };
-        let handle_indices = if self.common_handle_offsets.is_empty() {
+        let handle_indices = if self.common_handle_offsets().is_empty() {
             vec![table_offsets
                 .iter()
-                .rposition(|offset| *offset == self.pk_handle_offset || offset.is_none())
+                .rposition(|offset| *offset == self.pk_handle_offset() || offset.is_none())
                 .unwrap_or(0)]
         } else {
-            self.common_handle_offsets
+            self.common_handle_offsets()
                 .iter()
                 .filter_map(|offset| {
                     // The trailing duplicate is the HANDLE copy of the key
@@ -2746,7 +2746,7 @@ impl KvTableReader for KvTable {
         } else {
             !desc || topn.is_none()
         };
-        let encoder = Encoder::new(self.use_new_collation);
+        let encoder = Encoder::new(self.use_new_collation());
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             encoder
                 .encode_key_in_timezone(zone, values)
@@ -2755,7 +2755,7 @@ impl KvTableReader for KvTable {
         let mut key_ranges = Vec::with_capacity(ranges.len());
         for range in ranges {
             let mut low = Key::from_bytes(encode_index_seek_key(
-                self.table_id,
+                self.table_id(),
                 index_id,
                 &encode(&range.low)?,
             ));
@@ -2763,7 +2763,7 @@ impl KvTableReader for KvTable {
                 low = low.prefix_next();
             }
             let mut high = Key::from_bytes(encode_index_seek_key(
-                self.table_id,
+                self.table_id(),
                 index_id,
                 &encode(&range.high)?,
             ));
@@ -2806,7 +2806,7 @@ impl KvTableReader for KvTable {
         // before building the table task; do the same instead of forcing a
         // row-at-a-time `Vec<Datum>` conversion for the discarded index
         // columns.
-        let handle_is_unsigned = if self.common_handle_offsets.is_empty() {
+        let handle_is_unsigned = if self.common_handle_offsets().is_empty() {
             handle_indices
                 .first()
                 .and_then(|index| columns.get(*index))
@@ -2819,7 +2819,7 @@ impl KvTableReader for KvTable {
         // their field types beside the cursor so a columnar response can be
         // drained in one Go-shaped chunk without falling back to one row at a
         // time (`getHandle` still needs the original datum types).
-        let handle_field_types = if self.common_handle_offsets.is_empty() {
+        let handle_field_types = if self.common_handle_offsets().is_empty() {
             Vec::new()
         } else {
             handle_indices
@@ -2858,7 +2858,7 @@ impl KvTableReader for KvTable {
             None
         };
         let request = PushdownScanRequest {
-            table_id: self.table_id,
+            table_id: self.table_id(),
             index: Some(PushdownIndexScan {
                 index_id,
                 declared_unique,
@@ -2866,15 +2866,15 @@ impl KvTableReader for KvTable {
                 desc,
             }),
             columns,
-            handle_index: if self.common_handle_offsets.is_empty() {
+            handle_index: if self.common_handle_offsets().is_empty() {
                 returned_handle_indices.first().copied()
             } else {
                 None
             },
             primary_column_ids: self
-                .common_handle_offsets
+                .common_handle_offsets()
                 .iter()
-                .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+                .filter_map(|offset| self.columns().get(*offset).map(|column| column.id))
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
             conditions: predicates,
@@ -2895,7 +2895,7 @@ impl KvTableReader for KvTable {
             range_hints: Vec::new(),
             statement: statement.clone(),
         };
-        let Some(scan) = crate::remote_scan::open_remote_scan(self.store.as_ref(), &request) else {
+        let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
             return Ok(None);
         };
         let mut scan = scan.map_err(KvTableError::from)?;
@@ -2912,13 +2912,13 @@ impl KvTableReader for KvTable {
             inner: scan.stream,
             handle_indices: returned_handle_indices,
             projected_indices,
-            common_handle: !self.common_handle_offsets.is_empty(),
+            common_handle: !self.common_handle_offsets().is_empty(),
             zone: zone.clone(),
-            use_new_collation: self.use_new_collation,
+            use_new_collation: self.use_new_collation(),
             noted_rows: 0,
             handle_is_unsigned,
             handle_field_types,
-            handle_prefix_lengths: self.common_handle_prefix_lengths.clone(),
+            handle_prefix_lengths: self.common_handle_prefix_lengths().to_vec(),
             common_handle_version: self.common_handle_version(),
             pending_chunk: None,
             pending_chunk_row: 0,
@@ -2979,7 +2979,7 @@ impl KvTableReader for KvTable {
         // record identity beside its values rather than opening a separate
         // snapshot iterator (and RPC) for every range on the write path.
         let keep: Vec<usize> = self
-            .columns
+            .columns()
             .iter()
             .enumerate()
             .filter_map(|(offset, column)| {
@@ -3009,7 +3009,7 @@ impl KvTableReader for KvTable {
                     break;
                 };
                 let handle = decoder.record_handle(&key)?;
-                let row = if keep.len() == self.columns.len() {
+                let row = if keep.len() == self.columns().len() {
                     projected
                 } else {
                     decoder.project_remote_row(&keep, projected)?
@@ -3046,7 +3046,7 @@ impl KvTableReader for KvTable {
         end: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let Some((key, value)) = self.store.snapshot_first(
+        let Some((key, value)) = self.store_mut().snapshot_first(
             &Key::from_bytes(start.to_vec()),
             &Key::from_bytes(end.to_vec()),
         )?
@@ -3164,7 +3164,7 @@ impl KvTableReader for KvTable {
         ordered: bool,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let Some(index) = self
-            .indexes
+            .indexes()
             .iter()
             .find(|index| index.id == index_id)
             .cloned()
@@ -3174,11 +3174,11 @@ impl KvTableReader for KvTable {
         // Go `index.GenIndexKey` files a GLOBAL index under TableInfo.ID,
         // while local indexes remain under each physical partition id.
         let scan_physical_ids = if index.global {
-            vec![self.table_id]
+            vec![self.table_id()]
         } else {
             physical_ids.to_vec()
         };
-        let encoder = Encoder::new(self.use_new_collation);
+        let encoder = Encoder::new(self.use_new_collation());
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             encoder
                 .encode_key_in_timezone(zone, values)
@@ -3262,7 +3262,7 @@ impl KvTableReader for KvTable {
             merge_by_index_key,
             merge_heap,
             index,
-            common_handle: !self.common_handle_offsets.is_empty(),
+            common_handle: !self.common_handle_offsets().is_empty(),
             global_partition_ids,
         })
     }
@@ -4999,7 +4999,7 @@ impl TableScanExec {
         // The pruned column set is the cursor's projection, so an
         // unreferenced column is never decoded on the streaming path either.
         let projection: Option<&[usize]> =
-            if self.keep.iter().copied().eq(0..self.table.columns.len()) {
+            if self.keep.iter().copied().eq(0..self.table.columns().len()) {
                 None
             } else {
                 Some(&self.keep)
@@ -5053,7 +5053,7 @@ impl TableScanExec {
     fn has_virtual_projection(&self) -> bool {
         self.keep
             .iter()
-            .any(|offset| crate::generated_column::is_virtual(&self.table.columns[*offset]))
+            .any(|offset| crate::generated_column::is_virtual(&self.table.columns()[*offset]))
     }
     /// The next row of whichever cursor is open, remote or local.
     ///
@@ -6602,7 +6602,7 @@ mod remote_cursor_tests {
         );
         let predicate = crate::predicate_pushdown::fixtures::compare(
             1,
-            table.columns[1].field_type.clone(),
+            table.columns()[1].field_type.clone(),
             "gt",
             Datum::Int(6),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -6709,13 +6709,13 @@ mod remote_cursor_tests {
             let mut table = index_selection_table(capture.clone(), prefix)
                 .with_new_collation_mode(new_collation);
             if common {
-                table.pk_handle_offset = None;
+                *table.pk_handle_offset_mut() = None;
                 table.set_common_handle_offsets(vec![0, 1]);
                 table.set_common_handle_version(version);
             }
             let predicate = index_selection_predicate(
                 slot,
-                table.columns[[2, 1, 0][slot as usize]].field_type.clone(),
+                table.columns()[[2, 1, 0][slot as usize]].field_type.clone(),
             );
             let prefix_limit = (prefix == 2).then_some(crate::remote_scan::PushdownPrefixLimit {
                 count: 1,
@@ -6787,7 +6787,7 @@ mod remote_cursor_tests {
             {
                 let capture = RequestCapture::default();
                 let mut table = index_selection_table(capture.clone(), -1);
-                table.pk_handle_offset = None;
+                *table.pk_handle_offset_mut() = None;
                 // Stored source columns [a, v], with _tidb_rowid inserted at
                 // extra_slot. Neither source nor wire positions are table offsets.
                 let a_slot = usize::from(extra_slot == 0);
@@ -6799,7 +6799,7 @@ mod remote_cursor_tests {
                     ),
                     crate::predicate_pushdown::fixtures::is_null(
                         a_slot,
-                        table.columns[1].field_type.clone(),
+                        table.columns()[1].field_type.clone(),
                         true,
                     ),
                 ];
@@ -6859,7 +6859,7 @@ mod remote_cursor_tests {
             };
             let mut table = index_selection_table(capture.clone(), 2);
             let (projected, expected_ids, expected_handle, expected_projection) = if common {
-                table.pk_handle_offset = None;
+                *table.pk_handle_offset_mut() = None;
                 table.set_common_handle_offsets(vec![0, 1]);
                 table.set_common_handle_version(1);
                 (1, vec![2, 1, 2], vec![1, 2], vec![2])
@@ -6904,7 +6904,7 @@ mod remote_cursor_tests {
                 ..RequestCapture::default()
             };
             let mut table = index_selection_table(capture.clone(), index_prefix);
-            table.pk_handle_offset = None;
+            *table.pk_handle_offset_mut() = None;
             table.set_common_handle_offsets(vec![0, 1]);
             table.set_common_handle_version(1);
             let mut primary = table.indexes()[0].clone();
@@ -6920,7 +6920,7 @@ mod remote_cursor_tests {
                 let predicates = if filtered {
                     vec![index_selection_predicate(
                         1,
-                        table.columns[1].field_type.clone(),
+                        table.columns()[1].field_type.clone(),
                     )]
                 } else {
                     Vec::new()
@@ -6964,7 +6964,7 @@ mod remote_cursor_tests {
         ] {
             let mut table = index_selection_table(RequestCapture::default(), index_length)
                 .with_new_collation_mode(false);
-            table.pk_handle_offset = None;
+            *table.pk_handle_offset_mut() = None;
             table.set_common_handle_offsets(vec![1]);
             let mut primary = table.indexes()[0].clone();
             primary.id = 0;
@@ -7002,14 +7002,14 @@ mod remote_cursor_tests {
             ..RequestCapture::default()
         };
         let mut table = index_selection_table(capture.clone(), 2);
-        let column = column_at(1, table.columns[1].field_type.clone());
+        let column = column_at(1, table.columns()[1].field_type.clone());
         let null = call("isnull", vec![column.clone()]);
         let nested = call("not", vec![null]);
         let predicates = vec![call(
             "or",
             vec![
                 nested.clone(),
-                index_selection_predicate(0, table.columns[0].field_type.clone()),
+                index_selection_predicate(0, table.columns()[0].field_type.clone()),
             ],
         )];
         let mut cursor = table
@@ -7357,7 +7357,7 @@ mod remote_cursor_tests {
             "dirty reads retain transaction-aware fallback"
         );
         let statement = PushdownStatementContext::default();
-        table.read_partitions = Some(vec![102]);
+        *table.read_partitions_mut() = Some(vec![102]);
         assert!(
             table
                 .build_table_reader_from_routed_handles(
@@ -7388,7 +7388,7 @@ mod remote_cursor_tests {
                 .is_some(),
             "one selected partition supplies an unambiguous route"
         );
-        table.read_partitions = None;
+        *table.read_partitions_mut() = None;
         // A region cannot refuse a request (that is the lowering's answer,
         // before any send), so the failing send is what remains to pin.
         let capture = RequestCapture {

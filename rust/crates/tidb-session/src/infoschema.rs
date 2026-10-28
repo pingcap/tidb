@@ -270,7 +270,7 @@ pub(crate) fn tidb_index_usage_rows(
                 &schema,
                 &table.name(),
                 "primary",
-                collector.get_index_usage(table.table_id, 0),
+                collector.get_index_usage(table.table_id(), 0),
             ));
         }
         for index in table.indexes() {
@@ -278,7 +278,7 @@ pub(crate) fn tidb_index_usage_rows(
                 &schema,
                 &table.name(),
                 &index.name.go_to_lower(),
-                collector.get_index_usage(table.table_id, index.id),
+                collector.get_index_usage(table.table_id(), index.id),
             ));
         }
     }
@@ -473,14 +473,14 @@ fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec
                     / ids.len() as f64
             }
         } else {
-            tidb_ddl::tiflash_replica_manager::cached_replica_progress(table.table_id)
+            tidb_ddl::tiflash_replica_manager::cached_replica_progress(table.table_id())
                 .unwrap_or(fallback)
         };
         let progress = tidb_datatype::truncate(progress, 2);
         rows.push(vec![
             text(&schema),
             text(&table_name),
-            Datum::Int(table.table_id),
+            Datum::Int(table.table_id()),
             Datum::Int(replica.count as i64),
             text(
                 &replica
@@ -513,7 +513,7 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                 &schema,
                 &table_name,
                 "PRIMARY",
-                &table.columns[offset].name,
+                &table.columns()[offset].name,
                 1,
                 Datum::Int(1),
                 None,
@@ -535,7 +535,7 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                     &schema,
                     &table_name,
                     constraint_name,
-                    &table.columns[*offset].name,
+                    &table.columns()[*offset].name,
                     (position + 1) as i64,
                     Datum::Null,
                     None,
@@ -619,7 +619,7 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 },
                 StatisticsKeyPart {
                     sequence: 1,
-                    column_name: &table.columns[offset].name,
+                    column_name: &table.columns()[offset].name,
                     sub_part: Datum::Null,
                     nullable: false,
                     expression: Datum::Null,
@@ -628,7 +628,7 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
         }
         for index in table.indexes() {
             for (position, offset) in index.column_offsets.iter().enumerate() {
-                let column = &table.columns[*offset];
+                let column = &table.columns()[*offset];
                 let nullable =
                     column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
                 let (column_name, expression) = match &column.generated {
@@ -819,7 +819,7 @@ fn check_constraints_rows(
             ];
             if tidb_form {
                 row.push(text(&table_name));
-                row.push(Datum::Int(table.table_id));
+                row.push(Datum::Int(table.table_id()));
             }
             rows.push(row);
         }
@@ -2167,7 +2167,7 @@ fn table_or_partition_not_exist(
     if partition_name.is_empty() {
         !matches!(
             catalog.table_in(db_name, table_name),
-            Some(TableEntry::Kv(table)) if table.table_id == table_id
+            Some(TableEntry::Kv(table)) if table.table_id() == table_id
         )
     } else {
         catalog.find_table_by_partition_id(table_id).is_none()
@@ -2313,7 +2313,7 @@ fn tables_rows(
                 Datum::Null,
                 text(""),
                 text(""),
-                Datum::Int(table.table_id),
+                Datum::Int(table.table_id()),
                 Datum::Null,
                 text("NONCLUSTERED"),
                 Datum::Null,
@@ -2364,7 +2364,7 @@ fn tables_rows(
             Datum::Null,
             text(table_create_options(table)),
             text(&table.comment()),
-            Datum::Int(table.table_id),
+            Datum::Int(table.table_id()),
             text(&sharding_info(table)),
             text(&pk_type(table)),
             table
@@ -3174,7 +3174,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        let meta_key = format!("t{}", table.table_id);
+        let meta_key = format!("t{}", table.table_id());
         if let Some(offset) = table.pk_handle_offset() {
             entries.push((
                 schema.go_to_lower(),
@@ -3185,7 +3185,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                     Datum::Int(0),
                     text("PRIMARY"),
                     Datum::Int(1),
-                    text(&table.columns[offset].name),
+                    text(&table.columns()[offset].name),
                     Datum::Null,
                     text(""),
                     Datum::Null,
@@ -3206,7 +3206,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                 .partial_index_condition_string(index.id)
                 .map_or(Datum::Null, |condition| text(&condition));
             for (position, offset) in index.column_offsets.iter().enumerate() {
-                let column = &table.columns[*offset];
+                let column = &table.columns()[*offset];
                 let prefix = index.prefix_length(position);
                 // An expression key part is a hidden column: Go reports
                 // COLUMN_NAME 'NULL' beside its expression text.

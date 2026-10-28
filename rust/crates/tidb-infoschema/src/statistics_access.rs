@@ -25,7 +25,7 @@ use tidb_stats_handle::StatsHandle;
 /// indexes are all public; a column past the visible ones is hidden.
 pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo {
     tidb_stats::PseudoTableInfo {
-        id: table.table_id,
+        id: table.table_id(),
         pk_is_handle: table.pk_handle_offset().is_some(),
         columns: table
             .columns()
@@ -113,7 +113,7 @@ impl Catalog {
             } else {
                 item.id > 0
                     && self.kv_table_by_id(item.table_id).is_some_and(|table| {
-                        table.columns.iter().any(|column| column.id == item.id)
+                        table.columns().iter().any(|column| column.id == item.id)
                     })
             };
             let load_needed = handle
@@ -200,7 +200,7 @@ impl Catalog {
                 let Some(table) = self.kv_table_by_id(*table_id) else {
                     continue;
                 };
-                if let Some(column) = table.columns.iter().find(|column| {
+                if let Some(column) = table.columns().iter().find(|column| {
                     column
                         .generated
                         .as_ref()
@@ -233,14 +233,14 @@ impl Catalog {
                 continue;
             };
             let Some(name) = table
-                .columns
+                .columns()
                 .iter()
                 .find(|metadata| metadata.id == column.id)
                 .map(|metadata| metadata.name.as_str())
             else {
                 continue;
             };
-            index_source_columns.extend(table.columns.iter().filter_map(|metadata| {
+            index_source_columns.extend(table.columns().iter().filter_map(|metadata| {
                 let generated = metadata.generated.as_ref()?;
                 (!generated.stored
                     && generated
@@ -260,7 +260,7 @@ impl Catalog {
                 continue;
             };
             let Some(offset) = table
-                .columns
+                .columns()
                 .iter()
                 .position(|metadata| metadata.id == column.id)
             else {
@@ -426,7 +426,7 @@ impl Catalog {
                                 schemas.insert(definition.id, Arc::clone(&schema));
                             }
                         }
-                        schemas.insert(table.table_id, schema);
+                        schemas.insert(table.table_id(), schema);
                     }
                 }
                 schemas
@@ -450,7 +450,7 @@ impl Catalog {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;
                 };
-                if table.table_id != table_id {
+                if table.table_id() != table_id {
                     continue;
                 }
                 let table = Arc::make_mut(table);

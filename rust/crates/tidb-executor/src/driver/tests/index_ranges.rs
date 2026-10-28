@@ -79,7 +79,7 @@ fn planner_index_path(
             .iter()
             .find_map(|child| find_index_scan(child, table_id, visible))
     }
-    let scan = find_index_scan(&physical, table.table_id, visible)?;
+    let scan = find_index_scan(&physical, table.table_id(), visible)?;
     Some((
         scan.index_id,
         scan.ranges

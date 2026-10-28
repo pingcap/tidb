@@ -62,7 +62,7 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
         assert!(table.foreign_keys().is_empty(), "{name} must strip FKs");
         assert_eq!(table.pk_handle_offset(), Some(0), "{name} PKIsHandle");
         assert!(
-            table.columns[0]
+            table.columns()[0]
                 .field_type
                 .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
             "{name} first column NOT NULL"
@@ -233,7 +233,7 @@ fn create_table_like_at_temporary_mode_refusals_match_go() {
         panic!("test_gv_ddl_temp should be a KV table");
     };
     let generated: Vec<Option<bool>> = gv
-        .columns
+        .columns()
         .iter()
         .map(|column| column.generated.as_ref().map(|generated| generated.stored))
         .collect();

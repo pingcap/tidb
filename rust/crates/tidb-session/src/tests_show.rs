@@ -2436,7 +2436,7 @@ fn show_column_stats_usage_reads_global_and_partition_ids() {
                 panic!("table exists")
             };
             Ok((
-                table.table_id,
+                table.table_id(),
                 table.partition().unwrap().definitions[0].id,
                 table.columns()[0].id,
                 table.columns()[1].id,

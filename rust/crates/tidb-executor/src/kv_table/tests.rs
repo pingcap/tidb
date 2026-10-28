@@ -29,7 +29,7 @@ fn auto_id_owner_separates_hidden_handles_from_single_point_values() {
     table.set_auto_increment_offset(0);
     table.init_auto_id_cache(1);
     for expected in 1..=3 {
-        assert_eq!(table.auto_id.alloc(1, 1).unwrap(), expected);
+        assert_eq!(table.auto_id().alloc(1, 1).unwrap(), expected);
         let handle = table
             .handle_of_row(
                 &[Datum::Int(expected as i64), Datum::Null],
@@ -54,7 +54,7 @@ fn auto_id_owner_explicit_hidden_handle_does_not_rebase_auto_increment() {
             &crate::StmtContext::for_dml(false, false, false),
         )
         .unwrap();
-    assert_eq!(table.auto_id.alloc(1, 1).unwrap(), 1);
+    assert_eq!(table.auto_id().alloc(1, 1).unwrap(), 1);
 }
 
 #[test]
@@ -371,14 +371,14 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
         2,
         b"neighbor",
     ));
-    table.store.set(retired.clone(), vec![1]).unwrap();
-    table.store.set(retained.clone(), vec![2]).unwrap();
+    table.store_mut().set(retired.clone(), vec![1]).unwrap();
+    table.store_mut().set(retained.clone(), vec![2]).unwrap();
     assert!(table.drop_index("retired").unwrap());
     assert!(matches!(
-        table.store.get(&retired),
+        table.store_mut().get(&retired),
         Err(StorageError::NotFound)
     ));
-    assert_eq!(table.store.get(&retained).unwrap(), vec![2]);
+    assert_eq!(table.store_mut().get(&retained).unwrap(), vec![2]);
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
     use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
     for global in [false, true] {
         let mut table = KvTable::new(42, Vec::new());
-        table.partition = Some(Box::new(PartitionSpec {
+        *table.partition_mut() = Some(Box::new(PartitionSpec {
             kind: PartitionKind::Hash,
             expr_text: "0".to_owned(),
             expr: Expression::Constant(tidb_expr::constant::Constant::default()),
@@ -430,7 +430,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
             })
             .collect();
         for key in &keys {
-            table.store.set(key.clone(), vec![1]).unwrap();
+            table.store_mut().set(key.clone(), vec![1]).unwrap();
         }
         assert!(table.drop_index("retired").unwrap());
         for (id, key) in [42, 43, 44, 45].into_iter().zip(&keys) {
@@ -440,7 +440,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
                 id == 43 || id == 44
             };
             assert_eq!(
-                matches!(table.store.get(key), Err(StorageError::NotFound)),
+                matches!(table.store_mut().get(key), Err(StorageError::NotFound)),
                 removed,
                 "global={global}, table={id}"
             );
@@ -668,7 +668,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             .clone();
         let zone = tidb_datatype::SessionTimeZone::utc();
         let key = table
-            .index_entry_keys(&index, &row, &handle, table.table_id, &zone)
+            .index_entry_keys(&index, &row, &handle, table.table_id(), &zone)
             .unwrap()
             .remove(0)
             .key;
@@ -882,7 +882,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
         .unwrap();
     }
     // A row of the next table id, written into the same storage layout.
-    let mut neighbour = KvTable::new(t.table_id + 1, t.columns.to_vec());
+    let mut neighbour = KvTable::new(t.table_id() + 1, t.columns().to_vec());
     neighbour
         .insert_row(
             &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],

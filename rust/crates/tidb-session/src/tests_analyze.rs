@@ -117,7 +117,7 @@ fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
                 panic!("fresh_stats is not a stored table");
             };
             let stats = catalog
-                .table_statistics_in(&stats_handle, table.table_id)
+                .table_statistics_in(&stats_handle, table.table_id())
                 .unwrap();
             let column = stats.columns.values().next().unwrap();
             assert_eq!(column.total_row_count(), 3.0);
@@ -1253,7 +1253,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                     else {
                         panic!("{table_name} is not a KV table");
                     };
-                    let table_id = table.table_id;
+                    let table_id = table.table_id();
                     let requested = requested_ndvs
                         .iter()
                         .copied()
@@ -1539,7 +1539,7 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
     let TableEntry::Kv(table) = catalog.table_in("test", "partial_metadata").unwrap() else {
         panic!("KV table")
     };
-    let stats = catalog.table_statistics_in(&shared.stats_handle(), table.table_id).unwrap();
+    let stats = catalog.table_statistics_in(&shared.stats_handle(), table.table_id()).unwrap();
     assert_eq!(stats.stats_ver, 2);
     assert!(!stats.cache_pseudo);
     assert!(!stats.pseudo);

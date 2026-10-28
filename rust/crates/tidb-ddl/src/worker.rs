@@ -3015,14 +3015,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         let mut kv_table = cluster_table(table, &storage, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?;
         let Some(offset) = kv_table
-            .columns
+            .columns()
             .iter()
             .position(|column| column.id == column_id)
         else {
             return Ok(false);
         };
         // A NULL is what a NOT NULL copy of the column refuses.
-        let not_null = kv_table.columns[offset]
+        let not_null = kv_table.columns()[offset]
             .field_type
             .clone()
             .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
@@ -3086,7 +3086,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 .map_err(exchange_validation_internal)?
                 .with_new_collation_mode(tidb_datatype::new_collation_enabled());
             let offset = table
-                .columns
+                .columns()
                 .iter()
                 .position(|column| column.id == check.old_column_id)
                 .ok_or_else(|| {
@@ -3141,7 +3141,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     exchange_validation_internal("a column rewrite names no column".to_owned())
                 })?;
                 let old_offset = table
-                    .columns
+                    .columns()
                     .iter()
                     .position(|column| column.id == spec.old_column_id)
                     .ok_or_else(|| {

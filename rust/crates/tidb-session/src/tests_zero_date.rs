@@ -143,7 +143,7 @@ fn check_datetime_default_ddl(
                         panic!("d is not storage-backed");
                     };
                     Ok(table
-                        .columns
+                        .columns()
                         .iter()
                         .find(|column| column.name == "v")
                         .expect("default column v")

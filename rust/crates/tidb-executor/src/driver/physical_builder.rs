@@ -1241,7 +1241,7 @@ fn build_table_scan(
             })?,
     );
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
-    let logical_table_id = table.table_id;
+    let logical_table_id = table.table_id();
     let index_id = super::index_usage_reporter::cluster_index_id(&table);
     // Go's index-usage reporter reads the statement's `UsedStatsInfo` entry,
     // which `initStats` fills from `GetStatsTable`.
@@ -1428,14 +1428,14 @@ fn build_table_sample(
                 return Ok(SampleOutputColumn::ExtraCommitTs);
             }
             table
-                .columns
+                .columns()
                 .iter()
                 .position(|stored| stored.id == column.id)
                 .map(SampleOutputColumn::Stored)
                 .ok_or_else(|| {
                     DriverError::unsupported(format!(
                         "table-sample output column {} is absent from physical table {}",
-                        column.id, table.table_id
+                        column.id, table.table_id()
                     ))
                 })
         })
@@ -2481,13 +2481,13 @@ fn reader_output_offsets(
             .find(|column| column.unique_id == output.unique_id)
             .unwrap_or(output);
         let Some(offset) = table
-            .columns
+            .columns()
             .iter()
             .position(|column| column.id == source.id)
             .or_else(|| {
                 source.orig_name.rsplit('.').next().and_then(|name| {
                     table
-                        .columns
+                        .columns()
                         .iter()
                         .position(|column| column.name.eq_ignore_ascii_case(name))
                 })
@@ -2669,14 +2669,14 @@ fn build_index_reader(
                     index
                         .column_offsets
                         .iter()
-                        .position(|offset| table.columns[*offset].id == column.id)
+                        .position(|offset| table.columns()[*offset].id == column.id)
                 })
                 .ok_or_else(|| {
                     DriverError::unsupported("a prefix Limit column is absent from its index")
                 })
         })
         .transpose()?;
-    let logical_table_id = table.table_id;
+    let logical_table_id = table.table_id();
     let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
@@ -4608,14 +4608,14 @@ fn table_output_columns(
                 return Ok(HandleOutputColumn::RowChecksum);
             }
             table
-                .columns
+                .columns()
                 .iter()
                 .position(|stored| stored.id == column.id)
                 .map(HandleOutputColumn::Stored)
                 .ok_or_else(|| {
                     DriverError::unsupported(format!(
                         "retained table output column {} is absent from physical table {}",
-                        column.id, table.table_id
+                        column.id, table.table_id()
                     ))
                 })
         })
@@ -4804,7 +4804,7 @@ fn point_partition_id(
                 "partition point key width is invalid",
             ));
         }
-        let mut row = vec![tidb_datatype::Datum::Null; table.columns.len()];
+        let mut row = vec![tidb_datatype::Datum::Null; table.columns().len()];
         for (&offset, value) in offsets.iter().zip(values) {
             row[offset] = value;
         }
@@ -4847,7 +4847,7 @@ fn point_partition_id(
                 "partition point key width is invalid",
             ));
         }
-        let mut row = vec![tidb_datatype::Datum::Null; table.columns.len()];
+        let mut row = vec![tidb_datatype::Datum::Null; table.columns().len()];
         for (&offset, value) in table.common_handle_offsets().iter().zip(values) {
             row[offset] = value.clone();
         }
@@ -4983,7 +4983,7 @@ fn select_lock_executor(
                         .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?
                 };
                 let physical_id =
-                    partition_offset.map_or(table.table_id, |offset| row.get_int64(offset));
+                    partition_offset.map_or(table.table_id(), |offset| row.get_int64(offset));
                 if physical_id == 0 {
                     return Ok(None);
                 }
@@ -5287,7 +5287,7 @@ fn build_batch_point_get(
     if batch.keep_order {
         let unsigned_pk_is_handle = table
             .pk_handle_offset()
-            .and_then(|offset| table.columns.get(offset))
+            .and_then(|offset| table.columns().get(offset))
             .is_some_and(|column| column.field_type.is_unsigned());
         sort_handles_for_keep_order(&mut handles, batch.desc, unsigned_pk_is_handle);
     }
@@ -5372,8 +5372,8 @@ fn batch_point_usage_stats(
     table: &crate::kv_table::KvTable,
 ) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
     // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
-    if crate::access_cost::table_statistics(ctx, catalog, table.table_id).is_some() {
-        return crate::access_cost::get_stats_table(ctx, catalog, table.table_id);
+    if crate::access_cost::table_statistics(ctx, catalog, table.table_id()).is_some() {
+        return crate::access_cost::get_stats_table(ctx, catalog, table.table_id());
     }
     let partition = table.partition()?;
     let mut row_count = 0_i64;
@@ -5410,7 +5410,7 @@ fn partial_handle_columns(
     table: &crate::KvTable,
 ) -> Result<PartialHandleColumns, DriverError> {
     let table_column_slot = |offset: usize| {
-        let id = table.columns.get(offset)?.id;
+        let id = table.columns().get(offset)?.id;
         // Common handles are a suffix, even when an index column has the
         // same ID (and may contain only a prefix of the full key value).
         schema.columns.iter().rposition(|column| column.id == id)
@@ -7447,7 +7447,7 @@ fn build_union_scan(
     // The buffered entries of every physical table the reader can reach,
     // and of the logical table a global index is keyed under.
     let mut physical_ids = table.record_physical_ids();
-    physical_ids.push(table.table_id);
+    physical_ids.push(table.table_id());
     physical_ids.push(reader.table_id);
     physical_ids.sort_unstable();
     physical_ids.dedup();
@@ -7506,7 +7506,7 @@ fn build_union_scan(
                 .column_offsets
                 .iter()
                 .filter_map(|offset| {
-                    let name = &table.columns.get(*offset)?.name;
+                    let name = &table.columns().get(*offset)?.name;
                     schema.columns.iter().position(|column| {
                         column
                             .orig_name

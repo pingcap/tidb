@@ -486,10 +486,10 @@ pub(super) fn dirty_statement_tables(
                 .definitions
                 .iter()
                 .any(|definition| dirty.contains(&definition.id)),
-            None => dirty.contains(&table.table_id),
+            None => dirty.contains(&table.table_id()),
         };
         if is_dirty {
-            ids.push(table.table_id);
+            ids.push(table.table_id());
         }
     }
     ids.sort_unstable();

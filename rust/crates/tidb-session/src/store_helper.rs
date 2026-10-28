@@ -177,7 +177,7 @@ pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
             };
             let table = match entry {
                 TableEntry::Kv(table) => HelperTable {
-                    id: table.table_id,
+                    id: table.table_id(),
                     name: table.name(),
                     partitions: table
                         .partition()

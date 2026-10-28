@@ -136,7 +136,7 @@ pub fn split_region(
     // failed split is logged, and the regions it did create are reported.
     let start = std::time::Instant::now();
     let store = ctx.region_store();
-    let (region_ids, _error) = store.split_regions(keys, true, Some(table.table_id));
+    let (region_ids, _error) = store.split_regions(keys, true, Some(table.table_id()));
     let regions = region_ids.len();
     let mut finished = 0;
     if regions > 0 && wait_finish {
@@ -354,7 +354,7 @@ fn physical_ids(
     table_name: &str,
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {
-        return Ok(vec![table.table_id]);
+        return Ok(vec![table.table_id()]);
     };
     if stmt.partitions.is_empty() {
         return Ok(partition

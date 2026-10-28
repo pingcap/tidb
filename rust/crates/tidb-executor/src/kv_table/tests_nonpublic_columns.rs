@@ -88,7 +88,7 @@ fn writes_carry_nonpublic_columns_like_go() {
 
     // Once delete-only, a column is no longer written.
     let mut later = table.clone_for_test_nonpublic();
-    Arc::make_mut(&mut later.nonpublic_columns)[0].state = tidb_model::SchemaState::DELETE_ONLY;
+    Arc::make_mut(later.nonpublic_columns_arc_mut())[0].state = tidb_model::SchemaState::DELETE_ONLY;
     let handle = later
         .insert_row_with_row_id_checked(
             &[Datum::Int(2), Datum::Int(3)],

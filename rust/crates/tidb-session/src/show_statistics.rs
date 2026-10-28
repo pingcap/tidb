@@ -42,7 +42,7 @@ impl Session {
                         continue;
                     };
                     let mut targets = vec![(
-                        table.table_id,
+                        table.table_id(),
                         tidb_executor::show_stats::column_stats_usage_label(
                             table.partition().is_some(),
                             None,
@@ -145,7 +145,7 @@ impl Session {
                     .into_iter()
                     .filter_map(|name| {
                         catalog.table_in(&database, &name).map(|entry| match entry {
-                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id(), name),
                             _ => (i64::MAX, name),
                         })
                     })
@@ -168,7 +168,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -233,7 +233,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -275,7 +275,7 @@ impl Session {
                     .into_iter()
                     .filter_map(|name| {
                         catalog.table_in(&database, &name).map(|entry| match entry {
-                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id(), name),
                             _ => (i64::MAX, name),
                         })
                     })
@@ -298,7 +298,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -343,7 +343,7 @@ impl Session {
                     .into_iter()
                     .filter_map(|name| {
                         catalog.table_in(&database, &name).map(|entry| match entry {
-                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id(), name),
                             _ => (i64::MAX, name),
                         })
                     })
@@ -366,7 +366,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -464,7 +464,7 @@ impl Session {
                     .into_iter()
                     .filter_map(|name| {
                         catalog.table_in(&database, &name).map(|entry| match entry {
-                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id(), name),
                             _ => (i64::MAX, name),
                         })
                     })
@@ -487,7 +487,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -595,7 +595,7 @@ impl Session {
                     .into_iter()
                     .filter_map(|name| {
                         catalog.table_in(&database, &name).map(|entry| match entry {
-                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id(), name),
                             _ => (i64::MAX, name),
                         })
                     })
@@ -618,7 +618,7 @@ impl Session {
                         })
                         .unwrap_or_default();
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
-                        table.table_id,
+                        table.table_id(),
                         &partitions,
                         dynamic_partition_prune,
                     ) {
@@ -765,7 +765,7 @@ pub(crate) fn analyze_status_rows_of(
                     return Ok(None);
                 };
                 let physical_id = if job.partition_name.is_empty() {
-                    table.table_id
+                    table.table_id()
                 } else {
                     table
                         .partition()

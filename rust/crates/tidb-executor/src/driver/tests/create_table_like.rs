@@ -43,7 +43,7 @@ fn like_copies_the_structure_and_none_of_the_rows() {
 
     // Structure inherited: both indexes, by name and uniqueness.
     let dst = kv(&catalog, "dst");
-    assert_eq!(dst.columns.len(), 2);
+    assert_eq!(dst.columns().len(), 2);
     let indexes: Vec<(&str, bool)> = dst
         .indexes()
         .iter()
@@ -250,7 +250,7 @@ fn like_copies_partitioning_with_fresh_physical_ids() {
             !source_ids.contains(id),
             "a copied partition reused the source's physical id {id}"
         );
-        assert_ne!(*id, copy.table_id);
+        assert_ne!(*id, copy.table_id());
     }
 
     // The rows land in the copy's own partitions, not the source's.

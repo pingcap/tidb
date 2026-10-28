@@ -96,7 +96,7 @@ impl ChecksumContext {
         Self {
             db_name: db_name.to_owned(),
             table_name: table.name().to_owned(),
-            table_id: table.table_id,
+            table_id: table.table_id(),
             partition_ids: table.partition().map_or_else(Vec::new, |partition| {
                 partition
                     .definitions

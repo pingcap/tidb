@@ -1073,7 +1073,7 @@ fn issue_40135_modify_partition_column() {
     // carrier-free equivalent is the stored column type + partitioning.
     {
         let table = kv_table(&tk, "t40135");
-        let first = table.columns.first().unwrap();
+        let first = table.columns().first().unwrap();
         assert_eq!(first.name, "a");
         assert_eq!(
             first.field_type.code(),
@@ -1248,7 +1248,7 @@ fn issue_57780_add_and_change_column_on_partitioned_table() {
     // The change must have landed on the stored metadata as decimal(11,2).
     let table = kv_table(&tk, "cis_assay_report_detail");
     let column = table
-        .columns
+        .columns()
         .iter()
         .find(|column| column.name == "test_decimal")
         .expect("test_decimal must exist after add + change");

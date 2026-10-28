@@ -463,7 +463,7 @@ pub struct KvTable {
     /// its id here and what its setters record.
     meta: tidb_model::GoShared<tidb_model::TableInfo>,
     /// The table id (Go `TableInfo.ID`), the record-key prefix.
-    pub table_id: i64,
+    pub(crate) table_id: i64,
     /// `(row count, average row length, data length, index length)` from Go
     /// `TableSizeStats.EstimateDataLength` for this catalog image.
     storage_statistics: (u64, u64, u64, u64),
@@ -490,7 +490,7 @@ pub struct KvTable {
     /// through [`KvTable::columns_mut`], whose `Arc::make_mut` is Go's
     /// build-a-new-TableInfo, one shared metadata copied only when a DDL
     /// actually changes it.
-    pub columns: std::sync::Arc<Vec<KvColumn>>,
+    pub(crate) columns: std::sync::Arc<Vec<KvColumn>>,
     /// How many of the TRAILING entries of `columns` are hidden (Go
     /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
     hidden_columns: usize,
@@ -504,23 +504,23 @@ pub struct KvTable {
     mv_key_part_sources: std::collections::BTreeMap<i64, String>,
     /// The byte store, reached through the [`TableStorage`] seam (module
     /// doc), so a TiKV-backed backend replaces it without touching this file.
-    pub store: Box<dyn TableStorage>,
+    pub(crate) store: Box<dyn TableStorage>,
     /// The statement budget a reader's own copy counts its scanned keys
     /// against (see [`Self::count_keys_read`]); `None` on catalog tables and
     /// on reads Go serves outside the coprocessor.
     keys_read: Option<tidb_kv::keys_read::KeysReadBudget>,
     /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
     /// column whose value IS the row handle, when the table has one.
-    pub pk_handle_offset: Option<usize>,
+    pub(crate) pk_handle_offset: Option<usize>,
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
-    pub indexes: std::sync::Arc<Vec<KvIndex>>,
+    pub(crate) indexes: std::sync::Arc<Vec<KvIndex>>,
     /// Indexes a DDL is still adding or dropping; written by state only.
     nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
     /// Columns a DDL is adding, dropping or changing. A write row carries
     /// their values after the public columns (offset `columns.len() + i`),
     /// which is where a non-public index's key parts address them.
-    pub nonpublic_columns: std::sync::Arc<Vec<NonPublicColumn>>,
+    pub(crate) nonpublic_columns: std::sync::Arc<Vec<NonPublicColumn>>,
     /// Go `ColumnInfo.ChangingFieldType` of public columns, by offset: the
     /// type a MODIFY COLUMN that rewrites no rows is checking writes against.
     changing_field_types: std::collections::BTreeMap<usize, FieldType>,
@@ -537,22 +537,22 @@ pub struct KvTable {
     /// Go `IndexInfo.ConditionExprString` as the in-process DDL installed it
     /// (restored with the DDL session's connection charset, then through the
     /// meta JSON reload). A predicate without one prints its restored source.
-    pub partial_index_condition_texts: std::collections::BTreeMap<i64, String>,
+    pub(crate) partial_index_condition_texts: std::collections::BTreeMap<i64, String>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
     /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
-    pub auto_id: AutoIdAllocator,
-    pub row_id: Option<AutoIdAllocator>,
+    pub(crate) auto_id: AutoIdAllocator,
+    pub(crate) row_id: Option<AutoIdAllocator>,
     /// The `AUTO_RANDOM` handle layout and its distinct TARID allocator.
     auto_random: Option<AutoRandomSpec>,
-    pub auto_random_id: AutoIdAllocator,
+    pub(crate) auto_random_id: AutoIdAllocator,
     /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
-    pub common_handle_offsets: Vec<usize>,
+    pub(crate) common_handle_offsets: Vec<usize>,
     /// Go `IndexColumn.Length` for each common-handle column.
-    pub common_handle_prefix_lengths: Vec<i64>,
+    pub(crate) common_handle_prefix_lengths: Vec<i64>,
     /// During ALTER TABLE ... PARTITION BY / REMOVE PARTITIONING: the
     /// table's new ID (`PartitionInfo.NewTableID`) and the global indexes the
     /// job created (`DDLChangedIndex` true), whose entries are keyed under it.
@@ -564,7 +564,7 @@ pub struct KvTable {
     /// `index` it constructs. It is deliberately table state rather than a
     /// global read at each key/value call: one entry must never combine a
     /// legacy key with a new-collation restored-data value, or vice versa.
-    pub use_new_collation: bool,
+    pub(crate) use_new_collation: bool,
     /// Whether every loaded column is public. Point-read planning must not
     /// bypass the ordinary reader while a column is in a DDL transition.
     all_columns_public: bool,
@@ -587,7 +587,7 @@ pub struct KvTable {
     /// record key goes through [`KvTable::record_physical_id`], which reads
     /// this field once and then has no cases left. See
     /// [`crate::partition_routing`].
-    pub partition: Option<Box<crate::partition_routing::PartitionSpec>>,
+    pub(crate) partition: Option<Box<crate::partition_routing::PartitionSpec>>,
     /// The physical ids a READ of this table may touch, when something has
     /// narrowed them: `PARTITION (p)` naming them explicitly, or pruning
     /// proving the rest cannot match. `None` is "every partition", which is
@@ -602,7 +602,7 @@ pub struct KvTable {
     ///
     /// Writes ignore it: a row's partition is a function of the ROW (Go's
     /// `locatePartition`), never of the statement's restriction.
-    pub read_partitions: Option<Vec<i64>>,
+    pub(crate) read_partitions: Option<Vec<i64>>,
 }
 
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
@@ -969,6 +969,137 @@ impl KvTable {
 
     pub fn columns_mut(&mut self) -> &mut Vec<KvColumn> {
         std::sync::Arc::make_mut(&mut self.columns)
+    }
+
+    /// Go `Meta().ID`: the table's id.
+    #[must_use]
+    pub const fn table_id(&self) -> i64 {
+        self.table_id
+    }
+
+    /// Re-keys the table under another physical id (a partition's).
+    pub fn set_table_id(&mut self, id: i64) {
+        self.table_id = id;
+    }
+
+    /// The storage seam this table reads and writes through.
+    #[must_use]
+    pub fn store(&self) -> &dyn TableStorage {
+        &*self.store
+    }
+
+    /// The storage seam, mutably (rebinding a table to a statement's store).
+    pub fn store_mut(&mut self) -> &mut Box<dyn TableStorage> {
+        &mut self.store
+    }
+
+    /// The shared column list.
+    #[must_use]
+    pub fn columns_arc(&self) -> &std::sync::Arc<Vec<KvColumn>> {
+        &self.columns
+    }
+
+    /// The shared column list, for copy-on-write edits.
+    pub fn columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<KvColumn>> {
+        &mut self.columns
+    }
+
+    /// The shared index list.
+    #[must_use]
+    pub fn indexes_arc(&self) -> &std::sync::Arc<Vec<KvIndex>> {
+        &self.indexes
+    }
+
+    /// The shared index list, for copy-on-write edits.
+    pub fn indexes_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<KvIndex>> {
+        &mut self.indexes
+    }
+
+    /// The shared non-public column list, for copy-on-write edits.
+    pub fn nonpublic_columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<NonPublicColumn>> {
+        &mut self.nonpublic_columns
+    }
+
+    /// The handle column's offset, for edits.
+    pub fn pk_handle_offset_mut(&mut self) -> &mut Option<usize> {
+        &mut self.pk_handle_offset
+    }
+
+    /// The auto-increment allocator.
+    #[must_use]
+    pub fn auto_id(&self) -> &AutoIdAllocator {
+        &self.auto_id
+    }
+
+    /// The auto-increment allocator, mutably.
+    pub fn auto_id_mut(&mut self) -> &mut AutoIdAllocator {
+        &mut self.auto_id
+    }
+
+    /// The hidden row-id allocator.
+    #[must_use]
+    pub fn row_id(&self) -> Option<&AutoIdAllocator> {
+        self.row_id.as_ref()
+    }
+
+    /// The hidden row-id allocator, mutably.
+    pub fn row_id_mut(&mut self) -> &mut Option<AutoIdAllocator> {
+        &mut self.row_id
+    }
+
+    /// The auto-random allocator.
+    #[must_use]
+    pub fn auto_random_id(&self) -> &AutoIdAllocator {
+        &self.auto_random_id
+    }
+
+    /// The auto-random allocator, mutably.
+    pub fn auto_random_id_mut(&mut self) -> &mut AutoIdAllocator {
+        &mut self.auto_random_id
+    }
+
+    /// Partial-index condition texts by index id.
+    #[must_use]
+    pub fn partial_index_condition_texts(&self) -> &std::collections::BTreeMap<i64, String> {
+        &self.partial_index_condition_texts
+    }
+
+    /// Partial-index condition texts, mutably.
+    pub fn partial_index_condition_texts_mut(
+        &mut self,
+    ) -> &mut std::collections::BTreeMap<i64, String> {
+        &mut self.partial_index_condition_texts
+    }
+
+    /// The partitions a read is restricted to, if any.
+    #[must_use]
+    pub fn read_partitions(&self) -> Option<&[i64]> {
+        self.read_partitions.as_deref()
+    }
+
+    /// The partition restriction, mutably.
+    pub fn read_partitions_mut(&mut self) -> &mut Option<Vec<i64>> {
+        &mut self.read_partitions
+    }
+
+    /// The partition spec, mutably.
+    pub fn partition_mut(&mut self) -> &mut Option<Box<crate::partition_routing::PartitionSpec>> {
+        &mut self.partition
+    }
+
+    /// The handle columns' offsets, mutably.
+    pub fn common_handle_offsets_mut(&mut self) -> &mut Vec<usize> {
+        &mut self.common_handle_offsets
+    }
+
+    /// The handle columns' prefix lengths, mutably.
+    pub fn common_handle_prefix_lengths_mut(&mut self) -> &mut Vec<i64> {
+        &mut self.common_handle_prefix_lengths
+    }
+
+    /// Whether the table uses the new-collation encoding, mutably.
+    pub fn use_new_collation_mut(&mut self) -> &mut bool {
+        &mut self.use_new_collation
     }
 
     /// All table columns in physical offset order, including hidden columns

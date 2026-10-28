@@ -86,7 +86,7 @@ fn index_part_text(
     prefix_length: i64,
     ansi_quotes: bool,
 ) -> String {
-    let column = &table.columns[offset];
+    let column = &table.columns()[offset];
     match column
         .generated
         .as_ref()
@@ -140,7 +140,7 @@ pub(super) fn show_create_table_text(
         }
         _ => format!("CREATE TABLE {} (\n", escape_name(name, ansi_quotes)),
     };
-    let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
+    let mut clauses: Vec<String> = Vec::with_capacity(table.columns().len() + 1);
 
     let table_charset = table.charset();
     // Only the VISIBLE columns get a definition line: the hidden column an
@@ -294,7 +294,7 @@ pub(super) fn show_create_table_text(
     if primary_emitted_from_handles {
         let columns = handle_columns
             .iter()
-            .map(|offset| escape_name(&table.columns[*offset].name, ansi_quotes))
+            .map(|offset| escape_name(&table.columns()[*offset].name, ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         clauses.push(format!(

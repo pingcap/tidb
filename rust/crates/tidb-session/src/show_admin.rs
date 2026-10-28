@@ -328,9 +328,9 @@ impl crate::Session {
                         // `GetClient()` and `getSnapshotTS()`.
                         if client.is_none() {
                             client = table
-                                .store
+                                .store()
                                 .client()
-                                .map(|client| (client, table.store.start_ts()));
+                                .map(|client| (client, table.store().start_ts()));
                         }
                         contexts.push(tidb_executor::checksum::ChecksumContext::new(
                             database, table,

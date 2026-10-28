@@ -32,7 +32,7 @@ fn kv_table(tk: &TestKit, database: &str, name: &str) -> KvTable {
 /// One column of [`kv_table`], Go `tbl.Meta().Columns[i]`.
 fn column(tk: &TestKit, database: &str, table_name: &str, name: &str) -> KvColumn {
     kv_table(tk, database, table_name)
-        .columns
+        .columns()
         .iter()
         .find(|column| column.name.eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("no column {name} in {database}.{table_name}"))
@@ -137,7 +137,7 @@ fn add_column_if_not_exists_skips_duplicates_and_continues_grouped_adds() {
     let table = kv_table(&tk, "test", "t");
     assert_eq!(
         table
-            .columns
+            .columns()
             .iter()
             .map(|column| column.name.as_str())
             .collect::<Vec<_>>(),
@@ -371,7 +371,7 @@ fn issue_5092_add_drop_column_positions_and_guards() {
          add column f int after c1, add column g int, add column h int first",
     );
     let names: Vec<String> = kv_table(&tk, "test", "t_issue_5092")
-        .columns
+        .columns()
         .iter()
         .map(|c| c.name.clone())
         .collect();

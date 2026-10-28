@@ -792,7 +792,7 @@ impl Session {
         let Some(table) = temporary else {
             return Ok(None);
         };
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let statistics = self
             .analyze_one_table(statement)?
             .remove(&table_id)
@@ -839,7 +839,7 @@ impl Session {
             })?;
             if let Some((table, partition_ids)) = target {
                 for physical_id in
-                    std::iter::once(table.table_id).chain(partition_ids.iter().copied())
+                    std::iter::once(table.table_id()).chain(partition_ids.iter().copied())
                 {
                     let rows = self.exec_restricted_sql(&format!(
                         "select sample_num,sample_rate,buckets,topn,column_choice,column_ids \
@@ -857,7 +857,7 @@ impl Session {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => {
                     let partition_ids = analyze_partition_ids(kv, &statement.partitions)?;
-                    (kv.table_id, partition_ids, kv.clone())
+                    (kv.table_id(), partition_ids, kv.clone())
                 }
                 // Go raises 1146 for a name that is not a table, and
                 // `ErrAnalyzeMissColumn`-adjacent refusals for a view or a

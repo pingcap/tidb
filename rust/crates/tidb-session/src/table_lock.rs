@@ -111,7 +111,7 @@ impl Checker<'_> {
             return Ok(());
         };
         if privilege == tidb_mysql::DropPriv && tb.name() == table && self.has_locked_tables() {
-            if self.locked_tables.contains_key(&tb.table_id) {
+            if self.locked_tables.contains_key(&tb.table_id()) {
                 if lock.tp == TableLockType::WRITE {
                     return Err(LockCheckError::LockedTableDropped);
                 }
@@ -128,7 +128,7 @@ impl Checker<'_> {
             }
         }
         if !alter_writable && self.has_locked_tables() {
-            if let Some(held) = self.locked_tables.get(&tb.table_id) {
+            if let Some(held) = self.locked_tables.get(&tb.table_id()) {
                 if check_lock_tp_meet_privilege(held.tp, privilege) {
                     return Ok(());
                 }
@@ -416,7 +416,7 @@ impl Session {
                 }
             };
             check_table_locked(table, lock.lock_type, &info)?;
-            if !unique_table_id.insert(table.table_id) {
+            if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
                         .generate_with_stack_by_args(&[table.name().into()]),
@@ -424,7 +424,7 @@ impl Session {
             }
             lock_tables.push(TableLockTpInfo {
                 schema_id,
-                table_id: table.table_id,
+                table_id: table.table_id(),
                 tp: lock.lock_type,
             });
         }
@@ -621,7 +621,7 @@ impl Session {
             if !table.is_locked() {
                 unlocked += 1;
             }
-            if !unique_table_id.insert(table.table_id) {
+            if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
                         .generate_with_stack_by_args(&[table.name().into()]),
@@ -629,7 +629,7 @@ impl Session {
             }
             cleanup.push(TableLockTpInfo {
                 schema_id,
-                table_id: table.table_id,
+                table_id: table.table_id(),
                 tp: TableLockType::NONE,
             });
         }

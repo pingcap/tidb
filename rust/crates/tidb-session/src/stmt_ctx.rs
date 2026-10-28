@@ -872,7 +872,7 @@ impl Session {
         let mut schema = self.catalog.lock().ok()?.latest_index_schema();
         for (_, _, table) in &self.local_temporary_tables {
             Arc::make_mut(&mut schema).table_indexes.insert(
-                table.table_id,
+                table.table_id(),
                 table
                     .indexes()
                     .iter()

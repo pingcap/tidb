@@ -456,8 +456,8 @@ impl Catalog {
                         } else {
                             table.name().clone()
                         };
-                        let table_id = if table.table_id != 0 {
-                            table.table_id
+                        let table_id = if table.table_id() != 0 {
+                            table.table_id()
                         } else {
                             memory_table_id(&database.name, entry_name)
                         };
@@ -616,7 +616,7 @@ impl Catalog {
                         continue;
                     };
                     table_indexes.insert(
-                        table.table_id,
+                        table.table_id(),
                         table
                             .indexes()
                             .iter()
@@ -647,7 +647,7 @@ fn kv_source_table(
     use tidb_planner::plan_builder::catalog::{SourceColumn, SourceIndex, SourceIndexColumn};
 
     let columns = table
-        .columns
+        .columns()
         .iter()
         .enumerate()
         .map(|(offset, column)| SourceColumn {
@@ -693,7 +693,7 @@ fn kv_source_table(
                 .iter()
                 .enumerate()
                 .filter_map(|(position, offset)| {
-                    table.columns.get(*offset).map(|column| SourceIndexColumn {
+                    table.columns().get(*offset).map(|column| SourceIndexColumn {
                         name: column.name.clone(),
                         offset: *offset,
                         length: index.prefix_length(position),
@@ -724,10 +724,10 @@ fn kv_source_table(
         })
         .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
     let mut source_table = tidb_planner::plan_builder::catalog::SourceTable {
-        table_id: table.table_id,
+        table_id: table.table_id(),
         table_name: table.name().clone(),
         db_name: db_name.to_owned(),
-        physical_table_id: table.table_id,
+        physical_table_id: table.table_id(),
         is_partitioned: table.partition().is_some(),
         partition_expression_is_column: table.partition().is_some_and(
             |partition| {

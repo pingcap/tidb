@@ -792,7 +792,7 @@ impl Optimizer for SessionOptimizer<'_> {
                         .generate_with_stack_by_args(&[(&database).into(), (&table).into()]),
                 ));
             };
-            let statistics = catalog.table_statistics_in(&stats_handle, stored.table_id);
+            let statistics = catalog.table_statistics_in(&stats_handle, stored.table_id());
             let row_count = statistics
                 .as_ref()
                 .map_or(0.0, |stats| stats.row_count as f64);

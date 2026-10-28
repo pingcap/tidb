@@ -157,7 +157,7 @@ fn declared(catalog: &Catalog, database: &str, table: &str) -> (Vec<KvForeignKey
     match catalog.get_in(database, table) {
         Some(TableEntry::Kv(kv)) => (
             kv.foreign_keys().to_vec(),
-            kv.columns.iter().map(|c| c.name.clone()).collect(),
+            kv.columns().iter().map(|c| c.name.clone()).collect(),
         ),
         _ => (Vec::new(), Vec::new()),
     }
@@ -708,7 +708,7 @@ fn cascade_at_depth(
                         let level = crate::bad_null::NullLevel::from_is_error(
                             ctx.strict() && !ctx.ignore_err(),
                         );
-                        for (value, column) in new.iter_mut().zip(kv.columns.iter()) {
+                        for (value, column) in new.iter_mut().zip(kv.columns().iter()) {
                             crate::bad_null::handle_bad_null(
                                 value,
                                 &column.field_type,

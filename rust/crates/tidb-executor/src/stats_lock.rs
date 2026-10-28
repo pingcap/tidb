@@ -75,7 +75,7 @@ pub fn execute_catalog_stats_lock(
                 })?;
             partition_names.insert(definition.id, written_name.go_to_lower());
         }
-        let table_id = table.table_id;
+        let table_id = table.table_id();
         let displayed_table = if lock {
             format!("{}.{}", database.go_to_lower(), table_name.go_to_lower())
         } else {
@@ -122,7 +122,7 @@ pub fn execute_catalog_stats_lock(
                 .collect()
         });
         tables.insert(
-            table.table_id,
+            table.table_id(),
             tidb_stats::StatsLockTable {
                 partition_info,
                 full_name: format!("{}.{}", database.go_to_lower(), table_name.go_to_lower()),

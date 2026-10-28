@@ -108,7 +108,7 @@ impl Session {
                     warnings.push((error.code, error.message));
                     return;
                 };
-                ids.push(table.table_id);
+                ids.push(table.table_id());
                 if let Some(partition) = table.partition() {
                     ids.extend(partition.definitions.iter().map(|definition| definition.id));
                 }
@@ -216,11 +216,11 @@ impl Session {
         }
         let mut ids = Vec::new();
         if stmt.global {
-            ids.push(tables[0].table_id);
+            ids.push(tables[0].table_id());
         } else if stmt.partitions.is_empty() {
             for table in &tables {
                 ids.extend(get_physical_ids_and_partition_names(table, &[])?);
-                ids.push(table.table_id);
+                ids.push(table.table_id());
             }
         } else {
             ids = get_physical_ids_and_partition_names(&tables[0], &stmt.partitions)?;
@@ -301,7 +301,7 @@ pub(crate) fn get_physical_ids_and_partition_names(
                     .generate_with_stack_by_args(&[]),
             ));
         }
-        return Ok(vec![table.table_id]);
+        return Ok(vec![table.table_id()]);
     };
     if partition_names.is_empty() {
         return Ok(partition

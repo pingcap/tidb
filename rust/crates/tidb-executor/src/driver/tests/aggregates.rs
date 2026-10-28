@@ -1451,7 +1451,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
             .find(|index| index.name == "k_1")
             .map(|index| index.id)
             .expect("k_1 index");
-        (table.table_id, k_column_id, index_id)
+        (table.table_id(), k_column_id, index_id)
     };
     let analyzed_stats = |column_id: i64, index_id: i64| {
         let mut topn = tidb_stats::cmsketch::TopN::new(100);

@@ -66,8 +66,8 @@ pub(crate) fn show_index_rows(
             true,
             true,
             1,
-            Some(&table.columns[offset].name),
-            column_ndv(table.columns[offset].id),
+            Some(&table.columns()[offset].name),
+            column_ndv(table.columns()[offset].id),
             None,
             false,
             "",
@@ -80,7 +80,7 @@ pub(crate) fn show_index_rows(
         // Go `tb.Meta().IsCommonHandle && idxInfo.Primary`.
         let clustered = index.primary && !table.common_handle_offsets().is_empty();
         for (position, offset) in index.column_offsets.iter().enumerate() {
-            let column = &table.columns[*offset];
+            let column = &table.columns()[*offset];
             let nullable = column.field_type.flags() & FieldTypeFlags::NOT_NULL == 0;
             let expression = column
                 .generated

@@ -97,11 +97,11 @@ impl KvTableDdl for KvTable {
         // store needs one COW image for the entire backfill instead of repair
         // writes that can themselves fail or hide the original error.
         let original =
-            (!self.store.has_external_statement_rollback()).then(|| self.store.clone_box());
+            (!self.store().has_external_statement_rollback()).then(|| self.store().clone_box());
         let result = self.backfill_index(index, ctx, decode_context);
         if result.is_err() {
             if let Some(original) = original {
-                self.store = original;
+                *self.store_mut() = original;
             }
         }
         result
@@ -115,7 +115,7 @@ impl KvTableDdl for KvTable {
     ) -> Result<usize, KvTableError> {
         let zone = ctx.time_zone();
         if self
-            .indexes
+            .indexes()
             .iter()
             .any(|existing| existing.name.go_lower_eq(&index.name))
         {
@@ -161,7 +161,7 @@ impl KvTableDdl for KvTable {
                     physical_id,
                     &zone,
                 )?;
-                self.store.set(key, value).map_err(KvTableError::from)?;
+                self.store_mut().set(key, value).map_err(KvTableError::from)?;
             }
         }
         self.record_mv_key_part_source(&index);
@@ -176,7 +176,7 @@ impl KvTableDdl for KvTable {
         decode_context: &RowDecodeContext,
     ) -> Result<Option<(i64, i64)>, KvTableError> {
         let Some(index) = self
-            .indexes
+            .indexes()
             .iter()
             .find(|index| index.name.go_lower_eq(index_name))
             .cloned()
@@ -200,7 +200,7 @@ impl KvTableDdl for KvTable {
             // files is found.
             let mut all_found = true;
             for entry in &entries {
-                match self.store.get(&Key::from_bytes(entry.key.clone())) {
+                match self.store_mut().get(&Key::from_bytes(entry.key.clone())) {
                     Ok(value) if !value.is_empty() => {}
                     Ok(_) | Err(StorageError::NotFound) => all_found = false,
                     Err(error) => return Err(error.into()),
@@ -221,7 +221,7 @@ impl KvTableDdl for KvTable {
                     physical_id,
                     &zone,
                 )?;
-                self.store
+                self.store_mut()
                     .set(Key::from_bytes(entry.key), value)
                     .map_err(KvTableError::from)?;
             }
@@ -237,8 +237,8 @@ impl KvTableDdl for KvTable {
         check_value_range: bool,
         ctx: &dyn tidb_table::context::MutateContext,
     ) -> Result<Option<KvTableError>, KvTableError> {
-        let old_type = self.columns[offset].field_type.clone();
-        let column = tidb_hack::go_to_lower(&self.columns[offset].name);
+        let old_type = self.columns()[offset].field_type.clone();
+        let column = tidb_hack::go_to_lower(&self.columns()[offset].name);
         if crate::ddl::modify_column_type::modify_column_data_violation(
             &old_type,
             new_type,

@@ -411,7 +411,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
             panic!("expected KV table");
         };
         (
-            table.table_id,
+            table.table_id(),
             crate::analyze::kv::analyze_kv_table(
                 std::sync::Arc::make_mut(table),
                 &crate::analyze::AnalyzeOptions::default(),
@@ -507,7 +507,7 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
             panic!("np is not a KV table");
         };
         (
-            table.table_id,
+            table.table_id(),
             crate::analyze::kv::analyze_kv_table(
                 std::sync::Arc::make_mut(table),
                 &crate::analyze::AnalyzeOptions::default(),

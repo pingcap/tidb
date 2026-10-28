@@ -26,7 +26,7 @@ impl tidb_keydecoder::KeyInfoCatalog for Catalog {
                 let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;
                 };
-                if table.table_id == physical_id {
+                if table.table_id() == physical_id {
                     return Some(tidb_keydecoder::KeyInfoTableLookup::Resolved(
                         key_info_table(database, registered_name, table, 0, String::new()),
                     ));
@@ -77,7 +77,7 @@ fn key_info_table(
         } else {
             table.name().clone()
         },
-        table_id: table.table_id,
+        table_id: table.table_id(),
         partition_name,
         partition_id,
         indexes: table

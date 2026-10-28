@@ -75,7 +75,7 @@ pub fn physical_table_ids(catalog: &Catalog) -> Vec<i64> {
             let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
                 continue;
             };
-            ids.push(table.table_id);
+            ids.push(table.table_id());
             if let Some(partition) = table.partition() {
                 ids.extend(partition.definitions.iter().map(|definition| definition.id));
             }
@@ -119,7 +119,7 @@ fn estimates_from(catalog: &Catalog, source: &dyn TableSizeSource) -> Vec<TableS
                 })
                 .unwrap_or_default();
             estimates.push(TableStorageEstimate {
-                table_id: table.table_id,
+                table_id: table.table_id(),
                 table: stats.estimate_data_length(table),
                 partitions,
             });
@@ -198,8 +198,8 @@ impl SizeStats<'_> {
     /// rows and data, and adds their local index lengths to its own global
     /// ones.
     fn estimate_data_length(&self, table: &KvTable) -> StorageEstimate {
-        let mut rows = self.table_rows(table.table_id);
-        let (mut data, mut index) = self.data_and_index_length(table, table.table_id, rows);
+        let mut rows = self.table_rows(table.table_id());
+        let (mut data, mut index) = self.data_and_index_length(table, table.table_id(), rows);
         if let Some(partition) = table.partition() {
             rows = 0;
             data = 0;
@@ -220,9 +220,9 @@ impl SizeStats<'_> {
     /// index part costs its column's length, or its prefix per row. Global
     /// indexes count at the table level, local ones per partition.
     fn data_and_index_length(&self, table: &KvTable, physical_id: i64, rows: u64) -> (u64, u64) {
-        let mut column_lengths = vec![0_u64; table.columns.len()];
+        let mut column_lengths = vec![0_u64; table.columns().len()];
         let mut data = 0_u64;
-        for (offset, column) in table.columns.iter().enumerate() {
+        for (offset, column) in table.columns().iter().enumerate() {
             let storage_length = column.field_type.storage_length();
             let length = if storage_length == VAR_STORAGE_LEN {
                 self.column_length(physical_id, column.id)
@@ -236,10 +236,10 @@ impl SizeStats<'_> {
         let mut index = 0_u64;
         for kv_index in table.indexes() {
             if partitioned {
-                if kv_index.global && table.table_id != physical_id {
+                if kv_index.global && table.table_id() != physical_id {
                     continue;
                 }
-                if !kv_index.global && table.table_id == physical_id {
+                if !kv_index.global && table.table_id() == physical_id {
                     continue;
                 }
             }

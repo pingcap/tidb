@@ -77,7 +77,7 @@ pub(crate) fn exchange_partition_check(
         return Ok(Some(ExchangePartitionCheck::Standalone {
             partitioned,
             partition_id,
-            standalone_id: table.table_id,
+            standalone_id: table.table_id(),
         }));
     }
     Ok(other.map(|standalone| ExchangePartitionCheck::Partitioned {

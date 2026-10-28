@@ -1018,7 +1018,7 @@ use super::*;
         assert_eq!(table.visible_column_count(), 3);
         assert_eq!(
             table
-                .columns
+                .columns()
                 .iter()
                 .map(|c| (c.name.as_str(), c.id))
                 .collect::<Vec<_>>(),
@@ -1808,7 +1808,7 @@ use super::*;
         let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
         let index =
-            kv_index(&index(1, "vi", "v", 1, -1), &walked.columns).expect("a full-value index");
+            kv_index(&index(1, "vi", "v", 1, -1), &walked.columns()).expect("a full-value index");
 
         walked
             .create_index_with_context(index, &tidb_executor::StmtContext::default())

@@ -48,7 +48,7 @@ fn table_ids(session: &mut Session, name: &str) -> (i64, Vec<i64>) {
                 panic!("{name} must be a KV table");
             };
             Ok((
-                table.table_id,
+                table.table_id(),
                 table.indexes().iter().map(|index| index.id).collect(),
             ))
         })
@@ -205,7 +205,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
             let table = std::sync::Arc::make_mut(table);
             let keys = table.stored_keys().unwrap();
             Ok((
-                table.table_id,
+                table.table_id(),
                 table
                     .indexes()
                     .iter()

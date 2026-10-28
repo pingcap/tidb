@@ -850,7 +850,7 @@ impl Catalog {
     #[must_use]
     pub fn stored_table_id(&self, database: &str, name: &str) -> Option<i64> {
         match self.get_in(database, name)? {
-            TableEntry::Kv(table) => Some(table.table_id),
+            TableEntry::Kv(table) => Some(table.table_id()),
             _ => None,
         }
     }
@@ -863,7 +863,7 @@ impl Catalog {
     /// (`buildDataSource`).
     pub fn related_table_id_for_mdl(&self, database: &str, name: &str) -> Option<Option<i64>> {
         match self.get_in(database, name)? {
-            TableEntry::Kv(table) => Some(Some(table.table_id)),
+            TableEntry::Kv(table) => Some(Some(table.table_id())),
             TableEntry::View(view) => Some((view.id != 0).then_some(view.id)),
             TableEntry::Mem(_) | TableEntry::Sequence(_) => Some(None),
         }
@@ -968,7 +968,7 @@ impl Catalog {
         }
         let (database, table) = self
             .kv_table_by_physical_id(table_id)
-            .filter(|(_, table)| table.table_id == table_id)?;
+            .filter(|(_, table)| table.table_id() == table_id)?;
         let database = self
             .databases
             .get(database)
@@ -1153,7 +1153,7 @@ impl Catalog {
     pub fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
         self.kv_table_by_physical_id(table_id)
             .map(|(_, table)| table)
-            .filter(|table| table.table_id == table_id)
+            .filter(|table| table.table_id() == table_id)
             .map(|table| &**table)
     }
 
@@ -1166,7 +1166,7 @@ impl Catalog {
         physical_id: i64,
     ) -> Option<(&str, &Arc<crate::KvTable>)> {
         let local = self.local_temporary.iter().find_map(|(key, entry)| match entry.as_ref() {
-            TableEntry::Kv(table) if table.table_id == physical_id => {
+            TableEntry::Kv(table) if table.table_id() == physical_id => {
                 Some((key.database.as_str(), table))
             }
             _ => None,
@@ -1200,7 +1200,7 @@ impl Catalog {
                         database: database_name.clone(),
                         table: table_name.clone(),
                     });
-                    names.insert(table.table_id, Arc::clone(&key));
+                    names.insert(table.table_id(), Arc::clone(&key));
                     if let Some(partition) = table.partition() {
                         for definition in &partition.definitions {
                             names.insert(definition.id, Arc::clone(&key));
@@ -1225,7 +1225,7 @@ impl Catalog {
     pub fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
         let (_, table) = self.kv_table_by_physical_id(physical_id)?;
         let mut physical = Arc::clone(table);
-        if table.table_id != physical_id {
+        if table.table_id() != physical_id {
             Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
         }
         Some(physical)
