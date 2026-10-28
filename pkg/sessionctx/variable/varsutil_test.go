@@ -23,11 +23,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestTiDBOptOn(t *testing.T) {
@@ -806,4 +808,30 @@ func TestAssertionLevel(t *testing.T) {
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(vardef.AssertionOffStr))
 	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.AssertionFastStr))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
+}
+
+// TestRemoveLockDDLJobsForInternalSession verifies that transactions on internal
+// sessions participate in MDL. Before the fix RemoveLockDDLJobs returned early for
+// `InRestrictedSQL` sessions, so such transactions never blocked a DDL job.
+func TestRemoveLockDDLJobsForInternalSession(t *testing.T) {
+	sv := NewSessionVars(nil)
+	sv.TxnCtx.StartTS = oracle.GoTimeToTS(time.Now())
+	sv.InRestrictedSQL = true
+
+	newJobs := func() map[int64]*mdldef.JobMDL {
+		return map[int64]*mdldef.JobMDL{
+			1: {Ver: 20, TableIDs: map[int64]struct{}{100: {}}},
+		}
+	}
+
+	sv.GetRelatedTableForMDL().Store(int64(100), int64(10))
+	jobs := newJobs()
+	RemoveLockDDLJobs(sv, jobs, false)
+	require.Empty(t, jobs, "an internal session holding an older schema version must block the DDL job")
+
+	sv.ClearRelatedTableForMDL()
+	sv.GetRelatedTableForMDL().Store(int64(100), int64(30))
+	jobs = newJobs()
+	RemoveLockDDLJobs(sv, jobs, false)
+	require.Len(t, jobs, 1, "a newer schema version must not block the DDL job")
 }

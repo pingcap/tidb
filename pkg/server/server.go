@@ -1296,10 +1296,16 @@ func setSystemTimeZoneVariable() {
 
 // CheckOldRunningTxn implements SessionManager interface.
 func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
+	printLog := s.checkClientsOldRunningTxn(jobs)
+	s.checkInternalSessionsOldRunningTxn(jobs, printLog)
+}
+
+// checkClientsOldRunningTxn checks the transactions running on external connections and
+// reports whether the blocking log should be printed in this round.
+func (s *Server) checkClientsOldRunningTxn(jobs map[int64]*mdldef.JobMDL) (printLog bool) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 
-	printLog := false
 	if time.Since(s.printMDLLogTime) > 10*time.Second {
 		printLog = true
 		s.printMDLLogTime = time.Now()
@@ -1308,6 +1314,27 @@ func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 		se := client.ctx.Session
 		if se != nil {
 			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
+		}
+	}
+	return printLog
+}
+
+// checkInternalSessionsOldRunningTxn checks the transactions running on registered internal
+// sessions (TTL, MV maintenance, stats, ...), which may access user tables too.
+//
+// Snapshot the list first and inspect sessions outside sessionMapMutex: inspecting one can
+// block on its TxnCtxMu, and holding sessionMapMutex during that would block the pool's
+// Store/DeleteInternalSession calls.
+func (s *Server) checkInternalSessionsOldRunningTxn(jobs map[int64]*mdldef.JobMDL, printLog bool) {
+	s.sessionMapMutex.Lock()
+	internalSessions := make([]any, 0, len(s.internalSessions))
+	for se := range s.internalSessions {
+		internalSessions = append(internalSessions, se)
+	}
+	s.sessionMapMutex.Unlock()
+	for _, se := range internalSessions {
+		if sv, ok := se.(interface{ GetSessionVars() *variable.SessionVars }); ok {
+			variable.RemoveLockDDLJobs(sv.GetSessionVars(), jobs, printLog)
 		}
 	}
 }

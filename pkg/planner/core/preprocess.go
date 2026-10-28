@@ -2273,6 +2273,17 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		}
 	}()
 
+	// Internal sessions do not take MDL on tables in the `mysql` schema: those tables are only
+	// changed during upgrade, and letting internal transactions block that DDL (for example the
+	// stats bootstrap, or the DDL framework's own writes to mysql.tidb_ddl_job) could stall the
+	// upgrade. Keep the latest-table refresh below, and require the commit-time schema delta
+	// check because no MDL protects these writes. User tables accessed by internal sessions
+	// still take MDL, see issue #71055.
+	if sctx.GetSessionVars().InRestrictedSQL && metadef.IsSystemDB(dbName.L) {
+		skipLock = true
+		sctx.GetSessionVars().TxnCtx.NeedSchemaDeltaCheck = true
+	}
+
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
