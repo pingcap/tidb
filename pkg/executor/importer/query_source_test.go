@@ -150,7 +150,6 @@ func TestCaptureQuerySource(t *testing.T) {
 		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
 		_, locked := queryTK.Session().GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID)
 		require.False(t, locked)
-
 	})
 	t.Run("restore session states", func(t *testing.T) {
 		submitTK := testkit.NewTestKit(t, store)
