@@ -778,13 +778,20 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 // returns the read of key that another worker is running, or registers a new
 // one owned by the caller (isOwner).
 func (e *ParallelNestedLoopApplyExec) getCachedOrInflight(key []byte) (value *chunk.List, inflight *inflightInner, isOwner bool, err error) {
+	// Completed cache hits need only the cache's own synchronization. Keep
+	// them out of the lock that coordinates in-flight misses across workers.
+	value, err = e.cache.Get(key)
+	if err != nil || value != nil {
+		return value, nil, false, err
+	}
+	failpoint.InjectCall("parallelApplyCacheMiss")
 	e.inflightMu.Lock()
 	defer e.inflightMu.Unlock()
 	if inflight, ok := e.inflight[string(key)]; ok {
 		return nil, inflight, false, nil
 	}
-	// Checked under inflightMu, so the rows of a read that has just finished
-	// and unregistered are always found in the cache, unless they didn't fit.
+	// Recheck under inflightMu: an owner may have completed and unregistered
+	// since our first lookup. Do not start a duplicate read in that case.
 	value, err = e.cache.Get(key)
 	if err != nil || value != nil {
 		return value, nil, false, err

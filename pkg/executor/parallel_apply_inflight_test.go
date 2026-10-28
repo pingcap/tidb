@@ -58,7 +58,7 @@ func (e *inflightTestInner) Next(_ context.Context, chk *chunk.Chunk) error {
 }
 
 func TestParallelApplyInflightOutcome(t *testing.T) {
-	for _, outcome := range []string{"open-error", "next-error", "panic", "cancel", "shutdown", "cache-rejected"} {
+	for _, outcome := range []string{"cached-hit", "cache-filled-after-miss", "open-error", "next-error", "panic", "cancel", "shutdown", "cache-rejected"} {
 		t.Run(outcome, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -125,6 +125,54 @@ func TestParallelApplyInflightOutcome(t *testing.T) {
 				}}
 				row := chunk.MutRowFromValues(int64(7)).ToRow()
 				e.outerRow[id] = &row
+			}
+			if outcome == "cached-hit" || outcome == "cache-filled-after-miss" {
+				key, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(7))
+				require.NoError(t, err)
+				cached := chunk.NewList(fields, 1, 1)
+				populateCache := func() {
+					ok, err := e.cache.Set(key, cached)
+					require.NoError(t, err)
+					require.True(t, ok)
+				}
+				if outcome == "cache-filled-after-miss" {
+					// Model an owner finishing between our first cache miss
+					// and acquiring inflightMu. The locked recheck must find it.
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/parallelApplyCacheMiss", populateCache)
+					value, inflight, isOwner, err := e.getCachedOrInflight(key)
+					require.NoError(t, err)
+					require.Same(t, cached, value)
+					require.Nil(t, inflight)
+					require.False(t, isOwner)
+				} else {
+					populateCache()
+					e.inflightMu.Lock()
+					var unlockOnce sync.Once
+					unlock := func() { unlockOnce.Do(e.inflightMu.Unlock) }
+					defer unlock()
+					done := make(chan struct{})
+					var value *chunk.List
+					var inflight *inflightInner
+					var isOwner bool
+					var lookupErr error
+					go func() {
+						defer close(done)
+						value, inflight, isOwner, lookupErr = e.getCachedOrInflight(key)
+					}()
+					select {
+					case <-done:
+					case <-ctx.Done():
+						unlock()
+						<-done
+						t.Fatal("cache hit waited for inflightMu")
+					}
+					require.NoError(t, lookupErr)
+					require.Same(t, cached, value)
+					require.Nil(t, inflight)
+					require.False(t, isOwner)
+				}
+				require.Empty(t, e.inflight)
+				return
 			}
 
 			waitersStarted := make(chan struct{})
@@ -227,4 +275,50 @@ func TestParallelApplyInflightOutcome(t *testing.T) {
 			}
 		})
 	}
+}
+
+// BenchmarkParallelApplyCachedHit isolates completed-cache hits from inner reads
+// and SQL execution. Parallel callers share one prefetched entry, as Apply's
+// workers do, so the comparison exposes synchronization on the hit path.
+func BenchmarkParallelApplyCachedHit(b *testing.B) {
+	sctx := mock.NewContext()
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	schema := expression.NewSchema(&expression.Column{RetType: fields[0]})
+	e := &ParallelNestedLoopApplyExec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, schema, 0),
+		outerExec:    &inflightTestInner{BaseExecutor: exec.NewBaseExecutor(sctx, schema, 1)},
+		innerExecs:   []exec.Executor{&inflightTestInner{BaseExecutor: exec.NewBaseExecutor(sctx, schema, 2)}},
+		concurrency:  1,
+		useCache:     true,
+	}
+	require.NoError(b, e.Open(context.Background()))
+	defer func() { require.NoError(b, e.Close()) }()
+	key, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(7))
+	require.NoError(b, err)
+	cached := chunk.NewList(fields, 1, 1)
+	ok, err := e.cache.Set(key, cached)
+	require.NoError(b, err)
+	require.True(b, ok)
+
+	b.Run("serial", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			value, inflight, owner, err := e.getCachedOrInflight(key)
+			if err != nil || value != cached || inflight != nil || owner {
+				b.Fatalf("unexpected cached lookup: value=%p, inflight=%p, owner=%t, err=%v", value, inflight, owner, err)
+			}
+		}
+	})
+	b.Run("parallel", func(b *testing.B) {
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				value, inflight, owner, err := e.getCachedOrInflight(key)
+				if err != nil || value != cached || inflight != nil || owner {
+					b.Errorf("unexpected cached lookup: value=%p, inflight=%p, owner=%t, err=%v", value, inflight, owner, err)
+					return
+				}
+			}
+		})
+	})
 }
