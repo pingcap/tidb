@@ -30,6 +30,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

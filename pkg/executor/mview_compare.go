@@ -418,6 +418,11 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 	tblInfo *model.TableInfo,
 	visibleCols []*table.Column,
 ) (*compareMaterializedViewOutputWriter, error) {
+	definitionTimeZone := tblInfo.MaterializedView.DefinitionTimeZone.Clone()
+	loc, err := definitionTimeZone.GetLocation()
+	if err != nil {
+		return nil, errors.Annotate(err, "compare materialized view: invalid definition timezone")
+	}
 	diffTypeColName := chooseCompareMaterializedViewDifferTypeColumnName(visibleCols)
 
 	ddlSctx, err := e.GetSysSession()
@@ -443,7 +448,15 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		dropOutputTable(context.WithoutCancel(ctx))
 		return nil, err
 	}
+	sessVars := insertSctx.GetSessionVars()
+	origTimeZone := sessVars.TimeZone
+	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
+	// The query rows use the MV definition timezone, including TIMESTAMP values.
+	sessVars.TimeZone = loc
+	sessVars.StmtCtx.SetTimeZone(loc)
 	releaseInsertSession := func(releaseCtx context.Context) {
+		sessVars.TimeZone = origTimeZone
+		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
 		e.ReleaseSysSession(releaseCtx, insertSctx)
 	}
 
