@@ -37,9 +37,9 @@ impl Catalog {
         if tables.is_empty() {
             return;
         }
-        let base = self.metadata_version;
+        let base = self.schema.metadata_version;
         self.bump_metadata_version();
-        self.overlay_versions = Some((base, self.metadata_version));
+        self.overlay_versions = Some((base, self.schema.metadata_version));
         self.local_temporary = tables
             .into_iter()
             .map(|(database, table, kv)| {
@@ -60,13 +60,13 @@ impl Catalog {
         let restored = self
             .overlay_versions
             .take()
-            .and_then(|(base, attached)| (attached == self.metadata_version).then_some(base));
+            .and_then(|(base, attached)| (attached == self.schema.metadata_version).then_some(base));
         if self.local_temporary.is_empty() {
             return Vec::new();
         }
         self.bump_metadata_version();
         if let Some(base) = restored {
-            self.metadata_version = base;
+            self.schema.metadata_version = base;
         }
         std::mem::take(&mut self.local_temporary)
             .into_iter()
@@ -88,7 +88,7 @@ impl Catalog {
     /// current transaction's own buffer is ever visible.
     pub fn global_temporary_table_ids(&self) -> Vec<(String, String)> {
         let mut ids = Vec::new();
-        for (folded_database, schema) in self.databases.iter() {
+        for (folded_database, schema) in self.schema.databases.iter() {
             for (folded_name, entry) in &schema.tables {
                 if matches!(&**entry, TableEntry::Kv(table)
                     if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
@@ -107,15 +107,15 @@ impl Catalog {
     /// `temptable`'s own session map in O(1). Keyed on `metadata_version`,
     /// because exactly its mutators move the table set.
     pub fn global_temporary_table_ids_memo(&mut self) -> &[(String, String)] {
-        let epoch = self.metadata_version;
+        let epoch = self.schema.metadata_version;
         if self
-            .temporary_sweep
+            .schema.temporary_sweep
             .as_ref()
             .is_none_or(|(at, _)| *at != epoch)
         {
-            self.temporary_sweep = Some((epoch, self.global_temporary_table_ids()));
+            self.schema.temporary_sweep = Some((epoch, self.global_temporary_table_ids()));
         }
-        match self.temporary_sweep.as_ref() {
+        match self.schema.temporary_sweep.as_ref() {
             Some((_, globals)) => globals.as_slice(),
             None => unreachable!("just stored"),
         }

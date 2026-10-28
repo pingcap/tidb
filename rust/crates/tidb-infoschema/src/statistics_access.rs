@@ -381,7 +381,7 @@ impl Catalog {
                 // The shared schema's tables and the session's LOCAL
                 // temporary ones, which Go's `TableByID` finds too.
                 let entries = self
-                    .databases
+                    .schema.databases
                     .values()
                     .flat_map(|database| {
                         let database_name = database.name.go_to_lower();
@@ -445,7 +445,7 @@ impl Catalog {
         table_statistics: (u64, u64, u64, u64),
         partition_statistics: &[(i64, (u64, u64, u64, u64))],
     ) {
-        for database in Arc::make_mut(&mut self.databases).values_mut() {
+        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
             for entry in Arc::make_mut(database).tables.values_mut() {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;
@@ -468,7 +468,7 @@ impl Catalog {
     /// never fails a query over a stats refresh error; the zeroed statement is
     /// the seam fallback for providers that surface their own errors.
     pub fn clear_table_storage_statistics(&mut self) {
-        for database in Arc::make_mut(&mut self.databases).values_mut() {
+        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
             for entry in Arc::make_mut(database).tables.values_mut() {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;

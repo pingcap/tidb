@@ -21,7 +21,7 @@ impl tidb_keydecoder::KeyInfoCatalog for Catalog {
         &self,
         physical_id: i64,
     ) -> Option<tidb_keydecoder::KeyInfoTableLookup> {
-        for database in self.databases.values() {
+        for database in self.schema.databases.values() {
             for (registered_name, entry) in &database.tables {
                 let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;
@@ -33,7 +33,7 @@ impl tidb_keydecoder::KeyInfoCatalog for Catalog {
                 }
             }
         }
-        for database in self.databases.values() {
+        for database in self.schema.databases.values() {
             for (registered_name, entry) in &database.tables {
                 let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;

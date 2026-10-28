@@ -141,10 +141,12 @@ struct Database {
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
-/// A catalog of databases and their tables, the position Go's `infoschema`
-/// occupies. Database and table names are case-insensitive, as in MySQL.
+/// Go `infoschema.InfoSchema`: one schema image -- databases, their tables,
+/// views and sequences, placement policies and resource groups -- shared by
+/// every session that reads it. Database and table names are
+/// case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
-pub struct Catalog {
+pub struct InfoSchema {
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
@@ -193,7 +195,22 @@ pub struct Catalog {
     /// The immutable domain index view belongs to this metadata version.
     /// Catalog clones share the view; DDL invalidates only the mutated owner.
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
-    /// The planner's view of this catalog image, shared by clones like the
+    /// Memoized answer of walking EVERY database's table map for GLOBAL
+    /// temporary tables, valid as of one `metadata_version`. Without the memo
+    /// the walk runs twice per statement (`txn`'s overlay guard swaps global
+    /// row storage in and out), which is pure overhead for the sessions that
+    /// hold no temporary tables -- every OLTP workload.
+    temporary_sweep: Option<(u64, Vec<(String, String)>)>,
+}
+
+/// Go `infoschema.SessionExtendedInfoSchema`: the shared [`InfoSchema`] with
+/// the session's LOCAL temporary tables attached for a statement, and the
+/// lookup indexes built over both. Every statement plans and executes
+/// against one of these.
+#[derive(Clone, Debug)]
+pub struct Catalog {
+    /// The shared schema image.
+    schema: InfoSchema,    /// The planner's view of this catalog image, shared by clones like the
     /// index view and dropped by every mutator that moves [`Self::version`]
     /// or the metadata epoch.
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
@@ -218,12 +235,6 @@ pub struct Catalog {
     /// table / partition id; the statistics themselves live in the domain's
     /// `StatsHandle`, not in this image.
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<StatisticsSchema>>>>,
-    /// Memoized answer of walking EVERY database's table map for GLOBAL
-    /// temporary tables, valid as of one `metadata_version`. Without the memo
-    /// the walk runs twice per statement (`txn`'s overlay guard swaps global
-    /// row storage in and out), which is pure overhead for the sessions that
-    /// hold no temporary tables -- every OLTP workload.
-    temporary_sweep: Option<(u64, Vec<(String, String)>)>,
 }
 
 impl Catalog {
@@ -297,7 +308,7 @@ impl Catalog {
         &self,
         database: &str,
     ) -> impl Iterator<Item = (&String, &Arc<TableEntry>)> {
-        self.databases
+        self.schema.databases
             .get(database)
             .into_iter()
             .flat_map(|database| database.tables.iter())
@@ -351,25 +362,27 @@ impl Catalog {
             );
         }
         let catalog = Catalog {
-            databases: Arc::new(
-                databases
-                    .into_iter()
-                    .map(|(name, database)| (name, Arc::new(database)))
-                    .collect(),
-            ),
-            policies: HashMap::new(),
-            resource_groups: HashMap::new(),
-            version: 0,
-            metadata_version: next_metadata_version(),
-            latest_index_schema: std::sync::OnceLock::new(),
+            schema: InfoSchema {
+                databases: Arc::new(
+                    databases
+                        .into_iter()
+                        .map(|(name, database)| (name, Arc::new(database)))
+                        .collect(),
+                ),
+                policies: HashMap::new(),
+                resource_groups: HashMap::new(),
+                version: 0,
+                metadata_version: next_metadata_version(),
+                latest_index_schema: std::sync::OnceLock::new(),
+                temporary_sweep: None,
+                foreign_keys_present: false,
+                table_locks_present: false,
+            },
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
             local_temporary: Vec::new(),
             overlay_versions: None,
             statistics_schemas: Arc::default(),
-            temporary_sweep: None,
-            foreign_keys_present: false,
-            table_locks_present: false,
         };
         catalog
     }
@@ -524,7 +537,7 @@ impl TableEntry {
 
 impl Catalog {
     fn database_mut(&mut self, folded_name: &str) -> Option<&mut Database> {
-        Arc::make_mut(&mut self.databases)
+        Arc::make_mut(&mut self.schema.databases)
             .get_mut(folded_name)
             .map(Arc::make_mut)
     }
@@ -539,7 +552,7 @@ impl Catalog {
             TableEntry::Kv(table) => table.has_external_statement_rollback(),
             _ => false,
         };
-        self.databases
+        self.schema.databases
             .values()
             .all(|database| database.tables.values().all(external))
             && self.local_temporary.iter().all(|(_, entry)| external(entry))
@@ -614,8 +627,8 @@ impl Catalog {
         schema
             .tables
             .insert(name.go_to_lower(), std::sync::Arc::new(table));
-        self.foreign_keys_present |= table_has_foreign_keys;
-        self.table_locks_present |= table_is_locked;
+        self.schema.foreign_keys_present |= table_has_foreign_keys;
+        self.schema.table_locks_present |= table_is_locked;
         self.bump_version();
         Ok(())
     }
@@ -625,7 +638,7 @@ impl Catalog {
     #[must_use]
     pub fn database_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
-            .databases
+            .schema.databases
             .values()
             .map(|database| database.name.clone())
             .collect();
@@ -651,7 +664,7 @@ impl Catalog {
     /// sorts them; the catalog's keys are lower-cased and only for lookup.
     #[must_use]
     pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
-        let database = self.databases.get(&database.go_to_lower())?;
+        let database = self.schema.databases.get(&database.go_to_lower())?;
         let is_information_schema = database
             .name
             .go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA);
@@ -678,13 +691,13 @@ impl Catalog {
     /// Whether `database` exists (Go `is.SchemaExists`).
     #[must_use]
     pub fn has_database(&self, database: &str) -> bool {
-        self.databases.contains_key(&database.go_to_lower())
+        self.schema.databases.contains_key(&database.go_to_lower())
     }
 
     /// The effective defaults stored on a database.
     #[must_use]
     pub fn database_charset(&self, database: &str) -> Option<TableCharset> {
-        self.databases
+        self.schema.databases
             .get(&database.go_to_lower())
             .map(|database| database.charset)
     }
@@ -692,7 +705,7 @@ impl Catalog {
     /// Go `DBInfo.PlacementPolicyRef` of `database`.
     #[must_use]
     pub fn database_placement_policy(&self, database: &str) -> Option<&tidb_model::PolicyRefInfo> {
-        self.databases
+        self.schema.databases
             .get(&database.go_to_lower())?
             .placement_policy
             .as_ref()
@@ -717,7 +730,7 @@ impl Catalog {
     /// The stored name and defaults needed by `SHOW CREATE DATABASE`.
     #[must_use]
     pub fn database_definition(&self, database: &str) -> Option<(String, TableCharset)> {
-        self.databases
+        self.schema.databases
             .get(&database.go_to_lower())
             .map(|database| (database.name.clone(), database.charset))
     }
@@ -725,32 +738,32 @@ impl Catalog {
     /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
     #[must_use]
     pub fn policy(&self, name: &str) -> Option<&tidb_model::PolicyInfo> {
-        self.policies
+        self.schema.policies
             .get(&tidb_ast::CiString::new(name).lowercase().to_owned())
     }
 
     /// Every policy, for `information_schema` and `SHOW` surfaces.
     #[must_use]
     pub fn policies(&self) -> impl Iterator<Item = &tidb_model::PolicyInfo> {
-        self.policies.values()
+        self.schema.policies.values()
     }
 
     /// Go `infoschema.ResourceGroupByName`, folded.
     #[must_use]
     pub fn resource_group(&self, name: &str) -> Option<&tidb_model::ResourceGroupInfo> {
-        self.resource_groups.get(&name.go_to_lower())
+        self.schema.resource_groups.get(&name.go_to_lower())
     }
 
     /// Every resource group, for `information_schema.RESOURCE_GROUPS`.
     pub fn resource_groups(&self) -> impl Iterator<Item = &tidb_model::ResourceGroupInfo> {
-        self.resource_groups.values()
+        self.schema.resource_groups.values()
     }
 
     /// Go `infoSchemaMisc.setResourceGroup`: a group loaded from meta, as
     /// stored.
     pub fn set_resource_group(&mut self, group: tidb_model::ResourceGroupInfo) {
         self.bump_metadata_version();
-        self.resource_groups
+        self.schema.resource_groups
             .insert(group.name.lowercase().to_owned(), group);
         self.bump_version();
     }
@@ -758,7 +771,7 @@ impl Catalog {
     /// Go `infoSchemaMisc.setPolicy`: a policy loaded from meta, as stored
     /// (the references to it are by id).
     pub fn set_policy(&mut self, policy: tidb_model::PolicyInfo) {
-        self.policies
+        self.schema.policies
             .insert(policy.name.lowercase().to_owned(), policy);
     }
 
@@ -771,7 +784,7 @@ impl Catalog {
     #[must_use]
     pub fn policy_in_use(&self, name: &str) -> bool {
         let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
-        self.databases.values().any(|database| {
+        self.schema.databases.values().any(|database| {
             // Go `checkPlacementPolicyNotInUseFromInfoSchema` checks each
             // schema's default before its tables.
             database
@@ -824,10 +837,10 @@ impl Catalog {
             existing.id = id;
             existing.name = database.to_owned();
             existing.charset = charset;
-            self.version += u64::from(changed);
+            self.schema.version += u64::from(changed);
             return false;
         }
-        Arc::make_mut(&mut self.databases).insert(
+        Arc::make_mut(&mut self.schema.databases).insert(
             key,
             Arc::new(Database {
                 id,
@@ -892,7 +905,7 @@ impl Catalog {
     /// The shared schema's entry, without the session's temporary tables
     /// (Go `DetachLocalTemporaryTableInfoSchema`).
     fn schema_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
-        self.databases.get(&key.database)?.tables.get(&key.table)
+        self.schema.databases.get(&key.database)?.tables.get(&key.table)
     }
 
     fn local_temporary_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
@@ -910,7 +923,7 @@ impl Catalog {
     /// them through the catalog again. Callers impose ordering only on the
     /// entries they need; hash-map traversal itself is unordered.
     pub fn table_entries(&self) -> impl Iterator<Item = (&str, &str, &TableEntry)> {
-        self.databases.values().flat_map(|database| {
+        self.schema.databases.values().flat_map(|database| {
             database
                 .tables
                 .iter()
@@ -927,7 +940,7 @@ impl Catalog {
     /// extra table-path scan after the constraint is dropped, but never skips
     /// a required referential check.
     pub fn has_foreign_keys(&self) -> bool {
-        self.foreign_keys_present
+        self.schema.foreign_keys_present
     }
 
     /// Whether any table of this catalog may carry a `LOCK TABLES` lock.
@@ -936,13 +949,13 @@ impl Catalog {
     /// `lock.Checker` returns nil.
     #[must_use]
     pub fn has_table_locks(&self) -> bool {
-        self.table_locks_present
+        self.schema.table_locks_present
     }
 
     /// Go `DBInfo.ID` of `database`.
     #[must_use]
     pub fn database_id(&self, database: &str) -> Option<i64> {
-        self.databases
+        self.schema.databases
             .get(&database.go_to_lower())
             .map(|schema| schema.id)
     }
@@ -951,7 +964,7 @@ impl Catalog {
     /// `is.SchemaByID` finds it.
     #[must_use]
     pub fn database_name_by_id(&self, id: i64) -> Option<String> {
-        self.databases
+        self.schema.databases
             .values()
             .find(|schema| schema.id == id)
             .map(|schema| schema.name.clone())
@@ -970,7 +983,7 @@ impl Catalog {
             .kv_table_by_physical_id(table_id)
             .filter(|(_, table)| table.table_id() == table_id)?;
         let database = self
-            .databases
+            .schema.databases
             .get(database)
             .map_or_else(|| database.to_owned(), |schema| schema.name.clone());
         Some((database, table.name()))
@@ -981,7 +994,7 @@ impl Catalog {
     /// that ID (a table's own ID is not a partition's).
     pub fn find_table_by_partition_id(&self, partition_id: i64) -> Option<(String, String)> {
         let key = self.table_id_names().get(&partition_id)?;
-        let schema = self.databases.get(&key.database)?;
+        let schema = self.schema.databases.get(&key.database)?;
         match schema.tables.get(&key.table)?.as_ref() {
             TableEntry::Kv(table)
                 if table.partition().is_some_and(|partition| {
@@ -1001,7 +1014,7 @@ impl Catalog {
     /// `ListTablesWithSpecialAttribute(TableLockAttribute)`.
     pub fn locked_tables(&self) -> impl Iterator<Item = (&str, &crate::KvTable)> {
         self.table_entries()
-            .filter(|_| self.table_locks_present)
+            .filter(|_| self.schema.table_locks_present)
             .filter_map(|(schema, _, entry)| match entry {
                 TableEntry::Kv(table) if table.lock().is_some() => Some((schema, &**table)),
                 _ => None,
@@ -1041,7 +1054,7 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut TableEntry> {
-        self.version += 1;
+        self.schema.version += 1;
         let key = CatalogTableKey::new(database, name);
         let entry = match self.local_temporary.iter().position(|(local, _)| *local == key) {
             Some(position) => &mut self.local_temporary[position].1,
@@ -1055,7 +1068,7 @@ impl Catalog {
     /// The catalog's mutation counter.
     #[must_use]
     pub fn version(&self) -> u64 {
-        self.version
+        self.schema.version
     }
 
 
@@ -1066,7 +1079,7 @@ impl Catalog {
     /// This is an internal cache key, not the persisted cluster schema version.
     #[must_use]
     pub fn metadata_version(&self) -> u64 {
-        self.metadata_version
+        self.schema.metadata_version
     }
 
     /// Go `InfoSchema.SchemaMetaVersion` as a plan-cache key and plan
@@ -1077,7 +1090,7 @@ impl Catalog {
     #[must_use]
     pub fn schema_version(&self) -> u64 {
         self.overlay_versions
-            .map_or(self.metadata_version, |(base, _)| base)
+            .map_or(self.schema.metadata_version, |(base, _)| base)
     }
 
     /// Advances the mutation counter and drops the derived views that
@@ -1093,13 +1106,13 @@ impl Catalog {
     /// write (every `get_mut_in` caller in production) never reassigns a
     /// table's id or its key, so it does not owe this cache a rebuild.
     fn bump_version(&mut self) {
-        self.version += 1;
+        self.schema.version += 1;
         self.planner_view.take();
     }
 
     fn bump_metadata_version(&mut self) {
-        self.metadata_version = next_metadata_version();
-        self.latest_index_schema.take();
+        self.schema.metadata_version = next_metadata_version();
+        self.schema.latest_index_schema.take();
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
         self.invalidate_table_id_names();
@@ -1117,7 +1130,7 @@ impl Catalog {
     #[must_use]
     pub fn tidb_decode_key_snapshot(&self) -> crate::TidbDecodeKeySnapshot {
         let mut snapshot = crate::TidbDecodeKeySnapshot::default();
-        for database in self.databases.values() {
+        for database in self.schema.databases.values() {
             for entry in database.tables.values() {
                 if let TableEntry::Kv(table) = &**entry {
                     snapshot.insert_table(table);
@@ -1191,7 +1204,7 @@ impl Catalog {
     fn table_id_names(&self) -> &HashMap<i64, Arc<CatalogTableKey>> {
         self.table_id_names.get_or_init(|| {
             let mut names = HashMap::new();
-            for (database_name, database) in self.databases.iter() {
+            for (database_name, database) in self.schema.databases.iter() {
                 for (table_name, entry) in &database.tables {
                     let TableEntry::Kv(table) = entry.as_ref() else {
                         continue;
@@ -1234,7 +1247,7 @@ impl Catalog {
     /// Resolves a logical or partition table ID to its owning database name.
     pub fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
         let (database, _) = self.kv_table_by_physical_id(physical_id)?;
-        Some(self.databases.get(database)?.name.as_str())
+        Some(self.schema.databases.get(database)?.name.as_str())
     }
 
     /// A table of the default database, for tests that inspect the entry.
@@ -1255,7 +1268,7 @@ impl Catalog {
     /// (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
     /// A DML that changed `delta` rows adjusts the stored estimate.
     pub fn adjust_table_row_count(&mut self, database: &str, name: &str, delta: i64) {
-        let Some(database) = Arc::make_mut(&mut self.databases).get_mut(database) else {
+        let Some(database) = Arc::make_mut(&mut self.schema.databases).get_mut(database) else {
             return;
         };
         let database = std::sync::Arc::make_mut(database);

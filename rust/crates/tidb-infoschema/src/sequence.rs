@@ -41,7 +41,7 @@ impl SequenceSnapshot {
         last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
     ) -> Self {
         Self {
-            databases: Arc::clone(&catalog.databases),
+            databases: Arc::clone(&catalog.schema.databases),
             local_temporary: catalog.local_temporary.clone(),
             current_db: current_db.go_to_lower(),
             last_values,

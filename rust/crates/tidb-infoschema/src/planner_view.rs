@@ -394,7 +394,7 @@ impl Catalog {
             SourceColumn, SourceTable, SourceView,
         };
 
-        let databases = self.databases.keys().cloned().collect();
+        let databases = self.schema.databases.keys().cloned().collect();
         let mut tables = HashMap::new();
         let mut views = HashMap::new();
         let mut sequences = HashMap::new();
@@ -403,7 +403,7 @@ impl Catalog {
         // fixed by its schema and name: two views of one catalog must agree
         // on which table an id names, so it cannot follow hash-map order.
         let mut memory_tables: Vec<(String, String)> = self
-            .databases
+            .schema.databases
             .values()
             .flat_map(|database| {
                 database.tables.iter().filter_map(move |(name, entry)| {
@@ -425,7 +425,7 @@ impl Catalog {
                 .binary_search(&key)
                 .map_or(0, |index| index as i64)
         };
-        for (database_key, database) in self.databases.iter() {
+        for (database_key, database) in self.schema.databases.iter() {
             let resolve_db_info = tidb_model::GoShared::new(database_info(database));
             for (entry_name, entry) in &database.tables {
                 // The owning catalog already stores Go-folded keys. Preserve
@@ -570,7 +570,7 @@ impl Catalog {
                 };
                 // Go's `SessionTables` keeps each table's `DBInfo`, so a
                 // table outlives its dropped schema under that name.
-                let db_info = self.databases.get(&key.database).map_or_else(
+                let db_info = self.schema.databases.get(&key.database).map_or_else(
                     || tidb_model::DBInfo {
                         id: table.meta().read().db_id,
                         name: tidb_ast::CiString::new(key.database.clone()),
@@ -608,9 +608,9 @@ impl Catalog {
     pub fn latest_index_schema(&self) -> Arc<tidb_planner::domain_misc::LatestIndexSchema> {
         use tidb_planner::plan_builder::catalog::SourceIndex;
 
-        Arc::clone(self.latest_index_schema.get_or_init(|| {
+        Arc::clone(self.schema.latest_index_schema.get_or_init(|| {
             let mut table_indexes = std::collections::BTreeMap::new();
-            for database in self.databases.values() {
+            for database in self.schema.databases.values() {
                 for entry in database.tables.values() {
                     let TableEntry::Kv(table) = &**entry else {
                         continue;
@@ -630,7 +630,7 @@ impl Catalog {
                 }
             }
             Arc::new(tidb_planner::domain_misc::LatestIndexSchema {
-                schema_meta_version: self.metadata_version,
+                schema_meta_version: self.schema.metadata_version,
                 table_indexes,
             })
         }))
