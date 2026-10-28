@@ -20,6 +20,7 @@ import (
 	"compress/zlib"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"runtime"
 	"strconv"
 	"sync"
@@ -27,8 +28,10 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	server_err "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -644,6 +647,149 @@ func TestCompressedReaderZstdStopsAtTheHeaderLength(t *testing.T) {
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20))
 		})
 	}
+}
+
+func compressedPacket(seq uint8, uncompressedLength int, payload []byte) []byte {
+	return append([]byte{byte(len(payload)), byte(len(payload) >> 8), byte(len(payload) >> 16), seq,
+		byte(uncompressedLength), byte(uncompressedLength >> 8), byte(uncompressedLength >> 16)}, payload...)
+}
+
+func deflate(t *testing.T, data []byte) []byte {
+	var out bytes.Buffer
+	w := zlib.NewWriter(&out)
+	_, err := w.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return out.Bytes()
+}
+
+func TestCompressedWriterReaderRoundTrip(t *testing.T) {
+	random := make([]byte, 200*1024)
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range random {
+		random[i] = byte(rng.Uint32())
+	}
+	type writer struct {
+		name      string
+		algorithm int
+		level     zstd.EncoderLevel
+	}
+	writers := []writer{{name: "zlib", algorithm: mysql.CompressionZlib}}
+	for level := zstd.SpeedFastest; level <= zstd.SpeedBestCompression; level++ {
+		writers = append(writers, writer{name: "zstd " + level.String(), algorithm: mysql.CompressionZstd, level: level})
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			var wire bytes.Buffer
+			writerSeq, readerSeq := uint8(252), uint8(252)
+			cw := newCompressedWriter(&wire, w.algorithm, &writerSeq)
+			cw.zstdLevel = w.level
+			sizes := []int{1, minCompressLength, minCompressLength + 1, 70 * 1024, len(random)}
+			for _, size := range sizes {
+				_, err := cw.Write(random[:size])
+				require.NoError(t, err)
+				require.NoError(t, cw.Flush())
+			}
+			cr := newCompressedReader(&wire, w.algorithm, &readerSeq)
+			for _, size := range sizes {
+				got := make([]byte, size)
+				_, err := io.ReadFull(cr, got)
+				require.NoError(t, err)
+				require.Equal(t, random[:size], got)
+			}
+			require.Zero(t, wire.Len())
+			require.Equal(t, uint8(1), writerSeq)
+			require.Equal(t, writerSeq, readerSeq)
+		})
+	}
+}
+
+func TestCompressedWriterFlushDoesNotAllocate(t *testing.T) {
+	if israce.RaceEnabled {
+		t.Skip("sync.Pool drops items at random under the race detector")
+	}
+	payload := bytes.Repeat([]byte("\x05\x00\x00\x01\x011\x0e2025-01-01 00:00:00"), 300)
+	for _, algorithm := range []int{mysql.CompressionZlib, mysql.CompressionZstd} {
+		seq := uint8(0)
+		cw := newCompressedWriter(io.Discard, algorithm, &seq)
+		allocs := testing.AllocsPerRun(20, func() {
+			_, err := cw.Write(payload)
+			require.NoError(t, err)
+			require.NoError(t, cw.Flush())
+		})
+		require.Zero(t, allocs, "algorithm %d", algorithm)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestCompressedWriterReportsAFailedWrite(t *testing.T) {
+	for _, size := range []int{10, 2000} {
+		for _, algorithm := range []int{mysql.CompressionZlib, mysql.CompressionZstd} {
+			seq := uint8(0)
+			cw := newCompressedWriter(failingWriter{}, algorithm, &seq)
+			_, err := cw.Write(bytes.Repeat([]byte{'a'}, size))
+			require.NoError(t, err)
+			require.ErrorIs(t, cw.Flush(), io.ErrClosedPipe)
+		}
+	}
+}
+
+func TestCompressedReaderReadsAOneBytePayload(t *testing.T) {
+	encoder, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	for algorithm, compressed := range map[int][]byte{
+		mysql.CompressionZlib: deflate(t, []byte{'q'}),
+		mysql.CompressionZstd: encoder.EncodeAll([]byte{'q'}, nil),
+	} {
+		seq := uint8(0)
+		cr := newCompressedReader(bytes.NewReader(compressedPacket(0, 1, compressed)), algorithm, &seq)
+		got := make([]byte, 1)
+		_, err := io.ReadFull(cr, got)
+		require.NoError(t, err)
+		require.Equal(t, []byte{'q'}, got)
+	}
+}
+
+func TestCompressedReaderRejectsABrokenPacket(t *testing.T) {
+	encoder, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	payload := bytes.Repeat([]byte("abc"), 1000)
+	zlibPayload, zstdPayload := deflate(t, payload), encoder.EncodeAll(payload, nil)
+	cases := []struct {
+		name      string
+		algorithm int
+		input     []byte
+		check     func(t *testing.T, err error)
+	}{
+		{"no header", mysql.CompressionZlib, nil, func(t *testing.T, err error) { require.ErrorIs(t, err, io.EOF) }},
+		{"short header", mysql.CompressionZlib, []byte{0x01, 0x00, 0x00}, func(t *testing.T, err error) {
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		}},
+		{"wrong sequence", mysql.CompressionZlib, compressedPacket(1, 0, []byte{'a'}), func(t *testing.T, err error) {
+			require.True(t, server_err.ErrInvalidSequence.Equal(err), "%v", err)
+		}},
+		{"short uncompressed payload", mysql.CompressionZlib, compressedPacket(0, 0, []byte("abcd"))[:9], requireError},
+		{"short zlib payload", mysql.CompressionZlib, compressedPacket(0, len(payload), zlibPayload)[:20], requireError},
+		{"short zstd payload", mysql.CompressionZstd, compressedPacket(0, len(payload), zstdPayload)[:20], requireError},
+		{"corrupt zlib payload", mysql.CompressionZlib, compressedPacket(0, len(payload), bytes.Repeat([]byte{0xff}, 40)), requireError},
+		{"corrupt zstd payload", mysql.CompressionZstd, compressedPacket(0, len(payload), bytes.Repeat([]byte{0xff}, 40)), requireError},
+		{"unknown algorithm", mysql.CompressionNone, compressedPacket(0, len(payload), zlibPayload), requireError},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			seq := uint8(0)
+			cr := newCompressedReader(bytes.NewReader(c.input), c.algorithm, &seq)
+			_, err := cr.Read(make([]byte, 4))
+			c.check(t, err)
+		})
+	}
+}
+
+func requireError(t *testing.T, err error) {
+	require.Error(t, err)
 }
 
 func BenchmarkCompressedReaderZstd(b *testing.B) {
