@@ -586,3 +586,25 @@ func TestDBIsVisible(t *testing.T) {
 	require.True(t, isVisible)
 	tk.MustExec("delete from mysql.user")
 }
+
+// A column-level grant on one column must not satisfy a check on another column of the same table.
+// mysql.tables_priv.Column_priv only summarises "some column of this table has this privilege",
+// so it must not be used to grant access to an arbitrary column.
+func TestColumnPrivNotGrantedByTableColumnPrivSummary(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql;")
+	tk.MustExec("delete from tables_priv")
+	tk.MustExec("delete from columns_priv")
+	tk.MustExec(`INSERT INTO mysql.tables_priv VALUES ("%", "db", "user", "table", "grantor", "2017-01-04 16:33:42.235831", "", "Select")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Select")`)
+
+	p := privileges.NewMySQLPrivilege()
+	se := tk.Session()
+	require.NoError(t, p.LoadTablesPrivTable(se.GetSQLExecutor()))
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+
+	require.True(t, p.RequestVerification(nil, "user", "%", "db", "table", "c1", mysql.SelectPriv))
+	require.False(t, p.RequestVerification(nil, "user", "%", "db", "table", "c2", mysql.SelectPriv))
+}
