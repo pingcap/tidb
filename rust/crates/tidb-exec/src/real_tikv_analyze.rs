@@ -958,8 +958,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
         .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let plan = {
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
@@ -976,6 +975,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
                 options.raw,
                 &options.columns,
                 utc_now_timestamp(),
+                Some(row_ids.as_ref()),
             )
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
             combined.mutations.extend(write.mutations);
@@ -1480,8 +1480,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let (logical_id, total_count, modify_count, items) = {
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
@@ -1709,7 +1708,7 @@ fn record_analyze_history<S: StoreClient>(
         let staged = MutationBuffer::new();
         let (modify_count, count) =
             lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let catalog =
                     load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
                 let (counts, plan) =
@@ -1719,7 +1718,7 @@ fn record_analyze_history<S: StoreClient>(
             })
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let plan = plan_historical_stats_meta_replace(
                 &mut snapshot,
@@ -1730,6 +1729,7 @@ fn record_analyze_history<S: StoreClient>(
                 version,
                 "analyze",
                 local_now_datetime6(),
+                Some(row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             Ok(((), plan.mutations))
@@ -2294,8 +2294,7 @@ fn commit_global_stats_item<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let mut version = transaction.start_ts();
     let write = {
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let is_index = item.is_index;
@@ -2316,8 +2315,14 @@ fn commit_global_stats_item<S: StoreClient>(
             },
             indexes: if is_index { vec![item] } else { Vec::new() },
         };
-        plan_partial_stats_write(&mut snapshot, &catalog, &stats, utc_now_timestamp())
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+        plan_partial_stats_write(
+            &mut snapshot,
+            &catalog,
+            &stats,
+            utc_now_timestamp(),
+            Some(row_ids.as_ref()),
+        )
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
     };
     let counts = (write.histogram_count, write.bucket_count, write.topn_count);
     let outcome = transaction
@@ -2357,10 +2362,16 @@ fn refresh_stats_meta_version<S: StoreClient>(
     row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_stats_meta_version_refresh(&mut snapshot, &catalog, table_id, version)
-            .map_err(|error| error.to_string())?;
+        let plan = plan_stats_meta_version_refresh(
+            &mut snapshot,
+            &catalog,
+            table_id,
+            version,
+            Some(row_ids.as_ref()),
+        )
+        .map_err(|error| error.to_string())?;
         Ok((version, plan.mutations))
     })
     .map_err(|error| match error {
@@ -2398,8 +2409,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let sample_ts = sample_transaction.start_ts();
     let sampled = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut sample_transaction, timeout)
-            .with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut sample_transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
@@ -2478,8 +2488,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     report.stats.last_analyze_version = save_version;
     report.stats.last_stats_hist_version = save_version;
     let write = {
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut save_transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut save_transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let scope = if options.is_partition && selected_columns_for_task.is_some() {
@@ -2502,6 +2511,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
             },
             scope,
             utc_now_timestamp(),
+            Some(row_ids.as_ref()),
         )
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
     };
@@ -2605,8 +2615,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
     let (report, write, inserted_meta) = {
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
@@ -2639,6 +2648,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
             &report.stats,
             utc_now_timestamp(),
             physical_id.is_some_and(|id| id != table.id),
+            Some(row_ids.as_ref()),
         )
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         (report, write, inserted_meta)

@@ -246,8 +246,9 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     storage.apply(&bootstrap.mutations);
     let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut storage).unwrap();
     for statement in insert_table_stats_statements(&table, table_id) {
-        let write = plan_insert_table_stats_statement(&mut storage, &catalog, &statement, 101, now)
-            .unwrap();
+        let write =
+            plan_insert_table_stats_statement(&mut storage, &catalog, &statement, 101, now, None)
+                .unwrap();
         storage.apply(&write.mutations);
     }
     let updates = [tidb_stats_handle_usage::DeltaUpdate {
@@ -261,7 +262,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     }];
     for statement in stats_delta_statements(&updates) {
         let write =
-            plan_stats_delta_statement(&mut storage, &catalog, &statement, 102, now).unwrap();
+            plan_stats_delta_statement(&mut storage, &catalog, &statement, 102, now, None).unwrap();
         storage.apply(&write.mutations);
     }
     let loader = tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();

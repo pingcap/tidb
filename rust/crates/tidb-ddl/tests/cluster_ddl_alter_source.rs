@@ -956,7 +956,8 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
         "planning must not mutate the source catalog"
     );
     apply(&mut store, &write);
-    let reloaded = tidb_cluster::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
+    let reloaded =
+        tidb_cluster::catalog_reload::reload_cluster_catalog(&mut store, &before, None).unwrap();
     let peer = reloaded.catalog().unwrap();
     assert!(peer.find_table("u6", "parent").is_none());
     assert!(peer.find_table("u6", "child").is_none());

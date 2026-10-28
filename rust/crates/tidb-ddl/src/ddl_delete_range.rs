@@ -604,12 +604,13 @@ pub fn add_del_range_job_mutations<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     job: &Job,
     ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<Vec<BufferMutation>, DdlPlanError> {
     if !job_need_gc(job) {
         return Ok(Vec::new());
     }
     let ranges = delete_ranges_for_job(job)?;
-    del_range_rows_mutations(snapshot, catalog, &ranges, ts)
+    del_range_rows_mutations(snapshot, catalog, &ranges, ts, row_ids)
 }
 
 /// The `gc_delete_range` rows (`INSERT IGNORE`) for `ranges`.
@@ -618,6 +619,7 @@ pub fn del_range_rows_mutations<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     ranges: &[DelRangeTask],
     ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<Vec<BufferMutation>, DdlPlanError> {
     if ranges.is_empty() {
         return Ok(Vec::new());
@@ -626,7 +628,7 @@ pub fn del_range_rows_mutations<S: MetaSnapshot>(
     let existing = table
         .load(snapshot, u64::MAX)
         .map_err(DdlPlanError::Encode)?;
-    let ids = snapshot.row_ids().ok_or_else(|| {
+    let ids = row_ids.ok_or_else(|| {
         DdlPlanError::Encode("mysql.gc_delete_range has no row-ID allocator".into())
     })?;
     let allocator = ids.row_allocator_for(table.db_id(), table.table());

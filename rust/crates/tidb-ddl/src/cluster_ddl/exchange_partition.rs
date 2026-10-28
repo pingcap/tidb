@@ -280,6 +280,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (raw_args, args) = exchange_args(active)?;
     // `checkSchemaExistAndCancelNotExistJob` and the partitioned table's
@@ -578,7 +579,6 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
     write.mutations = mutations;
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string()) {
         append_schema_change_mutations(
-            snapshot,
             catalog,
             active.job.id,
             &[(
@@ -590,6 +590,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
                 ),
             )],
             &mut write.mutations,
+            row_ids,
         )?;
     }
     active.job.finish_table_job(

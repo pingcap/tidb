@@ -74,8 +74,6 @@ pub struct TransactionMetaSnapshot<'transaction, S: tidb_txnkv::transaction::Sto
     /// and a catalog-plus-full-scan read of a real cluster blew it before its
     /// first page came back.
     timeout: Duration,
-    /// The node's live row-ID allocators, for a writer that inserts.
-    row_ids: Option<std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 }
 
 impl<'transaction, S: tidb_txnkv::transaction::StoreClient>
@@ -86,19 +84,7 @@ impl<'transaction, S: tidb_txnkv::transaction::StoreClient>
         Self {
             transaction,
             timeout,
-            row_ids: None,
         }
-    }
-
-    /// Lets a writer allocate new rows' ids from `ids` (see
-    /// [`MetaSnapshot::row_ids`]).
-    #[must_use]
-    pub fn with_row_ids(
-        mut self,
-        ids: std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
-    ) -> Self {
-        self.row_ids = Some(ids);
-        self
     }
 }
 
@@ -131,10 +117,6 @@ where
         self.transaction
             .snapshot_scan(start, end, None, &call)
             .map_err(coordinator_catalog_error)
-    }
-
-    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
-        self.row_ids.as_deref()
     }
 }
 
@@ -183,8 +165,6 @@ where
 /// this turns one of them back into the loader's interface.
 pub struct SnapshotMetaSnapshot {
     snapshot: Box<dyn ClusterSnapshot>,
-    /// The node's live row-ID allocators, for a writer that inserts.
-    row_ids: Option<std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
     /// The node's auto-ID service client.
     auto_ids: Option<std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
 }
@@ -200,7 +180,6 @@ impl SnapshotMetaSnapshot {
     pub fn new(snapshot: Box<dyn ClusterSnapshot>) -> Self {
         Self {
             snapshot,
-            row_ids: None,
             auto_ids: None,
         }
     }
@@ -213,17 +192,6 @@ impl SnapshotMetaSnapshot {
         auto_ids: Option<&std::sync::Arc<C>>,
     ) -> Self {
         self.auto_ids = auto_ids.map(|client| std::sync::Arc::clone(client) as std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>);
-        self
-    }
-
-    /// Lets a writer allocate new rows' ids from `ids` (see
-    /// [`MetaSnapshot::row_ids`]).
-    #[must_use]
-    pub fn with_row_ids(
-        mut self,
-        ids: std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
-    ) -> Self {
-        self.row_ids = Some(ids);
         self
     }
 }
@@ -258,10 +226,6 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
                 None,
             )
             .map_err(storage_catalog_error)
-    }
-
-    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
-        self.row_ids.as_deref()
     }
 
     fn auto_id_client(&self) -> Option<&std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
@@ -339,10 +303,8 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
     let reloaded = {
         // The node's allocator registry, so an applied rebase diff drops the
         // ranges reserved before it (see `catalog_reload`).
-        let mut snapshot =
-            TransactionMetaSnapshot::new(&mut transaction, timeout)
-                .with_row_ids(std::sync::Arc::clone(row_ids));
-        reload_cluster_catalog(&mut snapshot, current)?
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        reload_cluster_catalog(&mut snapshot, current, Some(row_ids.as_ref()))?
     };
     transaction
         .finish_without_writes()

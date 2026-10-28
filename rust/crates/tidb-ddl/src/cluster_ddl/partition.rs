@@ -681,6 +681,7 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     if active.job.is_rollingback() {
@@ -805,7 +806,6 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
             let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
-                    snapshot,
                     catalog,
                     active.job.id,
                     &[(
@@ -816,6 +816,7 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
                         ),
                     )],
                     &mut write.mutations,
+                    row_ids,
                 )?;
             }
             active.job.finish_table_job(
@@ -1009,6 +1010,7 @@ pub(super) fn plan_persisted_drop_table_partition_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     let names = args
@@ -1118,7 +1120,6 @@ pub(super) fn plan_persisted_drop_table_partition_job_step<S: MetaSnapshot>(
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
-                    snapshot,
                     catalog,
                     active.job.id,
                     &[(
@@ -1129,6 +1130,7 @@ pub(super) fn plan_persisted_drop_table_partition_job_step<S: MetaSnapshot>(
                         ),
                     )],
                     &mut write.mutations,
+                    row_ids,
                 )?;
             }
             active.job.finish_table_job(
@@ -1156,6 +1158,7 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Only the first step may still cancel the job on a fault.
     let can_cancel = active.job.schema_state == SchemaState::PUBLIC;
@@ -1333,7 +1336,6 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
-                    snapshot,
                     catalog,
                     active.job.id,
                     &[(
@@ -1345,6 +1347,7 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
                         ),
                     )],
                     &mut write.mutations,
+                    row_ids,
                 )?;
             }
             active.job.finish_table_job(

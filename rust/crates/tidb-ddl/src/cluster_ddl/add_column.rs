@@ -204,11 +204,11 @@ fn check_unsupported_charset_for_tiflash(
 }
 
 /// Go `onAddColumn`.
-pub(super) fn plan_persisted_add_column_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn plan_persisted_add_column_job_step(
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts);
@@ -300,7 +300,6 @@ pub(super) fn plan_persisted_add_column_job_step<S: MetaSnapshot>(
     }
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
         append_schema_change_mutations(
-            snapshot,
             catalog,
             active.job.id,
             &[(
@@ -311,6 +310,7 @@ pub(super) fn plan_persisted_add_column_job_step<S: MetaSnapshot>(
                 ),
             )],
             &mut write.mutations,
+            row_ids,
         )?;
     }
     active.job.finish_table_job(

@@ -1363,6 +1363,7 @@ pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // The AUTO_RANDOM counters the step bumped commit with it.
     let mut counter_writes = Vec::new();
@@ -1373,6 +1374,7 @@ pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
         start_ts,
         outcome,
         &mut counter_writes,
+        row_ids,
     )?;
     step.write.mutations.extend(counter_writes);
     Ok(step)
@@ -1385,6 +1387,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
     counter_writes: &mut Vec<BufferMutation>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -1557,6 +1560,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
         changing,
         outcome,
         start_ts,
+        row_ids,
     )
 }
 
@@ -2895,6 +2899,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
     changing: GoShared<tidb_model::ColumnInfo>,
     outcome: Option<&ReorgOutcome>,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
     let new = args
@@ -3128,7 +3133,6 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
             if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
                 let analyzed = analyze_state(&active.job) == tidb_model::reorg::analyze_state::DONE;
                 append_schema_change_mutations(
-                    snapshot,
                     catalog,
                     active.job.id,
                     &[(
@@ -3140,6 +3144,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                         ),
                     )],
                     &mut write.mutations,
+                    row_ids,
                 )?;
             }
             active.job.finish_table_job(

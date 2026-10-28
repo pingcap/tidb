@@ -150,6 +150,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_create_table_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -310,11 +311,11 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     if finished {
         if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
             append_schema_change_mutations(
-                snapshot,
                 catalog,
                 active.job.id,
                 &[(-1, SchemaChangeEvent::create_table(info.clone_like_go()))],
                 &mut mutations,
+                row_ids,
             )?;
         }
         active.job.finish_table_job(

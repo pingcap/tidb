@@ -906,6 +906,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return plan_rollback_add_index(catalog, active, start_ts);
@@ -985,7 +986,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => plan_write_reorganization(
-            snapshot, catalog, active, info, indexes, outcome, start_ts, is_pk,
+            snapshot, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
         ),
         state => Err(DdlPlanError::from(
             tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
@@ -1025,6 +1026,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
     outcome: Option<&ReorgOutcome>,
     start_ts: u64,
     is_pk: bool,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
     let analyze_state = active
@@ -1090,7 +1092,6 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             .map(|index| index.read().clone_like_go())
             .collect();
         append_schema_change_mutations(
-            snapshot,
             catalog,
             active.job.id,
             &[(
@@ -1098,6 +1099,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
                 SchemaChangeEvent::add_indexes(info.clone_like_go(), added, analyzed),
             )],
             &mut write.mutations,
+            row_ids,
         )?;
     }
     let finished_args = GoShared::new(tidb_model::ModifyIndexArgs {

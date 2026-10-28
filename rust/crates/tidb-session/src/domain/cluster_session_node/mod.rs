@@ -1492,6 +1492,7 @@ impl ClusterSessionFactory {
                 &instance,
                 &analyze_process_ids,
                 &cutoff,
+                Some(self.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -1529,6 +1530,7 @@ impl ClusterSessionFactory {
                 &self.catalog.load(),
                 &alive_instances,
                 &cutoff,
+                Some(self.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -1725,13 +1727,13 @@ impl ClusterSessionFactory {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let plan = {
-                let mut snapshot =
-                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 tidb_exec::cluster_stats_write::plan_column_stats_usage_dump(
                     &mut snapshot,
                     &self.catalog.load(),
                     &converted,
                     tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                    Some(row_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())?
             };
@@ -1881,8 +1883,7 @@ impl ClusterSessionFactory {
                                 )
                             },
                             |snapshot, _start_ts| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot)
-                                    .with_row_ids(Arc::clone(&row_ids));
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan =
                                     tidb_exec::cluster_stats_write::plan_stats_delta_statement(
                                         &mut snapshot,
@@ -1890,6 +1891,7 @@ impl ClusterSessionFactory {
                                         &statement,
                                         read_ts,
                                         tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                                        Some(row_ids.as_ref()),
                                     )
                                     .map_err(|error| error.to_string())?;
                                 Ok(((), plan.mutations))
@@ -1985,7 +1987,7 @@ impl ClusterSessionFactory {
                                     )
                                 },
                                 |snapshot, _start_ts| {
-                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                     let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
                                 &mut snapshot,
                                 &catalog,
@@ -1995,6 +1997,7 @@ impl ClusterSessionFactory {
                                 read_ts,
                                 "flush stats",
                                 tidb_exec::mysql_bootstrap::local_now_datetime6(),
+                                Some(row_ids.as_ref()),
                             )
                                     .map_err(|error| error.to_string())?;
                                     Ok(((), plan.mutations))
@@ -2660,7 +2663,7 @@ impl ClusterHistoricalStatsHandle {
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let read_ts = snapshot.start_ts();
-        let mut meta = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&self.auto_ids));
+        let mut meta = SnapshotMetaSnapshot::new(snapshot);
         let plan = build(&mut meta, read_ts)?;
         self.transactions
             .commit_optimistic_mutations(
@@ -2811,6 +2814,7 @@ impl ClusterHistoricalStatsHandle {
                         &[physical_id],
                         false,
                         version,
+                        Some(self.auto_ids.as_ref()),
                     )
                     .map_err(|error| error.to_string())
                 })?;
@@ -2842,6 +2846,7 @@ impl ClusterHistoricalStatsHandle {
                     hist_id,
                     is_index,
                     version,
+                    Some(self.auto_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())
             })?;
@@ -2947,6 +2952,7 @@ impl ClusterHistoricalStatsHandle {
                 &catalog,
                 gc_version,
                 tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                Some(self.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -3210,8 +3216,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                         )
                     },
                     |snapshot, _start_ts| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot)
-                            .with_row_ids(Arc::clone(&row_ids));
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
                             tidb_exec::cluster_stats_write::plan_historical_stats_data_block(
                                 &mut snapshot,
@@ -3221,6 +3226,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                                 sequence,
                                 block,
                                 create_time,
+                                Some(row_ids.as_ref()),
                             )
                             .map_err(|error| error.to_string())?;
                         Ok(((), plan.mutations))
@@ -6048,8 +6054,7 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.store.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot =
-                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
                             tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
                                 &mut snapshot,
@@ -6057,6 +6062,7 @@ impl ClusterServerSession {
                                 &statement,
                                 version,
                                 now,
+                                Some(row_ids.as_ref()),
                             )
                             .map_err(|error| error.to_string())?;
                         Ok(((), plan.mutations))
@@ -6121,14 +6127,14 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.store.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot =
-                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
                             &mut snapshot,
                             &catalog,
                             &statement,
                             version,
                             now,
+                            Some(row_ids.as_ref()),
                         )
                         .map_err(|error| error.to_string())?;
                         Ok(((), plan.mutations))
@@ -6155,13 +6161,13 @@ impl ClusterServerSession {
                 &self.buffer,
                 self.store.session.lock_wait_timeout(),
                 |snapshot, _| {
-                    let mut snapshot =
-                        SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                     let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
                         &mut snapshot,
                         &catalog,
                         physical_id,
                         version,
+                        Some(row_ids.as_ref()),
                     )
                     .map_err(|error| error.to_string())?;
                     Ok(((), plan.mutations))
@@ -6237,8 +6243,7 @@ impl ClusterServerSession {
             &self.buffer,
             self.store.session.lock_wait_timeout(),
             |snapshot, _| {
-                let mut snapshot =
-                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
                     &mut snapshot,
                     &catalog,
@@ -6248,6 +6253,7 @@ impl ClusterServerSession {
                     locked,
                     version,
                     system_time_timestamp(SystemTime::now())?,
+                    Some(row_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())?;
                 Ok(((), plan.mutations))
@@ -6302,8 +6308,7 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.store.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot =
-                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let (inserted, plan) =
                             tidb_exec::cluster_stats_write::plan_insert_column_stats(
                                 &mut snapshot,
@@ -6314,6 +6319,7 @@ impl ClusterServerSession {
                                 origin_default.as_ref(),
                                 version,
                                 system_time_timestamp(SystemTime::now())?,
+                                Some(row_ids.as_ref()),
                             )
                             .map_err(|error| error.to_string())?;
                         Ok((inserted, plan.mutations))
@@ -6328,7 +6334,7 @@ impl ClusterServerSession {
                             transaction,
                             &self.buffer, self.store.session.lock_wait_timeout(),
                             |snapshot, _| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
                                     &mut snapshot,
                                     &catalog,
@@ -6337,6 +6343,7 @@ impl ClusterServerSession {
                                     count as i64,
                                     default,
                                     system_time_timestamp(SystemTime::now())?,
+                                    Some(row_ids.as_ref()),
                                 )
                                 .map_err(|error| error.to_string())?;
                                 Ok(((), plan.mutations))
@@ -6352,13 +6359,13 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.store.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot =
-                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
                             &mut snapshot,
                             &catalog,
                             physical_id,
                             version,
+                            Some(row_ids.as_ref()),
                         )
                         .map_err(|error| error.to_string())?;
                         Ok(((), plan.mutations))
@@ -6423,6 +6430,7 @@ impl ClusterServerSession {
                         &catalog,
                         target,
                         version,
+                        Some(self.auto_ids.as_ref()),
                     )
                     .map_err(|error| error.to_string())?;
                     Ok(((), plan.mutations))
@@ -6479,8 +6487,7 @@ impl ClusterServerSession {
             staged,
             self.store.session.lock_wait_timeout(),
             |snapshot, _| {
-                let mut snapshot =
-                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
                     &mut snapshot,
                     catalog,
@@ -6490,6 +6497,7 @@ impl ClusterServerSession {
                     version,
                     "schema change",
                     now,
+                    Some(row_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())?;
                 Ok(((), plan.mutations))

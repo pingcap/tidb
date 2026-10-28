@@ -652,17 +652,25 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient>(
     physical_id: i64,
     timeout: Duration,
     record_history: bool,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<u64, PessimisticStatementTransactionError> {
     let version = commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_stats_meta_version_refresh(&mut snapshot, &catalog, physical_id, version)
-            .map_err(|error| error.to_string())?;
+        let plan =
+            plan_stats_meta_version_refresh(&mut snapshot, &catalog, physical_id, version, row_ids)
+                .map_err(|error| error.to_string())?;
         Ok((version, plan.mutations))
     })?;
     if record_history {
-        let _ =
-            record_historical_stats_meta(opener, physical_id, version, "schema change", timeout);
+        let _ = record_historical_stats_meta(
+            opener,
+            physical_id,
+            version,
+            "schema change",
+            timeout,
+            row_ids,
+        );
     }
     Ok(version)
 }
@@ -671,11 +679,12 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient>(
 pub fn update_stats_version<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<u64, PessimisticStatementTransactionError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_update_stats_version(&mut snapshot, &catalog, version)
+        let plan = plan_update_stats_version(&mut snapshot, &catalog, version, row_ids)
             .map_err(|error| error.to_string())?;
         Ok((version, plan.mutations))
     })
@@ -704,6 +713,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
     version: u64,
     source: &str,
     timeout: Duration,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<(), PessimisticStatementTransactionError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
@@ -733,6 +743,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
             version,
             source,
             local_now_datetime6(),
+            row_ids,
         )
         .map_err(|error| error.to_string())?;
         Ok(((), plan.mutations))

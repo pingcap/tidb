@@ -207,6 +207,7 @@ fn read_schema_diff<S: MetaSnapshot>(
 pub fn reload_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
     current: &ClusterCatalog,
+    row_ids: Option<&dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {
     let needed = schema_version_with_non_empty_diff(snapshot)?;
     let loaded = current.schema_version;
@@ -225,7 +226,7 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
             to: needed,
         }
     } else {
-        match apply_diff_range(snapshot, current, loaded, needed)? {
+        match apply_diff_range(snapshot, current, loaded, needed, row_ids)? {
             Ok(applied) => return Ok(applied),
             Err(reason) => reason,
         }
@@ -249,6 +250,7 @@ fn apply_diff_range<S: MetaSnapshot>(
     current: &ClusterCatalog,
     loaded: i64,
     needed: i64,
+    row_ids: Option<&dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
     let mut catalog = current.clone();
     let mut applied = 0usize;
@@ -269,7 +271,7 @@ fn apply_diff_range<S: MetaSnapshot>(
         };
         // Go `applyCreateTable` recreates the table's allocators for a
         // rebase, a multi-schema change's sub-action included.
-        if let Some(row_ids) = snapshot.row_ids() {
+        if let Some(row_ids) = row_ids {
             for action in
                 std::iter::once(diff.action_type).chain(diff.sub_action_types.iter().copied())
             {

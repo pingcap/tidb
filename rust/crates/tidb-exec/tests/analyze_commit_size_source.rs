@@ -90,7 +90,7 @@ struct MetaStore {
     fail_scan_prefix: Option<Vec<u8>>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: tidb_cluster::table_from_meta::LocalTableAutoIds,
+    row_ids: std::sync::Arc<tidb_cluster::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -111,10 +111,6 @@ impl MetaSnapshot for MetaStore {
             .filter(|(key, _)| key.starts_with(prefix))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect())
-    }
-
-    fn row_ids(&self) -> Option<&dyn tidb_cluster::table_from_meta::TableAutoIds> {
-        Some(&self.row_ids)
     }
 }
 
@@ -142,6 +138,7 @@ fn apply_historical_stats_meta_statements(
     source: &str,
     now: Time,
 ) -> Result<(), StatsWriteError> {
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let ((modify_count, count), lock) =
         plan_historical_stats_meta_lock(store, catalog, table_id, version)?;
     apply_mutations(store, &lock.mutations);
@@ -154,6 +151,7 @@ fn apply_historical_stats_meta_statements(
         version,
         source,
         now,
+        Some(&*row_ids),
     )?;
     apply_mutations(store, &replace.mutations);
     Ok(())
@@ -166,10 +164,12 @@ fn apply_historical_stats_data_statements(
     json: &JsonTable,
     now: Time,
 ) -> Result<u64, StatsWriteError> {
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let (version, blocks) = historical_stats_data_blocks(json)?;
     for (sequence, block) in blocks.iter().enumerate() {
         let plan = plan_historical_stats_data_block(
             store, catalog, table_id, version, sequence, block, now,
+            Some(&*row_ids),
         )?;
         apply_mutations(store, &plan.mutations);
     }
@@ -183,8 +183,10 @@ fn apply_stats_delta_statements(
     version: u64,
     now: Time,
 ) -> Result<(), StatsWriteError> {
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     for statement in stats_delta_statements(updates) {
-        let plan = plan_stats_delta_statement(store, catalog, &statement, version, now)?;
+        let plan =
+            plan_stats_delta_statement(store, catalog, &statement, version, now, Some(&*row_ids))?;
         apply_mutations(store, &plan.mutations);
     }
     Ok(())
@@ -198,6 +200,7 @@ fn apply_loaded_stats_item(
     item: &ClusterStatsItem,
     version: u64,
 ) {
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     for statement in
         loaded_stats_item_statements(table_id, item).expect("LOAD STATS statements build")
     {
@@ -210,6 +213,7 @@ fn apply_loaded_stats_item(
             version,
             now(),
             &statement,
+            Some(&*row_ids),
         )
         .expect("LOAD STATS statement plans");
         apply_mutations(store, &plan.mutations);
@@ -310,6 +314,7 @@ fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
 #[test]
 fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let (job_id, insert) = plan_insert_analyze_job(
         &mut store,
@@ -321,6 +326,7 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
         "127.0.0.1:4000",
         77,
         now(),
+        Some(&*row_ids),
     )
     .expect("pending job plans");
     assert_eq!(job_id, 1);
@@ -328,17 +334,18 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let running_at =
         Time::from_date_checked(2026, 7, 29, 6, 13, 0, 0, TimeType::Timestamp, 0).unwrap();
     let catalog = load_cluster_catalog(&mut store).unwrap();
-    let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at).unwrap();
+    let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at, Some(&*row_ids)).unwrap();
     apply_mutations(&mut store, &start.mutations);
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let progress =
-        plan_update_analyze_job_progress(&mut store, &catalog, job_id, 8, running_at).unwrap();
+        plan_update_analyze_job_progress(&mut store, &catalog, job_id, 8, running_at, Some(&*row_ids))
+            .unwrap();
     apply_mutations(&mut store, &progress.mutations);
     let finished_at =
         Time::from_date_checked(2026, 7, 29, 6, 13, 5, 0, TimeType::Timestamp, 0).unwrap();
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let finish =
-        plan_finish_analyze_job(&mut store, &catalog, job_id, 12, None, finished_at).unwrap();
+        plan_finish_analyze_job(&mut store, &catalog, job_id, 12, None, finished_at, Some(&*row_ids)).unwrap();
     apply_mutations(&mut store, &finish.mutations);
 
     let rows = analyze_job_rows(&mut store);
@@ -476,6 +483,7 @@ fn loaded_stats_item_uses_go_statement_batches() {
 #[test]
 fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -488,7 +496,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
         columns: (1..=4).map(|id| full_histogram(id, false)).collect(),
         indexes: (1..=2).map(|id| full_histogram(id, true)).collect(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now())
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
         .expect("a full-sized analyze result plans");
     let planned = plan.mutations.len();
     // Every bucket and TopN row of the six 256-bucket, 100-value histograms
@@ -510,6 +518,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
 #[test]
 fn the_analyze_version_round_trips_through_the_stored_row() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -523,7 +532,7 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
         indexes: vec![],
     };
     let plan =
-        plan_stats_write(&mut store, &catalog, &stats, now()).expect("a small analyze plans");
+        plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("a small analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -549,6 +558,7 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
 #[test]
 fn table_size_stats_source_reads_requested_storage_rows() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
         let stats = ClusterTableStats {
@@ -562,8 +572,8 @@ fn table_size_stats_source_reads_requested_storage_rows() {
             columns: vec![full_histogram(column_id, false)],
             indexes: vec![full_histogram(21, true)],
         };
-        let plan =
-            plan_stats_write(&mut store, &catalog, &stats, now()).expect("statistics rows plan");
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
+            .expect("statistics rows plan");
         apply_mutations(&mut store, &plan.mutations);
     }
 
@@ -618,6 +628,7 @@ fn table_size_stats_source_reads_requested_storage_rows() {
 #[test]
 fn the_table_row_size_cache_serves_previous_values_after_a_failed_refresh() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
         let stats = ClusterTableStats {
@@ -631,8 +642,8 @@ fn the_table_row_size_cache_serves_previous_values_after_a_failed_refresh() {
             columns: vec![full_histogram(column_id, false)],
             indexes: vec![full_histogram(21, true)],
         };
-        let plan =
-            plan_stats_write(&mut store, &catalog, &stats, now()).expect("statistics rows plan");
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
+            .expect("statistics rows plan");
         apply_mutations(&mut store, &plan.mutations);
     }
 
@@ -782,6 +793,7 @@ fn table_size_stats_are_statement_local_and_clamp_negative_sizes() {
 fn analyze_save_reconciles_deltas_committed_after_sampling() {
     for (analyze_snapshot, expected_count) in [(true, 6), (false, 3)] {
         let mut store = bootstrapped();
+        let row_ids = std::sync::Arc::clone(&store.row_ids);
         let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
         let current = ClusterTableStats {
             table_id: 4242,
@@ -794,7 +806,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
             columns: vec![],
             indexes: vec![],
         };
-        let initial = plan_stats_write(&mut store, &catalog, &current, now())
+        let initial = plan_stats_write(&mut store, &catalog, &current, now(), Some(&*row_ids))
             .expect("current metadata plans");
         apply_mutations(&mut store, &initial.mutations);
 
@@ -820,6 +832,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
             },
             AnalyzeStatsWriteScope::FullTable,
             now(),
+            Some(&*row_ids),
         )
         .expect("the later save plans");
         assert!(!save.skipped_newer_snapshot);
@@ -836,6 +849,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
 #[test]
 fn analyze_save_does_not_replace_a_newer_snapshot() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let current = ClusterTableStats {
         table_id: 4242,
@@ -848,8 +862,8 @@ fn analyze_save_does_not_replace_a_newer_snapshot() {
         columns: vec![],
         indexes: vec![],
     };
-    let initial =
-        plan_stats_write(&mut store, &catalog, &current, now()).expect("current metadata plans");
+    let initial = plan_stats_write(&mut store, &catalog, &current, now(), Some(&*row_ids))
+        .expect("current metadata plans");
     apply_mutations(&mut store, &initial.mutations);
 
     let stale = ClusterTableStats {
@@ -874,6 +888,7 @@ fn analyze_save_does_not_replace_a_newer_snapshot() {
         },
         AnalyzeStatsWriteScope::FullTable,
         now(),
+        Some(&*row_ids),
     )
     .expect("the stale result is classified");
     assert!(save.skipped_newer_snapshot);
@@ -972,6 +987,7 @@ fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
 #[test]
 fn partition_fm_sketch_round_trips_only_for_global_merge() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [4, 8, 12]);
     let mut column = full_histogram(1, false);
@@ -987,7 +1003,7 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
         columns: vec![column],
         indexes: vec![],
     };
-    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
         .expect("partition analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -1009,7 +1025,7 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
     assert_eq!(merge_input.columns[0].fm_sketch.as_ref(), Some(&expected));
 
     let global =
-        plan_stats_write(&mut store, &catalog, &stats, now()).expect("global analyze plans");
+        plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("global analyze plans");
     apply_mutations(&mut store, &global.mutations);
     let merge_input = loader
         .load_table_with_fm(&mut store, stats.table_id, &column_types)
@@ -1024,6 +1040,7 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
 #[test]
 fn async_global_stats_loads_each_payload_by_item() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [8, 16, 24]);
     let mut expected_cms = CmsSketch::new(2, 8);
@@ -1041,7 +1058,7 @@ fn async_global_stats_loads_each_payload_by_item() {
         columns: vec![column],
         indexes: Vec::new(),
     };
-    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
         .expect("partition analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let mut cms_item = full_histogram(2, false);
@@ -1152,6 +1169,7 @@ fn async_global_stats_loads_each_payload_by_item() {
 #[test]
 fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -1164,7 +1182,7 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
         columns: vec![full_histogram(1, false)],
         indexes: vec![full_histogram(2, true)],
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -1194,6 +1212,7 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
 #[test]
 fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let version = 440_000_000_000_000_000;
     let current_ids = [4242, 4243, 4250, 4251];
@@ -1211,7 +1230,8 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
             columns: vec![full_histogram(1, false)],
             indexes: vec![full_histogram(2, true)],
         };
-        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+        let plan =
+            plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
         apply_mutations(&mut store, &plan.mutations);
     }
 
@@ -1348,11 +1368,13 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
 #[test]
 fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let empty_id = 4260;
     let topn_only_id = 4261;
-    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, empty_id, 6, 6, 100, now())
-        .expect("metadata-only table plans");
+    let initial =
+        plan_loaded_stats_meta_write(&mut store, &catalog, empty_id, 6, 6, 100, now(), Some(&*row_ids))
+            .expect("metadata-only table plans");
     apply_mutations(&mut store, &initial.mutations);
 
     let mut topn_only = full_histogram(2, true);
@@ -1368,7 +1390,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
         columns: Vec::new(),
         indexes: vec![topn_only],
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("TopN plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("TopN plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let target = |table_id| StatsTarget {
@@ -1443,6 +1465,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
 #[test]
 fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let old_stats = ClusterTableStats {
         table_id: 4242,
@@ -1455,7 +1478,8 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &old_stats, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &old_stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -1510,7 +1534,8 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
         columns: vec![changed],
         ..old_stats
     };
-    let plan = plan_stats_write(&mut store, &catalog, &new_stats, now()).expect("reanalyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &new_stats, now(), Some(&*row_ids)).expect("reanalyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let refreshed = loader
         .load_statistics_table_for_update(
@@ -1538,6 +1563,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
 #[test]
 fn topn_load_uses_the_declared_secondary_index() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -1550,7 +1576,7 @@ fn topn_load_uses_the_declared_secondary_index() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
 
@@ -1583,6 +1609,7 @@ fn topn_load_uses_the_declared_secondary_index() {
 #[test]
 fn one_item_load_uses_only_that_items_key_ranges() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -1595,7 +1622,7 @@ fn one_item_load_uses_only_that_items_key_ranges() {
         columns: vec![full_histogram(1, false), full_histogram(2, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
 
@@ -1643,6 +1670,7 @@ fn one_item_load_uses_only_that_items_key_ranges() {
 #[test]
 fn column_distribution_read_is_atomic_ordered_and_validated() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -1655,7 +1683,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let table = TableInfo {
         id: stats.table_id,
@@ -1722,7 +1750,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
 
     let mut version_one = stats.clone();
     version_one.columns[0].stats_ver = tidb_stats::VERSION_1;
-    let plan = plan_stats_write(&mut store, &catalog, &version_one, now())
+    let plan = plan_stats_write(&mut store, &catalog, &version_one, now(), Some(&*row_ids))
         .expect("the Analyze V1 fixture plans");
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
@@ -1737,7 +1765,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
 
     let mut corrupt = stats.clone();
     corrupt.columns[0].histogram.null_count = -1;
-    let plan = plan_stats_write(&mut store, &catalog, &corrupt, now())
+    let plan = plan_stats_write(&mut store, &catalog, &corrupt, now(), Some(&*row_ids))
         .expect("the stored-corruption fixture plans");
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
@@ -1754,6 +1782,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
 #[test]
 fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -1767,7 +1796,8 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
         columns: vec![full_histogram(1, false), full_histogram(2, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let version = initial.version + 10;
@@ -1824,6 +1854,7 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
 #[test]
 fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let stats = ClusterTableStats {
@@ -1837,18 +1868,18 @@ fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
         columns: vec![full_histogram(1, false), full_histogram(2, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let usage = HashMap::from([
         (usage_item(table_id, 1), ColumnStatsTimeInfo::default()),
         (usage_item(table_id, 2), ColumnStatsTimeInfo::default()),
     ]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("predicate usage plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let gc_version = stats.version + 10;
-    let plan = plan_stats_item_delete(&mut store, &catalog, table_id, 1, false, gc_version)
+    let plan = plan_stats_item_delete(&mut store, &catalog, table_id, 1, false, gc_version, Some(&*row_ids))
         .expect("column GC plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -1887,6 +1918,7 @@ fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
 #[test]
 fn table_stats_delete_preserves_go_soft_and_hard_phases() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4245;
     let stats = ClusterTableStats {
@@ -1900,7 +1932,7 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let column_types = BTreeMap::from([(
         1,
@@ -1909,7 +1941,7 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
 
     let soft_version = stats.version + 10;
-    let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], true, soft_version)
+    let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], true, soft_version, Some(&*row_ids))
         .expect("soft DROP STATS plans");
     apply_mutations(&mut store, &plan.mutations);
     let soft = loader
@@ -1945,8 +1977,9 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         .contains(&table_id));
 
     let hard_version = soft_version + 10;
-    let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], false, hard_version)
-        .expect("hard table GC plans");
+    let plan =
+        plan_delete_table_stats(&mut store, &catalog, &[table_id], false, hard_version, Some(&*row_ids))
+            .expect("hard table GC plans");
     apply_mutations(&mut store, &plan.mutations);
     let hard = loader
         .load_table(&mut store, table_id, &column_types)
@@ -1967,6 +2000,7 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
 #[test]
 fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, version) in [(4250, 100), (4251, 200)] {
         let stats = ClusterTableStats {
@@ -1980,7 +2014,7 @@ fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
             columns: Vec::new(),
             indexes: Vec::new(),
         };
-        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("stats plan");
+        let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("stats plan");
         apply_mutations(&mut store, &plan.mutations);
     }
 
@@ -1993,7 +2027,7 @@ fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
         0
     );
     for version in [200, 300] {
-        let plan = plan_stats_gc_timestamp_write(&mut store, &catalog, version, now())
+        let plan = plan_stats_gc_timestamp_write(&mut store, &catalog, version, now(), Some(&*row_ids))
             .expect("GC timestamp upsert plans");
         apply_mutations(&mut store, &plan.mutations);
         assert_eq!(
@@ -2008,6 +2042,7 @@ fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
 #[test]
 fn persisted_analyze_options_round_trip_and_replace_raw_values() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table = TableInfo {
         id: 4242,
@@ -2047,6 +2082,7 @@ fn persisted_analyze_options_round_trip_and_replace_raw_values() {
         },
         &AnalyzeColumnChoice::Explicit(vec!["a".to_owned(), "gone".to_owned()]),
         now(),
+        Some(&*row_ids),
     )
     .expect("first option row plans");
     apply_mutations(&mut store, &first.mutations);
@@ -2076,6 +2112,7 @@ fn persisted_analyze_options_round_trip_and_replace_raw_values() {
         },
         &AnalyzeColumnChoice::Predicate,
         now(),
+        Some(&*row_ids),
     )
     .expect("replacement option row plans");
     apply_mutations(&mut store, &second.mutations);
@@ -2099,6 +2136,7 @@ fn persisted_analyze_options_round_trip_and_replace_raw_values() {
 #[test]
 fn partial_analyze_write_preserves_unselected_histograms() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2112,7 +2150,8 @@ fn partial_analyze_write_preserves_unselected_histograms() {
         columns: vec![full_histogram(1, false), full_histogram(2, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let mut replacement = full_histogram(1, false);
@@ -2125,7 +2164,7 @@ fn partial_analyze_write_preserves_unselected_histograms() {
         columns: vec![replacement],
         ..initial
     };
-    let plan = plan_partial_stats_write(&mut store, &catalog, &partial, now())
+    let plan = plan_partial_stats_write(&mut store, &catalog, &partial, now(), Some(&*row_ids))
         .expect("partial analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -2170,6 +2209,7 @@ fn partial_analyze_write_preserves_unselected_histograms() {
 #[test]
 fn independent_index_write_preserves_existing_meta_values() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2183,7 +2223,8 @@ fn independent_index_write_preserves_existing_meta_values() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let next_version = initial.version + 1;
@@ -2201,7 +2242,7 @@ fn independent_index_write_preserves_existing_meta_values() {
         indexes: vec![index],
     };
     let (plan, inserted_meta) =
-        plan_independent_index_stats_write(&mut store, &catalog, &independent, now(), false)
+        plan_independent_index_stats_write(&mut store, &catalog, &independent, now(), false, Some(&*row_ids))
             .expect("independent index analyze plans");
     assert!(!inserted_meta);
     apply_mutations(&mut store, &plan.mutations);
@@ -2230,6 +2271,7 @@ fn independent_index_write_preserves_existing_meta_values() {
 #[test]
 fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let version = 440_000_000_000_000_001;
     let stats = ClusterTableStats {
@@ -2244,7 +2286,7 @@ fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
         indexes: vec![full_histogram(7, true)],
     };
     let (plan, inserted_meta) =
-        plan_independent_index_stats_write(&mut store, &catalog, &stats, now(), false)
+        plan_independent_index_stats_write(&mut store, &catalog, &stats, now(), false, Some(&*row_ids))
             .expect("independent index analyze plans");
     assert!(inserted_meta);
     apply_mutations(&mut store, &plan.mutations);
@@ -2267,6 +2309,7 @@ fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
 #[test]
 fn loaded_stats_negative_count_preserves_existing_meta_values() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2280,7 +2323,8 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
         columns: Vec::new(),
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let version = initial.version + 1;
@@ -2306,6 +2350,7 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 #[test]
 fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2319,12 +2364,14 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
         columns: Vec::new(),
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let version = initial.version + 1;
-    let plan = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now())
-        .expect("LOAD STATS final meta plans");
+    let plan =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now(), Some(&*row_ids))
+            .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -2337,6 +2384,7 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
 #[test]
 fn slow_save_version_refresh_changes_only_the_two_go_columns() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2350,11 +2398,12 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
         columns: Vec::new(),
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let refreshed = initial.version + 1;
-    let plan = plan_stats_meta_version_refresh(&mut store, &catalog, table_id, refreshed)
+    let plan = plan_stats_meta_version_refresh(&mut store, &catalog, table_id, refreshed, Some(&*row_ids))
         .expect("the slow-save metadata refresh plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -2374,6 +2423,7 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
 #[test]
 fn flashback_stats_version_updates_meta_and_histograms_only() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -2387,11 +2437,12 @@ fn flashback_stats_version_updates_meta_and_histograms_only() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let refreshed = initial.version + 1;
-    let plan = plan_update_stats_version(&mut store, &catalog, refreshed)
+    let plan = plan_update_stats_version(&mut store, &catalog, refreshed, Some(&*row_ids))
         .expect("flashback version updates plan");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -2423,6 +2474,7 @@ fn flashback_stats_version_updates_meta_and_histograms_only() {
 #[test]
 fn global_stats_id_moves_all_six_go_tables() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let from = 4242;
     let to = 5151;
@@ -2441,7 +2493,7 @@ fn global_stats_id_moves_all_six_go_tables() {
         }],
         indexes: Vec::new(),
     };
-    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now())
+    let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
         .expect("partition analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let usage = HashMap::from([(
@@ -2451,7 +2503,7 @@ fn global_stats_id_moves_all_six_go_tables() {
             last_analyzed_at: Some(now()),
         },
     )]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("predicate usage plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -2497,6 +2549,7 @@ fn global_stats_id_moves_all_six_go_tables() {
 #[test]
 fn global_stats_id_move_rejects_target_identity_collisions() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     for table_id in [4242, 5151] {
         let stats = ClusterTableStats {
@@ -2510,7 +2563,8 @@ fn global_stats_id_move_rejects_target_identity_collisions() {
             columns: Vec::new(),
             indexes: Vec::new(),
         };
-        let plan = plan_stats_write(&mut store, &catalog, &stats, now()).expect("analyze plans");
+        let plan =
+            plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
         apply_mutations(&mut store, &plan.mutations);
     }
     assert!(matches!(
@@ -2522,6 +2576,7 @@ fn global_stats_id_move_rejects_target_identity_collisions() {
 #[test]
 fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let physical_id = 4243;
     let table = TableInfo {
@@ -2572,9 +2627,15 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
 
     let version = 440_000_000_000_000_001;
     for statement in &statements {
-        let plan =
-            plan_insert_table_stats_statement(&mut store, &catalog, statement, version, now())
-                .expect("InsertTableStats2KV statement plans");
+        let plan = plan_insert_table_stats_statement(
+            &mut store,
+            &catalog,
+            statement,
+            version,
+            now(),
+            Some(&*row_ids),
+        )
+        .expect("InsertTableStats2KV statement plans");
         apply_mutations(&mut store, &plan.mutations);
     }
     let loader = ClusterStatsLoader::locate(&catalog).expect("stats tables locate");
@@ -2602,9 +2663,15 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
     );
 
     for statement in &statements {
-        let ignored =
-            plan_insert_table_stats_statement(&mut store, &catalog, statement, version + 1, now())
-                .expect("existing InsertTableStats2KV rows are ignored");
+        let ignored = plan_insert_table_stats_statement(
+            &mut store,
+            &catalog,
+            statement,
+            version + 1,
+            now(),
+            Some(&*row_ids),
+        )
+        .expect("existing InsertTableStats2KV rows are ignored");
         assert!(ignored.mutations.is_empty());
     }
 }
@@ -2612,6 +2679,7 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
 #[test]
 fn insert_column_stats_uses_go_origin_default_branches() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let physical_id = 4244;
     let version = 440_000_000_000_000_001;
@@ -2626,7 +2694,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
         columns: Vec::new(),
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("meta plans");
+    let plan = plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("meta plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let defaults = [None, Some(Datum::Null), Some(Datum::Bytes(b"xy".to_vec()))];
@@ -2641,6 +2709,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
             origin_default.as_ref(),
             version,
             now(),
+            Some(&*row_ids),
         )
         .expect("InsertColStats2KV histogram plans");
         assert!(inserted);
@@ -2654,6 +2723,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
                 3,
                 default,
                 now(),
+                Some(&*row_ids),
             )
             .expect("InsertColStats2KV bucket plans");
             apply_mutations(&mut store, &plan.mutations);
@@ -2740,6 +2810,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
         Some(&Datum::Bytes(b"replacement".to_vec())),
         version + 1,
         now(),
+        Some(&*row_ids),
     )
     .expect("existing histogram is INSERT IGNORE");
     assert!(!inserted);
@@ -2793,10 +2864,11 @@ fn stats_delta_updates_use_go_statement_order() {
 #[test]
 fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let existing_id = 4241;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, existing_id, 10, 2, 100, now())
+        plan_loaded_stats_meta_write(&mut store, &catalog, existing_id, 10, 2, 100, now(), Some(&*row_ids))
             .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
@@ -2806,6 +2878,7 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
         &StatsDeltaStatement::LockUnlocked(vec![existing_id, 999_999]),
         101,
         now(),
+        Some(&*row_ids),
     )
     .expect("locking SELECT plans");
     assert_eq!(plan.mutations.len(), 1);
@@ -2815,10 +2888,12 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
 #[test]
 fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
-    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 8, 5, 100, now())
-        .expect("initial meta plans");
+    let initial =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 8, 5, 100, now(), Some(&*row_ids))
+            .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
     let update = plan_exchange_partition_stats_update(
         &mut store,
@@ -2829,6 +2904,7 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
         false,
         101,
         now(),
+        Some(&*row_ids),
     )
     .expect("unlocked exchange update plans");
     apply_mutations(&mut store, &update.mutations);
@@ -2848,6 +2924,7 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
         true,
         102,
         now(),
+        Some(&*row_ids),
     )
     .expect("locked exchange update plans");
     apply_mutations(&mut store, &update.mutations);
@@ -2921,10 +2998,12 @@ fn stats_delta_negative_multirow_insert_keeps_go_duplicate_key_order() {
 #[test]
 fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
-    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now())
-        .expect("initial meta plans");
+    let initial =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
+            .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
     apply_stats_delta_statements(
@@ -3038,10 +3117,12 @@ fn stats_delta_batch_assigns_one_transaction_version_to_every_table() {
 #[test]
 fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
-    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now())
-        .expect("initial meta plans");
+    let initial =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
+            .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
     apply_stats_delta_statements(
@@ -3074,6 +3155,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
 #[test]
 fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let first = plan_loaded_stats_usage_write(
@@ -3086,6 +3168,7 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
             last_analyzed_at: Some("2026-08-28 04:05:06.000007".to_owned()),
         })],
         now(),
+        Some(&*row_ids),
     )
     .expect("predicate usage plans");
     apply_mutations(&mut store, &first.mutations);
@@ -3103,6 +3186,7 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
             }),
         ],
         now(),
+        Some(&*row_ids),
     )
     .expect("replacement usage plans");
     apply_mutations(&mut store, &replacement.mutations);
@@ -3148,6 +3232,7 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
 #[test]
 fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let usage = HashMap::from([(
@@ -3159,7 +3244,7 @@ fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
         },
         ColumnStatsTimeInfo::default(),
     )]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("Go writes every supplied TableItemID");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -3183,9 +3268,11 @@ fn usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
 }
 
 fn dump_usage(store: &mut MetaStore, item: tidb_model::TableItemID, used_at: Time) {
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut *store).expect("the bootstrapped catalog loads");
-    let plan = plan_column_stats_usage_dump(store, &catalog, &[(item, used_at)], now())
-        .expect("column usage dump plans");
+    let plan =
+        plan_column_stats_usage_dump(store, &catalog, &[(item, used_at)], now(), Some(&*row_ids))
+            .expect("column usage dump plans");
     apply_mutations(store, &plan.mutations);
 }
 
@@ -3251,6 +3338,7 @@ fn predicate_usage_bump_after_old_stored_value() {
 #[test]
 fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let plan = plan_loaded_stats_usage_write(
@@ -3270,6 +3358,7 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
             }),
         ],
         now(),
+        Some(&*row_ids),
     )
     .expect("usage plans");
     apply_mutations(&mut store, &plan.mutations);
@@ -3316,6 +3405,7 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
 #[test]
 fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let item = usage_item(table_id, 9);
@@ -3326,7 +3416,7 @@ fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
             last_analyzed_at: None,
         },
     )]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("predicate usage plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -3342,6 +3432,7 @@ fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
 #[test]
 fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let item = usage_item(table_id, 10);
@@ -3354,7 +3445,7 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
             last_analyzed_at: Some(zero),
         },
     )]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now())
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("predicate usage plans");
     apply_mutations(&mut store, &plan.mutations);
 
@@ -3408,11 +3499,13 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
 #[test]
 fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let version = 440_000_000_000_000_000;
-    let meta = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now())
-        .expect("LOAD STATS final meta plans");
+    let meta =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now(), Some(&*row_ids))
+            .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &meta.mutations);
 
     assert!(plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version - 1).is_err());
@@ -3433,6 +3526,7 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
         version,
         "load stats",
         now(),
+        Some(&*row_ids),
     )
     .expect("the exact version plans the history replace");
     apply_mutations(&mut store, &replace.mutations);
@@ -3545,6 +3639,7 @@ fn historical_stats_data_round_trips_through_stats_history() {
 #[test]
 fn historical_stats_data_plans_one_statement_per_block() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let json = JsonTable {
@@ -3585,6 +3680,7 @@ fn historical_stats_data_plans_one_statement_per_block() {
             sequence,
             block,
             now(),
+            Some(&*row_ids),
         )
         .expect("one block statement plans");
         apply_mutations(&mut store, &plan.mutations);
@@ -3609,6 +3705,7 @@ fn historical_stats_data_plans_one_statement_per_block() {
 #[test]
 fn historical_stats_reader_selects_meta_and_data_versions_independently() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let data_version = 440_000_000_000_000_000;
@@ -3628,6 +3725,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         data.modify_count,
         data_version,
         now(),
+        Some(&*row_ids),
     )
     .expect("initial metadata plans");
     apply_mutations(&mut store, &meta.mutations);
@@ -3644,9 +3742,17 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         .expect("initial data history statements plan");
 
     let meta_version = data_version + 10;
-    let meta =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 17, 7, meta_version, now())
-            .expect("newer metadata plans");
+    let meta = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        17,
+        7,
+        meta_version,
+        now(),
+        Some(&*row_ids),
+    )
+    .expect("newer metadata plans");
     apply_mutations(&mut store, &meta.mutations);
     apply_historical_stats_meta_statements(
         &mut store,
@@ -3677,6 +3783,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
 #[test]
 fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let cutoff = now();
@@ -3692,6 +3799,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
             0,
             version as u64,
             create_time,
+            Some(&*row_ids),
         )
         .expect("metadata plans");
         apply_mutations(&mut store, &meta.mutations);
@@ -3758,6 +3866,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
 #[test]
 fn live_stats_dump_refreshes_meta_after_loading_payload() {
     let mut store = bootstrapped();
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
@@ -3771,7 +3880,8 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
         columns: vec![full_histogram(1, false)],
         indexes: Vec::new(),
     };
-    let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("analyze plans");
+    let plan =
+        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let table_info = TableInfo {
         id: table_id,
@@ -3799,6 +3909,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
         3,
         refreshed_version,
         now(),
+        Some(&*row_ids),
     )
     .expect("newer metadata plans");
     apply_mutations(&mut store, &plan.mutations);
@@ -3846,9 +3957,8 @@ fn stats_writes_allocate_from_the_node_allocator_like_go() {
     let mut job_ids = Vec::new();
     for _ in 0..2 {
         let (job_id, insert) = {
-            let mut snapshot = tidb_exec::cluster_catalog::WithRowIds::new(&mut store, &allocators);
             plan_insert_analyze_job(
-                &mut snapshot,
+                &mut store,
                 &catalog,
                 "test",
                 "t",
@@ -3857,6 +3967,7 @@ fn stats_writes_allocate_from_the_node_allocator_like_go() {
                 "127.0.0.1:4000",
                 77,
                 now(),
+                Some(&allocators),
             )
             .expect("pending job plans")
         };

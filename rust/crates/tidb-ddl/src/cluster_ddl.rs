@@ -5270,6 +5270,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     start_ts: u64,
     schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let reorg_outcomes = schema_state.reorg.clone();
     plan_persisted_ddl_job_with(
@@ -5280,8 +5281,16 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         load_error_count_limit,
         supports_persisted_ddl_job,
         |snapshot, catalog, active| {
-            plan_persisted_action(snapshot, catalog, active, start_ts, &reorg_outcomes)
+            plan_persisted_action(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                &reorg_outcomes,
+                row_ids,
+            )
         },
+        row_ids,
     )
 }
 
@@ -5293,6 +5302,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // A job of its own reads the latest outcome; a multi-schema change hands
     // each sub-job its own.
@@ -5305,9 +5315,9 @@ fn plan_persisted_action<S: MetaSnapshot>(
             plan_persisted_check_constraint_job_step(catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_SCHEMA => plan_persisted_create_schema_job_step(catalog, active),
-        ActionType::ACTION_CREATE_TABLE => {
-            create_table::plan_persisted_create_table_job_step(snapshot, catalog, active, start_ts)
-        }
+        ActionType::ACTION_CREATE_TABLE => create_table::plan_persisted_create_table_job_step(
+            snapshot, catalog, active, start_ts, row_ids,
+        ),
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(catalog, active, start_ts)
         }
@@ -5356,7 +5366,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_ADD_TABLE_PARTITION => {
             partition::plan_persisted_add_table_partition_job_step(
-                snapshot, catalog, active, start_ts,
+                snapshot, catalog, active, start_ts, row_ids,
             )
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
@@ -5366,6 +5376,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcome,
+                row_ids,
             )
         }
         ActionType::ACTION_REORGANIZE_PARTITION
@@ -5377,6 +5388,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcome,
+                row_ids,
             )
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
@@ -5386,6 +5398,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcome,
+                row_ids,
             )
         }
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
@@ -5395,18 +5408,19 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcome,
+                row_ids,
             )
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
         }
         ActionType::ACTION_DROP_SCHEMA => {
-            plan_persisted_drop_schema_job_step(snapshot, catalog, active)
+            plan_persisted_drop_schema_job_step(snapshot, catalog, active, row_ids)
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE => {
-            plan_persisted_drop_table_job_step(snapshot, catalog, active)
+            plan_persisted_drop_table_job_step(snapshot, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             add_index::plan_persisted_add_index_job_step(
@@ -5415,16 +5429,17 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcome,
+                row_ids,
             )
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
             drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
         }
-        ActionType::ACTION_TRUNCATE_TABLE => {
-            truncate::plan_persisted_truncate_table_job_step(snapshot, catalog, active, start_ts)
-        }
+        ActionType::ACTION_TRUNCATE_TABLE => truncate::plan_persisted_truncate_table_job_step(
+            snapshot, catalog, active, start_ts, row_ids,
+        ),
         ActionType::ACTION_ADD_COLUMN => {
-            add_column::plan_persisted_add_column_job_step(snapshot, catalog, active, start_ts)
+            add_column::plan_persisted_add_column_job_step(catalog, active, start_ts, row_ids)
         }
         ActionType::ACTION_DROP_COLUMN => {
             drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
@@ -5436,6 +5451,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 active,
                 start_ts,
                 reorg_outcomes,
+                row_ids,
             )
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::plan_persisted_add_foreign_key_job_step(
@@ -5450,6 +5466,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
             active,
             start_ts,
             reorg_outcome,
+            row_ids,
         ),
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             alter_table::plan_persisted_alter_table_job_step(snapshot, catalog, active, start_ts)
@@ -5472,6 +5489,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         &ClusterCatalog,
         &mut crate::ddl_job_table::ActiveDdlJob,
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
@@ -5552,8 +5570,15 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
-        return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts)
-            .map(PersistedDdlJobPlan::Step);
+        return finish_persisted_ddl_job(
+            snapshot,
+            &catalog,
+            &job_table,
+            &mut active,
+            start_ts,
+            row_ids,
+        )
+        .map(PersistedDdlJobPlan::Step);
     }
 
     // Go processJobPausingRequest runs before action dispatch. The pause
@@ -5631,8 +5656,15 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
-        return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts)
-            .map(PersistedDdlJobPlan::Step);
+        return finish_persisted_ddl_job(
+            snapshot,
+            &catalog,
+            &job_table,
+            &mut active,
+            start_ts,
+            row_ids,
+        )
+        .map(PersistedDdlJobPlan::Step);
     }
     // Go transitOneJobStep discards failed forward metadata, but keeps a
     // handled rollback's mutations. The job/error checkpoint survives both.
@@ -5665,6 +5697,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
     job_table: &crate::ddl_job_table::DdlJobTable,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     if active.job.state == JobState::DONE {
         active.job.state = JobState::SYNCED;
@@ -5686,6 +5719,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         catalog,
         &active.job,
         start_ts,
+        row_ids,
     )?;
     append_history_ddl_job(catalog, snapshot, &active.job, encoded, &mut mutations)?;
     job_table
@@ -6429,6 +6463,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -6543,7 +6578,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
                     )
                 })
                 .collect();
-            append_schema_change_mutations(snapshot, catalog, ddl_job_id, &events, &mut mutations)?;
+            append_schema_change_mutations(catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
         }
         // Go `getIDs(tables)`: each table's id, then its partitions'.
         let dropped_ids: Vec<i64> = tables
@@ -6610,6 +6645,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -6715,11 +6751,11 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             && !tidb_metadef::is_mem_or_sys_db(&database.info.name.lowercase().go_to_lower())
         {
             append_schema_change_mutations(
-                snapshot,
                 catalog,
                 ddl_job_id,
                 &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))],
                 &mut mutations,
+                row_ids,
             )?;
         }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
@@ -7267,6 +7303,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     start_ts: u64,
     failure: PersistedDdlJobFailure,
     load_error_count_limit: &dyn Fn() -> i64,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
@@ -7300,7 +7337,14 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
         }
     };
     if active.job.is_cancelled() {
-        return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts);
+        return finish_persisted_ddl_job(
+            snapshot,
+            &catalog,
+            &job_table,
+            &mut active,
+            start_ts,
+            row_ids,
+        );
     }
     let mut mutations = Vec::new();
     job_table
@@ -8950,12 +8994,12 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
         .find(|index| index.read().name.original().go_lower_eq(name))
 }
 
-fn append_schema_change_mutations<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn append_schema_change_mutations(
     catalog: &ClusterCatalog,
     ddl_job_id: i64,
     events: &[(i64, SchemaChangeEvent)],
     writes: &mut Vec<BufferMutation>,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<(), DdlPlanError> {
     if events.is_empty() {
         return Ok(());
@@ -8985,7 +9029,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     // Go's internal INSERT allocates `_tidb_rowid` from the node's
     // allocator, whose reservation commits on its own.
     let allocator = if !table.pk_is_handle && !table.is_common_handle {
-        let ids = snapshot.row_ids().ok_or_else(|| {
+        let ids = row_ids.ok_or_else(|| {
             DdlPlanError::Encode(format!("mysql.{NOTIFIER_TABLE_NAME} has no row-ID allocator"))
         })?;
         Some(ids.row_allocator_for(system_database.id, table))

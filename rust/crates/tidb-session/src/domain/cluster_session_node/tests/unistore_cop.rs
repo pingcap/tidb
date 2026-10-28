@@ -5115,6 +5115,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
                 "127.0.0.1:4000",
                 78,
                 started_at,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             job_id = created_job_id;
@@ -5128,6 +5129,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
                 &stack.factory.catalog.load(),
                 job_id,
                 started_at,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5140,6 +5142,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
                 job_id,
                 3,
                 started_at,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5208,6 +5211,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
                 "127.0.0.1:4000",
                 1,
                 started_at,
+                Some(factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             job_id = created_job_id;
@@ -5221,6 +5225,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
                 &factory.catalog.load(),
                 job_id,
                 started_at,
+                Some(factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5234,6 +5239,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
                 0,
                 Some("simulated failure"),
                 now,
+                Some(factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5305,6 +5311,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
                     instance,
                     process_id,
                     created_at,
+                    Some(stack.factory.auto_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())?;
                 Ok(plan)
@@ -5319,6 +5326,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
                     &stack.factory.catalog.load(),
                     id,
                     old,
+                    Some(stack.factory.auto_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())
             })
@@ -5333,6 +5341,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
                 0,
                 None,
                 old,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5344,6 +5353,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
                 &stack.factory.catalog.load(),
                 2,
                 old,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })
@@ -5357,6 +5367,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
                 0,
                 None,
                 old,
+                Some(stack.factory.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         })

@@ -562,9 +562,17 @@ mod statement_tests {
         const TABLE_ID: i64 = 42;
         let mut store = bootstrapped();
         let catalog = load_cluster_catalog(&mut store).unwrap();
-        let meta =
-            plan_loaded_stats_meta_write(&mut store, &catalog, TABLE_ID, 5, 2, 10, timestamp())
-                .unwrap();
+        let meta = plan_loaded_stats_meta_write(
+            &mut store,
+            &catalog,
+            TABLE_ID,
+            5,
+            2,
+            10,
+            timestamp(),
+            None,
+        )
+        .unwrap();
         store.apply(&meta.mutations);
 
         let insert = plan_cluster_insert_lock(&mut store, &catalog, TABLE_ID, timestamp()).unwrap();

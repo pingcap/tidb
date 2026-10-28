@@ -145,7 +145,7 @@ fn put_policy(snapshot: &mut RecordedSnapshot, id: i64, name: &str) {
 #[test]
 fn an_unchanged_schema_version_reloads_nothing() {
     let (mut snapshot, catalog) = started_cluster();
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     assert!(matches!(
         reloaded,
         ReloadedCatalog::Unchanged { version: 100 }
@@ -159,7 +159,7 @@ fn a_create_table_diff_adds_exactly_that_table() {
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -182,7 +182,7 @@ fn a_drop_table_diff_removes_exactly_that_table() {
     snapshot.remove(&key::table_kv_key(3, 77));
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_DROP_TABLE, 3, 77));
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let Some(next) = reloaded.catalog() else {
         panic!("expected a published catalog, got {reloaded:?}");
     };
@@ -204,7 +204,7 @@ fn a_truncate_table_diff_swaps_the_old_table_id_for_the_new_one() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
     assert_eq!(next.databases[0].tables.len(), 1);
     let (_, table) = next.find_table("campaign", "rows").expect("table survives");
@@ -228,7 +228,7 @@ fn a_rename_table_diff_within_the_same_database_renames_in_place() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -269,7 +269,7 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -324,7 +324,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -366,7 +366,7 @@ fn a_rename_tables_diff_panics_on_a_nil_affected_option() {
         ),
     );
 
-    let _ = reload_cluster_catalog(&mut snapshot, &catalog);
+    let _ = reload_cluster_catalog(&mut snapshot, &catalog, None);
 }
 
 /// A malformed rename diff (`old_schema_id: 0` while the current database is
@@ -389,7 +389,7 @@ fn a_rename_table_diff_with_a_zero_old_schema_id_takes_the_full_load() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Full {
         catalog: next,
         reason,
@@ -418,7 +418,7 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_SCHEMA, 4, 0));
 
-    let created = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let created = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let created = created.catalog().expect("published catalog").clone();
     // Loading also installs system schemas; check the diff's delta.
     assert_eq!(created.databases.len(), catalog.databases.len() + 1);
@@ -429,7 +429,7 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
 
     snapshot.remove(&key::database_kv_key(4));
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_DROP_SCHEMA, 4, 0));
-    let dropped = reload_cluster_catalog(&mut snapshot, &created).expect("reload runs");
+    let dropped = reload_cluster_catalog(&mut snapshot, &created, None).expect("reload runs");
     let dropped = dropped.catalog().expect("published catalog");
     assert_eq!(dropped.schema_version, 102);
     assert_eq!(dropped.databases.len(), catalog.databases.len());
@@ -449,7 +449,7 @@ fn a_create_tables_diff_adds_every_affected_table() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
     assert_eq!(next.databases[0].tables.len(), 3);
     assert!(next.find_table("campaign", "notes").is_some());
@@ -468,7 +468,7 @@ fn a_create_tables_diff_panics_on_a_nil_affected_option() {
         ),
     );
 
-    let _ = reload_cluster_catalog(&mut snapshot, &catalog);
+    let _ = reload_cluster_catalog(&mut snapshot, &catalog, None);
 }
 
 /// The same table shape as [`go_table`] in another schema state, as a
@@ -622,7 +622,7 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
     );
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 74));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "old table by diff",
     );
     let (_, v1b) = next.find_table("campaign", "v1b").expect("v1b");
@@ -656,7 +656,7 @@ fn diff_reloads_report_the_changed_physical_tables_and_actions() {
         103,
         &diff_json(103, ActionType::ACTION_SET_TI_FLASH_REPLICA, 3, 77),
     );
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog,
         applied,
@@ -698,7 +698,7 @@ fn diff_reloads_report_the_changed_physical_tables_and_actions() {
         106,
         &diff_json(106, ActionType::ACTION_FLASHBACK_CLUSTER, 0, -1),
     );
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         applied, changes, ..
     } = reloaded
@@ -739,7 +739,7 @@ fn drop_schema_and_truncate_diffs_answer_gos_ids() {
         &diff_json(102, ActionType::ACTION_CREATE_PLACEMENT_POLICY, 99, 0),
     );
     snapshot.commit_diff(103, &diff_json(103, ActionType::ACTION_DROP_SCHEMA, 3, 0));
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs { changes, .. } = reloaded else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
     };
@@ -782,7 +782,7 @@ fn a_multi_schema_change_diff_reloads_the_table_in_place_like_gos_default() {
     );
 
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "multi schema change",
     );
     let (_, table) = next.find_table("campaign", "rows").expect("table survives");
@@ -801,7 +801,7 @@ fn a_schema_level_diff_in_the_default_tier_touches_no_table() {
     );
 
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "modify schema read only",
     );
     assert_eq!(next.schema_version, 101);
@@ -820,7 +820,7 @@ fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
     );
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_DROP_TABLE, 3, 77));
     let kept = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "write-only drop step",
     );
     let (_, table) = kept.find_table("campaign", "rows").expect("table kept");
@@ -832,7 +832,7 @@ fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
     snapshot.remove(&key::table_kv_key(3, 77));
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_DROP_TABLE, 3, 77));
     let gone = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &kept).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
         "final drop step",
     );
     assert!(gone.databases[0].tables.is_empty());
@@ -849,7 +849,7 @@ fn drop_view_and_drop_sequence_diffs_drop_like_drop_table() {
         snapshot.remove(&key::table_kv_key(3, 77));
         snapshot.commit_diff(101, &diff_json(101, action, 3, 77));
         let next = diffs_reload(
-            reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+            reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
             "drop view/sequence",
         );
         assert!(next.databases[0].tables.is_empty(), "{action}");
@@ -871,7 +871,7 @@ fn a_create_or_replace_view_diff_drops_the_old_view_id() {
         ),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create or replace view",
     );
     assert_eq!(next.databases[0].tables.len(), 1);
@@ -888,7 +888,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         &diff_json(101, ActionType::ACTION_RECOVER_TABLE, 3, 78),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "recover table",
     );
     assert_eq!(next.databases[0].tables.len(), 2);
@@ -899,7 +899,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         &diff_json(102, ActionType::ACTION_CREATE_SEQUENCE, 3, 79),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "create sequence",
     );
     assert_eq!(next.databases[0].tables.len(), 3);
@@ -923,7 +923,7 @@ fn a_recover_schema_diff_reads_the_databases_tables_from_the_store() {
     };
     snapshot.commit_diff(101, &recover(101));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "recover schema",
     );
     assert_eq!(next.databases.len(), catalog.databases.len() + 1);
@@ -931,7 +931,7 @@ fn a_recover_schema_diff_reads_the_databases_tables_from_the_store() {
     assert!(next.find_table("ledger", "b").is_some());
 
     snapshot.commit_diff(102, &recover(102));
-    let reloaded = reload_cluster_catalog(&mut snapshot, &next).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs");
     let ReloadedCatalog::Full { reason, .. } = reloaded else {
         panic!("expected a full reload, got {reloaded:?}");
     };
@@ -966,7 +966,7 @@ fn a_modify_schema_charset_diff_copies_the_fresh_fields_onto_the_loaded_database
         ),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "modify schema charset",
     );
     assert_eq!(next.databases[0].info.charset, "latin1");
@@ -986,7 +986,7 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
         put_policy(&mut snapshot, 99, "p99");
         snapshot.commit_diff(101, &diff_json(101, action, 99, 0));
         let next = diffs_reload(
-            reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+            reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
             "policy diff",
         );
         assert_eq!(next.schema_version, 101, "{action}");
@@ -1008,7 +1008,7 @@ fn policy_diffs_keep_the_loaded_policy_set_current() {
         &diff_json(101, ActionType::ACTION_CREATE_PLACEMENT_POLICY, 99, 0),
     );
     let created = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create policy",
     );
     assert_eq!(created.policies.len(), 1);
@@ -1018,7 +1018,7 @@ fn policy_diffs_keep_the_loaded_policy_set_current() {
         &diff_json(102, ActionType::ACTION_DROP_PLACEMENT_POLICY, 99, 0),
     );
     let dropped = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &created).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &created, None).expect("reload runs"),
         "drop policy",
     );
     assert!(dropped.policies.is_empty());
@@ -1026,7 +1026,7 @@ fn policy_diffs_keep_the_loaded_policy_set_current() {
         103,
         &diff_json(103, ActionType::ACTION_ALTER_PLACEMENT_POLICY, 98, 0),
     );
-    let reloaded = reload_cluster_catalog(&mut snapshot, &dropped).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &dropped, None).expect("reload runs");
     assert!(
         matches!(reloaded, ReloadedCatalog::Full { .. }),
         "{reloaded:?}"
@@ -1050,7 +1050,7 @@ fn an_exchange_partition_diff_reloads_the_normal_and_the_partitioned_table() {
         ),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "exchange partition",
     );
     let mut ids: Vec<i64> = next.databases[0].tables.iter().map(|t| t.id).collect();
@@ -1077,28 +1077,28 @@ fn refresh_meta_diffs_follow_the_store() {
     };
     snapshot.commit_diff(101, &refresh(101, 3, 77));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "refresh meta drop",
     );
     assert!(next.databases[0].tables.is_empty());
 
     snapshot.commit_diff(102, &refresh(102, 3, 78));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta add table",
     );
     assert!(next.find_table("campaign", "notes").is_some());
 
     snapshot.commit_diff(103, &refresh(103, 5, 9));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta table under unloaded database",
     );
     assert_eq!(next.databases.len(), catalog.databases.len());
 
     snapshot.commit_diff(104, &refresh(104, 4, 0));
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta add database",
     );
     assert_eq!(next.databases.len(), catalog.databases.len() + 1);
@@ -1114,7 +1114,7 @@ fn a_flashback_cluster_diff_without_regenerate_changes_nothing() {
         &diff_json(101, ActionType::ACTION_FLASHBACK_CLUSTER, 0, -1),
     );
     let next = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "flashback",
     );
     assert_eq!(next.databases[0].tables.len(), 1);
@@ -1140,7 +1140,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         // has something to leave untouched.
         snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
         snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
-        let catalog = reload_cluster_catalog(&mut snapshot, &catalog)
+        let catalog = reload_cluster_catalog(&mut snapshot, &catalog, None)
             .expect("seed reload runs")
             .catalog()
             .expect("seed catalog published")
@@ -1159,7 +1159,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         );
         snapshot.commit_diff(102, &diff_json(102, action, 3, 77));
 
-        let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+        let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
         let ReloadedCatalog::Diffs {
             catalog: next,
             applied,
@@ -1215,7 +1215,7 @@ fn a_common_alter_table_diff_also_reloads_every_affected_table() {
         ),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -1245,7 +1245,7 @@ fn a_regenerate_schema_map_diff_forces_a_full_reload() {
             ActionType::ACTION_CREATE_TABLE.0
         ),
     );
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     assert!(matches!(
         reloaded,
         ReloadedCatalog::Full {
@@ -1262,7 +1262,7 @@ fn a_large_version_gap_takes_the_full_load_instead_of_replaying() {
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
     snapshot.commit_diff(far, &diff_json(far, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Full {
         catalog: next,
         reason,
@@ -1285,7 +1285,7 @@ fn a_version_whose_diff_is_not_written_yet_is_not_adopted() {
     // own transaction has not committed its diff, so version 101 is not yet
     // observable and the node stays at 100.
     snapshot.put(key::schema_version_kv_key(), value::encode_int_value(101));
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     assert!(matches!(
         reloaded,
         ReloadedCatalog::Unchanged { version: 100 }
@@ -1299,7 +1299,7 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
@@ -1317,7 +1317,7 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
 fn a_backwards_version_takes_the_full_load() {
     let (mut snapshot, mut catalog) = started_cluster();
     catalog.schema_version = 150;
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Full {
         catalog: next,
         reason,
@@ -1336,7 +1336,7 @@ fn a_backwards_version_takes_the_full_load() {
 fn a_diff_naming_an_unknown_database_takes_the_full_load() {
     let (mut snapshot, catalog) = started_cluster();
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 9, 91));
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Full { reason, .. } = reloaded else {
         panic!("expected a full reload");
     };
@@ -1374,7 +1374,7 @@ fn resource_group_diffs_follow_the_stored_group() {
         &diff_json(101, ActionType::ACTION_CREATE_RESOURCE_GROUP, 90, 0),
     );
     let created = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create resource group",
     );
     let rg1 = |catalog: &ClusterCatalog| {
@@ -1392,7 +1392,7 @@ fn resource_group_diffs_follow_the_stored_group() {
         &diff_json(102, ActionType::ACTION_ALTER_RESOURCE_GROUP, 90, 0),
     );
     let altered = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &created).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &created, None).expect("reload runs"),
         "alter resource group",
     );
     assert_eq!(rg1(&altered), Some(200));
@@ -1404,7 +1404,7 @@ fn resource_group_diffs_follow_the_stored_group() {
         &diff_json(103, ActionType::ACTION_DROP_RESOURCE_GROUP, 90, 0),
     );
     let dropped = diffs_reload(
-        reload_cluster_catalog(&mut snapshot, &altered).expect("reload runs"),
+        reload_cluster_catalog(&mut snapshot, &altered, None).expect("reload runs"),
         "drop resource group",
     );
     assert_eq!(rg1(&dropped), None);

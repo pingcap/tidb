@@ -79,8 +79,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             let catalog = self.catalog.load();
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
-            let mut snapshot =
-                super::SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&self.row_ids));
+            let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
             let (job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
                 &mut snapshot,
                 &catalog,
@@ -91,6 +90,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                 &self.instance,
                 self.process_id,
                 utc_now_timestamp(),
+                Some(self.row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             self.transactions
@@ -121,6 +121,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                 catalog,
                 job_id,
                 utc_now_timestamp(),
+                Some(self.row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         }) {
@@ -141,6 +142,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                 job_id,
                 processed_rows,
                 utc_now_timestamp(),
+                Some(self.row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         }) {
@@ -172,6 +174,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                 processed_rows,
                 failure,
                 utc_now_timestamp(),
+                Some(self.row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
         }) {

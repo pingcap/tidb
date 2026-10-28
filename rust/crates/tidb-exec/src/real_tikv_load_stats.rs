@@ -151,12 +151,20 @@ pub fn commit_cluster_drop_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     physical_ids: &[i64],
     timeout: Duration,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_delete_table_stats(&mut snapshot, &catalog, physical_ids, true, version)
-            .map_err(|error| error.to_string())?;
+        let plan = plan_delete_table_stats(
+            &mut snapshot,
+            &catalog,
+            physical_ids,
+            true,
+            version,
+            row_ids,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(((), plan.mutations))
     })
     .map_err(pessimistic_error)
@@ -176,13 +184,25 @@ fn commit_loaded_table<S: StoreClient>(
         let version = commit_item(opener, catalog, table, item, timeout, row_ids)?;
         item_count += 1;
         if historical_stats_enabled && item_history_initialized(table.physical_id) {
-            record_history(opener, table.physical_id, version, timeout);
+            record_history(
+                opener,
+                table.physical_id,
+                version,
+                timeout,
+                Some(row_ids.as_ref()),
+            );
         }
     }
     commit_usage(opener, catalog, table, timeout, row_ids)?;
     let version = commit_final_meta(opener, catalog, table, timeout, row_ids)?;
     if historical_stats_enabled {
-        record_history(opener, table.physical_id, version, timeout);
+        record_history(
+            opener,
+            table.physical_id,
+            version,
+            timeout,
+            Some(row_ids.as_ref()),
+        );
     }
     Ok(item_count)
 }
@@ -311,7 +331,7 @@ fn commit_item<S: StoreClient>(
     let staged = MutationBuffer::new();
     for statement in loaded_stats_item_statements(table.physical_id, item).map_err(other)? {
         lock_pessimistic_statement(&transaction, &staged, |snapshot, start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let plan = plan_loaded_stats_item_statement(
                 &mut snapshot,
                 catalog,
@@ -321,6 +341,7 @@ fn commit_item<S: StoreClient>(
                 start_ts,
                 utc_now_timestamp(),
                 &statement,
+                Some(row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             Ok(((), plan.mutations))
@@ -353,13 +374,14 @@ fn commit_usage<S: StoreClient>(
             continue;
         }
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let plan = plan_loaded_stats_usage_write(
                 &mut snapshot,
                 catalog,
                 table.physical_id,
                 std::slice::from_ref(column),
                 utc_now_timestamp(),
+                Some(row_ids.as_ref()),
             )
             .map_err(|error| error.to_string())?;
             Ok(((), plan.mutations))
@@ -380,7 +402,7 @@ fn commit_final_meta<S: StoreClient>(
     row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(std::sync::Arc::clone(row_ids));
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         let plan = plan_loaded_stats_meta_write(
             &mut snapshot,
             catalog,
@@ -389,6 +411,7 @@ fn commit_final_meta<S: StoreClient>(
             table.modify_count,
             version,
             utc_now_timestamp(),
+            Some(row_ids.as_ref()),
         )
         .map_err(|error| error.to_string())?;
         Ok((version, plan.mutations))
@@ -401,6 +424,7 @@ fn record_history<S: StoreClient>(
     table_id: i64,
     version: u64,
     timeout: Duration,
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) {
     let _ = crate::real_tikv_stats::record_historical_stats_meta(
         opener,
@@ -408,6 +432,7 @@ fn record_history<S: StoreClient>(
         version,
         LOAD_STATS_HISTORY_SOURCE,
         timeout,
+        row_ids,
     );
 }
 

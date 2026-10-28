@@ -303,6 +303,7 @@ where
             &self.opener,
             physical_ids,
             self.timeout,
+            Some(self.row_ids.as_ref()),
         )
         .map_err(cluster_load_stats_error)?;
         // Go `executeDropStats` ends in `StatsHandle.Update`, and returns its

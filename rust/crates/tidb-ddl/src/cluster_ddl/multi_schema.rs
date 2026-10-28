@@ -95,10 +95,6 @@ impl MetaSnapshot for MetaOverlay<'_> {
         Ok(self.merge(pairs, |key| key >= start && key < end))
     }
 
-    fn row_ids(&self) -> Option<&dyn tidb_cluster::table_from_meta::TableAutoIds> {
-        self.inner.row_ids()
-    }
-
     fn auto_id_client(&self) -> Option<&std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
         self.inner.auto_id_client()
     }
@@ -844,6 +840,7 @@ fn run_sub_job_step(
     skip_version: bool,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> SubJobStep {
     let proxy_job = sub.read().to_proxy_job(&active.job, seq as i64);
     if skip_version {
@@ -897,6 +894,7 @@ fn run_sub_job_step(
         &mut proxy,
         start_ts,
         outcome.map(std::slice::from_ref).unwrap_or_default(),
+        row_ids,
     ) {
         Ok(mut step) => {
             // Go `countForError` on the proxy.
@@ -966,6 +964,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
+    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {
         return Err(cancel_ddl_job(
@@ -1001,6 +1000,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
                     false,
                     start_ts,
                     outcomes,
+                    row_ids,
                 );
                 if step.reorg.is_some() {
                     return Ok(step);
@@ -1053,6 +1053,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
                 false,
                 start_ts,
                 outcomes,
+                row_ids,
             );
             if step.reorg.is_some() {
                 return Ok(step);
@@ -1103,6 +1104,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
                 version != 0,
                 start_ts,
                 outcomes,
+                row_ids,
             );
             if step.reorg.is_some() {
                 return Ok(step);
@@ -1178,6 +1180,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
             false,
             start_ts,
             outcomes,
+            row_ids,
         );
         if step.reorg.is_some() {
             return Ok(step);

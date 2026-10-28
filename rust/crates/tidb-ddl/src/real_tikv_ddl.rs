@@ -1815,14 +1815,14 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
             transaction
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        )
-        .with_row_ids(row_ids);
+        );
         match plan_persisted_ddl_job_step(
             &mut snapshot,
             phase.ddl_job_id,
             start_ts,
             phase.schema_state.clone(),
             &|| refresh_ddl_error_count_limit(&opener, timeout, phase.ddl_job_id),
+            Some(row_ids.as_ref()),
         ) {
             Ok(PersistedDdlJobPlan::Paused) => {
                 transaction
@@ -1907,6 +1907,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                         start_ts,
                         failure,
                         &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id),
+                        Some(row_ids.as_ref()),
                     )
                 });
             let checkpoint = match checkpoint {

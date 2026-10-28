@@ -357,6 +357,7 @@ fn the_first_user_table_is_117() {
             467_996_279_696_262_000 + tick,
             DdlJobSchemaState::new(true),
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
+            None,
         )
         .unwrap();
         let PersistedDdlJobPlan::Step(step) = plan else {
