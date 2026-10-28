@@ -801,11 +801,9 @@ impl Domain {
         self.bindings = Some(Arc::clone(&bindings));
         // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.
         self.register_statistics(Arc::new(stat::BindingStatistics(bindings.cache())));
-        let factory = self.shared();
-        bindings.attach_session_pool(Arc::new(binding_maintenance::BindingSessions::new(
-            &factory,
-        )));
-        factory
+        // The session package attaches the binding sessions (Go
+        // `NewBindingHandle`'s `sPool`), `attach_binding_sessions`.
+        self.shared()
     }
 
     /// Binds the factory to an authority that has already read the cluster's

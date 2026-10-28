@@ -596,7 +596,8 @@ pub fn cluster_session_stack(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
-    let factory = factory.with_bindings(bindings);
+    let factory = factory.with_bindings(Arc::clone(&bindings));
+    crate::domain::cluster_session_node::attach_binding_sessions(&factory, bindings.as_ref());
     factory.attach_login_storage(&users);
     if let Some(runner) = &mut server_info_runner {
         let processes = factory.processes();

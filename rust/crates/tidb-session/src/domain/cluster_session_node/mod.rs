@@ -248,6 +248,7 @@ pub const STATS_OWNER_PROMPT: &str = "stats";
 pub(crate) use tidb_domain_core::bdr_role_store;
 mod catalog_follower;
 mod binding_maintenance;
+pub use binding_maintenance::attach_binding_sessions;
 use tidb_ddl::worker as ddl;
 pub(crate) use tidb_domain_core::ddl_job_history_store;
 mod ddl_notifier;

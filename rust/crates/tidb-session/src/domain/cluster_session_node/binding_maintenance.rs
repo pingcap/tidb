@@ -132,3 +132,12 @@ impl InternalSqlRunner for BindingRunner {
         self.rows(&sql)
     }
 }
+
+/// Go `NewBindingHandle`'s `sPool`: the binding authority runs its
+/// maintenance on sessions the session package opens over `domain`.
+pub fn attach_binding_sessions(
+    domain: &Arc<Domain>,
+    bindings: &dyn crate::domain::cluster_binding_seam::ClusterBindings,
+) {
+    bindings.attach_session_pool(Arc::new(BindingSessions::new(domain)));
+}
