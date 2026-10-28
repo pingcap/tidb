@@ -25,7 +25,7 @@ use tidb_datatype::Datum;
 /// is `PlacementSettings.String()`. Go interpolates the name with `%s`
 /// between literal backticks rather than escaping it.
 #[must_use]
-pub(crate) fn rows(name: &str, settings_clause: &str) -> Vec<Vec<Datum>> {
+pub fn rows(name: &str, settings_clause: &str) -> Vec<Vec<Datum>> {
     let create = if settings_clause.is_empty() {
         format!("CREATE PLACEMENT POLICY `{name}` ")
     } else {

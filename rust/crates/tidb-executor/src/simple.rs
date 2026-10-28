@@ -17,6 +17,7 @@
 pub mod account;
 pub mod account_password;
 pub mod account_tables;
+pub mod exec;
 
 use crate::sessionctx::SessionContext;
 use crate::{Catalog, DriverError};

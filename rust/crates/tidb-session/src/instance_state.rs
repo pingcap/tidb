@@ -28,7 +28,7 @@ use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
 use tidb_executor::{Catalog, DriverError};
 use tidb_hack::GoCaseCompare;
 
-use crate::infoschema::SchemaVisibility;
+use tidb_executor::infoschema_reader::SchemaVisibility;
 use crate::process;
 
 /// What the instance-wide tables read of the session viewing them.
@@ -178,7 +178,7 @@ impl ViewerState {
                 .collect();
         }
         let columns =
-            crate::infoschema::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
+            tidb_executor::infoschema_reader::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
         let read = tidb_executor::slow_query::retrieve_slow_query_rows(
             &columns,
             &checker,
@@ -335,14 +335,14 @@ impl MemTableRetriever for InstanceStateRetriever {
             // `tidb_snapshot`, the transaction's otherwise).
             let (running, history) = self.viewer.all_ddl_jobs()?;
             let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
-            return Ok(crate::infoschema::ddl_jobs_rows(
+            return Ok(tidb_executor::infoschema_reader::ddl_jobs_rows(
                 &jobs,
                 &self.viewer.visibility,
                 catalog,
             ));
         }
         if table.go_lower_eq("ANALYZE_STATUS") {
-            return crate::show::statistics::analyze_status_rows_of(
+            return tidb_executor::show::stats::analyze_status_rows_of(
                 self.viewer.analyze_status.as_deref(),
                 &self.viewer.resource_group,
                 &self.viewer.visibility,
@@ -381,7 +381,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             let Some(Extractor::MetricSummaryTable(extractor)) = &read.extractor else {
                 return Ok(Vec::new());
             };
-            return crate::memtable_retrievers::metrics_summary_rows(
+            return tidb_executor::memtable_retrievers::metrics_summary_rows(
                 extractor,
                 &read.query_time_range,
                 table.go_lower_eq("METRICS_SUMMARY_BY_LABEL"),
@@ -404,7 +404,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             return Ok(tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows());
         }
         if table.go_lower_eq("TIDB_INDEX_USAGE") {
-            return Ok(crate::infoschema::tidb_index_usage_rows(
+            return Ok(tidb_executor::infoschema_reader::tidb_index_usage_rows(
                 catalog,
                 &self.viewer.visibility,
                 self.viewer.index_usage.as_ref(),
@@ -417,7 +417,7 @@ impl MemTableRetriever for InstanceStateRetriever {
                 self.viewer.login_user.as_deref(),
             );
         }
-        let columns = crate::infoschema::table_schema(table).ok_or_else(|| {
+        let columns = tidb_executor::infoschema_reader::table_schema(table).ok_or_else(|| {
             DriverError::unsupported("a statement summary table has no declared schema")
         })?;
         self.viewer

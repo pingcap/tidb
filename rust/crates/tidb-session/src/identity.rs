@@ -40,10 +40,11 @@ impl Session {
         table: &str,
         privilege: privilege::PrivilegeType,
     ) -> Result<(), DriverError> {
-        let granted = match crate::table_privilege::mem_db_verdict_mask(database, privilege.bit()) {
-            Some(verdict) => verdict,
-            None => self.has_scoped_privilege(database, table, privilege),
-        };
+        let granted =
+            match tidb_privilege::verification::mem_db_verdict_mask(database, privilege.bit()) {
+                Some(verdict) => verdict,
+                None => self.has_scoped_privilege(database, table, privilege),
+            };
         if granted {
             return Ok(());
         }
@@ -195,7 +196,7 @@ impl Session {
     ///
     /// The virtual schemas answer before any grant is read, exactly as they
     /// do for the single-privilege form
-    /// ([`crate::table_privilege::mem_db_verdict_mask`]).
+    /// ([`tidb_privilege::verification::mem_db_verdict_mask`]).
     #[must_use]
     pub fn has_any_scoped_privilege(&self, database: &str, table: &str, mask: u64) -> bool {
         let Some((registry, user, host)) = self.privilege_context() else {
@@ -204,7 +205,7 @@ impl Session {
         if let Some(verdict) = self.sem_table_verdict(registry, user, host, database, table, mask) {
             return verdict;
         }
-        if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
+        if let Some(verdict) = tidb_privilege::verification::mem_db_verdict_mask(database, mask) {
             return verdict;
         }
         registry.has_priv_mask_with_roles(user, host, self.active_roles(), database, table, mask)
@@ -214,15 +215,17 @@ impl Session {
     /// `information_schema` retrievers filter their rows with, since they run
     /// with the catalog borrowed and cannot ask the session anything.
     #[must_use]
-    pub(crate) fn schema_visibility(&self) -> crate::infoschema::SchemaVisibility {
+    pub(crate) fn schema_visibility(&self) -> tidb_executor::infoschema_reader::SchemaVisibility {
         match self.privilege_context() {
-            Some((registry, user, host)) => crate::infoschema::SchemaVisibility::for_session(
-                registry.clone(),
-                user,
-                host,
-                self.active_roles(),
-            ),
-            None => crate::infoschema::SchemaVisibility::unrestricted(),
+            Some((registry, user, host)) => {
+                tidb_executor::infoschema_reader::SchemaVisibility::for_session(
+                    registry.clone(),
+                    user,
+                    host,
+                    self.active_roles(),
+                )
+            }
+            None => tidb_executor::infoschema_reader::SchemaVisibility::unrestricted(),
         }
     }
 
@@ -316,7 +319,12 @@ impl Session {
             "RESTRICTED_TABLES_ADMIN",
             false,
         );
-        crate::table_privilege::sem_verdict_mask(database, table, mask, has_restricted_tables_admin)
+        tidb_privilege::verification::sem_verdict_mask(
+            database,
+            table,
+            mask,
+            has_restricted_tables_admin,
+        )
     }
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
@@ -1364,7 +1372,7 @@ fn scoped_privilege(
             "RESTRICTED_TABLES_ADMIN",
             false,
         );
-        if let Some(verdict) = crate::table_privilege::sem_verdict_mask(
+        if let Some(verdict) = tidb_privilege::verification::sem_verdict_mask(
             database,
             table,
             global_priv.mask(),
@@ -1373,7 +1381,8 @@ fn scoped_privilege(
             return verdict;
         }
     }
-    if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, global_priv.mask())
+    if let Some(verdict) =
+        tidb_privilege::verification::mem_db_verdict_mask(database, global_priv.mask())
     {
         return verdict;
     }

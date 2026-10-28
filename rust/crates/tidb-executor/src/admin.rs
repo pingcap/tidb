@@ -1,12 +1,40 @@
-//! The `SHOW`/`ADMIN` arms Go answers from `SimpleExec` and `ShowDDLExec`
-//! without touching a user table.
+//! Go's ADMIN executors and the `SimpleExec` arms that touch no user table.
 //!
-//! Split out of `crate::show` when that file passed the repository's
-//! 2200-line ceiling. Each function is the body of one arm, so what the
-//! dispatcher does is still one line per statement.
+//! `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX`: the `AdminStmt::AdminCheck` arm
+//! of the session's ADMIN dispatch.
+//!
+//! The check itself lives in `crate::admin_check` (which mirrors Go
+//! `pkg/executor/check_table_index.go`); this file is only the statement
+//! seam -- name resolution, the output SHAPE, and the refusals.
+//!
+//! # The shapes, from TiDB's own recording
+//!
+//! From `tests/integrationtest/r/util/admin.result` and
+//! `tests/integrationtest/r/executor/admin.result`, which are TiDB's oracle
+//! and are only ever read here:
+//!
+//! - `admin check table t;` -- NO output at all: Go's `CheckTable` plan has
+//!   an EMPTY schema, so the server sends an OK packet, not a zero-column
+//!   result set (see [`admin_check_passed`]). Producing nothing is the whole
+//!   success contract, which is exactly why the check underneath must be
+//!   real: an `Ok` returned without reading a byte is indistinguishable from
+//!   a passing check, and would be a success return that is not one.
+//! - `admin check index t idx;` -- also no output; the same consistency
+//!   check, narrowed to one index.
+//! - `admin check index t idx (2, 4);` -- a RESULT SET: the indexed columns
+//!   followed by `extra_handle`, in index order, for the rows whose handle
+//!   falls in a half-open interval.
+//!
+//! # What this refuses, by name
+//!
+//! A table whose rows are not stored as index-bearing bytes has no index
+//! entries to check against, so `ADMIN CHECK` over one is REFUSED rather than
+//! answered OK. Same for the multi-table `ADMIN CHECK TABLE t1, t2` form,
+//! which Go's own planner rejects.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
+use crate::KvTableDdl;
 use crate::{DriverError, StmtOutput};
 
 /// Go `SimpleExec.executeFlush`.
@@ -15,7 +43,7 @@ use crate::{DriverError, StmtOutput};
 /// caches they reset are per-instance, and this node re-reads accounts from
 /// the cluster rather than holding the privilege cache Go notifies. The two
 /// that are NOT no-ops keep Go's exact answers.
-pub(crate) fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError> {
+pub fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError> {
     match &flush.target {
         tidb_ast::FlushTarget::Tables { read_lock, .. } => {
             if *read_lock {
@@ -55,7 +83,7 @@ pub(crate) fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, Driv
 
 /// Go `ShowDDLExec`'s six columns. The rows come from the session, which owns
 /// the node identity and the followed schema version.
-pub(crate) fn show_ddl_output(rows: &[Vec<Datum>]) -> StmtOutput {
+pub fn show_ddl_output(rows: &[Vec<Datum>]) -> StmtOutput {
     let varchar = |size: i64| FieldType::new(FieldTypeCode::Varchar).with_flen(size);
     StmtOutput::Rows {
         columns: vec![
@@ -73,23 +101,9 @@ pub(crate) fn show_ddl_output(rows: &[Vec<Datum>]) -> StmtOutput {
     }
 }
 
-/// Go `ShowExec.fetchShowMasterStatus`: one row naming TiDB's pseudo binlog
-/// file and the CURRENT transaction's start timestamp as the position, with
-/// the three replication columns empty. Tools that call this to fence a dump
-/// read the position.
-pub(crate) fn master_status_rows(position: i64) -> Vec<Vec<Datum>> {
-    vec![vec![
-        Datum::Bytes(b"tidb-binlog".to_vec()),
-        Datum::Int(position),
-        Datum::Bytes(Vec::new()),
-        Datum::Bytes(Vec::new()),
-        Datum::Bytes(Vec::new()),
-    ]]
-}
-
 /// Go `ShowImports`, which `buildShowSchema` has no case for: this tier
 /// answers the empty `Job_ID | State` listing.
-pub(crate) fn show_imports_output() -> StmtOutput {
+pub fn show_imports_output() -> StmtOutput {
     StmtOutput::Rows {
         columns: vec![
             ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
@@ -99,170 +113,50 @@ pub(crate) fn show_imports_output() -> StmtOutput {
     }
 }
 
-/// Go `ShowExec.fetchShowPrivileges`: the static MySQL privilege table
-/// (`executor/show.go:2037` onward) followed by every registered dynamic
-/// privilege as `("<NAME>", "Server Admin", "")` — `privileges.GetDynamicPrivileges()`
-/// over `pkg/privilege/privileges/privileges.go:60`'s list, in stored order.
-/// Go `ShowExec.fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
-/// static table, then every dynamic privilege.
-pub(crate) fn show_privileges_rows() -> Vec<Vec<Datum>> {
-    const STATIC_PRIVILEGES: &[(&str, &str, &str)] = &[
-        ("Alter", "Tables", "To alter the table"),
-        ("Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"),
-        ("Config", "Server Admin", "To use SHOW CONFIG and SET CONFIG statements"),
-        ("Create", "Databases,Tables,Indexes", "To create new databases and tables"),
-        ("Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"),
-        ("Create role", "Server Admin", "To create new roles"),
-        ("Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"),
-        ("Create view", "Tables", "To create new views"),
-        ("Create user", "Server Admin", "To create new users"),
-        ("Delete", "Tables", "To delete existing rows"),
-        ("Drop", "Databases,Tables", "To drop databases, tables, and views"),
-        ("Drop role", "Server Admin", "To drop roles"),
-        ("Event", "Server Admin", "To create, alter, drop and execute events"),
-        ("Execute", "Functions,Procedures", "To execute stored routines"),
-        ("File", "File access on server", "To read and write files on the server"),
-        ("Grant option", "Databases,Tables,Functions,Procedures", "To give to other users those privileges you possess"),
-        ("Index", "Tables", "To create or drop indexes"),
-        ("Insert", "Tables", "To insert data into tables"),
-        ("Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"),
-        ("Process", "Server Admin", "To view the plain text of currently executing queries"),
-        ("Proxy", "Server Admin", "To make proxy user possible"),
-        ("References", "Databases,Tables", "To have references on tables"),
-        ("Reload", "Server Admin", "To reload or refresh tables, logs and privileges"),
-        ("Replication client", "Server Admin", "To ask where the slave or master servers are"),
-        ("Replication slave", "Server Admin", "To read binary log events from the master"),
-        ("Select", "Tables", "To retrieve rows from table"),
-        ("Show databases", "Server Admin", "To see all databases with SHOW DATABASES"),
-        ("Show view", "Tables", "To see views with SHOW CREATE VIEW"),
-        ("Shutdown", "Server Admin", "To shut down the server"),
-        ("Super", "Server Admin", "To use KILL thread, SET GLOBAL, CHANGE MASTER, etc."),
-        ("Trigger", "Tables", "To use triggers"),
-        ("Create tablespace", "Server Admin", "To create/alter/drop tablespaces"),
-        ("Update", "Tables", "To update existing rows"),
-        ("Usage", "Server Admin", "No privileges - allow connect only"),
-    ];
-    const DYNAMIC_PRIVILEGES: &[&str] = &[
-        "BACKUP_ADMIN",
-        "RESTORE_ADMIN",
-        "SYSTEM_USER",
-        "SYSTEM_VARIABLES_ADMIN",
-        "ROLE_ADMIN",
-        "CONNECTION_ADMIN",
-        "PLACEMENT_ADMIN",
-        "DASHBOARD_CLIENT",
-        "RESTRICTED_TABLES_ADMIN",
-        "RESTRICTED_STATUS_ADMIN",
-        "RESTRICTED_VARIABLES_ADMIN",
-        "RESTRICTED_USER_ADMIN",
-        "RESTRICTED_CONNECTION_ADMIN",
-        "RESTRICTED_REPLICA_WRITER_ADMIN",
-        "RESTRICTED_PRIV_ADMIN",
-        "RESTRICTED_SQL_ADMIN",
-        "RESOURCE_GROUP_ADMIN",
-        "RESOURCE_GROUP_USER",
-        "TRAFFIC_CAPTURE_ADMIN",
-        "TRAFFIC_REPLAY_ADMIN",
-        "APPLICATION_PASSWORD_ADMIN",
-    ];
-    let mut rows: Vec<Vec<Datum>> = STATIC_PRIVILEGES
-        .iter()
-        .map(|(privilege, context, comment)| {
-            vec![
-                Datum::Bytes(privilege.as_bytes().to_vec()),
-                Datum::Bytes(context.as_bytes().to_vec()),
-                Datum::Bytes(comment.as_bytes().to_vec()),
-            ]
-        })
-        .collect();
-    rows.extend(DYNAMIC_PRIVILEGES.iter().map(|privilege| {
-        vec![
-            Datum::Bytes(privilege.as_bytes().to_vec()),
-            Datum::Bytes(b"Server Admin".to_vec()),
-            Datum::Bytes(Vec::new()),
-        ]
-    }));
-    rows
-}
+/// Go's ADMIN executors (`ShowDDLJobsExec`, `ShowDDLJobQueriesExec`,
+/// `ShowSlowExec`, `ChecksumTableExec`, `SplitTableRegionExec`,
+/// `CancelDDLJobsExec` and its siblings) over the session primitives.
+pub trait AdminExec: crate::show::exec::ShowExec {
+    /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
+    /// history newest first, read on a fresh system-session transaction.
+    fn all_ddl_jobs(&mut self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError>;
+    /// Runs `attempt` over the statement's catalog, answering the memory
+    /// tables it asks for (Go's `MemTableReaderExec` retrievers) and
+    /// retrying.
+    fn with_catalog_retrieving<T>(
+        &mut self,
+        ctx: &crate::StmtContext,
+        attempt: impl FnMut(&mut crate::Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError>;
 
-/// The domain's slow-query memory `ADMIN SHOW SLOW` reads -- Go
-/// `Domain.slowQuery` (`topn_slow_query.go`), sized by
-/// `in-mem-slow-query-topn-num` / `in-mem-slow-query-recent-num` with a
-/// seven-day period. `ExecStmt.LogSlowQuery` lands every statement its rules
-/// select here (`domain.LogSlowQuery`).
-struct DomainSlowQueries {
-    queries: tidb_domain::topn_slow_query::TopNSlowQueries,
-    /// When `topNSlowQueryLoop`'s ten-minute ticker last removed expired
-    /// entries.
-    last_expired: std::time::Instant,
-}
-
-static SLOW_QUERIES: std::sync::LazyLock<std::sync::Mutex<DomainSlowQueries>> =
-    std::sync::LazyLock::new(|| {
-        let config = tidb_config::config_tree::config::get_global_config();
-        std::sync::Mutex::new(DomainSlowQueries {
-            queries: tidb_domain::topn_slow_query::TopNSlowQueries::new(
-                usize::try_from(config.in_mem_slow_query_topn_num).unwrap_or(0),
-                std::time::Duration::from_secs(60 * 60 * 24 * 7),
-                usize::try_from(config.in_mem_slow_query_recent_num).unwrap_or(0),
-            ),
-            last_expired: std::time::Instant::now(),
-        })
-    });
-
-/// Go `topNSlowQueryLoop`'s ticker: every ten minutes the user and internal
-/// heaps drop entries older than the period.
-fn remove_expired_slow_queries(store: &mut DomainSlowQueries) {
-    const TICK: std::time::Duration = std::time::Duration::from_secs(600);
-    if store.last_expired.elapsed() >= TICK {
-        store.last_expired = std::time::Instant::now();
-        store.queries.remove_expired(std::time::SystemTime::now());
+    /// Resolves a written table path against the current database.
+    fn split_table_path(
+        &self,
+        path: &[String],
+    ) -> Result<(String, String), DriverError> {
+        match path {
+            [name] => Ok((self.require_current_database()?.to_owned(), name.clone())),
+            [database, name] => Ok((database.clone(), name.clone())),
+            _ => Err(DriverError::unsupported("empty table name")),
+        }
     }
-}
 
-/// Go `domain.LogSlowQuery`: hands the statement to the slow-query memory.
-pub fn record_slow_query(info: tidb_domain::topn_slow_query::SlowQueryInfo) {
-    let mut store = SLOW_QUERIES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    remove_expired_slow_queries(&mut store);
-    store.queries.append(info);
-}
-
-/// Go `Domain.ShowSlowQuery`: `QueryTop` for `ADMIN SHOW SLOW TOP`,
-/// `QueryRecent` for `ADMIN SHOW SLOW RECENT`.
-fn slow_query_rows(
-    mode: &tidb_ast::AdminShowSlowMode,
-    count: u64,
-) -> Vec<tidb_domain::topn_slow_query::SlowQueryInfo> {
-    let mut store = SLOW_QUERIES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    remove_expired_slow_queries(&mut store);
-    let count = usize::try_from(count).unwrap_or(usize::MAX);
-    match mode {
-        tidb_ast::AdminShowSlowMode::Recent => store.queries.query_recent(count),
-        tidb_ast::AdminShowSlowMode::Top(kind) => store.queries.query_top(count, *kind),
-    }
-}
-
-impl crate::Session {
     /// go `SplitTableRegionExec` / `SplitIndexRegionExec`
     /// (`pkg/executor/split.go`): one `(TOTAL_SPLIT_REGION,
     /// SCATTER_FINISH_RATIO)` row.
-    pub(crate) fn split_region_stmt(
+    fn split_region_stmt(
         &mut self,
         split: &tidb_ast::SplitRegionStmt,
     ) -> Result<StmtOutput, DriverError> {
         let (database, name) = self.split_table_path(&split.table)?;
         let ctx = self.statement_context(false);
         let wait_finish = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_WAIT_SPLIT_REGION_FINISH)
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
         // Go `GetSplitRegionTimeout`: `tidb_wait_split_region_timeout` seconds.
         let timeout = std::time::Duration::from_secs(
-            self.vars
+            self.session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_WAIT_SPLIT_REGION_TIMEOUT)
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -271,8 +165,8 @@ impl crate::Session {
         let row = self.with_catalog_mut(|catalog| {
             let catalog = &*catalog;
             match catalog.table_in(&database, &name) {
-                Some(tidb_executor::TableEntry::Kv(table)) => {
-                    tidb_executor::split_region::split_region(
+                Some(crate::TableEntry::Kv(table)) => {
+                    crate::split_region::split_region(
                         split,
                         table,
                         &ctx,
@@ -290,7 +184,7 @@ impl crate::Session {
             }
         })?;
         Ok(StmtOutput::Rows {
-            columns: tidb_executor::split_region::split_region_columns(),
+            columns: crate::split_region::split_region_columns(),
             rows: vec![row],
         })
     }
@@ -299,10 +193,10 @@ impl crate::Session {
     /// `buildChecksumTable`: one coprocessor checksum request per physical
     /// table (the table's own ID plus every partition) and per public index
     /// on each, all at the statement's snapshot, folded per table by
-    /// `updateChecksumResponse` (see [`tidb_executor::checksum`]). One
+    /// `updateChecksumResponse` (see [`crate::checksum`]). One
     /// `(Db_name, Table_name, Checksum_crc64_xor, Total_kvs, Total_bytes)`
     /// row per distinct table, the schema of `buildChecksumTableSchema`.
-    pub(crate) fn admin_checksum_stmt(
+    fn admin_checksum_stmt(
         &mut self,
         tables: &[Vec<String>],
     ) -> Result<StmtOutput, DriverError> {
@@ -316,13 +210,13 @@ impl crate::Session {
             for (database, name) in &paths {
                 match catalog.table_in(database, name) {
                     // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
-                    Some(tidb_executor::TableEntry::Kv(table)) if table.is_temporary() => {
+                    Some(crate::TableEntry::Kv(table)) if table.is_temporary() => {
                         return Err(DriverError::from(
                             tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                                 .generate_with_stack_by_args(&["admin checksum table".into()]),
                         ));
                     }
-                    Some(tidb_executor::TableEntry::Kv(table)) => {
+                    Some(crate::TableEntry::Kv(table)) => {
                         // Every table of a session shares one storage, so
                         // one coprocessor client and one snapshot: Go
                         // `GetClient()` and `getSnapshotTS()`.
@@ -332,7 +226,7 @@ impl crate::Session {
                                 .client()
                                 .map(|client| (client, table.store().start_ts()));
                         }
-                        contexts.push(tidb_executor::checksum::ChecksumContext::new(
+                        contexts.push(crate::checksum::ChecksumContext::new(
                             database, table,
                         ));
                     }
@@ -353,13 +247,13 @@ impl crate::Session {
         })?;
         // Go `getChecksumTableConcurrency`.
         let concurrency = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_CHECKSUM_TABLE_CONCURRENCY)
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(4);
         let explicit_request_source_type = self
-            .vars
+            .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
             .unwrap_or_default();
         let ctx = self.statement_context(false);
@@ -367,7 +261,7 @@ impl crate::Session {
             Some((client, start_ts)) => (Some(client), start_ts),
             None => (None, 0),
         };
-        let tables = tidb_executor::checksum::ChecksumTableExec::new(
+        let tables = crate::checksum::ChecksumTableExec::new(
             contexts,
             client,
             start_ts,
@@ -411,7 +305,7 @@ impl crate::Session {
     /// found` — which is the only reachable shape on a node whose DDL runs
     /// to completion synchronously (no job is ever mid-flight at query
     /// time).
-    pub(crate) fn ddl_job_control_stmt(
+    fn ddl_job_control_stmt(
         &mut self,
         control: &tidb_ast::AdminDdlJobControlStmt,
     ) -> Result<StmtOutput, DriverError> {
@@ -439,12 +333,12 @@ impl crate::Session {
 
     /// go `buildShowSlowSchema` (`pkg/planner/core/planbuilder.go:3340`)
     /// rendered over the recorded slow statements.
-    pub(crate) fn admin_show_slow_stmt(
+    fn admin_show_slow_stmt(
         &mut self,
         show: &tidb_ast::AdminShowSlowStmt,
     ) -> Result<StmtOutput, DriverError> {
         use tidb_datatype::{core_time_from_datetime, Time, TimeType};
-        let records = slow_query_rows(&show.mode, show.count);
+        let records = tidb_domain::topn_slow_query::show_slow_query(&show.mode, show.count);
         let varchar = || FieldType::new(FieldTypeCode::Varchar);
         let rows = records
             .into_iter()
@@ -525,7 +419,7 @@ impl crate::Session {
     /// Go `ShowDDLJobQueriesExec` / `ShowDDLJobQueriesWithRangeExec`: the
     /// queries of the named jobs, searched in the running jobs and the newest
     /// ten history jobs (the range form: the newest `offset + count`).
-    pub(crate) fn admin_show_ddl_job_queries_stmt(
+    fn admin_show_ddl_job_queries_stmt(
         &mut self,
         show: &tidb_ast::AdminShowDdlJobQueriesStmt,
     ) -> Result<StmtOutput, DriverError> {
@@ -596,7 +490,7 @@ impl crate::Session {
     /// rendered by `appendJobToChunk` with its COMMENTS, a multi-schema
     /// change followed by its sub-jobs. The statement checks no table
     /// privilege.
-    pub(crate) fn admin_show_ddl_jobs_stmt(
+    fn admin_show_ddl_jobs_stmt(
         &mut self,
         show: &tidb_ast::AdminShowDdlJobsStmt,
     ) -> Result<StmtOutput, DriverError> {
@@ -604,9 +498,9 @@ impl crate::Session {
         const DEF_NUM_HISTORY_JOBS: usize = 10;
         // Go `buildAdmin`: `LogicalShowDDLJobs` under the WHERE's selection.
         let ctx = self.statement_context(false);
-        let current_db = self.vars.current_db.clone();
+        let current_db = self.session_vars().current_db.clone();
         let mut physical = self.with_catalog_mut(|catalog| {
-            tidb_executor::driver::plan_admin_show_ddl_jobs(
+            crate::driver::plan_admin_show_ddl_jobs(
                 show.job_number,
                 show.where_clause.as_ref(),
                 catalog,
@@ -614,7 +508,7 @@ impl crate::Session {
                 &ctx,
             )
         })?;
-        if let Some(leaf) = tidb_executor::driver::physical_show_ddl_jobs_of(&physical) {
+        if let Some(leaf) = crate::driver::physical_show_ddl_jobs_of(&physical) {
             let job_number = if leaf.job_number > 0 {
                 usize::try_from(leaf.job_number).unwrap_or(usize::MAX)
             } else {
@@ -636,9 +530,271 @@ impl crate::Session {
             ctx.show_retrieval().supply(plan_id, rows);
         }
         let (columns, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
-            tidb_executor::driver::open_show_plan(&mut physical, catalog, &ctx)?.collect()
+            crate::driver::open_show_plan(&mut physical, catalog, &ctx)?.collect()
         })?;
         Ok(StmtOutput::Rows { columns, rows })
     }
+
+    /// Go `CheckTableExec` / `CheckIndexRangeExec`.
+    fn admin_check_stmt(
+        &mut self,
+        check: &tidb_ast::AdminCheckStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        match check {
+            tidb_ast::AdminCheckStmt::Table { tables } => {
+                let [path] = tables.as_slice() else {
+                    // Go's parser accepts the list and its planner then
+                    // refuses it; refusing here keeps the same outcome.
+                    return Err(DriverError::unsupported(
+                        "ADMIN CHECK TABLE checks one table at a time",
+                    ));
+                };
+                let (database, name) = self.split_table_path(path)?;
+                self.run_admin_check(&database, &name, None, "admin check table")?;
+                Ok(admin_check_passed())
+            }
+            tidb_ast::AdminCheckStmt::Index {
+                table,
+                index,
+                handle_ranges,
+            } => {
+                let (database, name) = self.split_table_path(table)?;
+                if handle_ranges.is_empty() {
+                    self.run_admin_check(&database, &name, Some(index), "admin check index")?;
+                    return Ok(admin_check_passed());
+                }
+                let index = index.clone();
+                let ranges = handle_ranges.clone();
+                let ctx = self.statement_context(false);
+                let decode_context = crate::RowDecodeContext::for_query(&ctx);
+                let (columns, rows) = self.with_catalog_mut(|catalog| {
+                    let table =
+                        admin_check_table_mut(catalog, &database, &name, "admin check index")?;
+                    crate::admin_check::check_index_ranges(
+                        table,
+                        &index,
+                        &ranges,
+                        &decode_context,
+                    )
+                    .map_err(admin_check_error)
+                })?;
+                Ok(StmtOutput::Rows { columns, rows })
+            }
+        }
+    }
+
+    /// Go `RecoverIndexExec`: `ADDED_COUNT` and `SCAN_COUNT` for the rows
+    /// whose missing entries of the named index were written back.
+    fn admin_recover_index_stmt(
+        &mut self,
+        recover: &tidb_ast::AdminRecoverIndexStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (database, name) = self.split_table_path(&recover.table)?;
+        let index = recover.index.clone();
+        let ctx = self.statement_context(true);
+        let decode_context = crate::RowDecodeContext::for_query(&ctx);
+        let (added, scanned) = self.with_catalog_mut(|catalog| {
+            let table = admin_index_table_mut(catalog, &database, &name)?;
+            let table_name = table.name().to_owned();
+            table
+                .recover_index(&index, &ctx, &decode_context)
+                .map_err(crate::ddl::index_backfill_error)?
+                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
+        })?;
+        let count = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        Ok(StmtOutput::Rows {
+            columns: vec![
+                ("ADDED_COUNT".to_owned(), count.clone()),
+                ("SCAN_COUNT".to_owned(), count),
+            ],
+            rows: vec![vec![Datum::Int(added), Datum::Int(scanned)]],
+        })
+    }
+
+    /// Go `CleanupIndexExec`: `REMOVED_COUNT` for the entries of the named
+    /// index whose row is gone.
+    fn admin_cleanup_index_stmt(
+        &mut self,
+        cleanup: &tidb_ast::AdminRecoverIndexStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (database, name) = self.split_table_path(&cleanup.table)?;
+        let index = cleanup.index.clone();
+        let removed = self.with_catalog_mut(|catalog| {
+            let table = admin_index_table_mut(catalog, &database, &name)?;
+            let table_name = table.name().to_owned();
+            table
+                .cleanup_index(&index)
+                .map_err(crate::ddl::index_backfill_error)?
+                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
+        })?;
+        Ok(StmtOutput::Rows {
+            columns: vec![(
+                "REMOVED_COUNT".to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )],
+            rows: vec![vec![Datum::UInt(removed)]],
+        })
+    }
+
+    /// Go `CheckTableExec.Next`'s consistency check over one table, or one
+    /// of its indexes.
+    fn run_admin_check(
+        &mut self,
+        database: &str,
+        name: &str,
+        only_index: Option<&str>,
+        statement: &'static str,
+    ) -> Result<usize, DriverError> {
+        let (database, name) = (database.to_owned(), name.to_owned());
+        let only_index = only_index.map(str::to_owned);
+        let ctx = self.statement_context(false);
+        let decode_context = crate::RowDecodeContext::for_query(&ctx);
+        let fast_check = self.session_vars().system_bool("tidb_enable_fast_table_check", true);
+        self.with_catalog_mut(|catalog| {
+            let table = admin_check_table_mut(catalog, &database, &name, statement)?;
+            crate::admin_check::check_table(
+                table,
+                only_index.as_deref(),
+                &decode_context,
+                fast_check,
+            )
+            .map_err(admin_check_error)
+        })
+    }
 }
 
+/// What a passing `ADMIN CHECK TABLE`/`CHECK INDEX` answers.
+///
+/// NOT an empty result set: Go's `CheckTable` plan is a
+/// `SimpleSchemaProducer` that never calls `SetSchema`, so its schema is
+/// EMPTY and the server replies with an OK packet rather than a zero-column
+/// result set. `r/util/admin.result` records the statement with nothing
+/// under it, which a zero-column result set would render as a blank header
+/// line -- one line where TiDB wrote none.
+pub(crate) fn admin_check_passed() -> StmtOutput {
+    StmtOutput::Affected(0)
+}
+
+/// The storage-backed table `ADMIN CHECK` needs, or the refusal that names
+/// why it is not checkable.
+pub(crate) fn admin_check_table_mut<'a>(
+    catalog: &'a mut crate::Catalog,
+    database: &str,
+    name: &str,
+    // The statement name Go's 8006 carries: `admin check table` or
+    // `admin check index`, spelled as Go spells it.
+    statement: &'static str,
+) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
+    let Some(entry) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        ));
+    };
+    match entry {
+        // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`): a temporary
+        // table's rows are in a session membuffer, never in TiKV, so there is
+        // no stored index for the check to compare them against and TiDB
+        // refuses the statement instead of answering OK about nothing. Both
+        // scopes are refused; the argument names the statement, which is why
+        // the caller passes it.
+        crate::TableEntry::Kv(table) if table.is_temporary() => Err(DriverError::from(
+            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&[statement.into()]),
+        )),
+        crate::TableEntry::Kv(table) => Ok(std::sync::Arc::make_mut(table)),
+        // A view has no rows of its own and a sequence has no index; a
+        // `MemTable` has rows but stores no index entries, so "consistent"
+        // would be a statement about nothing.
+        _ => Err(DriverError::unsupported(
+            "ADMIN CHECK needs a storage-backed table: this table stores no index entries to \
+             check its rows against",
+        )),
+    }
+}
+
+/// The stored table `ADMIN RECOVER INDEX` / `ADMIN CLEANUP INDEX` works on.
+pub(crate) fn admin_index_table_mut<'a>(
+    catalog: &'a mut crate::Catalog,
+    database: &str,
+    name: &str,
+) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
+    match catalog.table_mut_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => Ok(std::sync::Arc::make_mut(table)),
+        Some(_) => Err(DriverError::unsupported(
+            "ADMIN RECOVER/CLEANUP INDEX needs a storage-backed table",
+        )),
+        None => Err(DriverError::from(
+            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        )),
+    }
+}
+
+/// Go `executorBuilder.buildRecoverIndex`/`buildCleanupIndex`'s
+/// `errors.Errorf("secondary index `%v` is not found in table `%v`")`, which
+/// names the index as written and the table by its stored name.
+pub(crate) fn secondary_index_not_found(index: &str, table: &str) -> DriverError {
+    DriverError::Mysql(crate::driver::MysqlError::unknown(
+        format!("secondary index `{index}` is not found in table `{table}`"),
+    ))
+}
+
+/// Maps the check's own outcome onto the errors TiDB reports.
+pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> DriverError {
+    use crate::admin_check::AdminCheckError;
+    match error {
+        AdminCheckError::CountMismatch {
+            table_count,
+            index,
+            index_count,
+        } => DriverError::from(
+            tidb_error::catalog::admin::ERR_ADMIN_CHECK_TABLE.generate_with_stack(format!(
+                "table count {table_count} != index({index}) count {index_count}"
+            )),
+        ),
+        AdminCheckError::Inconsistent {
+            table,
+            index,
+            handle,
+            index_values,
+            record_values,
+        } => DriverError::from(
+            tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT.generate_with_stack(
+                format!(
+                    "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
+             index-values:{index_values} != record-values:{record_values}"
+                ),
+            ),
+        ),
+        AdminCheckError::ValueMismatch(mismatch) => {
+            let crate::admin_check::AdminValueMismatch {
+                table,
+                index,
+                column,
+                handle,
+                index_value,
+                record_value,
+                compare_error,
+            } = *mismatch;
+            DriverError::from(
+                tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
+                    .generate_with_stack(format!(
+                "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
+                 {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
+                 compare err:{compare_error}"
+            )),
+            )
+        }
+        AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
+            crate::ExecError::internal(format!("secondary index {index} does not exist")),
+        ),
+        AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
+            DriverError::unsupported(detail)
+        }
+        AdminCheckError::PartialIndexWithoutFastCheck => DriverError::from(
+            tidb_error::catalog::executor::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
+                .generate_with_stack_by_args(&[]),
+        ),
+    }
+}

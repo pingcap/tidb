@@ -782,7 +782,7 @@ impl Session {
             // Go `ResetContextOfStmt`: after SET, DDL or transaction control
             // the next `ROW_COUNT()` reads 0 (captured: after SET).
             if self.routed_statement_kind.take() == Some(crate::classify::StatementKind::Other)
-                && !self.in_set_session_states
+                && !self.vars.in_set_session_states_stmt
             {
                 self.vars.prev_row_count = 0;
             }
@@ -1513,7 +1513,7 @@ impl Session {
                     .join(",")
             )
         };
-        crate::show_admin::record_slow_query(tidb_domain::topn_slow_query::SlowQueryInfo {
+        tidb_domain::topn_slow_query::log_slow_query(tidb_domain::topn_slow_query::SlowQueryInfo {
             sql: items.sql,
             start: Some(observation.start_time.into()),
             duration: elapsed,

@@ -14,13 +14,16 @@
 
 //! SHOW CREATE table/view text and stored definition formatting.
 
-use super::*;
+use tidb_datatype::{Datum, STRICT_INTEGER_DISPLAY_WIDTH};
+
+use super::columns::{literal_column_default_text, NOT_NULL_FLAG};
+use crate::DriverError;
 
 use tidb_hack::GoCaseCompare;
 
 /// Go prints the column comment last, after AUTO_RANDOM and before the next
 /// column's line, for every column that carries one.
-fn push_column_comment(clause: &mut String, column: &tidb_executor::KvColumn) {
+fn push_column_comment(clause: &mut String, column: &crate::KvColumn) {
     if column.comment.is_empty() {
         return;
     }
@@ -32,7 +35,7 @@ fn push_column_comment(clause: &mut String, column: &tidb_executor::KvColumn) {
 /// Go `stringutil.Escape`: double-quoted under `ANSI_QUOTES`, backtick-quoted
 /// otherwise, with the quote character doubled inside.
 fn escape_name(name: &str, ansi_quotes: bool) -> String {
-    tidb_executor::escape_identifier(name, ansi_quotes)
+    crate::escape_identifier(name, ansi_quotes)
 }
 
 /// Go `ConstructResultOfShowCreateView`.
@@ -42,14 +45,14 @@ fn escape_name(name: &str, ansi_quotes: bool) -> String {
 /// `CREATE VIEW` had none -- the names come from the stored definition.
 ///
 /// The definer is whatever the statement recorded, which
-/// [`tidb_executor::view`] settles at CREATE time: an explicit
+/// [`crate::view`] settles at CREATE time: an explicit
 /// `DEFINER = u@h` is kept verbatim, and `DEFINER = CURRENT_USER` (the
 /// default) takes the connection's authenticated identity. It prints as
 /// ``@`` only for a session with no authenticated identity at all, which
 /// is an in-process session rather than a served connection -- a served
 /// one prints its user, as the wire test in `tidb-server` captures
 /// (`DEFINER=\`alice\`@\`%\``).
-pub(super) fn show_create_view_text(view: &tidb_executor::ViewDef, ansi_quotes: bool) -> String {
+pub fn show_create_view_text(view: &crate::ViewDef, ansi_quotes: bool) -> String {
     let mut out = format!(
         "CREATE ALGORITHM={} DEFINER={}@{} SQL SECURITY {} VIEW {} (",
         view.algorithm,
@@ -81,7 +84,7 @@ pub(super) fn show_create_view_text(view: &tidb_executor::ViewDef, ansi_quotes: 
 /// ``UNIQUE KEY `idx` (`a`(2),`b`)``, and a prefix covering the whole column
 /// prints no `(n)` at all because the DDL stored none.
 fn index_part_text(
-    table: &tidb_executor::KvTable,
+    table: &crate::KvTable,
     offset: usize,
     prefix_length: i64,
     ansi_quotes: bool,
@@ -114,11 +117,11 @@ fn index_part_text(
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
 /// differs in collation prints `COLLATE <coll>`, and a binary-charset column
 /// (`varbinary`, `blob`) prints neither because its type name already says so.
-pub(super) fn show_create_table_text(
+pub fn show_create_table_text(
     database: &str,
     name: &str,
-    table: &tidb_executor::KvTable,
-    ctx: &tidb_executor::StmtContext,
+    table: &crate::KvTable,
+    ctx: &crate::StmtContext,
 ) -> Result<String, DriverError> {
     let ansi_quotes = ctx.sql_mode().ansi_quotes;
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1073`): the
@@ -196,7 +199,7 @@ pub(super) fn show_create_table_text(
             .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE)
         {
             match &column.default_value {
-                Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) => {
+                Some(crate::column_default::ColumnDefault::Value(Datum::Null)) => {
                     if column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
                         clause.push_str(" NULL");
                     }
@@ -205,10 +208,10 @@ pub(super) fn show_create_table_text(
                 Some(default) => {
                     // Go quotes every non-bit LITERAL default, integers included,
                     // and prints the computed forms unquoted -- see
-                    // `tidb_executor::show::show_create_default_clause` for which
+                    // `crate::show::show_create_default_clause` for which
                     // is which.
                     let literal = match default {
-                        tidb_executor::column_default::ColumnDefault::Value(value) => {
+                        crate::column_default::ColumnDefault::Value(value) => {
                             literal_column_default_text(
                                 value,
                                 column,
@@ -227,7 +230,7 @@ pub(super) fn show_create_table_text(
                     };
                     clause.push_str(&format!(
                         " DEFAULT {}",
-                        tidb_executor::show::show_create_default_clause(
+                        crate::show::show_create_default_clause(
                             default,
                             &column.field_type,
                             &literal,
@@ -473,7 +476,7 @@ pub(super) fn show_create_table_text(
     // `STORAGE_CLASS` sugar when that loses nothing.
     let engine_attribute = table.engine_attribute();
     if !engine_attribute.is_empty() {
-        match tidb_executor::ddl::storage_class::simple_table_storage_class_for_show_create(
+        match crate::ddl::storage_class::simple_table_storage_class_for_show_create(
             &engine_attribute,
         )? {
             Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),
@@ -571,7 +574,7 @@ pub(super) fn show_create_table_text(
     // policy after the comment and BEFORE the cached marker, under the same
     // `/*T![placement] ... */` feature gate a partition's uses -- so a dump
     // carrying placement still loads on a parser that does not know it.
-    out.push_str(&tidb_executor::partition_placement_text(
+    out.push_str(&crate::partition_placement_text(
         table.placement_policy().as_ref(),
         ansi_quotes,
     ));
@@ -592,7 +595,7 @@ pub(super) fn show_create_table_text(
 /// Go `ShowCreateTable`'s region split policies (`executor/show.go:1435`):
 /// the table's own, then each index's in index order, each on its own line
 /// behind the `region_split` feature comment.
-fn region_split_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> String {
+fn region_split_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
     fn bounds(policy: &tidb_model::RegionSplitPolicy) -> String {
         let values = |values: &[String]| {
             values
@@ -666,7 +669,7 @@ fn split_value_text(value: &str) -> String {
 /// `TTLInfo`, rather than only when they were written -- which is why a table
 /// created with `TTL=` alone prints `TTL_ENABLE='ON'` and the default job
 /// interval back.
-fn ttl_clause_text(table: &tidb_executor::KvTable) -> String {
+fn ttl_clause_text(table: &crate::KvTable) -> String {
     let Some(info) = table.ttl_info() else {
         return String::new();
     };
@@ -716,7 +719,7 @@ fn ttl_clause_text(table: &tidb_executor::KvTable) -> String {
 /// Go `AppendPartitionInfo`'s `defaultPartitionDefinitions`
 /// (`ddl/partition.go:5147-5159`): whether a HASH/KEY table's partitions are
 /// still exactly the ones `PARTITIONS n` would generate.
-fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> bool {
+fn hash_definitions_are_default(definitions: &[crate::PartitionDef]) -> bool {
     definitions.iter().enumerate().all(|(ordinal, definition)| {
         definition.name == format!("p{ordinal}")
             && definition.comment.is_empty()
@@ -727,7 +730,7 @@ fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> 
     })
 }
 
-fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> String {
+fn partition_clause_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
     let Some(partition) = table.partition() else {
         return String::new();
     };
@@ -737,7 +740,7 @@ fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> S
         partition.expr_text
     );
     let defs = || {
-        tidb_executor::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
+        crate::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
     };
     // Go `writeColumnListToBuffer` escapes each partition column by the
     // session's sql_mode.
@@ -760,8 +763,8 @@ fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> S
         // Printing `PARTITIONS n` unconditionally lost the written names and
         // any comments from `SHOW CREATE TABLE`, so the DDL it produced built
         // a DIFFERENT table from the one it described.
-        tidb_executor::PartitionKind::Hash | tidb_executor::PartitionKind::Key => {
-            let head = if matches!(partition.kind, tidb_executor::PartitionKind::Key) {
+        crate::PartitionKind::Hash | crate::PartitionKind::Key => {
+            let head = if matches!(partition.kind, crate::PartitionKind::Key) {
                 // Go `writeColumnListToBuffer` (`ddl/partition.go:5125`)
                 // emits NOTHING when the column list was filled in from the
                 // primary key, so `PARTITION BY KEY ()` reads back as
@@ -781,13 +784,13 @@ fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> S
                 format!("{head}{}", defs())
             }
         }
-        tidb_executor::PartitionKind::Range { .. } | tidb_executor::PartitionKind::List { .. } => {
+        crate::PartitionKind::Range { .. } | crate::PartitionKind::List { .. } => {
             format!("{head}{}", defs())
         }
         // Go prints ` COLUMNS(` for the typed forms, with MySQL's two spaces
         // after LIST (`ddl/partition.go:5185`).
-        tidb_executor::PartitionKind::RangeColumns { .. }
-        | tidb_executor::PartitionKind::ListColumns { .. } => format!(
+        crate::PartitionKind::RangeColumns { .. }
+        | crate::PartitionKind::ListColumns { .. } => format!(
             "\nPARTITION BY {} COLUMNS({}){}",
             partition.kind.sql(),
             column_list(),
@@ -796,20 +799,20 @@ fn partition_clause_text(table: &tidb_executor::KvTable, ansi_quotes: bool) -> S
         // Go `AppendPartitionInfo` has no NONE special case: `Columns` is
         // empty, so it takes the `else` branch and prints
         // `PARTITION BY NONE (<Expr>)` with the definition list.
-        tidb_executor::PartitionKind::None => format!("{head}{}", defs()),
+        crate::PartitionKind::None => format!("{head}{}", defs()),
     }
 }
 
 /// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or
 /// `None` for an omitted clause.
-fn referential_action_sql(action: tidb_executor::FkAction) -> Option<&'static str> {
+fn referential_action_sql(action: crate::FkAction) -> Option<&'static str> {
     match action {
-        tidb_executor::FkAction::NoOption => None,
-        tidb_executor::FkAction::Restrict => Some("RESTRICT"),
-        tidb_executor::FkAction::Cascade => Some("CASCADE"),
-        tidb_executor::FkAction::SetNull => Some("SET NULL"),
-        tidb_executor::FkAction::NoAction => Some("NO ACTION"),
-        tidb_executor::FkAction::SetDefault => Some("SET DEFAULT"),
+        crate::FkAction::NoOption => None,
+        crate::FkAction::Restrict => Some("RESTRICT"),
+        crate::FkAction::Cascade => Some("CASCADE"),
+        crate::FkAction::SetNull => Some("SET NULL"),
+        crate::FkAction::NoAction => Some("NO ACTION"),
+        crate::FkAction::SetDefault => Some("SET DEFAULT"),
     }
 }
 
@@ -827,7 +830,7 @@ fn referential_action_sql(action: tidb_executor::FkAction) -> Option<&'static st
 /// reproduce.
 fn column_charset_clause(
     field_type: &tidb_datatype::FieldType,
-    table: tidb_executor::TableCharset,
+    table: crate::TableCharset,
 ) -> String {
     if !field_type.has_charset() {
         return String::new();

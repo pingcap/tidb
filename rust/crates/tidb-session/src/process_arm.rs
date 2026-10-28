@@ -371,7 +371,8 @@ impl SqlDigestTextRetriever {
         let requested: HashSet<_> = texts.keys().cloned().collect();
         // Go limits the WHERE IN list to512 digests, otherwise fetching all.
         let filter = (requested.len() <= 512).then_some(&requested);
-        let columns = infoschema::table_schema("STATEMENTS_SUMMARY").expect("summary schema");
+        let columns = tidb_executor::infoschema_reader::table_schema("STATEMENTS_SUMMARY")
+            .expect("summary schema");
         let columns: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
             .iter()
             .map(|name| {
@@ -425,7 +426,8 @@ impl SqlDigestTextRetriever {
                 "STATEMENTS_SUMMARY_HISTORY",
             ),
         ] {
-            let schema = infoschema::table_schema(table).expect("cluster summary schema");
+            let schema = tidb_executor::infoschema_reader::table_schema(table)
+                .expect("cluster summary schema");
             let offsets: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
                 .iter()
                 .map(|name| {
@@ -503,7 +505,8 @@ pub(crate) fn peer_cluster_table_rows(
         peer.ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
     let result = client.scan_projected(
         &servers,
-        infoschema::memory_table_id(table_name).expect("registered memory table"),
+        tidb_executor::infoschema_reader::memory_table_id(table_name)
+            .expect("registered memory table"),
         columns,
         offsets,
         user,

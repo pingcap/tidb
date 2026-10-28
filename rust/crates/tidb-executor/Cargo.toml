@@ -23,6 +23,11 @@ tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-ddl = { path = "../tidb-ddl" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-domain = { path = "../tidb-domain" }
+tidb-lexer = { path = "../tidb-lexer" }
+tidb-log = { path = "../tidb-log" }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
 stacker = { workspace = true }

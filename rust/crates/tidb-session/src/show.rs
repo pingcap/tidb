@@ -24,482 +24,12 @@
 //! to from [`Session::dispatch_admin_stmt`] here.
 
 use crate::privilege::PrivilegeTypeExt;
-use crate::show_index::show_index_rows;
-use tidb_executor::simple::account::AccountExec;
-use tidb_executor::simple::account_password::AccountPasswordExec;
 use crate::*;
-use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
-use tidb_util::stringutil::go_to_lower;
-
-/// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
-/// `col.GetTypeDesc()`.
-fn type_desc_cell(field_type: &tidb_datatype::FieldType) -> Datum {
-    Datum::Bytes(
-        field_type
-            .type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
-            .into_bytes(),
-    )
-}
-
-/// The text of a column's SETTLED `DEFAULT`, as every surface that prints one
-/// renders it.
-///
-/// Go stores the default as a string and each printer -- `pkg/executor/show.go`
-/// for both `SHOW CREATE TABLE` and `SHOW COLUMNS`, and
-/// `pkg/infoschema`'s `COLUMN_DEFAULT` -- carries the SAME `TypeBit` branch:
-/// a `BIT` column's stored bytes print through
-/// `BinaryLiteral.ToBitLiteralString(true)`, so `DEFAULT 250` and
-/// `DEFAULT b'11111010'` both read back as `b'11111010'`. Every other type
-/// prints its stored text.
-pub(crate) fn column_default_text(
-    value: &Datum,
-    field_type: &tidb_datatype::FieldType,
-) -> Option<String> {
-    if field_type.code() == tidb_datatype::FieldTypeCode::Bit {
-        return match value {
-            Datum::Null => None,
-            Datum::String(_)
-            | Datum::Bytes(_)
-            | Datum::Raw(_)
-            | Datum::BinaryLiteral(_)
-            | Datum::Bit(_) => Some(
-                tidb_datatype::BinaryLiteral::from(value.go_bytes()).to_bit_literal_string(true),
-            ),
-            // Anything else never settled into the column's own domain;
-            // rendering it as bits would invent a value it does not hold.
-            other => datum_text(other),
-        };
-    }
-    datum_text(value)
-}
-
-/// The SQL-visible text of one LITERAL column default.
-///
-/// Go stores a version-1-and-later `TIMESTAMP` default as a UTC wall clock,
-/// then `GetColDefaultValue` projects it into the reading session before any
-/// metadata surface prints it. Version 0 uses the system zone as the source;
-/// [`tidb_executor::column_default::materialize_stored_literal`] owns that
-/// version boundary. Other types do not pass through this cast here: their
-/// stored metadata spelling is the spelling SHOW and INFORMATION_SCHEMA
-/// report.
-pub(crate) fn literal_column_default_text(
-    value: &Datum,
-    column: &tidb_executor::KvColumn,
-    flags: tidb_datatype::ConversionFlags,
-    session_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<String>, tidb_datatype::DatumValueError> {
-    if column.field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
-        return Ok(column_default_text(value, &column.field_type));
-    }
-    let converted = tidb_executor::column_default::materialize_stored_literal(
-        value,
-        &column.field_type,
-        column.column_info_version,
-        flags,
-        session_zone,
-    )?;
-    Ok(match converted.value {
-        Datum::Time(time) => Some(time.to_string()),
-        other => column_default_text(&other, &column.field_type),
-    })
-}
-
-#[path = "show_create.rs"]
-mod create;
-use create::{show_create_table_text, show_create_view_text};
-
-#[path = "show_statistics.rs"]
-pub(crate) mod statistics;
-
-/// Go `NewColDesc`'s `Collation` cell: the column's own collation name, and
-/// NULL for anything with no character set -- a numeric or temporal column,
-/// and a binary-charset string column alike (captured: `varbinary`, `binary`,
-/// `blob` and `longblob` all report NULL).
-fn column_collation_cell(field_type: &tidb_datatype::FieldType) -> Datum {
-    if field_type.has_charset() {
-        Datum::Bytes(field_type.collation_name().as_bytes().to_vec())
-    } else {
-        Datum::Null
-    }
-}
-
-/// Go's mock session's fixed grant string for every column of every table
-/// (`fetchShowColumns`): this tier grants no per-column privileges of its
-/// own, so it reports the same static capture MySQL/TiDB print for a column
-/// the current user can select, insert, update, and reference.
-const FULL_COL_DESC_PRIVILEGES: &str = "select,insert,update,references";
-
-/// Go `table.NewColDesc`, restricted to the facts this seed's metadata holds.
-///
-/// `Null` is NO when the column carries `NotNullFlag`; `Key` is PRI for a
-/// primary-key column, UNI for a column that is the whole of a unique index,
-/// and MUL for one that leads a non-unique index -- Go reads those from the
-/// column's key flags, which the DDL sets from the same index definitions.
-///
-/// `Default` is the column's stored `DEFAULT`, or NULL when none was written.
-///
-/// `Extra` follows Go `NewColDesc`'s ordered precedence: auto increment,
-/// ON UPDATE CURRENT_TIMESTAMP, generated-column kind, then expression
-/// default.
-fn column_description(
-    column: &tidb_executor::KvColumn,
-    offset: usize,
-    table: &tidb_executor::KvTable,
-    full: bool,
-    ctx: &tidb_executor::StmtContext,
-) -> Result<Vec<Datum>, DriverError> {
-    let null_flag = if column.field_type.flags() & NOT_NULL_FLAG != 0 {
-        "NO"
-    } else {
-        "YES"
-    };
-    let extra = column_extra(
-        &column.field_type,
-        table.auto_increment_offset() == Some(offset),
-        column.generated.as_ref().map(|generated| generated.stored),
-        column
-            .default_value
-            .as_ref()
-            .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
-    );
-    let key_flag = column_key_flag(table, offset);
-    // Go `NewColDesc`: a column carrying `NoDefaultValueFlag` reports no
-    // default, whatever value its metadata still stores (a NOT NULL TEXT/BLOB
-    // given `DEFAULT ''` under a non-strict sql_mode).
-    let no_default = column
-        .field_type
-        .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
-    let default = match &column.default_value {
-        _ if no_default => Datum::Null,
-        Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
-            match literal_column_default_text(
-                value,
-                column,
-                ctx.show_default_conversion_flags(),
-                &ctx.session_zone(),
-            )
-            .map_err(|_| {
-                DriverError::from(
-                    tidb_error::catalog::table::ERR_GET_DEFAULT_FAILED
-                        .generate_with_stack_by_args(&[column.name.clone().into()]),
-                )
-            })? {
-                Some(text) => Datum::Bytes(text.into_bytes()),
-                None => Datum::Null,
-            }
-        }
-        // Go `NewColDesc` reports a computed default's STORED string here,
-        // which is not the parenthesised form `SHOW CREATE TABLE` prints.
-        Some(computed) => match computed.column_desc_text(&column.field_type) {
-            Some(text) => Datum::Bytes(text.into_bytes()),
-            None => Datum::Null,
-        },
-        None => Datum::Null,
-    };
-    if !full {
-        return Ok(vec![
-            Datum::Bytes(column.name.clone().into_bytes()),
-            type_desc_cell(&column.field_type),
-            Datum::Bytes(null_flag.as_bytes().to_vec()),
-            Datum::Bytes(key_flag.into_bytes()),
-            default,
-            Datum::Bytes(extra.clone().into_bytes()),
-        ]);
-    }
-    let collation = column_collation_cell(&column.field_type);
-    Ok(vec![
-        Datum::Bytes(column.name.clone().into_bytes()),
-        type_desc_cell(&column.field_type),
-        collation,
-        Datum::Bytes(null_flag.as_bytes().to_vec()),
-        Datum::Bytes(key_flag.into_bytes()),
-        default,
-        Datum::Bytes(extra.into_bytes()),
-        Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
-        // Go `table.NewColDesc`'s `Comment`, from `ColumnInfo.Comment`.
-        Datum::Bytes(column.comment.clone().into_bytes()),
-    ])
-}
-
-/// Go `table.NewColDesc`'s `Extra` field, kept as a pure formatter so every
-/// metadata producer supplies the same four source facts in the same order.
-pub(crate) fn column_extra(
-    field_type: &tidb_datatype::FieldType,
-    auto_increment: bool,
-    generated_stored: Option<bool>,
-    default_is_expr: bool,
-) -> String {
-    if auto_increment {
-        return "auto_increment".to_owned();
-    }
-    if field_type.has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW) {
-        let fsp = field_type.decimal();
-        return if fsp > 0 {
-            format!("DEFAULT_GENERATED on update CURRENT_TIMESTAMP({fsp})")
-        } else {
-            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_owned()
-        };
-    }
-    if let Some(stored) = generated_stored {
-        return if stored {
-            "STORED GENERATED".to_owned()
-        } else {
-            "VIRTUAL GENERATED".to_owned()
-        };
-    }
-    if default_is_expr {
-        return "DEFAULT_GENERATED".to_owned();
-    }
-    String::new()
-}
-
-/// A view column's `SHOW COLUMNS` row.
-///
-/// A view carries no storage metadata, so Go reports no key, no default and
-/// no extra for every one of its columns; only the name, the type the body
-/// produced, and nullability come from the definition.
-///
-/// # Why this disagrees with `information_schema.columns`, on purpose
-///
-/// Go's `tryFillViewColumnType` (`pkg/executor/show.go`) OVERWRITES the stored
-/// column's `FieldType` with the re-planned one and then rewrites `VarString`
-/// to `Varchar` in place, so every cell this row prints -- type text, charset,
-/// collation, nullability -- is read off the PLAN's type.
-/// `dataForColumnsInTable` does not: it keeps the re-planned type for
-/// `COLUMN_TYPE`/`DATA_TYPE` only and builds the rest from the STORED column,
-/// and it does the `VarString` remap for `DATA_TYPE` alone.
-///
-/// One captured view makes both halves visible at once:
-///
-/// ```text
-/// desc v                            ->  event_id | varchar(32)    | NO
-/// information_schema.columns for v  ->  event_id | var_string(32) | YES
-/// ```
-///
-/// Making the two surfaces agree would be the regression, not the fix.
-fn view_column_description(
-    name: &str,
-    field_type: &tidb_datatype::FieldType,
-    full: bool,
-) -> Vec<Datum> {
-    let field_type = &show_columns_view_type(field_type);
-    let null_flag = if field_type.flags() & NOT_NULL_FLAG != 0 {
-        "NO"
-    } else {
-        "YES"
-    };
-    // Go `NewColDesc`: the key column reads the type's own flags, which a
-    // view column inherits from the base column it projects.
-    let key_flag = if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
-        "PRI"
-    } else if field_type.has_flag(tidb_datatype::FieldTypeFlags::UNIQUE_KEY) {
-        "UNI"
-    } else if field_type.has_flag(tidb_datatype::FieldTypeFlags::MULTIPLE_KEY) {
-        "MUL"
-    } else {
-        ""
-    };
-    if !full {
-        return vec![
-            Datum::Bytes(name.as_bytes().to_vec()),
-            type_desc_cell(field_type),
-            Datum::Bytes(null_flag.as_bytes().to_vec()),
-            Datum::Bytes(key_flag.as_bytes().to_vec()),
-            Datum::Null,
-            Datum::Bytes(Vec::new()),
-        ];
-    }
-    let collation = column_collation_cell(field_type);
-    vec![
-        Datum::Bytes(name.as_bytes().to_vec()),
-        type_desc_cell(field_type),
-        collation,
-        Datum::Bytes(null_flag.as_bytes().to_vec()),
-        Datum::Bytes(key_flag.as_bytes().to_vec()),
-        Datum::Null,
-        Datum::Bytes(Vec::new()),
-        Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
-        Datum::Bytes(Vec::new()),
-    ]
-}
-
-/// Go `tryFillViewColumnType`'s closing rewrite: a re-planned view column
-/// whose type came back `VarString` is reported as a `VARCHAR`.
-///
-/// `CAST(... AS CHAR(32))` yields a `VarString` in the plan, so without this a
-/// view over one describes itself with a type name no `CREATE TABLE` can
-/// spell. The rewrite is confined to the `SHOW` surface; see
-/// [`view_column_description`] for the surface that deliberately does not.
-fn show_columns_view_type(field_type: &tidb_datatype::FieldType) -> tidb_datatype::FieldType {
-    let mut field_type = field_type.clone();
-    if field_type.code() == tidb_datatype::FieldTypeCode::VarString {
-        field_type.set_code(tidb_datatype::FieldTypeCode::Varchar);
-    }
-    field_type
-}
-
-/// Go `mysql.NotNullFlag`.
-const NOT_NULL_FLAG: u32 = 1;
-
-/// Go `NewColDesc`'s key flag, shared by `SHOW COLUMNS` and
-/// `information_schema.COLUMNS`: PRI for a primary key, UNI for a column that
-/// is the whole of a unique index, MUL for one that leads a non-unique index.
-pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> String {
-    if table.columns()[offset]
-        .field_type
-        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
-    {
-        "PRI".to_owned()
-    } else if table
-        .indexes()
-        .iter()
-        .any(|index| index.unique && index.column_offsets == [offset])
-    {
-        "UNI".to_owned()
-    } else if table
-        .indexes()
-        .iter()
-        .any(|index| index.column_offsets.first() == Some(&offset))
-    {
-        "MUL".to_owned()
-    } else {
-        String::new()
-    }
-}
-
-
-
-
-
-
-
+use tidb_executor::admin::AdminExec;
+use tidb_executor::show::exec::ShowExec;
+use tidb_executor::simple::account::AccountExec;
 
 impl Session {
-    /// Go `buildShow`'s selections over a virtual SHOW result: `LIKE`
-    /// matches the first column and `WHERE` is a `LogicalSelection` over the
-    /// result's own columns. A `WHERE` that reads a subquery is planned as
-    /// that selection, which builds the subquery the way any SELECT's does
-    /// (`field IN (SELECT ...)`, `field < ALL (SELECT ...)`); any other
-    /// predicate evaluates row by row against the same columns.
-    /// Go `ShowExec.fetchShowAffinity`: one row per table (`table` level) or
-    /// partition (`partition` level) carrying an AFFINITY, with its PD group's
-    /// state from `affinity.GetAllGroupStates` -- NULL where PD holds no such
-    /// group. The rows follow `ListTablesWithSpecialAttribute` over infoschema
-    /// v2: schema name, then table id, both descending, each table the
-    /// extractor admits by its lowercased name.
-    fn show_affinity_rows(
-        &mut self,
-        extractor: tidb_executor::show::Extractor<'_>,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        struct AffinityRow {
-            db_lower: String,
-            table_id: i64,
-            db: String,
-            table: String,
-            partition: Option<String>,
-            group_id: String,
-        }
-        let mut infos = Vec::new();
-        {
-            let catalog = self.lock_catalog()?;
-            for database in catalog.database_names() {
-                for name in catalog.table_names(&database).unwrap_or_default() {
-                    let Some(tidb_executor::TableEntry::Kv(table)) =
-                        catalog.table_in(&database, &name)
-                    else {
-                        continue;
-                    };
-                    let Some(affinity) = table.affinity() else {
-                        continue;
-                    };
-                    let lower = go_to_lower(&table.name());
-                    if !tidb_executor::show::extractor_admits(extractor, &lower, &lower) {
-                        continue;
-                    }
-                    let row = |partition: Option<String>, group_id: String| AffinityRow {
-                        db_lower: go_to_lower(&database),
-                        table_id: table.table_id(),
-                        db: database.clone(),
-                        table: table.name(),
-                        partition,
-                        group_id,
-                    };
-                    match affinity.level.as_str() {
-                        "table" => infos.push(row(
-                            None,
-                            tidb_ddl::ddl_affinity::get_table_affinity_group_id(table.table_id()),
-                        )),
-                        "partition" => {
-                            for definition in
-                                table.partition().map_or(&[][..], |spec| &spec.definitions)
-                            {
-                                infos.push(row(
-                                    Some(definition.name.clone()),
-                                    tidb_ddl::ddl_affinity::get_partition_affinity_group_id(
-                                        table.table_id(),
-                                        definition.id,
-                                    ),
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        // A stable sort keeps a table's partitions in definition order.
-        infos.sort_by(|left, right| {
-            right
-                .db_lower
-                .cmp(&left.db_lower)
-                .then(right.table_id.cmp(&left.table_id))
-        });
-        let states = tidb_domain::affinity::get_all_group_states().map_err(|error| {
-            DriverError::Mysql(tidb_executor::MysqlError::unknown(error.to_string()))
-        })?;
-        let rows = infos
-            .into_iter()
-            .map(|info| {
-                let state = states.get(&info.group_id);
-                let text = |text: &str| Datum::Bytes(text.as_bytes().to_vec());
-                vec![
-                    text(&info.db),
-                    text(&info.table),
-                    info.partition.as_deref().map_or(Datum::Null, text),
-                    state
-                        .filter(|state| state.group.leader_store_id != 0)
-                        .map_or(Datum::Null, |state| {
-                            Datum::UInt(state.group.leader_store_id)
-                        }),
-                    state
-                        .filter(|state| !state.group.voter_store_ids.is_empty())
-                        .map_or(Datum::Null, |state| {
-                            text(
-                                &state
-                                    .group
-                                    .voter_store_ids
-                                    .iter()
-                                    .map(u64::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(","),
-                            )
-                        }),
-                    state.map_or(Datum::Null, |state| {
-                        text(match state.phase.as_str() {
-                            "pending" => "Pending",
-                            "preparing" => "Preparing",
-                            "stable" => "Stable",
-                            other => other,
-                        })
-                    }),
-                    state.map_or(Datum::Null, |state| Datum::Int(state.region_count)),
-                    state.map_or(Datum::Null, |state| Datum::Int(state.affinity_region_count)),
-                ]
-            })
-            .collect();
-        Ok(rows)
-    }
-
     /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
     /// preprocessed (`resolveShowStmt`) and planned (`buildShow` and the
     /// optimizer), its `PhysicalShow`'s rows fetched ([`Self::fetch_show`],
@@ -585,583 +115,9 @@ impl Session {
             .collect())
     }
 
-    /// Go `ShowExec.fetchShowCreate{Database,ResourceGroup,PlacementPolicy,
-    /// Table,Sequence,View}`: the one row a SHOW CREATE answers.
-    fn show_create_rows(
-        &mut self,
-        contents: &tidb_planner::logical::ShowContents,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        if contents.tp == tidb_ast::ShowStmtType::CreateDatabase {
-            let database = &contents.db_name;
-            let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
-                let (reported, charset) =
-                    catalog.database_definition(database).ok_or_else(|| {
-                        DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[(database.clone()).into()]),
-                        )
-                    })?;
-                let placement = catalog
-                    .database_placement_policy(database)
-                    .map(|reference| reference.name.original().to_owned());
-                Ok((reported, charset, placement))
-            })?;
-            return Ok(crate::show_create_database::rows(
-                reported,
-                charset,
-                placement.as_deref(),
-                contents.if_not_exists,
-                self.vars.sql_mode().has_ansi_quotes_mode(),
-            ));
-        }
-        // Go `fetchShowCreateResourceGroup`: the group by name
-        // (`ErrResourceGroupNotExists` when absent), reported under
-        // the name as written beside `CREATE RESOURCE GROUP`
-        // followed by its settings.
-        if contents.tp == tidb_ast::ShowStmtType::CreateResourceGroup {
-            let group_name = &contents.resource_group_name;
-            let text = self.with_catalog_mut(|catalog| {
-                let group = catalog.resource_group(group_name).ok_or_else(|| {
-                    DriverError::Mysql(tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
-                            .generate_with_stack_by_args(&[group_name.into()]),
-                    ))
-                })?;
-                let settings = group
-                    .settings
-                    .as_ref()
-                    .map(|settings| settings.to_string())
-                    .unwrap_or_default();
-                Ok(format!(
-                    "CREATE RESOURCE GROUP `{}` {settings}",
-                    group.name.original()
-                ))
-            })?;
-            return Ok(vec![vec![
-                Datum::Bytes(group_name.clone().into_bytes()),
-                Datum::Bytes(text.into_bytes()),
-            ]]);
-        }
-        // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
-        // looks the policy up and reports `ErrPlacementPolicyNotExists`
-        // (8239) for a name that is not there. The row is the policy's
-        // ORIGINAL-cased name beside
-        // `ConstructResultOfShowCreatePlacementPolicy` (`:1742`).
-        if contents.tp == tidb_ast::ShowStmtType::CreatePlacementPolicy {
-            let policy_name = &contents.db_name;
-            let (reported, clause) = self.with_catalog_mut(|catalog| {
-                catalog
-                    .policy(policy_name)
-                    .map(|policy| {
-                        let settings = policy
-                            .placement_settings
-                            .as_ref()
-                            .map(|settings| settings.read().to_clause())
-                            .unwrap_or_default();
-                        (policy.name.original().to_owned(), settings)
-                    })
-                    .ok_or_else(|| {
-                        DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                                .generate_with_stack_by_args(&[policy_name.clone().into()]),
-                        )
-                    })
-            })?;
-            return Ok(crate::show_create_placement_policy::rows(&reported, &clause));
-        }
-        // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
-        // SAME path: Go's `buildShow` picks the column names from
-        // whether the session-visible object IS a sequence, not from
-        // the keyword written, and `fetchShowCreateTable` prints a
-        // sequence's own DDL (`constructResultOfShowCreateTable`'s
-        // `IsSequence` arm). `SHOW CREATE SEQUENCE` reads the
-        // persistent object, which a local temporary table of the
-        // same name does not shadow, and refuses anything that is not
-        // a sequence (`fetchShowCreateSequence`'s ErrWrongObject).
-        let want_view = match contents.tp {
-            tidb_ast::ShowStmtType::CreateTable | tidb_ast::ShowStmtType::CreateSequence => {
-                false
-            }
-            tidb_ast::ShowStmtType::CreateView => true,
-            other => {
-                return Err(DriverError::unsupported(format!(
-                    "SHOW {other:?} has no SHOW CREATE row"
-                )))
-            }
-        };
-        let want_sequence = contents.tp == tidb_ast::ShowStmtType::CreateSequence;
-        let (database, table_name) =
-            (contents.db_name.clone(), contents.table_name.clone().unwrap_or_default());
-        self.require_show_create_privilege(&database, &table_name)?;
-        let ctx = self.statement_context(false);
-        // A view answers either spelling with the same row, which
-        // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
-        // table is refused.
-        let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
-        // Go `preprocess.go` detaches the LOCAL temporary tables for
-        // `SHOW CREATE VIEW` as for `SHOW CREATE SEQUENCE`: a
-        // temporary table of the same name does not shadow either.
-        let include_local = !want_sequence && !want_view;
-        let shown = self.with_catalog_scope(include_local, |catalog| {
-            let Some(entry) = catalog.table_in(&database, &table_name) else {
-                return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
-                ));
-            };
-            match entry {
-                // Go prints the object's stored name
-                // (`TableInfo.Name.O`), not the name as written.
-                tidb_executor::TableEntry::View(view) => Ok((
-                    show_create_view_text(view, ansi_quotes),
-                    view.name.clone(),
-                    Some((
-                        view.character_set_client.clone(),
-                        view.collation_connection.clone(),
-                    )),
-                )),
-                _ if want_view => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
-                        &[(&database).into(), (&table_name).into(), "VIEW".into()],
-                    ),
-                )),
-                tidb_executor::TableEntry::Sequence(sequence) => Ok((
-                    tidb_executor::show_create_sequence(sequence),
-                    sequence.name.clone(),
-                    None,
-                )),
-                _ if want_sequence => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
-                        &[(&database).into(), (&table_name).into(), "SEQUENCE".into()],
-                    ),
-                )),
-                tidb_executor::TableEntry::Kv(table) => {
-                    let stored = match table.name() {
-                        name if name.is_empty() => table_name.clone(),
-                        name => name,
-                    };
-                    Ok((
-                        show_create_table_text(&database, &stored, table, &ctx)?,
-                        stored,
-                        None,
-                    ))
-                }
-                tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
-                    "SHOW CREATE TABLE needs a storage-backed table",
-                )),
-            }
-        });
-        let (text, reported, view_charset) = shown?;
-        // Go's view form carries the session's character set and
-        // collation; `buildShowSchema` names the columns from the
-        // object, not the keyword written.
-        if let Some((character_set_client, collation_connection)) = view_charset {
-            return Ok(vec![vec![
-                Datum::Bytes(reported.into_bytes()),
-                Datum::Bytes(text.into_bytes()),
-                Datum::Bytes(character_set_client.into_bytes()),
-                Datum::Bytes(collation_connection.into_bytes()),
-            ]]);
-        }
-        Ok(vec![vec![
-            Datum::Bytes(reported.into_bytes()),
-            Datum::Bytes(text.into_bytes()),
-        ]])
-    }
-
-    /// Go `ShowNextRowIDExec.Next`: one row per allocator of the table, read
-    /// through the domain's infoschema, which holds no local temporary table.
-    fn show_next_row_id_rows(&mut self, path: &[String]) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let [database, table_name] = path else {
-            return Err(DriverError::unsupported("SHOW TABLE NEXT_ROW_ID without its table"));
-        };
-        let ids = self.with_catalog_mut(|catalog| {
-            let Some(entry) = catalog.persistent_table_in(database, table_name) else {
-                return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
-                ));
-            };
-            let tidb_executor::TableEntry::Kv(table) = entry else {
-                return Err(DriverError::unsupported(
-                    "SHOW TABLE NEXT_ROW_ID needs a storage-backed table",
-                ));
-            };
-            table
-                .next_global_row_ids()
-                .map_err(|error| DriverError::from(tidb_error::mysql::MysqlError::unknown(error.0)))
-        })?;
-        Ok(ids
-            .into_iter()
-            .map(|(column, next, id_type)| {
-                vec![
-                    Datum::Bytes(database.as_bytes().to_vec()),
-                    Datum::Bytes(table_name.as_bytes().to_vec()),
-                    Datum::Bytes(column.into_bytes()),
-                    Datum::Int(next),
-                    Datum::Bytes(id_type.as_bytes().to_vec()),
-                ]
-            })
-            .collect())
-    }
-
-    /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
-    /// Only the kinds [`is_planned_show`] lists reach it.
-    fn fetch_show(
-        &mut self,
-        leaf: &tidb_planner::physical::PhysicalShow,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let stats_handle = std::sync::Arc::clone(&self.stats_handle);
-        use tidb_ast::ShowStmtType as T;
-        let contents = &leaf.contents;
-        let extractor = base_extractor(leaf);
-        let shared = self.shared_catalog();
-        let strings = |names: Vec<String>| -> Vec<Vec<Datum>> {
-            names.into_iter().map(|name| vec![Datum::new_string(name)]).collect()
-        };
-        Ok(match contents.tp {
-            T::Charset => tidb_executor::show::fetch_show_charset(self),
-            T::Collation => tidb_executor::show::fetch_show_collation(self, extractor),
-            T::Databases => {
-                let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                strings(tidb_executor::show::fetch_show_databases(self, &catalog, extractor))
-            }
-            T::Engines => tidb_executor::show::fetch_show_engines(),
-            // Go `fetchShowProcedureStatus`, `fetchShowTriggers` and the
-            // `ShowEvents` / `ShowProfiles` / `ShowFunctionStatus` arms
-            // answer nothing; `fetchShowOpenTables` answers the empty set;
-            // `fetchShowPlugins` lists an empty `plugin.GetAll()`; the BRIE
-            // listings read a queue this server never fills.
-            // Go `fetchShowImportJobs` / `fetchShowImportGroups` read the
-            // dist-task framework, which runs no IMPORT job here.
-            T::ImportJobs | T::ImportGroups => Vec::new(),
-            T::ProcedureStatus
-            | T::FunctionStatus
-            | T::Triggers
-            | T::Events
-            | T::Profiles
-            | T::OpenTables
-            | T::Plugins
-            | T::Backups
-            | T::Restores => Vec::new(),
-            T::Tables => {
-                let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                tidb_executor::show::fetch_show_tables(
-                    self,
-                    &catalog,
-                    &contents.db_name,
-                    contents.full,
-                    extractor,
-                )?
-                .into_iter()
-                .map(|(name, table_type)| {
-                    let mut row = vec![Datum::new_string(name)];
-                    row.extend(table_type.map(Datum::new_string));
-                    row
-                })
-                .collect()
-            }
-            T::Variables => {
-                tidb_executor::show::fetch_show_variables(self, contents.global_scope, extractor)
-            }
-            // Go `executorBuilder.buildShow`: "show master status need start
-            // ts", then `fetchShowMasterStatus`.
-            T::MasterStatus | T::BinlogStatus => {
-                self.activate_statement_txn();
-                crate::show_admin::master_status_rows(self.current_tso().value())
-            }
-            T::Privileges => crate::show_admin::show_privileges_rows(),
-            T::Status => self.show_status_rows(contents.global_scope)?,
-            T::CreateTable
-            | T::CreateView
-            | T::CreateSequence
-            | T::CreateDatabase
-            | T::CreatePlacementPolicy
-            | T::CreateResourceGroup => self.show_create_rows(contents)?,
-            T::Grants => self.show_grants_rows(contents.user.as_ref(), &contents.roles)?,
-            // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
-            // rejects execution because extended statistics was removed.
-            T::StatsExtended => {
-                return Err(DriverError::unsupported(
-                    "Extended statistics feature has been removed",
-                ))
-            }
-            // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
-            T::StatsMeta => {
-                self.require_show_stats_privilege("stats_meta")?;
-                self.stats_meta_rows(leaf.extractor.as_ref())?
-            }
-            T::StatsHealthy => self.stats_healthy_rows(leaf.extractor.as_ref())?,
-            T::ColumnStatsUsage => self.column_stats_usage_rows()?,
-            T::HistogramsInFlight => {
-                let count =
-                    self.with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items(&stats_handle)))?;
-                vec![tidb_executor::show_stats::histograms_in_flight_row(count)]
-            }
-            T::AnalyzeStatus => self.analyze_status_rows()?,
-            // Go `fetchShowBind` (LIKE is a case-sensitive selection on
-            // `Original_sql`: Go gives BINDINGS no extractor).
-            T::Bindings => self.show_bindings_rows(contents.global_scope)?,
-            T::BindingCacheStatus => self.binding_cache_status_rows()?,
-            // Go `ShowExec.fetchShowProcessList`: one row per live connection
-            // of this server, read from the session manager.
-            T::ProcessList => self.process_list_rows(contents.full),
-            T::SessionStates => self.show_session_states_rows()?,
-            // Go `fetchShowClusterConfigs`; Go gives CONFIG no extractor, so
-            // LIKE is the plan's selection on `Type`.
-            T::Config => self.cluster_config_table_rows(&[Default::default()])?,
-            T::Affinity => self.show_affinity_rows(extractor)?,
-            // Go `fetchShowPlacement` and its FOR DATABASE / TABLE /
-            // PARTITION and LABELS forms (`executor/show_placement.go`); Go
-            // gives them no extractor, so LIKE is the plan's selection.
-            T::Placement
-            | T::PlacementLabels
-            | T::PlacementForDatabase
-            | T::PlacementForTable
-            | T::PlacementForPartition => self.placement_rows(contents)?,
-            // Go `fetchShowTableRegions`.
-            T::Regions => {
-                let table_name = contents.table_name.clone().unwrap_or_default();
-                let store = self.region_store();
-                self.with_catalog_mut(|catalog| {
-                    tidb_executor::show_regions::show_table_regions(
-                        catalog,
-                        store.as_ref(),
-                        &contents.db_name,
-                        &table_name,
-                        &contents.table_partitions,
-                        (!contents.index_name.is_empty()).then_some(contents.index_name.as_str()),
-                    )
-                })?
-            }
-            // Go `fetchShowDistributions`, which needs PD's HTTP client: the
-            // table and partitions are checked, then PD's error answers.
-            T::Distributions => {
-                let table_name = contents.table_name.clone().unwrap_or_default();
-                self.with_catalog_mut(|catalog| {
-                    tidb_executor::show_regions::show_table_distributions(
-                        catalog,
-                        &contents.db_name,
-                        &table_name,
-                        &contents.table_partitions,
-                    )
-                })?;
-                Vec::new()
-            }
-            T::StatsTopN => self.stats_topn_rows()?,
-            T::StatsBuckets => {
-                self.require_show_stats_privilege("stats_buckets")?;
-                self.stats_buckets_rows()?
-            }
-            T::StatsHistograms => {
-                self.require_show_stats_privilege("stats_histograms")?;
-                self.stats_histograms_rows()?
-            }
-            T::StatsLocked => {
-                self.require_show_stats_privilege("stats_table_locked")?;
-                self.stats_locked_rows()?
-            }
-            T::CreateUser => {
-                let spec = contents
-                    .user
-                    .as_ref()
-                    .ok_or_else(|| DriverError::unsupported("SHOW CREATE USER without a user"))?;
-                self.show_create_user_rows(spec)?
-            }
-            // Go `fetchShowIndex`: one row per index COLUMN, ordered
-            // with the clustered primary key first, then the table's own
-            // indexes in definition order.
-            //
-            // Cardinality is each column's NDV from the table's stats and
-            // Sub_part the declared prefix length; Packed is NULL and
-            // Comment empty, as Go writes them; Expression is NULL when no
-            // expression key part exists; Global is the stored
-            // `IndexInfo.Global` flag.
-            T::Index => {
-                let database = contents.db_name.clone();
-                let table_name = contents.table_name.clone().unwrap_or_default();
-                self.with_catalog_mut(|catalog| {
-                    let Some(entry) = catalog.table_in(&database, &table_name) else {
-                        return Err(DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[
-                                    (&database).into(),
-                                    (&table_name).into(),
-                                ]),
-                        ));
-                    };
-                    let table = match entry {
-                        tidb_executor::TableEntry::Kv(table) => table,
-                        // A view's `TableInfo` carries no indexes (Go answers
-                        // the header and no rows).
-                        tidb_executor::TableEntry::View(_)
-                        | tidb_executor::TableEntry::Sequence(_) => return Ok(Vec::new()),
-                        _ => {
-                            return Err(DriverError::unsupported(
-                                "SHOW INDEX needs a storage-backed table",
-                            ));
-                        }
-                    };
-                    // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
-                    let statistics = catalog.table_statistics_in(&stats_handle, table.table_id());
-                    Ok(show_index_rows(&table_name, table, |column_id| {
-                        statistics
-                            .as_ref()
-                            .and_then(|statistics| statistics.columns.get(&column_id))
-                            .map_or(0, |column| column.histogram.ndv)
-                    }))
-                })?
-            }
-            // Go `fetchShowColumns`.
-            T::Columns => {
-                let table = [
-                    contents.db_name.clone(),
-                    contents.table_name.clone().unwrap_or_default(),
-                ];
-                self.show_column_rows(
-                    &contents.db_name,
-                    &table,
-                    extractor,
-                    contents.full,
-                    contents.extended,
-                )?
-            }
-            // Go `fetchShowTableStatus`: the 1044 gate SHOW TABLES applies,
-            // the unknown schema, then its restricted SQL over
-            // `information_schema.tables` for the schema, ordered by table
-            // name (so every size and count is the TABLES reader's), each
-            // table the extractor admits by its lowercased name.
-            T::TableStatus => {
-                let database = contents.db_name.clone();
-                self.require_visible_database(&database)?;
-                let zone = self.session_time_zone();
-                let visibility = self.schema_visibility();
-                let catalog = self.table_storage_statistics_catalog(true)?;
-                if catalog.table_names(&database).is_none() {
-                    return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[database.into()]),
-                    ));
-                }
-                crate::infoschema::show_table_status_rows(&catalog, &visibility, &zone, &database)
-                    .into_iter()
-                    .filter(|row| {
-                        let name = go_to_lower(datum_text(&row[0]).unwrap_or_default());
-                        tidb_executor::show::extractor_admits(extractor, &name, &name)
-                    })
-                    .collect()
-            }
-            T::Warnings | T::Errors => {
-                self.warning_rows(contents.count_warnings_or_errors, contents.tp == T::Errors)
-            }
-            // Go `fetchShowBuiltins` over `expression.GetBuiltinList`.
-            T::Builtins => strings(tidb_executor::builtin_list()),
-            other => {
-                return Err(DriverError::unsupported(format!(
-                    "SHOW {other:?} is not planned"
-                )))
-            }
-        })
-    }
-
 }
 
 impl Session {
-    /// Go `ShowExec.fetchShowColumns`: one row per column of the table (its
-    /// hidden ones too with `extended`), the `FULL` shape with `full`, each
-    /// column the extractor admits by its lowercased name.
-    fn show_column_rows(
-        &mut self,
-        database: &str,
-        table_path: &[String],
-        extractor: tidb_executor::show::Extractor<'_>,
-        full: bool,
-        extended: bool,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let admits = |name: &str| {
-            let lower = go_to_lower(name);
-            tidb_executor::show::extractor_admits(extractor, &lower, &lower)
-        };
-        // A `db.tbl` path names its own schema, as everywhere else.
-        let (database, table_name) = match table_path {
-            [name] => (database.to_owned(), name.clone()),
-            [db, name] => (db.clone(), name.clone()),
-            _ => return Err(DriverError::unsupported("empty table name")),
-        };
-        // Go `fetchShowColumns` asks for any column privilege once the table
-        // resolves, and refuses as a denied SELECT on the table as stored.
-        let stored_name = self
-            .lock_catalog()?
-            .table_in(&database, &table_name)
-            .map(|entry| match entry {
-                tidb_executor::TableEntry::Kv(table) if !table.name().is_empty() => {
-                    table.name().to_owned()
-                }
-                tidb_executor::TableEntry::View(view) => view.name.clone(),
-                _ => table_name.clone(),
-            });
-        if let (Some(stored_name), Some((_, user, host))) = (stored_name, self.privilege_context())
-        {
-            if !self.has_any_scoped_privilege(
-                &database,
-                &table_name,
-                crate::privilege::column_privs_mask(),
-            ) {
-                return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
-                        &[
-                            "SELECT".into(),
-                            user.to_owned().into(),
-                            host.to_owned().into(),
-                            stored_name.into(),
-                        ],
-                    ),
-                ));
-            }
-        }
-        let ctx = self.statement_context(false);
-        let rows = self.with_catalog_mut(|catalog| {
-            let Some(entry) = catalog.table_in(&database, &table_name) else {
-                return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
-                ));
-            };
-            if let tidb_executor::TableEntry::View(view) = entry {
-                // Go re-plans the body here (`tryFillViewColumnType`), so the
-                // types reported are the ones the base tables have now, and a
-                // body that no longer resolves fails the statement with its
-                // own error rather than with ErrViewInvalid.
-                let view = view.clone();
-                let columns = tidb_executor::view_column_list(&view, &database, catalog, &ctx)?;
-                return Ok(columns
-                    .iter()
-                    .filter(|(candidate, _)| admits(candidate))
-                    .map(|(name, field_type)| view_column_description(name, field_type, full))
-                    .collect::<Vec<_>>());
-            }
-            let tidb_executor::TableEntry::Kv(table) = entry else {
-                return Err(DriverError::unsupported(
-                    "SHOW COLUMNS needs a storage-backed table",
-                ));
-            };
-            // `EXTENDED` adds the hidden columns MySQL keeps internally
-            // (`tb.Cols()` rather than `tb.VisibleCols()`).
-            let listed = if extended {
-                table.columns()
-            } else {
-                table.visible_columns()
-            };
-            listed
-                .iter()
-                .enumerate()
-                .filter(|(_, candidate)| admits(&candidate.name))
-                .map(|(offset, candidate)| column_description(candidate, offset, table, full, &ctx))
-                .collect::<Result<Vec<_>, _>>()
-        })?;
-        Ok(rows)
-    }
-
     /// Go `buildShow` for SHOW CREATE TABLE/SEQUENCE/VIEW: a view needs SHOW
     /// VIEW, anything else any privilege but CREATE TEMPORARY TABLES (a
     /// local temporary table any at all), each refused as its own command
@@ -1541,10 +497,10 @@ impl Session {
                 if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
                     self.flush_privileges()?;
                 }
-                return crate::show_admin::flush_stmt(flush).map(Some);
+                return tidb_executor::admin::flush_stmt(flush).map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
-                return Ok(Some(crate::show_admin::show_ddl_output(
+                return Ok(Some(tidb_executor::admin::show_ddl_output(
                     &self.show_ddl_rows(),
                 )));
             }
@@ -1556,7 +512,7 @@ impl Session {
             // names no columns for it); this tier answers the empty
             // `Job_ID | State` listing.
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Imports => {
-                Ok(Some(crate::show_admin::show_imports_output()))
+                Ok(Some(tidb_executor::admin::show_imports_output()))
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
@@ -1604,66 +560,6 @@ impl Session {
             },
             _ => Ok(None),
         }
-    }
-}
-
-#[cfg(test)]
-mod column_description_source_tests {
-    use super::*;
-    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-
-    #[test]
-    fn test_desc() {
-        // Direct port of pkg/table/column_test.go::TestDesc. The Go test
-        // drives NewColDesc by replacing the column flags, then toggles the
-        // generated-column storage bit and asks for both result schemas.
-        let auto = FieldType::new(FieldTypeCode::Long).with_flags(
-            FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY,
-        );
-        assert_eq!(column_extra(&auto, true, None, false), "auto_increment");
-
-        let multiple = FieldType::new(FieldTypeCode::Long).with_flags(FieldTypeFlags::MULTIPLE_KEY);
-        assert_eq!(column_extra(&multiple, false, None, false), "");
-
-        let on_update = FieldType::new(FieldTypeCode::Timestamp)
-            .with_flags(FieldTypeFlags::UNIQUE_KEY | FieldTypeFlags::ON_UPDATE_NOW);
-        assert_eq!(
-            column_extra(&on_update, false, None, false),
-            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
-        );
-
-        let ordinary = FieldType::new(FieldTypeCode::Long);
-        assert_eq!(
-            column_extra(&ordinary, false, Some(true), false),
-            "STORED GENERATED"
-        );
-        assert_eq!(
-            column_extra(&ordinary, false, Some(false), false),
-            "VIRTUAL GENERATED"
-        );
-        assert_eq!(
-            column_extra(&ordinary, false, None, true),
-            "DEFAULT_GENERATED"
-        );
-
-        assert_eq!(
-            tidb_planner::show_schema::col_desc_field_names(false),
-            ["Field", "Type", "Null", "Key", "Default", "Extra"]
-        );
-        assert_eq!(
-            tidb_planner::show_schema::col_desc_field_names(true),
-            [
-                "Field",
-                "Type",
-                "Collation",
-                "Null",
-                "Key",
-                "Default",
-                "Extra",
-                "Privileges",
-                "Comment",
-            ]
-        );
     }
 }
 
@@ -1736,13 +632,159 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
     )
 }
 
-/// The `ShowBaseExtractor` `buildShow` installed on a planned SHOW.
-fn base_extractor(
-    leaf: &tidb_planner::physical::PhysicalShow,
-) -> Option<&tidb_planner::show_predicate_extractor::ShowBaseExtractor> {
-    match &leaf.extractor {
-        Some(tidb_planner::logical::ShowPredicateExtractor::Base(extractor)) => Some(extractor),
-        _ => None,
+impl tidb_executor::show::exec::ShowExec for Session {
+    fn with_catalog_scope<T>(
+        &mut self,
+        include_local: bool,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        Session::with_catalog_scope(self, include_local, body)
+    }
+
+    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<Catalog>> {
+        std::sync::Arc::clone(self.catalog.inner())
+    }
+
+    fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {
+        std::sync::Arc::clone(&self.stats_handle)
+    }
+
+    fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+        Session::session_time_zone(self)
+    }
+
+    fn active_resource_group(&self) -> &str {
+        &self.active_resource_group
+    }
+
+    fn activated_txn_start_ts(&mut self) -> i64 {
+        self.activate_statement_txn();
+        self.current_tso().value()
+    }
+
+    fn privilege_context(&self) -> Option<(&privilege::PrivilegeRegistry, &str, &str)> {
+        Session::privilege_context(self)
+    }
+
+    fn has_any_scoped_privilege(&self, database: &str, table: &str, mask: u64) -> bool {
+        Session::has_any_scoped_privilege(self, database, table, mask)
+    }
+
+    fn database_is_visible(&self, database: &str) -> bool {
+        Session::database_is_visible(self, database)
+    }
+
+    fn schema_visibility(&self) -> tidb_executor::infoschema_reader::SchemaVisibility {
+        Session::schema_visibility(self)
+    }
+
+    fn require_visible_database(&self, database: &str) -> Result<(), DriverError> {
+        Session::require_visible_database(self, database)
+    }
+
+    fn require_current_database(&self) -> Result<&str, DriverError> {
+        Session::require_current_database(self)
+    }
+
+    fn require_show_create_privilege(
+        &self,
+        database: &str,
+        table_name: &str,
+    ) -> Result<(), DriverError> {
+        Session::require_show_create_privilege(self, database, table_name)
+    }
+
+    fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError> {
+        Session::require_show_stats_privilege(self, table)
+    }
+
+    fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore> {
+        Session::region_store(self)
+    }
+
+    fn table_storage_statistics_catalog(
+        &mut self,
+        needs_column_lengths: bool,
+    ) -> Result<Catalog, DriverError> {
+        Session::table_storage_statistics_catalog(self, needs_column_lengths)
+    }
+
+    fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>> {
+        self.column_stats_usage.clone()
+    }
+
+    fn analyze_status_provider(&self) -> Option<std::sync::Arc<dyn AnalyzeStatusProvider>> {
+        self.analyze_status.clone()
+    }
+
+    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::show_status_rows(self, global)
+    }
+
+    fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>> {
+        Session::warning_rows(self, count_only, errors_only)
+    }
+
+    fn show_bindings_rows(&mut self, global_scope: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::show_bindings_rows(self, global_scope)
+    }
+
+    fn binding_cache_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::binding_cache_status_rows(self)
+    }
+
+    fn process_list_rows(&self, full: bool) -> Vec<Vec<Datum>> {
+        Session::process_list_rows(self, full)
+    }
+
+    fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::show_session_states_rows(self)
+    }
+
+    fn cluster_config_table_rows(
+        &mut self,
+        filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::cluster_config_table_rows(self, filters)
     }
 }
 
+impl tidb_executor::admin::AdminExec for Session {
+    fn all_ddl_jobs(
+        &mut self,
+    ) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError> {
+        Session::all_ddl_jobs(self)
+    }
+
+    fn with_catalog_retrieving<T>(
+        &mut self,
+        ctx: &tidb_executor::StmtContext,
+        attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        Session::with_catalog_retrieving(self, ctx, attempt)
+    }
+}
+
+impl tidb_executor::simple::exec::SimpleExec for Session {
+    fn decode_session_states(&mut self, text: &str) -> Result<(), DriverError> {
+        Session::decode_session_states(self, text)
+    }
+
+    fn reload_tls(&mut self, no_rollback_on_error: bool) -> Result<(), DriverError> {
+        let process = self
+            .process
+            .as_ref()
+            .ok_or_else(|| DriverError::unsupported("TLS reload requires a running server"))?;
+        process
+            .registry()
+            .reload_tls(no_rollback_on_error)
+            .map_err(DriverError::unsupported)
+    }
+
+    fn dispatch_admin_stmt(
+        &mut self,
+        admin: &tidb_ast::AdminStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::dispatch_admin_stmt(self, admin)
+    }
+}

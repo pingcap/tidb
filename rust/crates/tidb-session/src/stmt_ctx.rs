@@ -1956,7 +1956,7 @@ impl Session {
             self.vars.last_found_rows = *rows;
         }
         // Go preserves StmtCtx.PrevAffectedRows across SET SESSION_STATES.
-        if self.in_set_session_states {
+        if self.vars.in_set_session_states_stmt {
             return;
         }
         self.vars.prev_row_count = match self.statement_kind {

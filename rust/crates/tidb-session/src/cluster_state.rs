@@ -27,7 +27,7 @@ use tidb_executor::{Catalog, DriverError};
 
 use crate::instance_state::ViewerState;
 use std::sync::Arc;
-use crate::{datetime_datum, go_uptime_string, infoschema};
+use crate::{datetime_datum, go_uptime_string};
 use crate::process_arm::peer_cluster_table_rows;
 
 impl ViewerState {
@@ -374,7 +374,7 @@ impl ViewerState {
             | "STATEMENTS_SUMMARY_HISTORY"
             | "STATEMENTS_SUMMARY_EVICTED"
             | "TIDB_STATEMENTS_STATS" => {
-                let columns = infoschema::table_schema(source).expect("registered summary source");
+                let columns = tidb_executor::infoschema_reader::table_schema(source).expect("registered summary source");
                 let offsets: Vec<_> = columns
                     .iter()
                     .enumerate()
@@ -434,7 +434,7 @@ impl ViewerState {
             "MEMORY_USAGE_OPS_HISTORY" => {
                 tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             }
-            "TIDB_INDEX_USAGE" => crate::infoschema::tidb_index_usage_rows(
+            "TIDB_INDEX_USAGE" => tidb_executor::infoschema_reader::tidb_index_usage_rows(
                 catalog,
                 &self.visibility,
                 self.index_usage.as_ref(),
@@ -888,7 +888,7 @@ impl ViewerState {
             .into_iter()
             .map(|server| server.status_address)
             .collect::<Vec<_>>();
-        crate::memtable_retrievers::tidb_hot_regions_history_rows(
+        tidb_executor::memtable_retrievers::tidb_hot_regions_history_rows(
             extractor,
             &pd_servers,
             catalog,
@@ -998,7 +998,7 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for ClusterTablesRetr
             ClusterTableFilter, MemTablePredicateExtractor as Extractor,
         };
         let table = read.table_name.as_str();
-        let columns = crate::infoschema::table_schema(table);
+        let columns = tidb_executor::infoschema_reader::table_schema(table);
         let required = columns
             .as_deref()
             .map(|columns| required_columns(read, columns));

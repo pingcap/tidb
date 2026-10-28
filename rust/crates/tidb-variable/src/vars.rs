@@ -352,6 +352,9 @@ pub struct SessionVars {
     /// which only a statement that ALLOCATED an auto value updates.
     /// (Go `SessionVars.LastInsertID`.)
     pub last_insert_id: u64,
+    /// Go `SessionVars.InSetSessionStatesStmt`: the running statement is
+    /// `SET SESSION_STATES`, which keeps the previous `ROW_COUNT()`.
+    pub in_set_session_states_stmt: bool,
     /// The id the last statement allocated, which the OK packet carries and
     /// which is 0 for a statement that allocated nothing.
     /// (Go `SessionVars.StmtCtx.InsertID`.)
@@ -543,6 +546,7 @@ impl Default for SessionVars {
             connection_id: None,
             client_found_rows: false,
             last_insert_id: 0,
+            in_set_session_states_stmt: false,
             statement_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: 0,
@@ -1244,6 +1248,17 @@ impl SessionVars {
             ));
         };
         self.system_value_at(index)
+    }
+
+    /// A boolean variable's session value (`ON`, `1`, `TRUE`, `YES`), or
+    /// `default` for a name the registry does not know.
+    pub fn system_bool(&self, name: &str, default: bool) -> bool {
+        match self.system_value(name) {
+            Ok(value) => ["ON", "1", "TRUE", "YES"]
+                .iter()
+                .any(|on| value.eq_ignore_ascii_case(on)),
+            Err(_) => default,
+        }
     }
 
     /// [`Self::system_value`] for a caller that already holds the variable's

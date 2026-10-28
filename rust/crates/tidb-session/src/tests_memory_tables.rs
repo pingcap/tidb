@@ -163,10 +163,11 @@ fn a_missing_memory_table_is_reported_as_the_planner_resolves_it() {
 fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
     let catalog = tidb_executor::Catalog::mock();
     let ctx = tidb_executor::StmtContext::default();
-    let visibility = crate::infoschema::SchemaVisibility::unrestricted();
-    for table in crate::infoschema::SERVED_TABLES {
+    let visibility = tidb_executor::infoschema_reader::SchemaVisibility::unrestricted();
+    for table in tidb_executor::infoschema_reader::SERVED_TABLES {
         assert!(
-            crate::infoschema::table_rows(table, &catalog, &visibility, &ctx).is_some(),
+            tidb_executor::infoschema_reader::table_rows(table, &catalog, &visibility, &ctx)
+                .is_some(),
             "{table}"
         );
     }
@@ -179,9 +180,13 @@ fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
         "DDL_JOBS",
         "USER_PRIVILEGES",
     ] {
-        assert!(!crate::infoschema::serves_table(table), "{table}");
         assert!(
-            crate::infoschema::table_rows(table, &catalog, &visibility, &ctx).is_none(),
+            !tidb_executor::infoschema_reader::serves_table(table),
+            "{table}"
+        );
+        assert!(
+            tidb_executor::infoschema_reader::table_rows(table, &catalog, &visibility, &ctx)
+                .is_none(),
             "{table}"
         );
     }
@@ -205,18 +210,22 @@ fn a_scan_has_at_most_one_retriever() {
         is_cluster_scan: false,
     };
     let retrievers: Vec<Box<dyn MemTableRetriever>> = vec![
-        Box::new(crate::memtable_retrievers::InformationSchemaRetriever::new(
-            session.schema_visibility(),
-            None,
-            "default".to_owned(),
-        )),
+        Box::new(
+            tidb_executor::memtable_retrievers::InformationSchemaRetriever::new(
+                session.schema_visibility(),
+                None,
+                "default".to_owned(),
+            ),
+        ),
         Box::new(crate::instance_state::InstanceStateRetriever::new(
             session.viewer_state(),
         )),
-        Box::new(crate::memtable_retrievers::CatalogTablesRetriever::new(
-            session.schema_visibility(),
-            false,
-        )),
+        Box::new(
+            tidb_executor::memtable_retrievers::CatalogTablesRetriever::new(
+                session.schema_visibility(),
+                false,
+            ),
+        ),
         Box::new(crate::account_state::AccountRetriever::new(
             session.account_state(),
         )),

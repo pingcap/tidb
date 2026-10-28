@@ -18,9 +18,9 @@ use tidb_datatype::{Datum, FieldTypeFlags};
 /// primary key first, then each index in definition order. `column_ndv` is
 /// Go `fetchShowIndex`'s Cardinality: the column's NDV in the table's stats
 /// (`statsTbl.GetCol(col.ID).NDV`, 0 without them).
-pub(crate) fn show_index_rows(
+pub fn show_index_rows(
     table_name: &str,
-    table: &tidb_executor::KvTable,
+    table: &crate::KvTable,
     column_ndv: impl Fn(i64) -> i64,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();

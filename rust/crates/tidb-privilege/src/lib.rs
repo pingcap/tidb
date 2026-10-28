@@ -79,6 +79,7 @@ mod password_lock;
 mod privs;
 mod registry_ops;
 mod tls_policy;
+pub mod verification;
 use tls_policy::match_uri_with_wildcard;
 pub use tls_policy::parse_policy_sans;
 pub use tls_policy::{certificate_uri, TlsPeerIdentity};

@@ -30,16 +30,16 @@ use tidb_codec::table_key::{
     get_table_handle_key_range, KeyHead, RecordHandle, TABLE_PREFIX, TABLE_SPLIT_KEY_LEN,
 };
 use tidb_kv::region_map::RegionStore;
-use tidb_executor::{Catalog, TableEntry};
+use crate::{Catalog, TableEntry};
 use tidb_hack::GoToLower;
 use tikv_client::pd_http;
 
 /// Go `helper.TryGetPDHTTPClient`'s failure for a store without PD.
-pub(crate) const PD_HTTP_CLIENT_UNAVAILABLE: &str = "pd http client unavailable";
+pub const PD_HTTP_CLIENT_UNAVAILABLE: &str = "pd http client unavailable";
 
 /// Go `helper.TryGetPDHTTPClient`: the store's PD HTTP client tagged with
 /// the helper's caller ID, `None` for a store without PD.
-pub(crate) fn try_get_pd_http_client(store: &dyn RegionStore) -> Option<pd_http::Client> {
+pub fn try_get_pd_http_client(store: &dyn RegionStore) -> Option<pd_http::Client> {
     store
         .pd_http_client()
         .map(|client| client.with_caller_id("tidb-store-helper"))
@@ -47,7 +47,7 @@ pub(crate) fn try_get_pd_http_client(store: &dyn RegionStore) -> Option<pd_http:
 
 /// Runs one PD HTTP request from synchronous code on the store runtime the
 /// client's connections live on; a failure is Go's plain error text.
-pub(crate) fn block_on_pd<T, F>(request: F) -> Result<T, String>
+pub fn block_on_pd<T, F>(request: F) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, tikv_client::Error>> + Send,
     T: Send,
@@ -71,7 +71,7 @@ fn prefix_next(key: &[u8]) -> Vec<u8> {
 }
 
 /// Go `Helper.GetRegions`: every region of the store's key range, from PD.
-pub(crate) fn get_regions(client: &pd_http::Client) -> Result<pd_http::RegionsInfo, String> {
+pub fn get_regions(client: &pd_http::Client) -> Result<pd_http::RegionsInfo, String> {
     let (start_key, end_key) = region_key_codec().encode_region_range(&[], &[]);
     let key_range = pd_http::KeyRange::new(start_key, end_key);
     block_on_pd(client.get_regions_by_key_range(&key_range, -1))
@@ -79,7 +79,7 @@ pub(crate) fn get_regions(client: &pd_http::Client) -> Result<pd_http::RegionsIn
 
 /// The regions of one physical table's whole `t{id}` prefix, record and
 /// index keys alike -- Go `memtableRetriever.getRegionsInfoForSingleTable`.
-pub(crate) fn get_regions_by_table_prefix(
+pub fn get_regions_by_table_prefix(
     client: &pd_http::Client,
     table_id: i64,
 ) -> Result<pd_http::RegionsInfo, String> {
@@ -92,7 +92,7 @@ pub(crate) fn get_regions_by_table_prefix(
 
 /// Go `Helper.GetPDRegionStats` with `noIndexStats` false: PD's region
 /// statistics for the table's whole `t{id}` prefix.
-pub(crate) fn get_pd_region_stats(
+pub fn get_pd_region_stats(
     client: &pd_http::Client,
     table_id: i64,
 ) -> Result<pd_http::RegionStats, String> {
@@ -106,7 +106,7 @@ pub(crate) fn get_pd_region_stats(
 /// One partition of a [`HelperTable`]: Go `model.PartitionDefinition`'s ID
 /// and `Name.O`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HelperPartition {
+pub struct HelperPartition {
     pub(crate) id: i64,
     pub(crate) name: String,
 }
@@ -114,7 +114,7 @@ pub(crate) struct HelperPartition {
 /// One index of a [`HelperTable`]: Go `model.IndexInfo`'s ID, `Name.O` and
 /// `Global`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HelperIndex {
+pub struct HelperIndex {
     pub(crate) id: i64,
     pub(crate) name: String,
     pub(crate) global: bool,
@@ -122,7 +122,7 @@ pub(crate) struct HelperIndex {
 
 /// The facts of a Go `model.TableInfo` the helper reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HelperTable {
+pub struct HelperTable {
     pub(crate) id: i64,
     /// Go `TableInfo.Name.O`.
     pub(crate) name: String,
@@ -137,7 +137,7 @@ pub(crate) struct HelperTable {
 
 /// One Go `model.DBInfo` with its `SchemaTableInfos`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HelperSchema {
+pub struct HelperSchema {
     /// Go `DBInfo.Name.O`.
     pub(crate) name: String,
     pub(crate) tables: Vec<HelperTable>,
@@ -161,7 +161,7 @@ impl HelperSchema {
 /// Go table IDs (`perfschema.tableIDMap`) have no port here. Its IDs lie
 /// between the other two memory schemas' and hold no keys, so no region
 /// boundary falls among them.
-pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
+pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
     let mut stored = catalog
         .database_names()
         .into_iter()
@@ -235,11 +235,11 @@ pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
         is_common_handle: false,
     };
     let information_schema = catalog
-        .table_names(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+        .table_names(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|name| {
-            crate::infoschema::memory_table_id(&name).map(|id| memory_table(id, &name))
+            crate::infoschema_reader::memory_table_id(&name).map(|id| memory_table(id, &name))
         })
         .collect::<Vec<_>>();
     if !information_schema.is_empty() {
@@ -251,7 +251,7 @@ pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
     if catalog.has_database("metrics_schema") {
         schemas.push(HelperSchema {
             name: "METRICS_SCHEMA".to_owned(),
-            tables: crate::infoschema::METRICS_SCHEMA_TABLES
+            tables: crate::infoschema_reader::METRICS_SCHEMA_TABLES
                 .iter()
                 .map(|(name, id)| memory_table(*id, name))
                 .collect(),
@@ -263,7 +263,7 @@ pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
 /// Go `helper.TableInfo`: the table, partition or index a key range belongs
 /// to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TableInfo {
+pub struct TableInfo {
     /// Go `DB.Name.O`.
     pub(crate) db_name: String,
     /// Go `Table.ID`, the logical table's.
@@ -286,7 +286,7 @@ impl TableInfo {
 /// Go `helper.TableInfoWithKeyRange`: a table, partition or index with its
 /// region key range as upper-case hex.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TableInfoWithKeyRange {
+pub struct TableInfoWithKeyRange {
     pub(crate) table_info: TableInfo,
     pub(crate) start_key: String,
     pub(crate) end_key: String,
@@ -330,7 +330,7 @@ fn new_table_info_with_key_range(
 /// Go `Helper.GetTablesInfoWithKeyRange`: every table (or partition) record
 /// range and index range of `schemas`, the memory schemas left out when
 /// `filter_mem_dbs` (Go's `FilterMemDBs` filter), sorted by start key.
-pub(crate) fn get_tables_info_with_key_range(
+pub fn get_tables_info_with_key_range(
     schemas: &[HelperSchema],
     filter_mem_dbs: bool,
 ) -> Vec<TableInfoWithKeyRange> {
@@ -391,7 +391,7 @@ fn is_intersecting(x_start_key: &str, x_end_key: &str, y_start_key: &str, y_end_
 /// partitions and indices its key range intersects. The first region past
 /// the last table range reads an empty entry and ends the walk, so the
 /// regions after it have no entry.
-pub(crate) fn parse_regions_table_infos(
+pub fn parse_regions_table_infos(
     regions: &[&pd_http::RegionInfo],
     tables: &[TableInfoWithKeyRange],
 ) -> HashMap<i64, Vec<TableInfo>> {
@@ -429,7 +429,7 @@ pub(crate) fn parse_regions_table_infos(
 }
 
 /// Go `Helper.GetRegionsTableInfo`.
-pub(crate) fn get_regions_table_info(
+pub fn get_regions_table_info(
     regions_info: &pd_http::RegionsInfo,
     schemas: &[HelperSchema],
     filter_mem_dbs: bool,
@@ -441,7 +441,7 @@ pub(crate) fn get_regions_table_info(
 
 /// Go `helper.RegionMetric`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RegionMetric {
+pub struct RegionMetric {
     pub(crate) flow_bytes: u64,
     pub(crate) max_hot_degree: i64,
     pub(crate) count: i64,
@@ -449,7 +449,7 @@ pub(crate) struct RegionMetric {
 
 /// Go `helper.HotRead` / `helper.HotWrite`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HotType {
+pub enum HotType {
     Read,
     Write,
 }
@@ -458,7 +458,7 @@ pub(crate) enum HotType {
 /// region ID. Go fills a map from PD's per-store map, a later store's entry
 /// replacing an earlier one's; both are unordered there, and here the
 /// stores are walked by ID and the regions listed by ID.
-pub(crate) fn fetch_hot_region(
+pub fn fetch_hot_region(
     client: &pd_http::Client,
     hot_type: HotType,
 ) -> Result<BTreeMap<u64, RegionMetric>, String> {
@@ -470,7 +470,7 @@ pub(crate) fn fetch_hot_region(
 }
 
 /// The metric map Go `Helper.FetchHotRegion` builds from PD's answer.
-pub(crate) fn region_metrics(
+pub fn region_metrics(
     region_resp: &pd_http::StoreHotPeersInfos,
 ) -> BTreeMap<u64, RegionMetric> {
     let mut stores = region_resp.as_leader.iter().collect::<Vec<_>>();
@@ -494,7 +494,7 @@ pub(crate) fn region_metrics(
 /// Go `helper.FrameItem`, without the record ID and index values no reader
 /// here prints.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FrameItem {
+pub struct FrameItem {
     pub(crate) db_name: String,
     pub(crate) table_name: String,
     pub(crate) table_id: i64,
@@ -505,13 +505,13 @@ pub(crate) struct FrameItem {
 
 /// Go `helper.RegionFrameRange`: the frames at a region's two ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RegionFrameRange {
+pub struct RegionFrameRange {
     pub(crate) first: FrameItem,
     pub(crate) last: FrameItem,
 }
 
 /// Go `helper.NewRegionFrameRange` over a region's decoded key bounds.
-pub(crate) fn new_region_frame_range(
+pub fn new_region_frame_range(
     start_key: &[u8],
     end_key: &[u8],
 ) -> Result<RegionFrameRange, String> {
@@ -544,7 +544,7 @@ pub(crate) fn new_region_frame_range(
 /// names the `PRIMARY` index; Go decodes the handle's values and index
 /// values too, which no reader here prints, and ignores decode errors past
 /// the key head.
-pub(crate) fn new_frame_item_from_region_key(key: &[u8]) -> Result<FrameItem, String> {
+pub fn new_frame_item_from_region_key(key: &[u8]) -> Result<FrameItem, String> {
     let mut frame = FrameItem::default();
     match decode_key_head(key) {
         Ok(KeyHead::Record { table_id }) => {
@@ -722,7 +722,7 @@ fn find_range_in_table(
 
 /// Go `Helper.FindTableIndexOfRegion`: the first table, in schema order,
 /// whose record or index range the region covers.
-pub(crate) fn find_table_index_of_region(
+pub fn find_table_index_of_region(
     schemas: &[HelperSchema],
     hot_range: &mut RegionFrameRange,
 ) -> Option<FrameItem> {
@@ -738,7 +738,7 @@ pub(crate) fn find_table_index_of_region(
 
 /// Go `helper.HotTableIndex`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct HotTableIndex {
+pub struct HotTableIndex {
     pub(crate) region_id: u64,
     pub(crate) region_metric: RegionMetric,
     pub(crate) db_name: String,
@@ -752,7 +752,7 @@ pub(crate) struct HotTableIndex {
 /// index its range covers. A region the region cache cannot locate is
 /// skipped (Go logs it). Go's `filter` argument is unused there, so every
 /// schema is searched.
-pub(crate) fn fetch_region_table_index(
+pub fn fetch_region_table_index(
     store: &dyn RegionStore,
     metrics: &BTreeMap<u64, RegionMetric>,
     schemas: &[HelperSchema],

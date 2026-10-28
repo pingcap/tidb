@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tidb_datatype::Datum;
 use tidb_kv::region_map::RegionStore;
-use tidb_executor::{Catalog, DriverError};
+use crate::{Catalog, DriverError};
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::logical::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::{
@@ -36,7 +36,7 @@ use tidb_planner::memtable_predicate_extractor::{
 };
 use tikv_client::pd_http;
 
-use crate::infoschema::{PrivMask, SchemaVisibility};
+use crate::infoschema_reader::{PrivMask, SchemaVisibility};
 use crate::store_helper::{self, PD_HTTP_CLIENT_UNAVAILABLE};
 
 fn text(value: &str) -> Datum {
@@ -51,7 +51,7 @@ fn plain_error(message: &str) -> DriverError {
 /// `MetricsSummaryByLabelRetriever.retrieve` (`by_label` true) after the
 /// PROCESS check: every metrics table the extractor admits, in name order,
 /// summarised by the restricted SQL `query` runs over `metrics_schema`.
-pub(crate) fn metrics_summary_rows(
+pub fn metrics_summary_rows(
     extractor: &MetricSummaryTableExtractor,
     time_range: &QueryTimeRange,
     by_label: bool,
@@ -187,13 +187,13 @@ pub(crate) fn metrics_summary_rows(
 /// 1105 'pd http client unavailable' (oracle-captured); the Eval wrap marks
 /// that error evaluation-origin, which the statement completion door treats
 /// as buffer-invisible.
-pub(crate) fn tikv_store_status_rows(
+pub fn tikv_store_status_rows(
     store: &dyn RegionStore,
     sem_redacts: bool,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let Some(client) = store_helper::try_get_pd_http_client(store) else {
-        return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-            tidb_executor::EvalError::Unsupported(PD_HTTP_CLIENT_UNAVAILABLE),
+        return Err(DriverError::Exec(crate::ExecError::Eval(
+            crate::EvalError::Unsupported(PD_HTTP_CLIENT_UNAVAILABLE),
         )));
     };
     let stores_stat =
@@ -216,7 +216,7 @@ fn pd_time_datum(time: &pd_http::Time) -> Datum {
 ///
 /// Go marshals `Store.Labels` with `encoding/json`; PD omits an empty label
 /// list, so Go's nil slice marshals to JSON `null`.
-pub(crate) fn tikv_store_status_rows_from(
+pub fn tikv_store_status_rows_from(
     stores_stat: &pd_http::StoresInfo,
     sem_redacts: bool,
 ) -> Result<Vec<Vec<Datum>>, String> {
@@ -265,7 +265,7 @@ pub(crate) fn tikv_store_status_rows_from(
 /// Go `showPlacementLabelsResultBuilder`: each label key with the set of
 /// values the stores give it.
 #[derive(Debug, Default)]
-pub(crate) struct ShowPlacementLabelsResultBuilder {
+pub struct ShowPlacementLabelsResultBuilder {
     label_key2values: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -315,7 +315,7 @@ impl ShowPlacementLabelsResultBuilder {
 /// `LABEL` cells directly (the internal session is never SEM-redacted, and
 /// the builder's sets make `DISTINCT` moot). A failure is the retriever's
 /// error text.
-pub(crate) fn show_placement_labels_rows(
+pub fn show_placement_labels_rows(
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, String> {
     let client = store_helper::try_get_pd_http_client(store)
@@ -333,7 +333,7 @@ pub(crate) fn show_placement_labels_rows(
 /// Go `tikvRegionPeersRetriever.retrieve`: the peers of every region, or of
 /// the regions on the extractor's stores (only those stores' peers) and/or
 /// with the extractor's region IDs.
-pub(crate) fn tikv_region_peers_rows(
+pub fn tikv_region_peers_rows(
     extractor: &TikvRegionPeersExtractor,
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -397,7 +397,7 @@ pub(crate) fn tikv_region_peers_rows(
 }
 
 /// Go `tikvRegionPeersRetriever.packTiKVRegionPeersRows`.
-pub(crate) fn pack_tikv_region_peers_rows(
+pub fn pack_tikv_region_peers_rows(
     regions_info: &[pd_http::RegionInfo],
     extractor: &TikvRegionPeersExtractor,
     store_map: &HashSet<i64>,
@@ -467,7 +467,7 @@ fn regions_info_for_table(
 /// whole store, each read once per table, partition or index its key range
 /// covers that is not in a memory schema and that the session may see. A
 /// region covering nothing reads one row without table cells.
-pub(crate) fn tikv_region_status_rows(
+pub fn tikv_region_status_rows(
     extractor: Option<&TiKVRegionStatusExtractor>,
     catalog: &Catalog,
     store: &dyn RegionStore,
@@ -533,7 +533,7 @@ pub(crate) fn tikv_region_status_rows(
 }
 
 /// Go `memtableRetriever.setNewTiKVRegionStatusCol`.
-pub(crate) fn new_tikv_region_status_row(
+pub fn new_tikv_region_status_row(
     region: &pd_http::RegionInfo,
     table: Option<&store_helper::TableInfo>,
 ) -> Vec<Datum> {
@@ -574,7 +574,7 @@ pub(crate) fn new_tikv_region_status_row(
 /// Go `memtableRetriever.setDataForTiDBHotRegions`: the hot read regions,
 /// then the hot write regions (Go `Helper.ScrapeHotInfo`), each with the
 /// table or index its range covers.
-pub(crate) fn tidb_hot_regions_rows(
+pub fn tidb_hot_regions_rows(
     catalog: &Catalog,
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -596,7 +596,7 @@ pub(crate) fn tidb_hot_regions_rows(
 }
 
 /// Go `memtableRetriever.setDataForHotRegionByMetrics`.
-pub(crate) fn hot_region_rows_by_metrics(
+pub fn hot_region_rows_by_metrics(
     metrics: &[store_helper::HotTableIndex],
     tp: &str,
 ) -> Vec<Vec<Datum>> {
@@ -650,7 +650,7 @@ fn internal_http_schema() -> &'static str {
 /// store's PD HTTP client pinned to that server (`WithTargetURL`), the same
 /// endpoint with the same follower-handle header. Go's request errors read
 /// differently from the client's.
-pub(crate) fn tidb_hot_regions_history_rows(
+pub fn tidb_hot_regions_history_rows(
     extractor: &HotRegionsHistoryTableExtractor,
     pd_servers: &[String],
     catalog: &Catalog,
@@ -729,7 +729,7 @@ pub(crate) fn tidb_hot_regions_history_rows(
 /// Go `hotRegionsHistoryRetriver.getHotRegionRowWithSchemaInfo`. Go builds
 /// the update time with `time.UnixMilli` in the process's local zone (its
 /// `In(tz)` result is discarded), as a `TIMESTAMP` of fsp 0.
-pub(crate) fn hot_region_row_with_schema_info(
+pub fn hot_region_row_with_schema_info(
     his_hot_region: &pd_http::HistoryHotRegion,
     tables: &[store_helper::TableInfoWithKeyRange],
 ) -> Vec<Vec<Datum>> {
@@ -793,7 +793,7 @@ pub(crate) fn hot_region_row_with_schema_info(
 ///
 /// Go walks the extractor's schema and table sets in map order; these are
 /// sorted sets.
-pub(crate) fn table_storage_stats_rows(
+pub fn table_storage_stats_rows(
     extractor: &TableStorageStatsExtractor,
     catalog: &Catalog,
     store: &dyn RegionStore,
@@ -875,7 +875,7 @@ pub(crate) fn table_storage_stats_rows(
 
 /// Go `setDataForPseudoProfiling`: one all-zero row while the session's
 /// `profiling` is on, none otherwise.
-pub(crate) fn pseudo_profiling_rows(profiling: bool) -> Vec<Vec<Datum>> {
+pub fn pseudo_profiling_rows(profiling: bool) -> Vec<Vec<Datum>> {
     if !profiling {
         return Vec::new();
     }
@@ -904,7 +904,7 @@ pub(crate) fn pseudo_profiling_rows(profiling: bool) -> Vec<Vec<Datum>> {
 
 /// Go `setDataForKeyspaceMeta` for a store without keyspace meta: one row of
 /// an empty name and ID and Go's zero `BinaryJSON` config.
-pub(crate) fn keyspace_meta_rows() -> Vec<Vec<Datum>> {
+pub fn keyspace_meta_rows() -> Vec<Vec<Datum>> {
     vec![vec![
         text(""),
         text(""),
@@ -915,7 +915,7 @@ pub(crate) fn keyspace_meta_rows() -> Vec<Vec<Datum>> {
 /// Go `setDataFromPlacementPolicies`: every placement policy, a `FOLLOWERS`
 /// of zero (unset) shown as the default two. Go walks its policy map in
 /// random order; this lists the policies by name.
-pub(crate) fn placement_policies_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+pub fn placement_policies_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
     let mut policies = catalog.policies().collect::<Vec<_>>();
     policies.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
     policies
@@ -1234,23 +1234,23 @@ mod tests {
     }
 }
 
-pub(crate) fn table_storage_statistics_catalog_of(
-    mut scratch: tidb_executor::Catalog,
+pub fn table_storage_statistics_catalog_of(
+    mut scratch: crate::Catalog,
     stats_handle: &tidb_stats_handle::StatsHandle,
-    table_storage_stats: Option<&dyn crate::TableStorageStatsProvider>,
+    table_storage_stats: Option<&dyn crate::table_size_stats::TableStorageStatsProvider>,
     resource_group: &str,
     needs_column_lengths: bool,
-) -> Result<tidb_executor::Catalog, DriverError> {
+) -> Result<crate::Catalog, DriverError> {
     let estimates = match table_storage_stats {
         Some(provider) => {
-            let physical_ids = tidb_executor::table_size_stats::physical_table_ids(&scratch);
+            let physical_ids = crate::table_size_stats::physical_table_ids(&scratch);
             match provider.load_table_row_stats(
                 resource_group,
                 needs_column_lengths,
                 &physical_ids,
             ) {
                 Ok(row_stats) => {
-                    tidb_executor::table_size_stats::table_storage_estimates_from_row_stats(
+                    crate::table_size_stats::table_storage_estimates_from_row_stats(
                         &scratch, &row_stats,
                     )
                 }
@@ -1270,7 +1270,7 @@ pub(crate) fn table_storage_statistics_catalog_of(
         // The in-process store is its own statistics handle: Go's
         // `TableRowStatsCache` reads `stats_meta` and the column
         // histograms, which here are the catalog's table statistics.
-        None => tidb_executor::table_size_stats::table_storage_estimates(&scratch, stats_handle),
+        None => crate::table_size_stats::table_storage_estimates(&scratch, stats_handle),
     };
     for estimate in estimates {
         scratch.set_table_storage_statistics(
@@ -1286,16 +1286,16 @@ pub(crate) fn table_storage_statistics_catalog_of(
 /// are a function of the statement's schema and the session's identity: the
 /// executor builds them when the scan is first read, over the catalog the
 /// statement was built with and a snapshot of what the viewer may see.
-pub(crate) struct InformationSchemaRetriever {
+pub struct InformationSchemaRetriever {
     visibility: SchemaVisibility,
-    table_storage_stats: Option<std::sync::Arc<dyn crate::TableStorageStatsProvider>>,
+    table_storage_stats: Option<std::sync::Arc<dyn crate::table_size_stats::TableStorageStatsProvider>>,
     resource_group: String,
 }
 
 impl InformationSchemaRetriever {
-    pub(crate) fn new(
+    pub fn new(
         visibility: SchemaVisibility,
-        table_storage_stats: Option<std::sync::Arc<dyn crate::TableStorageStatsProvider>>,
+        table_storage_stats: Option<std::sync::Arc<dyn crate::table_size_stats::TableStorageStatsProvider>>,
         resource_group: String,
     ) -> Self {
         Self {
@@ -1306,18 +1306,18 @@ impl InformationSchemaRetriever {
     }
 }
 
-impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchemaRetriever {
-    fn serves(&self, read: &tidb_executor::mem_table_retrieval::MemTableRead) -> bool {
+impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetriever {
+    fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
         read.db_name
-            .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
-            && crate::infoschema::serves_table(&read.table_name)
+            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+            && crate::infoschema_reader::serves_table(&read.table_name)
     }
 
     fn retrieve(
         &self,
-        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+        read: &crate::mem_table_retrieval::MemTableRead,
         catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         // Go `updateStatsCacheIfNeed`: the size columns of TABLES and
         // PARTITIONS are read from the table-size cache, refreshed first.
@@ -1334,7 +1334,7 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchema
         } else {
             catalog
         };
-        Ok(crate::infoschema::table_rows(&read.table_name, catalog, &self.visibility, ctx)
+        Ok(crate::infoschema_reader::table_rows(&read.table_name, catalog, &self.visibility, ctx)
             .unwrap_or_default())
     }
 }
@@ -1343,7 +1343,7 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchema
 /// image and the store's region map: the PD-backed region and store tables,
 /// `ATTRIBUTES`, `PLACEMENT_POLICIES` and `KEYSPACE_META`. A scan builds them
 /// at its first `Next` from the catalog it was built with.
-pub(crate) struct CatalogTablesRetriever {
+pub struct CatalogTablesRetriever {
     visibility: SchemaVisibility,
     /// Whether SEM hides the cluster metadata from the viewer
     /// (`sem_hides_cluster_metadata`).
@@ -1351,7 +1351,7 @@ pub(crate) struct CatalogTablesRetriever {
 }
 
 impl CatalogTablesRetriever {
-    pub(crate) fn new(visibility: SchemaVisibility, hides_cluster_metadata: bool) -> Self {
+    pub fn new(visibility: SchemaVisibility, hides_cluster_metadata: bool) -> Self {
         Self {
             visibility,
             hides_cluster_metadata,
@@ -1359,12 +1359,12 @@ impl CatalogTablesRetriever {
     }
 }
 
-impl tidb_executor::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
-    fn serves(&self, read: &tidb_executor::mem_table_retrieval::MemTableRead) -> bool {
+impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
+    fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
         !read.is_cluster_scan
             && read
                 .db_name
-                .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+                .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
             && [
                 "TIKV_STORE_STATUS",
                 "TIKV_REGION_STATUS",
@@ -1381,9 +1381,9 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for CatalogTablesRetr
 
     fn retrieve(
         &self,
-        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+        read: &crate::mem_table_retrieval::MemTableRead,
         catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
         let table = read.table_name.as_str();
@@ -1392,7 +1392,7 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for CatalogTablesRetr
             return tikv_store_status_rows(store.as_ref(), self.hides_cluster_metadata);
         }
         if table.go_lower_eq("ATTRIBUTES") {
-            return crate::infoschema::attributes_rows(catalog, &self.visibility);
+            return crate::infoschema_reader::attributes_rows(catalog, &self.visibility);
         }
         if table.go_lower_eq("PLACEMENT_POLICIES") {
             return Ok(placement_policies_rows(catalog));

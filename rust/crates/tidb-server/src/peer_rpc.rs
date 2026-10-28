@@ -178,7 +178,7 @@ impl PeerService {
                 let table = tidb_executor::driver::infoschema_meta::CLUSTER_TABLES
                     .iter()
                     .map(|(name, _)| *name)
-                    .find(|name| scan.table_id == tidb_session::infoschema::memory_table_id(name))
+                    .find(|name| scan.table_id == tidb_executor::infoschema_reader::memory_table_id(name))
                     .ok_or("unsupported TiDB cluster table")?;
                 let columns = tidb_executor::driver::infoschema_meta::table_schema(table)
                     .ok_or("missing cluster table schema")?;
@@ -877,7 +877,7 @@ mod tests {
             executors: vec![tipb::Executor {
                 tp: Some(tipb::ExecType::TypeTableScan as i32),
                 tbl_scan: Some(tipb::TableScan {
-                    table_id: tidb_session::infoschema::memory_table_id("CLUSTER_PROCESSLIST"),
+                    table_id: tidb_executor::infoschema_reader::memory_table_id("CLUSTER_PROCESSLIST"),
                     columns: vec![
                         tipb::ColumnInfo {
                             column_id: Some(3),
@@ -1025,7 +1025,7 @@ mod tests {
                         executors: vec![tipb::Executor {
                             tp: Some(tipb::ExecType::TypeTableScan as i32),
                             tbl_scan: Some(tipb::TableScan {
-                                table_id: tidb_session::infoschema::memory_table_id(
+                                table_id: tidb_executor::infoschema_reader::memory_table_id(
                                     "CLUSTER_TIDB_TRX",
                                 ),
                                 columns: vec![tipb::ColumnInfo {
@@ -1091,7 +1091,7 @@ mod tests {
                         let mut dag = scan(None, tipb::EncodeType::TypeDefault);
                         dag.output_offsets = vec![0];
                         dag.executors[0].tbl_scan = Some(tipb::TableScan {
-                            table_id: tidb_session::infoschema::memory_table_id(
+                            table_id: tidb_executor::infoschema_reader::memory_table_id(
                                 "CLUSTER_DEADLOCKS",
                             ),
                             columns: vec![tipb::ColumnInfo {
@@ -1232,7 +1232,7 @@ mod tests {
             assert!(response.other_error.is_empty(), "{}", response.other_error);
             let response = tipb::SelectResponse::decode(response.data.as_ref()).unwrap();
             assert!(response.error.is_none());
-            let schema = tidb_session::infoschema::table_schema("CLUSTER_PROCESSLIST").unwrap();
+            let schema = tidb_executor::infoschema_reader::table_schema("CLUSTER_PROCESSLIST").unwrap();
             let fields = vec![schema[1].1.clone(), schema[1].1.clone()];
             let expected = if encoding == tipb::EncodeType::TypeDefault {
                 tidb_codec::encode_value(&[Datum::UInt(11), Datum::UInt(11)]).unwrap()
@@ -1469,17 +1469,17 @@ mod tests {
             );
             let scan = dag.executors[0].tbl_scan.as_ref().unwrap();
             let table = if scan.table_id
-                == tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY")
+                == tidb_executor::infoschema_reader::memory_table_id("CLUSTER_STATEMENTS_SUMMARY")
             {
                 "CLUSTER_STATEMENTS_SUMMARY"
             } else {
                 assert_eq!(
                     scan.table_id,
-                    tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_HISTORY")
+                    tidb_executor::infoschema_reader::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_HISTORY")
                 );
                 "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
             };
-            let columns = tidb_session::infoschema::table_schema(table).unwrap();
+            let columns = tidb_executor::infoschema_reader::table_schema(table).unwrap();
             assert_eq!(
                 scan.columns.iter().map(|c| c.column_id).collect::<Vec<_>>(),
                 ["DIGEST", "DIGEST_TEXT"]
@@ -1545,7 +1545,7 @@ mod tests {
             let mut dag = scan(None, tipb::EncodeType::TypeDefault);
             dag.output_offsets = vec![0];
             dag.executors[0].tbl_scan = Some(tipb::TableScan {
-                table_id: tidb_session::infoschema::memory_table_id("CLUSTER_DEADLOCKS"),
+                table_id: tidb_executor::infoschema_reader::memory_table_id("CLUSTER_DEADLOCKS"),
                 columns: vec![tipb::ColumnInfo {
                     column_id: Some(7),
                     ..Default::default()
@@ -1715,7 +1715,7 @@ mod tests {
         ] {
             let mut dag = scan(None, tipb::EncodeType::TypeDefault);
             dag.executors[0].tbl_scan = Some(tipb::TableScan {
-                table_id: tidb_session::infoschema::memory_table_id(table),
+                table_id: tidb_executor::infoschema_reader::memory_table_id(table),
                 columns: vec![tipb::ColumnInfo {
                     column_id: Some(1),
                     ..Default::default()
@@ -1857,7 +1857,7 @@ mod tests {
             let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
             let rows = outbound.scan(
                 &[info.clone()],
-                tidb_session::infoschema::memory_table_id(table).unwrap(),
+                tidb_executor::infoschema_reader::memory_table_id(table).unwrap(),
                 &columns,
                 Some(("diagnostic_alice", "127.0.0.1")),
                 &tidb_executor::StmtContext::for_query(),
@@ -2015,7 +2015,7 @@ mod tests {
         );
         let mut dag = scan(None, tipb::EncodeType::TypeDefault);
         dag.executors[0].tbl_scan.as_mut().unwrap().table_id =
-            tidb_session::infoschema::memory_table_id("CLUSTER_TRX_SUMMARY");
+            tidb_executor::infoschema_reader::memory_table_id("CLUSTER_TRX_SUMMARY");
         let response = service.handle(request(dag));
         assert!(response.other_error.is_empty(), "{}", response.other_error);
         tipb::SelectResponse::decode(response.data).unwrap();
@@ -2069,7 +2069,7 @@ mod tests {
             let rows = outbound
                 .scan(
                     &[address.clone()],
-                    tidb_session::infoschema::memory_table_id(table).unwrap(),
+                    tidb_executor::infoschema_reader::memory_table_id(table).unwrap(),
                     &columns,
                     Some(("summary_alice", "127.0.0.1")),
                     &tidb_executor::StmtContext::for_query(),
@@ -2115,7 +2115,7 @@ mod tests {
                     let filtered = outbound
                         .scan_projected(
                             &[address.clone()],
-                            tidb_session::infoschema::memory_table_id(table).unwrap(),
+                            tidb_executor::infoschema_reader::memory_table_id(table).unwrap(),
                             &columns,
                             &[digest, text],
                             None,
@@ -2137,7 +2137,7 @@ mod tests {
             for encoding in [tipb::EncodeType::TypeDefault, tipb::EncodeType::TypeChunk] {
                 let mut dag = scan(Some("summary_alice"), encoding);
                 dag.executors[0].tbl_scan = Some(tipb::TableScan {
-                    table_id: tidb_session::infoschema::memory_table_id(table),
+                    table_id: tidb_executor::infoschema_reader::memory_table_id(table),
                     columns: vec![
                         tipb::ColumnInfo {
                             column_id: Some((text + 1) as i64),
@@ -2194,7 +2194,7 @@ mod tests {
         let scan_evicted = || {
             outbound.scan(
                 &[address.clone()],
-                tidb_session::infoschema::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+                tidb_executor::infoschema_reader::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_EVICTED")
                     .unwrap(),
                 &columns,
                 Some(("summary_alice", "127.0.0.1")),
@@ -2551,7 +2551,7 @@ mod tests {
         let rows = outbound
             .scan(
                 &[info.clone()],
-                tidb_session::infoschema::memory_table_id("CLUSTER_PROCESSLIST").unwrap(),
+                tidb_executor::infoschema_reader::memory_table_id("CLUSTER_PROCESSLIST").unwrap(),
                 &columns,
                 Some(("bob", "127.0.0.1")),
                 &context,

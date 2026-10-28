@@ -217,25 +217,7 @@ pub enum StmtResult {
     Done(bool),
 }
 
-/// The result of running one statement, with wire-facing column metadata.
-///
-/// [`StmtResult::Rows`] loses column names/types; a server front end needs one
-/// `(name, type)` per result column to build protocol column definitions, so
-/// [`Session::run_with_columns`] returns this richer shape instead.
-#[derive(Debug, PartialEq)]
-pub enum StmtOutput {
-    /// A query's result columns and rows.
-    Rows {
-        /// One `(display name, field type)` per output column.
-        columns: Vec<(String, FieldType)>,
-        /// The result rows (one `Datum` per column).
-        rows: Vec<Vec<Datum>>,
-    },
-    /// A DML statement's affected-row count.
-    Affected(u64),
-    /// A DDL statement completed (`false` = `IF NOT EXISTS` no-op).
-    Done(bool),
-}
+pub use tidb_executor::StmtOutput;
 
 /// One pessimistic wait-for edge returned by the active storage backend.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -256,41 +238,9 @@ pub trait DataLockWaitsProvider: Send + Sync {
     fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
 }
 
-/// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
-pub trait ColumnStatsUsageProvider: Send + Sync {
-    /// Loads the complete shared usage table at a fresh statement snapshot.
-    fn load_column_stats_usage(
-        &self,
-        location: &tidb_datatype::SessionTimeZone,
-        resource_group: &str,
-    ) -> Result<
-        std::collections::HashMap<
-            tidb_model::TableItemID,
-            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
-        >,
-        String,
-    >;
-}
+pub use tidb_executor::show::stats::ColumnStatsUsageProvider;
 
-/// Storage-backed reader used by pinned Go `SHOW ANALYZE STATUS`.
-pub trait AnalyzeStatusProvider: Send + Sync {
-    /// Runs Go's fresh restricted read of the thirty newest persisted jobs.
-    fn load_analyze_status(
-        &self,
-        resource_group: &str,
-    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String>;
-
-    /// Go `GlobalPDHelper.GetApproximateTableCountFromStorage`. Errors and a
-    /// backend without PD both produce zero, as its caller ignores `hasPD`.
-    fn approximate_table_count(
-        &self,
-        resource_group: &str,
-        physical_id: i64,
-        database: &str,
-        table: &str,
-        partition: &str,
-    ) -> i64;
-}
+pub use tidb_executor::show::stats::AnalyzeStatusProvider;
 
 /// The cluster's DDL jobs, Go's `mysql.tidb_ddl_job` and meta
 /// `DDLJobHistory`, where a front end keeps them in a shared store rather
@@ -319,21 +269,7 @@ pub trait BdrRoleStore: Send + Sync {
     fn set(&self, role: &str) -> Result<(), String>;
 }
 
-/// Fresh restricted-storage boundary used by Go's information-schema
-/// `TableSizeStats` reader: the node's `cache.TableRowStatsCache`.
-pub trait TableStorageStatsProvider: Send + Sync {
-    /// Go `updateStatsCacheIfNeed` + the cache read after it: refreshes the
-    /// size cache for `physical_ids` -- the statement's own tables and
-    /// partitions -- and answers what the cache then holds. The
-    /// histogram-size read is skipped when only `TABLE_ROWS` is requested. A
-    /// read failure is warning-only at the caller.
-    fn load_table_row_stats(
-        &self,
-        resource_group: &str,
-        need_column_lengths: bool,
-        physical_ids: &[i64],
-    ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String>;
-}
+pub use tidb_executor::table_size_stats::TableStorageStatsProvider;
 
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
@@ -718,7 +654,6 @@ pub struct Session {
     /// hint overwrote for the duration of ONE statement, put back when that
     /// statement finishes whether it succeeded or failed.
     set_var_hint_restore: Vec<(String, Option<String>)>,
-    in_set_session_states: bool,
     /// The class of the statement currently running, which decides what
     /// `ROW_COUNT()` reports next (Go's `StmtCtx.InSelectStmt` /
     /// `InInsertStmt` / `InUpdateStmt` / `InDeleteStmt` bits, read by
@@ -1073,7 +1008,6 @@ impl Session {
             local_infile_data: None,
             local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
-            in_set_session_states: false,
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
@@ -1287,10 +1221,8 @@ mod account;
 pub mod slow_log;
 pub use tidb_variable::slow_log_rules;
 pub mod trace;
-mod show_placement;
 mod index_advisor;
 mod account_password;
-mod admin_check_arm;
 mod analyze_arm;
 pub mod binding;
 mod binding_arm;
@@ -1313,13 +1245,11 @@ mod explain_arm;
 mod gcutil;
 pub mod restricted_sql;
 mod identity;
-pub mod infoschema;
-mod inspection;
+pub mod inspection;
 mod load_stats_arm;
 mod account_state;
 mod cluster_state;
 mod instance_state;
-mod memtable_retrievers;
 mod non_prepared_plan_cache;
 mod nontransactional;
 pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
@@ -1335,7 +1265,6 @@ use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 mod resource_group;
 pub use tidb_variable::session_vars;
-mod store_helper;
 mod stmt_ctx;
 mod table_lock;
 mod temptable;
@@ -1365,6 +1294,7 @@ pub(crate) use classify::{
 pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
+pub(crate) use tidb_executor::infoschema_reader::datetime_datum;
 pub use warnings::{SqlWarning, WarningLevel};
 pub mod expensivequery;
 pub use tidb_privilege as privilege;
@@ -1374,10 +1304,6 @@ mod tests_privilege_tls;
 pub mod process;
 mod process_arm;
 mod show;
-pub mod show_admin;
-mod show_create_database;
-mod show_create_placement_policy;
-mod show_index;
 pub use tidb_variable::statusvar;
 pub use tidb_variable::sysvar;
 pub use tidb_variable::vars;
@@ -2934,7 +2860,7 @@ impl Session {
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
-        self.in_set_session_states = false;
+        self.vars.in_set_session_states_stmt = false;
         self.statement_message.clear();
         self.statement_affected_rows = 0;
         *self
@@ -3568,33 +3494,6 @@ fn go_uptime_string(seconds: i64) -> String {
     }
 }
 
-/// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's
-/// `types.NewTime(types.FromGoTime(time.Unix(ts, 0)), mysql.TypeDatetime, 0)`.
-pub(crate) fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
-    use chrono::{Datelike, TimeZone, Timelike};
-    // go renders these datetimes through the node's own clock (`FromGoTime`),
-    // i.e. the system's local zone -- the UTC read answered 13:07 where the
-    // oracle shows 21:07 for the same boot instant.
-    let Some(local) = chrono::Local
-        .timestamp_opt(unix_seconds, 0)
-        .single()
-        .map(|moment| moment.naive_local())
-    else {
-        return tidb_datatype::Datum::Null;
-    };
-    tidb_datatype::Time::from_date_checked(
-        local.year(),
-        local.month() as i32,
-        local.day() as i32,
-        local.hour() as i32,
-        local.minute() as i32,
-        local.second() as i32,
-        0,
-        tidb_datatype::TimeType::DateTime,
-        0,
-    )
-    .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
-}
 
 pub(crate) use tidb_util::stringutil::go_json_marshal;
 

@@ -18,6 +18,26 @@
 
 use tidb_variable::SessionVars;
 
+/// The result of running one statement, with wire-facing column metadata.
+///
+/// `StmtResult::Rows` loses column names/types; a server front end needs one
+/// `(name, type)` per result column to build protocol column definitions, so
+/// `Session::run_with_columns` returns this richer shape instead.
+#[derive(Debug, PartialEq)]
+pub enum StmtOutput {
+    /// A query's result columns and rows.
+    Rows {
+        /// One `(display name, field type)` per output column.
+        columns: Vec<(String, tidb_datatype::FieldType)>,
+        /// The result rows (one `Datum` per column).
+        rows: Vec<Vec<tidb_datatype::Datum>>,
+    },
+    /// A DML statement's affected-row count.
+    Affected(u64),
+    /// A DDL statement completed (`false` = `IF NOT EXISTS` no-op).
+    Done(bool),
+}
+
 /// Go `sessionctx.Context`.
 pub trait SessionContext {
     /// Go `GetSessionVars`.

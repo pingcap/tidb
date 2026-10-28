@@ -474,3 +474,61 @@ mod tests {
         assert!(q.is_closed());
     }
 }
+
+/// The domain's slow-query memory `ADMIN SHOW SLOW` reads -- Go
+/// `Domain.slowQuery` (`topn_slow_query.go`), sized by
+/// `in-mem-slow-query-topn-num` / `in-mem-slow-query-recent-num` with a
+/// seven-day period. `ExecStmt.LogSlowQuery` lands every statement its rules
+/// select here (`domain.LogSlowQuery`).
+struct DomainSlowQueries {
+    queries: TopNSlowQueries,
+    /// When `topNSlowQueryLoop`'s ten-minute ticker last removed expired
+    /// entries.
+    last_expired: std::time::Instant,
+}
+
+static SLOW_QUERIES: std::sync::LazyLock<std::sync::Mutex<DomainSlowQueries>> =
+    std::sync::LazyLock::new(|| {
+        let config = tidb_config::config_tree::config::get_global_config();
+        std::sync::Mutex::new(DomainSlowQueries {
+            queries: TopNSlowQueries::new(
+                usize::try_from(config.in_mem_slow_query_topn_num).unwrap_or(0),
+                std::time::Duration::from_secs(60 * 60 * 24 * 7),
+                usize::try_from(config.in_mem_slow_query_recent_num).unwrap_or(0),
+            ),
+            last_expired: std::time::Instant::now(),
+        })
+    });
+
+/// Go `topNSlowQueryLoop`'s ticker: every ten minutes the user and internal
+/// heaps drop entries older than the period.
+fn remove_expired_slow_queries(store: &mut DomainSlowQueries) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(600);
+    if store.last_expired.elapsed() >= TICK {
+        store.last_expired = std::time::Instant::now();
+        store.queries.remove_expired(std::time::SystemTime::now());
+    }
+}
+
+/// Go `domain.LogSlowQuery`: hands the statement to the slow-query memory.
+pub fn log_slow_query(info: SlowQueryInfo) {
+    let mut store = SLOW_QUERIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    remove_expired_slow_queries(&mut store);
+    store.queries.append(info);
+}
+
+/// Go `Domain.ShowSlowQuery`: `QueryTop` for `ADMIN SHOW SLOW TOP`,
+/// `QueryRecent` for `ADMIN SHOW SLOW RECENT`.
+pub fn show_slow_query(mode: &tidb_ast::AdminShowSlowMode, count: u64) -> Vec<SlowQueryInfo> {
+    let mut store = SLOW_QUERIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    remove_expired_slow_queries(&mut store);
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    match mode {
+        tidb_ast::AdminShowSlowMode::Recent => store.queries.query_recent(count),
+        tidb_ast::AdminShowSlowMode::Top(kind) => store.queries.query_top(count, *kind),
+    }
+}

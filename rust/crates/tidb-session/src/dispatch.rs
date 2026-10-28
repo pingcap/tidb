@@ -22,15 +22,12 @@
 //! dispatch over query/DML/DDL.
 
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
-use tidb_executor::simple::account::AccountExec;
-use tidb_executor::simple::account_password::AccountPasswordExec;
 use tidb_executor::{Catalog, DriverError};
 use tidb_hack::GoCaseCompare;
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::{
-    infoschema, statement_kind_of, statement_priority_of, Session,
-    StatementKind, StmtOutput, WarningLevel,
+    statement_kind_of, statement_priority_of, Session, StatementKind, StmtOutput, WarningLevel,
 };
 
 /// The `SELECT <exprs>` whose execution is Go `buildDo`'s Projection over a
@@ -410,9 +407,11 @@ impl Session {
             Plan::Simple(_)
                 if Self::is_account_statement(stmt) =>
             {
-                self.with_account_service(|session| session.simple_exec(stmt))
+                self.with_account_service(|session| {
+                    tidb_executor::simple::exec::SimpleExec::simple_next(session, stmt)
+                })
             }
-            Plan::Simple(_) => self.simple_exec(stmt),
+            Plan::Simple(_) => tidb_executor::simple::exec::SimpleExec::simple_next(self, stmt),
             Plan::Ddl(_) => self.ddl_exec(stmt),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             Plan::Logical(_) | Plan::Physical(_) | Plan::ShowNextRowID(_) | Plan::Set(_) => {
@@ -443,103 +442,6 @@ impl Session {
         });
         self.drain_eval_warnings(&ctx);
         result.map(|()| StmtOutput::Affected(0))
-    }
-
-    /// Go `SimpleExec.Next`: one arm per statement type.
-    fn simple_exec(&mut self, stmt: &Stmt) -> Result<Option<StmtOutput>, DriverError> {
-        match stmt {
-            Stmt::Session(session_stmt) => match &**session_stmt {
-                SessionStmt::Use(name) => {
-                    self.use_database(name)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                SessionStmt::SetRole(set_role) => {
-                    tidb_executor::simple::execute_set_role(self, set_role)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                SessionStmt::SetDefaultRole(set_default) => {
-                    self.set_default_role_stmt(set_default)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                // `SET PASSWORD` writes `mysql.user`, not a variable.
-                SessionStmt::SetPassword(set_password) => {
-                    self.set_password_stmt(set_password)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                SessionStmt::SetSessionStates(set) => {
-                    self.in_set_session_states = true;
-                    self.decode_session_states(&set.session_states)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                SessionStmt::SetResourceGroup(resource_group) => {
-                    self.set_resource_group_stmt(resource_group)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                _ => Ok(None),
-            },
-            Stmt::Admin(admin) => match &**admin {
-                tidb_ast::AdminStmt::CreateUser {
-                    if_not_exists,
-                    users,
-                    tls_options,
-                    resource_options,
-                    password_options,
-                    comment_or_attribute,
-                    resource_group,
-                } => {
-                    self.create_user_stmt(
-                        *if_not_exists,
-                        users,
-                        tls_options,
-                        resource_options,
-                        password_options,
-                        comment_or_attribute,
-                        resource_group,
-                    )?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::AdminStmt::DropUser {
-                    is_role,
-                    if_exists,
-                    users,
-                } => {
-                    self.drop_user_stmt(*is_role, *if_exists, users)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::AdminStmt::AlterInstance(alter) => {
-                    let process = self.process.as_ref().ok_or_else(|| {
-                        DriverError::unsupported("TLS reload requires a running server")
-                    })?;
-                    process
-                        .registry()
-                        .reload_tls(alter.no_rollback_on_error)
-                        .map_err(DriverError::unsupported)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::AdminStmt::AlterUser(alter) => {
-                    self.alter_user_stmt(alter)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::AdminStmt::RenameUser { pairs } => {
-                    self.rename_user_stmt(pairs)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                tidb_ast::AdminStmt::CreateRole {
-                    if_not_exists,
-                    roles,
-                } => {
-                    self.create_role_stmt(*if_not_exists, roles)?;
-                    Ok(Some(StmtOutput::Affected(0)))
-                }
-                // Go `SimpleExec.Next` has no arm for `DropProcedureStmt`
-                // (and `autoNewTxn` does not list it): `buildSimple` already
-                // refused it, or noted `IF EXISTS`; the executor does nothing
-                // and the open transaction stays.
-                tidb_ast::AdminStmt::DropProcedure(_) => Ok(Some(StmtOutput::Affected(0))),
-                _ => self.dispatch_admin_stmt(admin),
-            },
-            _ => Ok(None),
-        }
     }
 
     /// Answers the memory-table scans the statement's executors asked for
@@ -576,7 +478,7 @@ impl Session {
         &self,
         read: &tidb_executor::mem_table_retrieval::MemTableRead,
     ) -> Option<std::sync::Arc<dyn tidb_executor::mem_table_retrieval::MemTableRetriever>> {
-        let retriever = crate::memtable_retrievers::InformationSchemaRetriever::new(
+        let retriever = tidb_executor::memtable_retrievers::InformationSchemaRetriever::new(
             self.schema_visibility(),
             self.table_storage_stats.clone(),
             self.active_resource_group.clone(),
@@ -588,7 +490,7 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
-        let retriever = crate::memtable_retrievers::CatalogTablesRetriever::new(
+        let retriever = tidb_executor::memtable_retrievers::CatalogTablesRetriever::new(
             self.schema_visibility(),
             self.sem_hides_cluster_metadata(),
         );
@@ -705,7 +607,7 @@ impl Session {
         needs_column_lengths: bool,
     ) -> Result<tidb_executor::Catalog, DriverError> {
         let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
-        crate::memtable_retrievers::table_storage_statistics_catalog_of(
+        tidb_executor::memtable_retrievers::table_storage_statistics_catalog_of(
             scratch,
             &self.stats_handle,
             self.table_storage_stats.as_deref(),
@@ -2597,7 +2499,8 @@ pub(crate) fn statement_summary_rows(
         };
         // The caller asks for `columns` (a pruned scan reads only some of the
         // table's); the evicted row is produced at full width.
-        let schema = infoschema::table_schema("STATEMENTS_SUMMARY_EVICTED").unwrap_or_default();
+        let schema = tidb_executor::infoschema_reader::table_schema("STATEMENTS_SUMMARY_EVICTED")
+            .unwrap_or_default();
         let positions: Vec<usize> = columns
             .iter()
             .filter_map(|(name, _)| schema.iter().position(|(have, _)| have.eq_ignore_ascii_case(name)))

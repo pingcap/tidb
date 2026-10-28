@@ -423,7 +423,7 @@ impl MemTableRetriever for VariablesRetriever {
         if read.table_name.go_lower_eq("SESSION_VARIABLES") {
             return self.state.session_variables_rows();
         }
-        Ok(crate::memtable_retrievers::pseudo_profiling_rows(
+        Ok(tidb_executor::memtable_retrievers::pseudo_profiling_rows(
             tidb_vardef::option_values::tidb_opt_on(
                 &self.state.vars.get_system("profiling").unwrap_or_default(),
             ),

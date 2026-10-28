@@ -201,16 +201,6 @@ impl Session {
         }
     }
 
-    /// Go `SimpleExec.executeSetResourceGroupName`, the executor's.
-    pub(crate) fn set_resource_group_stmt(
-        &mut self,
-        resource_group: &tidb_ast::SetResourceGroupStmt,
-    ) -> Result<(), DriverError> {
-        let catalog = self.shared_catalog();
-        let catalog = catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        tidb_executor::simple::execute_set_resource_group_name(self, &catalog, resource_group)
-    }
-
     /// The connection's persistent resource group. A statement hint does not
     /// modify this value.
     #[must_use]

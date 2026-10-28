@@ -20,7 +20,7 @@
 //! so the column lists must match exactly -- a `SELECT *` that returns the
 //! wrong arity breaks a client that reads by position.
 //!
-//! Column definitions live in `tidb_executor::infoschema_meta`. Catalog-backed
+//! Column definitions live in `crate::infoschema_meta`. Catalog-backed
 //! readers below share the statement's schema and privilege snapshot. Session
 //! dispatch composes process-owned providers for runtime tables. A declared
 //! virtual table does not imply that its live provider is implemented; remaining
@@ -29,10 +29,10 @@
 use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
 };
-use crate::privilege::PrivilegeTypeExt;
-use tidb_executor::{Catalog, KvTable, TableEntry};
+use tidb_privilege::PrivilegeTypeExt;
+use crate::{Catalog, KvTable, TableEntry};
 
-pub use tidb_executor::infoschema_meta::{
+pub use crate::infoschema_meta::{
     is_information_schema, served_table_names, table_schema, INFORMATION_SCHEMA,
 };
 
@@ -70,10 +70,10 @@ pub struct SchemaVisibility {
 
 #[derive(Clone)]
 struct VisibilityContext {
-    registry: crate::privilege::PrivilegeRegistry,
+    registry: tidb_privilege::PrivilegeRegistry,
     user: String,
     host: String,
-    active_roles: Vec<crate::privilege::Account>,
+    active_roles: Vec<tidb_privilege::Account>,
 }
 
 /// Which of Go's two masks a retriever filters with.
@@ -97,10 +97,10 @@ impl SchemaVisibility {
     /// The filter for one authenticated session.
     #[must_use]
     pub fn for_session(
-        registry: crate::privilege::PrivilegeRegistry,
+        registry: tidb_privilege::PrivilegeRegistry,
         user: &str,
         host: &str,
-        active_roles: &[crate::privilege::Account],
+        active_roles: &[tidb_privilege::Account],
     ) -> Self {
         Self {
             context: Some(VisibilityContext {
@@ -114,13 +114,13 @@ impl SchemaVisibility {
 
     /// Go `RequestVerification(activeRoles, database, table, "", mask)`.
     #[must_use]
-    pub(crate) fn allows(&self, database: &str, table: &str, mask: PrivMask) -> bool {
+    pub fn allows(&self, database: &str, table: &str, mask: PrivMask) -> bool {
         self.allows_bits(
             database,
             table,
             match mask {
-                PrivMask::Any => crate::privilege::any_priv_mask(),
-                PrivMask::Column => crate::privilege::column_privs_mask(),
+                PrivMask::Any => tidb_privilege::any_priv_mask(),
+                PrivMask::Column => tidb_privilege::column_privs_mask(),
                 PrivMask::Select => tidb_mysql::SelectPriv.bit(),
             },
         )
@@ -157,7 +157,7 @@ impl SchemaVisibility {
             "RESTRICTED_TABLES_ADMIN",
             false,
         );
-        if let Some(verdict) = crate::table_privilege::sem_verdict_mask(
+        if let Some(verdict) = tidb_privilege::verification::sem_verdict_mask(
             database,
             table,
             mask,
@@ -165,7 +165,7 @@ impl SchemaVisibility {
         ) {
             return verdict;
         }
-        if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
+        if let Some(verdict) = tidb_privilege::verification::mem_db_verdict_mask(database, mask) {
             return verdict;
         }
         context.registry.has_priv_mask_with_roles(
@@ -216,7 +216,7 @@ fn visible_tables(
 /// every table visible to the current account, joined with the Domain's
 /// node-global usage counters. Integer primary-key handles use synthetic
 /// index ID zero because Go does not keep them in `TableInfo.Indices`.
-pub(crate) fn tidb_index_usage_rows(
+pub fn tidb_index_usage_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
     collector: &tidb_stats_handle_usage_indexusage::Collector,
@@ -286,7 +286,7 @@ pub(crate) fn tidb_index_usage_rows(
 }
 
 /// The tables [`table_rows`] answers, which a scan retrieves itself.
-pub(crate) const SERVED_TABLES: &[&str] = &[
+pub const SERVED_TABLES: &[&str] = &[
     "SCHEMATA",
     "TABLES",
     "PARTITIONS",
@@ -335,7 +335,7 @@ pub fn table_rows(
     name: &str,
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    ctx: &tidb_executor::StmtContext,
+    ctx: &crate::StmtContext,
 ) -> Option<Vec<Vec<Datum>>> {
     if name.go_lower_eq("SCHEMATA") {
         return Some(schemata_rows(catalog, visibility));
@@ -782,13 +782,13 @@ fn referential_constraints_rows(
     rows
 }
 
-fn referential_rule(action: tidb_executor::FkAction) -> &'static str {
+fn referential_rule(action: crate::FkAction) -> &'static str {
     match action {
-        tidb_executor::FkAction::NoOption | tidb_executor::FkAction::NoAction => "NO ACTION",
-        tidb_executor::FkAction::Restrict => "RESTRICT",
-        tidb_executor::FkAction::Cascade => "CASCADE",
-        tidb_executor::FkAction::SetNull => "SET NULL",
-        tidb_executor::FkAction::SetDefault => "SET DEFAULT",
+        crate::FkAction::NoOption | crate::FkAction::NoAction => "NO ACTION",
+        crate::FkAction::Restrict => "RESTRICT",
+        crate::FkAction::Cascade => "CASCADE",
+        crate::FkAction::SetNull => "SET NULL",
+        crate::FkAction::SetDefault => "SET DEFAULT",
     }
 }
 
@@ -900,7 +900,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
             // the server default here made that ALTER invisible.
             let charset = catalog
                 .database_definition(&name)
-                .map_or_else(tidb_executor::TableCharset::default, |(_, charset)| charset);
+                .map_or_else(crate::TableCharset::default, |(_, charset)| charset);
             vec![
                 text(CATALOG),
                 text(&name),
@@ -1022,13 +1022,13 @@ fn partitions_rows(
         // prints the column list in place of the expression
         // (`infoschema_reader.go`): `RANGE COLUMNS`, `LIST COLUMNS`, `KEY`.
         let (method, expression) = match &partition.kind {
-            tidb_executor::PartitionKind::RangeColumns { .. } => {
+            crate::PartitionKind::RangeColumns { .. } => {
                 ("RANGE COLUMNS".to_owned(), partition.expr_text.clone())
             }
-            tidb_executor::PartitionKind::ListColumns { .. } => {
+            crate::PartitionKind::ListColumns { .. } => {
                 ("LIST COLUMNS".to_owned(), partition.expr_text.clone())
             }
-            tidb_executor::PartitionKind::Key => ("KEY".to_owned(), partition.expr_text.clone()),
+            crate::PartitionKind::Key => ("KEY".to_owned(), partition.expr_text.clone()),
             other => (other.sql().to_owned(), partition.expr_text.clone()),
         };
         for (ordinal, definition) in partition.definitions.iter().enumerate() {
@@ -1037,12 +1037,12 @@ fn partitions_rows(
             // Go's `PARTITION_DESCRIPTION`: the RANGE bounds joined by commas,
             // or the LIST tuples with multi-column ones parenthesised.
             let description = match &partition.kind {
-                tidb_executor::PartitionKind::Range { .. }
-                | tidb_executor::PartitionKind::RangeColumns { .. } => {
+                crate::PartitionKind::Range { .. }
+                | crate::PartitionKind::RangeColumns { .. } => {
                     definition.less_than.join(",")
                 }
-                tidb_executor::PartitionKind::List { .. }
-                | tidb_executor::PartitionKind::ListColumns { .. } => definition
+                crate::PartitionKind::List { .. }
+                | crate::PartitionKind::ListColumns { .. } => definition
                     .in_values
                     .iter()
                     .map(|tuple| {
@@ -1108,7 +1108,7 @@ fn partitions_rows(
 /// Go `autoid.InformationSchemaDBID`.
 const INFORMATION_SCHEMA_DB_ID: i64 = (1 << 62) | 1;
 
-use tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
+use crate::driver::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// The `information_schema.tables` rows for the schema's OWN tables: Go
@@ -1994,16 +1994,16 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
 /// Go `memtableRetriever.setDataForAttributes`: each label rule naming a
 /// table or partition that still exists, and whose table the session may
 /// SELECT from. A malformed rule is skipped (Go logs it).
-pub(crate) fn attributes_rows(
+pub fn attributes_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-) -> Result<Vec<Vec<Datum>>, tidb_executor::DriverError> {
+) -> Result<Vec<Vec<Datum>>, crate::DriverError> {
     use tidb_ddl_label as ddl_label;
     // Go `infosync.GetAllLabelRules`: the node's label-rule manager.
     let rules = tidb_domain::label_manager::label_rule_manager()
         .get_all_label_rules(&ddl_label::CodecV1)
         .map_err(|error| {
-            tidb_executor::DriverError::unsupported(format!("get the label rules failed: {error}"))
+            crate::DriverError::unsupported(format!("get the label rules failed: {error}"))
         })?;
     let mut rows = Vec::with_capacity(rules.len());
     for rule in rules {
@@ -2055,10 +2055,10 @@ pub(crate) fn attributes_rows(
 /// Go `DDLJobsReaderExec`: the history newest-first, each job rendered by
 /// `appendJobToChunk` and kept when the session holds any privilege on the
 /// table it names.
-pub(crate) fn ddl_jobs_rows(
+pub fn ddl_jobs_rows(
     jobs: &[tidb_model::Job],
     visibility: &SchemaVisibility,
-    catalog: &tidb_executor::Catalog,
+    catalog: &crate::Catalog,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for job in jobs {
@@ -2192,7 +2192,7 @@ pub fn sys_tables() -> [(&'static str, i64); 1] {
 /// A `DATETIME` for a table's `UpdateTS` TSO in the session zone (Go
 /// `types.FromGoTime(table.GetUpdateTime().In(loc))`), NULL for a table whose
 /// creating tier recorded no TSO.
-pub(crate) fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> Datum {
+pub fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> Datum {
     use chrono::{Datelike, TimeZone, Timelike};
     // Go `TSConvert2Time`: a table that never recorded a TSO (the seeded
     // `metrics_schema` ones) reads as the epoch in the session zone.
@@ -2223,7 +2223,7 @@ pub(crate) fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZon
 /// auto_increment, create_time, update_time, check_time, table_collation,
 /// IFNULL(checksum,''), create_options, table_comment ... WHERE
 /// lower(table_schema)=? ORDER BY table_name`, over `catalog`'s TABLES rows.
-pub(crate) fn show_table_status_rows(
+pub fn show_table_status_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
     zone: &tidb_expr::SessionTimeZone,
@@ -2236,7 +2236,7 @@ pub(crate) fn show_table_status_rows(
     let mut rows = tables_rows(catalog, visibility, zone)
         .into_iter()
         .filter(|row| {
-            crate::datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
+            crate::simple::account_tables::sysvar_datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
         })
         .map(|row| {
             let mut status = Vec::with_capacity(18);
@@ -2306,7 +2306,7 @@ fn tables_rows(
                 Datum::Int(0),
                 Datum::Int(0),
                 Datum::Null,
-                crate::datetime_datum(0),
+                datetime_datum(0),
                 Datum::Null,
                 Datum::Null,
                 text("utf8mb4_bin"),
@@ -2480,7 +2480,7 @@ fn tables_rows(
 fn view_tables_row(
     schema: &str,
     table_name: &str,
-    view: &tidb_executor::ViewDef,
+    view: &crate::ViewDef,
     zone: &tidb_expr::SessionTimeZone,
 ) -> Vec<Datum> {
     let mut row = vec![text(CATALOG), text(schema), text(table_name), text("VIEW")];
@@ -2508,7 +2508,7 @@ fn view_tables_row(
 /// collation falls back to the server default.
 fn sequence_tables_row(
     schema: &str,
-    sequence: &tidb_executor::driver::SequenceDef,
+    sequence: &crate::driver::SequenceDef,
     zone: &tidb_expr::SessionTimeZone,
 ) -> Vec<Datum> {
     vec![
@@ -2633,7 +2633,7 @@ fn table_create_options(table: &KvTable) -> &'static str {
 fn columns_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    ctx: &tidb_executor::StmtContext,
+    ctx: &crate::StmtContext,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, PrivMask::Column) {
@@ -2643,7 +2643,7 @@ fn columns_rows(
                 // Hidden columns are absent here, and ORDINAL_POSITION
                 // counts only the visible ones -- which needs no separate
                 // counter, because a visible column's offset IS its
-                // physical offset (see `tidb_executor::expression_index`).
+                // physical offset (see `crate::expression_index`).
                 // Captured: a table with an expression index and columns
                 // `a`, `z` reports exactly a|1, z|2.
                 for (offset, column) in table.visible_columns().iter().enumerate() {
@@ -2664,7 +2664,7 @@ fn columns_rows(
             // table entirely, which is what Go answers (captured: a view
             // over a dropped column reports no COLUMNS rows at all).
             Some(TableEntry::View(view)) => {
-                let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, ctx)
+                let Ok(columns) = crate::view_column_list(view, &schema, catalog, ctx)
                 else {
                     continue;
                 };
@@ -2691,9 +2691,9 @@ fn column_row(
     table_name: &str,
     table: &KvTable,
     offset: usize,
-    column: &tidb_executor::KvColumn,
+    column: &crate::KvColumn,
     privileges: &str,
-    ctx: &tidb_executor::StmtContext,
+    ctx: &crate::StmtContext,
 ) -> Vec<Datum> {
     let field_type = &column.field_type;
     let not_null = field_type.flags() & 1 != 0;
@@ -2718,17 +2718,17 @@ fn column_row(
             _ if field_type.has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE) => {
                 Datum::Null
             }
-            Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) | None => {
+            Some(crate::column_default::ColumnDefault::Value(Datum::Null)) | None => {
                 Datum::Null
             }
             // Go `infoschema_reader.go` fills COLUMN_DEFAULT from
             // `ColDesc.DefaultValue`, the same string `SHOW COLUMNS` reports,
             // so a computed default reports its stored text unparenthesised.
-            Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
+            Some(crate::column_default::ColumnDefault::Value(value)) => {
                 // Go's INFORMATION_SCHEMA retriever deliberately keeps the
                 // stored metadata text when GetColDefaultValue cannot
                 // materialize it; SHOW propagates the same conversion error.
-                let visible = crate::show::literal_column_default_text(
+                let visible = crate::show::columns::literal_column_default_text(
                     value,
                     column,
                     ctx.query_default_conversion_flags(),
@@ -2736,7 +2736,7 @@ fn column_row(
                 )
                 .ok()
                 .flatten()
-                .or_else(|| crate::show::column_default_text(value, field_type))
+                .or_else(|| crate::show::columns::column_default_text(value, field_type))
                 .unwrap_or_default();
                 text(&visible)
             }
@@ -2755,15 +2755,15 @@ fn column_row(
         charset_name,
         collation_name,
         text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
-        text(&crate::show::column_key_flag(table, offset)),
-        text(&crate::show::column_extra(
+        text(&crate::show::columns::column_key_flag(table, offset)),
+        text(&crate::show::columns::column_extra(
             field_type,
             table.auto_increment_offset() == Some(offset),
             column.generated.as_ref().map(|generated| generated.stored),
             column
                 .default_value
                 .as_ref()
-                .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
+                .is_some_and(crate::column_default::ColumnDefault::is_default_generated),
         )),
         text(privileges),
         // Go `COLUMN_COMMENT`, from `ColumnInfo.Comment`.
@@ -3320,7 +3320,7 @@ fn tiflash_segments_rows() -> Vec<Vec<Datum>> {
 /// Go `memtableRetriever.setDataFromResourceGroups` over the groups the
 /// resource manager holds -- for this tier, the catalog's, as `onCreate`/
 /// `onAlterResourceGroup` register them (`NewGroupFromOptions`' shape).
-fn resource_groups_rows(catalog: &tidb_executor::Catalog) -> Vec<Vec<Datum>> {
+fn resource_groups_rows(catalog: &crate::Catalog) -> Vec<Vec<Datum>> {
     let mut groups: Vec<_> = catalog.resource_groups().collect();
     groups.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
     groups.into_iter().map(resource_group_row).collect()
@@ -3454,5 +3454,33 @@ fn collations_rows() -> Vec<Vec<Datum>> {
 
 /// Shared stable ID for outgoing memory-table scans and local catalog metadata.
 pub fn memory_table_id(name: &str) -> Option<i64> {
-    tidb_executor::driver::infoschema_meta::memory_table_id(name)
+    crate::driver::infoschema_meta::memory_table_id(name)
+}
+
+/// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's
+/// `types.NewTime(types.FromGoTime(time.Unix(ts, 0)), mysql.TypeDatetime, 0)`.
+pub fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
+    use chrono::{Datelike, TimeZone, Timelike};
+    // go renders these datetimes through the node's own clock (`FromGoTime`),
+    // i.e. the system's local zone -- the UTC read answered 13:07 where the
+    // oracle shows 21:07 for the same boot instant.
+    let Some(local) = chrono::Local
+        .timestamp_opt(unix_seconds, 0)
+        .single()
+        .map(|moment| moment.naive_local())
+    else {
+        return tidb_datatype::Datum::Null;
+    };
+    tidb_datatype::Time::from_date_checked(
+        local.year(),
+        local.month() as i32,
+        local.day() as i32,
+        local.hour() as i32,
+        local.minute() as i32,
+        local.second() as i32,
+        0,
+        tidb_datatype::TimeType::DateTime,
+        0,
+    )
+    .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
 }

@@ -59,8 +59,9 @@ impl crate::Session {
             required.push(tidb_mysql::DeletePriv);
         }
         for privilege in required {
-            let granted = crate::table_privilege::mem_db_verdict_mask(schema, privilege.bit())
-                .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
+            let granted =
+                tidb_privilege::verification::mem_db_verdict_mask(schema, privilege.bit())
+                    .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
             if !granted {
                 return Err(DriverError::from(
                     tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(

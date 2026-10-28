@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use tidb_datatype::Datum;
-use tidb_executor::TableCharset;
+use crate::TableCharset;
 
 
 /// Go `ConstructResultOfShowCreateDatabase`: the name is escaped by the
 /// session's sql_mode (`stringutil.Escape`).
-pub(crate) fn rows(
+pub fn rows(
     database: String,
     charset: TableCharset,
     placement_policy: Option<&str>,
@@ -29,7 +29,7 @@ pub(crate) fn rows(
     if if_not_exists {
         text.push_str("IF NOT EXISTS ");
     }
-    text.push_str(&tidb_executor::escape_identifier(&database, ansi_quotes));
+    text.push_str(&crate::escape_identifier(&database, ansi_quotes));
     text.push_str(" /*!40100 DEFAULT CHARACTER SET ");
     text.push_str(charset.charset.name());
     if charset.collation != charset.charset.default_collation() {
@@ -40,7 +40,7 @@ pub(crate) fn rows(
     // Go appends the schema's placement reference.
     if let Some(policy) = placement_policy {
         text.push_str(" /*T![placement] PLACEMENT POLICY=");
-        text.push_str(&tidb_executor::escape_identifier(policy, ansi_quotes));
+        text.push_str(&crate::escape_identifier(policy, ansi_quotes));
         text.push_str(" */");
     }
     vec![vec![

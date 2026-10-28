@@ -23,6 +23,15 @@ use tidb_variable::sysvar;
 
 use crate::sessionctx::{sys_var_hidden_for_sem, SessionContext};
 
+pub mod columns;
+pub mod create;
+pub mod create_database;
+pub mod create_placement_policy;
+pub mod exec;
+pub mod index;
+pub mod placement;
+pub mod stats;
+
 /// The `ShowBaseExtractor` of a planned SHOW, as Go's fetchers read it.
 pub type Extractor<'a> = Option<&'a tidb_planner::show_predicate_extractor::ShowBaseExtractor>;
 
@@ -364,4 +373,104 @@ mod show_create_default_tests {
 
         assert_eq!(clause, "'slash\\\\quote''\\0nul\\nline\\rcarriage'");
     }
+}
+
+/// Go `ShowExec.fetchShowMasterStatus`: one row naming TiDB's pseudo binlog
+/// file and the CURRENT transaction's start timestamp as the position, with
+/// the three replication columns empty. Tools that call this to fence a dump
+/// read the position.
+pub fn master_status_rows(position: i64) -> Vec<Vec<Datum>> {
+    vec![vec![
+        Datum::Bytes(b"tidb-binlog".to_vec()),
+        Datum::Int(position),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+    ]]
+}
+
+/// Go `ShowExec.fetchShowPrivileges`: the static MySQL privilege table
+/// (`executor/show.go:2037` onward) followed by every registered dynamic
+/// privilege as `("<NAME>", "Server Admin", "")` — `privileges.GetDynamicPrivileges()`
+/// over `pkg/privilege/privileges/privileges.go:60`'s list, in stored order.
+/// Go `ShowExec.fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
+/// static table, then every dynamic privilege.
+pub fn show_privileges_rows() -> Vec<Vec<Datum>> {
+    const STATIC_PRIVILEGES: &[(&str, &str, &str)] = &[
+        ("Alter", "Tables", "To alter the table"),
+        ("Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"),
+        ("Config", "Server Admin", "To use SHOW CONFIG and SET CONFIG statements"),
+        ("Create", "Databases,Tables,Indexes", "To create new databases and tables"),
+        ("Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"),
+        ("Create role", "Server Admin", "To create new roles"),
+        ("Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"),
+        ("Create view", "Tables", "To create new views"),
+        ("Create user", "Server Admin", "To create new users"),
+        ("Delete", "Tables", "To delete existing rows"),
+        ("Drop", "Databases,Tables", "To drop databases, tables, and views"),
+        ("Drop role", "Server Admin", "To drop roles"),
+        ("Event", "Server Admin", "To create, alter, drop and execute events"),
+        ("Execute", "Functions,Procedures", "To execute stored routines"),
+        ("File", "File access on server", "To read and write files on the server"),
+        ("Grant option", "Databases,Tables,Functions,Procedures", "To give to other users those privileges you possess"),
+        ("Index", "Tables", "To create or drop indexes"),
+        ("Insert", "Tables", "To insert data into tables"),
+        ("Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"),
+        ("Process", "Server Admin", "To view the plain text of currently executing queries"),
+        ("Proxy", "Server Admin", "To make proxy user possible"),
+        ("References", "Databases,Tables", "To have references on tables"),
+        ("Reload", "Server Admin", "To reload or refresh tables, logs and privileges"),
+        ("Replication client", "Server Admin", "To ask where the slave or master servers are"),
+        ("Replication slave", "Server Admin", "To read binary log events from the master"),
+        ("Select", "Tables", "To retrieve rows from table"),
+        ("Show databases", "Server Admin", "To see all databases with SHOW DATABASES"),
+        ("Show view", "Tables", "To see views with SHOW CREATE VIEW"),
+        ("Shutdown", "Server Admin", "To shut down the server"),
+        ("Super", "Server Admin", "To use KILL thread, SET GLOBAL, CHANGE MASTER, etc."),
+        ("Trigger", "Tables", "To use triggers"),
+        ("Create tablespace", "Server Admin", "To create/alter/drop tablespaces"),
+        ("Update", "Tables", "To update existing rows"),
+        ("Usage", "Server Admin", "No privileges - allow connect only"),
+    ];
+    const DYNAMIC_PRIVILEGES: &[&str] = &[
+        "BACKUP_ADMIN",
+        "RESTORE_ADMIN",
+        "SYSTEM_USER",
+        "SYSTEM_VARIABLES_ADMIN",
+        "ROLE_ADMIN",
+        "CONNECTION_ADMIN",
+        "PLACEMENT_ADMIN",
+        "DASHBOARD_CLIENT",
+        "RESTRICTED_TABLES_ADMIN",
+        "RESTRICTED_STATUS_ADMIN",
+        "RESTRICTED_VARIABLES_ADMIN",
+        "RESTRICTED_USER_ADMIN",
+        "RESTRICTED_CONNECTION_ADMIN",
+        "RESTRICTED_REPLICA_WRITER_ADMIN",
+        "RESTRICTED_PRIV_ADMIN",
+        "RESTRICTED_SQL_ADMIN",
+        "RESOURCE_GROUP_ADMIN",
+        "RESOURCE_GROUP_USER",
+        "TRAFFIC_CAPTURE_ADMIN",
+        "TRAFFIC_REPLAY_ADMIN",
+        "APPLICATION_PASSWORD_ADMIN",
+    ];
+    let mut rows: Vec<Vec<Datum>> = STATIC_PRIVILEGES
+        .iter()
+        .map(|(privilege, context, comment)| {
+            vec![
+                Datum::Bytes(privilege.as_bytes().to_vec()),
+                Datum::Bytes(context.as_bytes().to_vec()),
+                Datum::Bytes(comment.as_bytes().to_vec()),
+            ]
+        })
+        .collect();
+    rows.extend(DYNAMIC_PRIVILEGES.iter().map(|privilege| {
+        vec![
+            Datum::Bytes(privilege.as_bytes().to_vec()),
+            Datum::Bytes(b"Server Admin".to_vec()),
+            Datum::Bytes(Vec::new()),
+        ]
+    }));
+    rows
 }
