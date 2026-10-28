@@ -3795,12 +3795,20 @@ dependencies = [
 name = "tidb-domain-core"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "serde_json",
  "tidb-cluster",
  "tidb-codec",
+ "tidb-datatype",
+ "tidb-ddl",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
  "tidb-log",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-pd-client",
+ "tidb-privilege",
  "tidb-proto",
  "tidb-txnkv",
  "tidb-util",

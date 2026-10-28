@@ -36,3 +36,25 @@ pub fn install_as_default_thread_stack() {
         std::env::set_var(VARIABLE, WORKER_STACK_BYTES.to_string());
     }
 }
+
+// A connection worker runs the planner, whose recursion is guarded by
+// `stacker::maybe_grow(red_zone = 2 MB, segment = 16 MB)`. On the default
+// 2 MB thread stack the red-zone check fails on EVERY select, so each
+// statement mmap'ed and munmap'ed a fresh 16 MB segment -- measured at ~11%
+// of the serving thread under sysbench point selects. Go never pays this
+// because a goroutine's grown stack PERSISTS for the goroutine's life; a
+// large reserved stack is that semantics for a dedicated thread (reserved
+// address space, committed only as touched), leaving `maybe_grow` as the
+// safety net for genuinely deep plans.
+pub const SQL_WORKER_STACK_BYTES: usize = WORKER_STACK_BYTES;
+
+/// A named thread with the SQL worker's stack, for every background worker
+/// that runs a session, a transaction or a catalog reload. Go runs these on
+/// goroutines whose stacks grow; a debug build's commit path alone (the
+/// client's prewrite futures) outgrows the default 2 MB thread stack, which
+/// aborted the whole process from `tidb-binding-maintenance`'s GC commit.
+pub fn sql_worker_thread(name: impl Into<String>) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(SQL_WORKER_STACK_BYTES)
+}

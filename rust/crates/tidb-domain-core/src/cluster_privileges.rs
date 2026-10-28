@@ -40,11 +40,11 @@ use tidb_cluster::cluster_privilege_load::{
 use tidb_exec::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use crate::privilege::PrivilegeRegistry;
+use tidb_privilege::PrivilegeRegistry;
 
-use crate::domain::auth_identity::DEFAULT_AUTH_PLUGIN;
+use tidb_mysql::consts::AuthNativePassword as DEFAULT_AUTH_PLUGIN;
 
-pub use crate::privilege::load::{registry_from_cluster, LoadedRegistry, SkippedGrant};
+pub use tidb_privilege::load::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 
 /// The cluster rows a registry built by [`registry_from_cluster`] would not
 /// carry, as sentences.
@@ -224,13 +224,13 @@ fn set_element(printed: &str) -> String {
 /// re-reads `mysql.*` on a `/tidb/privilege` etcd event and on its own
 /// interval. Both halves are here: the tick is what makes the reload
 /// *correct* (it runs whether or not any watch is connected), and
-/// [`Self::waker`] -- driven by [`crate::domain::real_tikv_node::spawn_privilege_watch`]
+/// [`Self::waker`] -- driven by `crate::domain::real_tikv_node::spawn_privilege_watch`
 /// -- is what makes it *prompt*. Either way the pass re-scans and applies the
 /// cluster's table whole via [`PrivilegeRegistry::replace_from`], diffed
 /// against nothing, exactly as Go's reload rebuilds its handle.
 ///
 /// One-shot loading (`--load-privileges`'s startup read,
-/// [`crate::domain::real_tikv_node::node_accounts`]) already reuses
+/// `crate::domain::real_tikv_node::node_accounts`) already reuses
 /// [`load_accounts_from_cluster`] and [`registry_from_cluster`]; this
 /// reloader is the same two calls run again on a timer against the SAME live
 /// registry, rather than a new one the caller has to go re-wire in.
@@ -367,7 +367,7 @@ impl PrivilegeReloader {
         let stats = Arc::new(PrivilegeReloadCounters::default());
         let worker_signal = Arc::clone(&signal);
         let worker_stats = Arc::clone(&stats);
-        let worker = crate::domain::session_api::sql_worker_thread("privilege-reloader")
+        let worker = tidb_util::worker_stack::sql_worker_thread("privilege-reloader")
             .spawn(move || {
                 let (lock, condvar) = &*worker_signal;
                 loop {
@@ -478,7 +478,7 @@ fn run_one_privilege_reload_pass(
             // Go `LoadPrivilegeLoop`'s failed reload.
             tidb_util::logutil::bg_logger().error(
                 "load privilege failed",
-                &[crate::domain::zap_error(format!(
+                &[tidb_util::logutil::zap_error(format!(
                     "cluster reports {}",
                     accounts.bootstrap
                 ))],
@@ -487,7 +487,7 @@ fn run_one_privilege_reload_pass(
         Err(error) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
             tidb_util::logutil::bg_logger()
-                .error("load privilege failed", &[crate::domain::zap_error(error)]);
+                .error("load privilege failed", &[tidb_util::logutil::zap_error(error)]);
         }
     }
 }
@@ -497,7 +497,7 @@ mod tests {
     use tidb_cluster::cluster_privilege_load::{
         LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant,
     };
-    use crate::privilege::{Account, PrivilegeTypeExt};
+    use tidb_privilege::{Account, PrivilegeTypeExt};
 
     use super::*;
 
@@ -533,7 +533,7 @@ mod tests {
         registry.set_password_expire(
             "expiry",
             "%",
-            crate::privilege::PasswordExpireSetting::Interval(7),
+            tidb_privilege::PasswordExpireSetting::Interval(7),
         );
         let before = registry.password_expiry("expiry", "%");
         let rebuilt = registry_from_cluster(&cluster_image_from_registry(&registry)).registry;
@@ -1076,7 +1076,7 @@ mod tests {
 mod account_tls_batch_tests {
     use super::*;
     use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
-    use crate::privilege::SslType;
+    use tidb_privilege::SslType;
 
     fn policy(json: &str) -> ClusterPrivileges {
         let registry = PrivilegeRegistry::default();
@@ -1125,7 +1125,7 @@ mod account_tls_batch_tests {
 mod account_tls_batch_policy_controls {
     use super::*;
     use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
-    use crate::privilege::SslType;
+    use tidb_privilege::SslType;
 
     #[test]
     fn account_tls_batch_host_policy_matches_independently_and_broken_json_denies() {
@@ -1202,49 +1202,5 @@ mod account_tls_batch_policy_controls {
         fresh.set_ssl_type("root", "%", SslType::Any);
         registry.replace_from(&fresh);
         assert_eq!(registry.ssl_type("root", "%"), SslType::Any);
-    }
-}
-
-#[cfg(test)]
-mod account_tls_batch_admission_controls {
-    use super::*;
-    use crate::domain::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
-    use crate::domain::secure_transport::TransportKind;
-    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
-    use crate::privilege::SslType;
-
-    #[test]
-    fn account_tls_batch_authentication_uses_go_canonical_account_host() {
-        let registry = PrivilegeRegistry::default();
-        registry.load_global_priv(vec![LoadedGlobalPriv {
-            user: "root".into(),
-            host: "127.%".into(),
-            priv_json: r#"{"ssl_type":2}"#.into(),
-        }]);
-        let users = ConfiguredUserStore::from_accounts(registry);
-        // MatchIdentity selected root@%; ConnectionVerification uses that
-        // authHost, rather than performing another match against the peer IP.
-        assert!(users
-            .authenticate("root", "127.0.0.1", &[0; 20], &[], TransportKind::DirectTls)
-            .is_ok());
-    }
-
-    #[test]
-    fn account_tls_batch_require_ssl_does_not_treat_unix_as_tls() {
-        let registry = PrivilegeRegistry::default();
-        registry.set_ssl_type("root", "%", SslType::Any);
-        let users = ConfiguredUserStore::from_accounts(registry);
-        assert_eq!(
-            users
-                .authenticate(
-                    "root",
-                    "localhost",
-                    &[0; 20],
-                    &[],
-                    TransportKind::UnixSocket
-                )
-                .unwrap_err(),
-            AuthenticationFailure::AccessDenied
-        );
     }
 }

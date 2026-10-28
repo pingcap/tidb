@@ -17,7 +17,9 @@
 //! syncer, the label manager) are tidb-domain, which the DDL builder imports;
 //! this crate is the domain the session package opens sessions over.
 
+pub mod cluster_account_seam;
 pub mod cluster_analyze_seam;
+pub mod cluster_privileges;
 pub mod cluster_stats_lock_seam;
 pub mod cluster_transactions;
 pub mod errors;

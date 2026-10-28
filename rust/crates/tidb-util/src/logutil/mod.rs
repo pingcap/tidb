@@ -1871,3 +1871,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// zap `zap.Error(err)` under TiDB's default `disable-error-stack`: an
+/// `error` field carrying the error text.
+pub fn zap_error(error: impl std::fmt::Display) -> tidb_log::Field {
+    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))
+}
+
+/// zap `zap.Stack("stack")`: the current stack trace.
+pub fn zap_stack() -> tidb_log::Field {
+    tidb_log::Field::new(
+        "stack",
+        tidb_log::Value::Str(std::backtrace::Backtrace::force_capture().to_string()),
+    )
+}
+
+/// Go `util.Recover(metrics.LabelDomain, funcInfo, nil, false)`'s line for a
+/// domain worker whose panic surfaced when it was joined. The panicking
+/// thread's stack is gone by then, so the entry carries no `stack` field.
+pub fn log_recovered_panic(func_info: &str, payload: &(dyn std::any::Any + Send)) {
+    let recovered = payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    crate::logutil::bg_logger().error(
+        "panic in the recoverable goroutine",
+        &[
+            tidb_log::Field::new("label", tidb_log::Value::Str("domain".to_owned())),
+            tidb_log::Field::new("funcInfo", tidb_log::Value::Str(func_info.to_owned())),
+            tidb_log::Field::new("r", tidb_log::Value::Str(recovered)),
+        ],
+    );
+}

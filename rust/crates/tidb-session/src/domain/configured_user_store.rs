@@ -827,3 +827,47 @@ impl std::error::Error for ConfiguredUserStoreError {
         }
     }
 }
+
+#[cfg(test)]
+mod account_tls_batch_admission_controls {
+    use crate::privilege::PrivilegeRegistry;
+    use crate::domain::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
+    use crate::domain::secure_transport::TransportKind;
+    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
+    use crate::privilege::SslType;
+
+    #[test]
+    fn account_tls_batch_authentication_uses_go_canonical_account_host() {
+        let registry = PrivilegeRegistry::default();
+        registry.load_global_priv(vec![LoadedGlobalPriv {
+            user: "root".into(),
+            host: "127.%".into(),
+            priv_json: r#"{"ssl_type":2}"#.into(),
+        }]);
+        let users = ConfiguredUserStore::from_accounts(registry);
+        // MatchIdentity selected root@%; ConnectionVerification uses that
+        // authHost, rather than performing another match against the peer IP.
+        assert!(users
+            .authenticate("root", "127.0.0.1", &[0; 20], &[], TransportKind::DirectTls)
+            .is_ok());
+    }
+
+    #[test]
+    fn account_tls_batch_require_ssl_does_not_treat_unix_as_tls() {
+        let registry = PrivilegeRegistry::default();
+        registry.set_ssl_type("root", "%", SslType::Any);
+        let users = ConfiguredUserStore::from_accounts(registry);
+        assert_eq!(
+            users
+                .authenticate(
+                    "root",
+                    "localhost",
+                    &[0; 20],
+                    &[],
+                    TransportKind::UnixSocket
+                )
+                .unwrap_err(),
+            AuthenticationFailure::AccessDenied
+        );
+    }
+}

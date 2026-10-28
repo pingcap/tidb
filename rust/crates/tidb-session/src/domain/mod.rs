@@ -35,8 +35,8 @@ pub mod configured_user_store;
 pub mod auth_identity;
 pub mod native_password;
 pub mod secure_transport;
-pub mod cluster_privileges;
-pub mod cluster_account_seam;
+pub use tidb_domain_core::cluster_privileges;
+pub use tidb_domain_core::cluster_account_seam;
 pub use tidb_domain_core::cluster_analyze_seam;
 pub mod cluster_auto_id_seam;
 pub mod cluster_binding_seam;
@@ -82,38 +82,10 @@ pub fn isolate_process_globals() -> bool {
     true
 }
 
-/// zap `zap.Error(err)` under TiDB's default `disable-error-stack`: an
-/// `error` field carrying the error text.
-pub fn zap_error(error: impl std::fmt::Display) -> tidb_log::Field {
-    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))
-}
 
-/// zap `zap.Stack("stack")`: the current stack trace.
-pub fn zap_stack() -> tidb_log::Field {
-    tidb_log::Field::new(
-        "stack",
-        tidb_log::Value::Str(std::backtrace::Backtrace::force_capture().to_string()),
-    )
-}
 
-/// Go `util.Recover(metrics.LabelDomain, funcInfo, nil, false)`'s line for a
-/// domain worker whose panic surfaced when it was joined. The panicking
-/// thread's stack is gone by then, so the entry carries no `stack` field.
-pub fn log_recovered_panic(func_info: &str, payload: &(dyn std::any::Any + Send)) {
-    let recovered = payload
-        .downcast_ref::<&str>()
-        .map(|message| (*message).to_owned())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_default();
-    tidb_util::logutil::bg_logger().error(
-        "panic in the recoverable goroutine",
-        &[
-            tidb_log::Field::new("label", tidb_log::Value::Str("domain".to_owned())),
-            tidb_log::Field::new("funcInfo", tidb_log::Value::Str(func_info.to_owned())),
-            tidb_log::Field::new("r", tidb_log::Value::Str(recovered)),
-        ],
-    );
-}
+
+pub use tidb_util::logutil::{log_recovered_panic, zap_error, zap_stack};
 
 /// Go `net.JoinHostPort`.
 pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {

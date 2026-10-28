@@ -15,7 +15,7 @@
 //! The route an account statement takes when the accounts live in the
 //! cluster, not in this process.
 //!
-//! This is [`crate::domain::cluster_session_node`]'s [`ClusterDdl`] seam's twin, and
+//! This is `crate::domain::cluster_session_node`'s `ClusterDdl` seam's twin, and
 //! it exists for the same reason: a `CREATE USER` run against the node's own
 //! in-memory account table would change a *read* of somebody else's state and
 //! answer `OK` to a client whose account does not exist anywhere.
@@ -40,7 +40,7 @@
 //! Nothing the node serves from is touched before the commit: a statement
 //! that fails to validate or to commit leaves the live table as it was.
 //!
-//! [`ClusterDdl`]: crate::domain::cluster_session_node::ClusterDdl
+//! `ClusterDdl`: tidb_ddl::worker::ClusterDdl
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,12 +54,13 @@ use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
-use crate::privilege::PrivilegeRegistry;
+use tidb_privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use crate::domain::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
-use crate::domain::session_api::{cluster_commit_error, SqlQueryError};
+use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
+use crate::errors::cluster_commit_error;
+use tidb_cluster::sql_query_error::SqlQueryError;
 
 /// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
 /// transaction (Go's autoid allocator, `RunInNewTxn`), never below
@@ -222,7 +223,7 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String
     // Go `Domain.notifyUpdatePrivilege` is silent on success.
     if let Err(error) = notifier.notify_privilege_update() {
         tidb_util::logutil::bg_logger()
-            .warn("notify update privilege failed", &[crate::domain::zap_error(error)]);
+            .warn("notify update privilege failed", &[tidb_util::logutil::zap_error(error)]);
     }
 }
 
@@ -298,7 +299,7 @@ where
 
 #[cfg(test)]
 mod seed_tests {
-    use crate::privilege::PrivilegeRegistry;
+    use tidb_privilege::PrivilegeRegistry;
 
     /// The startup identity's CREDENTIAL, not merely its name, is what an
     /// account statement used to discard: the cluster's bootstrap row carries
