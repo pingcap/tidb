@@ -145,7 +145,7 @@ impl QuerySessionFactory for PanickingFactory {
 }
 
 fn config() -> NodeConfig {
-    NodeConfig::parse([
+    tidb_server::parse_node_config([
         "tidb-server",
         "--path",
         "127.0.0.1:2379",

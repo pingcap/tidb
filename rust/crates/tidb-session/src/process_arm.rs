@@ -58,17 +58,6 @@ impl Session {
         }
     }
 
-    /// Every connection this session is allowed to see for `SHOW
-    /// PROCESSLIST` / `information_schema.PROCESSLIST`.
-    ///
-    /// Go (`setDataForProcessList`, `fetchShowProcessList`): "If you have the
-    /// PROCESS privilege, you can see all threads. Otherwise, you can see
-    /// only your own threads" -- and an internal session with no login user
-    /// is not filtered at all, since there is nothing to compare against.
-    pub(crate) fn visible_process_rows(&self, full: bool) -> Vec<process::ProcessRow> {
-        self.viewer_state().visible_process_rows(full)
-    }
-
     /// What the instance-wide `information_schema` tables read of this
     /// session: see [`tidb_executor::memtable_reader::ViewerState`].
     pub(crate) fn viewer_state(&self) -> tidb_executor::memtable_reader::ViewerState {

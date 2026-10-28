@@ -251,8 +251,7 @@ pub(crate) fn prepare_binary(
     session: &mut Session,
     sql: &str,
 ) -> crate::domain::session_api::PreparedGeneral {
-    use crate::domain::session_api::QuerySession;
-    QuerySession::prepare_general(session, sql).unwrap()
+    session.node_conn().prepare_general(sql).unwrap()
 }
 
 /// Go `clientConn.handleStmtExecute` with integer parameters: the rows of a
@@ -263,12 +262,12 @@ pub(crate) fn execute_binary(
     params: &[i64],
 ) -> StmtOutput {
     use crate::domain::resultset_source::ResultSetSource;
-    use crate::domain::session_api::{GeneralExecuteOutcome, QuerySession};
+    use crate::domain::session_api::GeneralExecuteOutcome;
     let values: Vec<_> = params
         .iter()
         .map(|value| tidb_protocol::PreparedValue::SignedLongLong(*value))
         .collect();
-    match QuerySession::execute_general(session, prepared, &values).unwrap() {
+    match session.node_conn().execute_general(prepared, &values).unwrap() {
         GeneralExecuteOutcome::Write(outcome) => StmtOutput::Affected(outcome.affected_rows),
         GeneralExecuteOutcome::Rows(mut result) => {
             let source = result.source();
@@ -300,9 +299,8 @@ pub(crate) fn execute_stmt<'a>(
     session: &'a mut Session,
     sql: &str,
 ) -> Option<crate::domain::session_api::QueryResult<'a>> {
-    use crate::domain::session_api::QuerySession;
-    let stmt = QuerySession::parse_statement(session, sql).unwrap();
-    QuerySession::execute_stmt(session, sql, &stmt).unwrap()
+    let stmt = session.parse_at_statement_boundary(sql).unwrap();
+    session.node_conn().execute_stmt(sql, &stmt).unwrap()
 }
 
 pub(crate) fn collect_record_set(execution: StatementExecution<'_>) -> StmtOutput {

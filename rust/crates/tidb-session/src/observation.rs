@@ -119,6 +119,12 @@ struct LazyStatement {
     sql: String,
     binary_plan: String,
     encoded_plan: String,
+    /// A plan published without its encodings renders them here, once, when
+    /// the summary first asks (Go `LazyInfo.GetEncodedPlan`).
+    plan_source: Option<tidb_executor::PlanSource>,
+    rendered_plan: std::sync::OnceLock<(String, String)>,
+    /// `tidb_generate_binary_plan` as the statement finished.
+    binary_plan_enabled: bool,
     plan_digest: String,
     plan_hint: String,
     binding_sql: String,
@@ -129,10 +135,24 @@ impl StmtExecLazyInfo for LazyStatement {
         self.sql.clone()
     }
     fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
-        Ok((self.encoded_plan.clone(), self.plan_hint.clone()))
+        let encoded = match &self.plan_source {
+            Some(source) if self.encoded_plan.is_empty() => {
+                self.rendered_plan.get_or_init(|| source.render()).0.clone()
+            }
+            _ => self.encoded_plan.clone(),
+        };
+        Ok((encoded, self.plan_hint.clone()))
     }
     fn binary_plan(&self) -> String {
-        self.binary_plan.clone()
+        if !self.binary_plan_enabled {
+            return String::new();
+        }
+        match &self.plan_source {
+            Some(source) if self.binary_plan.is_empty() => {
+                self.rendered_plan.get_or_init(|| source.render()).1.clone()
+            }
+            _ => self.binary_plan.clone(),
+        }
     }
     fn plan_digest(&self) -> String {
         self.plan_digest.clone()
@@ -1062,16 +1082,14 @@ impl Session {
                 } else {
                     plan.plan_digest
                 },
-                binary_plan: if !observation.routed
+                binary_plan_enabled: !observation.routed
                     && self
                         .vars
                         .get_global("tidb_generate_binary_plan")
-                        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
-                {
-                    plan.summary_binary_plan
-                } else {
-                    String::new()
-                },
+                        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                binary_plan: plan.summary_binary_plan,
+                plan_source: (!observation.routed).then_some(plan.plan_source).flatten(),
+                rendered_plan: std::sync::OnceLock::new(),
             }),
         });
     }
@@ -1287,6 +1305,12 @@ impl Session {
             .unwrap_or_default();
         let exec_detail = observation.cop_stats.exec_details();
         let cop_tasks = observation.cop_stats.cop_tasks_details();
+        // A plan published without its encodings (the cached point read)
+        // renders them now that a slow statement asks (Go `getEncodedPlan`).
+        let (encoded_plan, summary_binary_plan) = match &plan.plan_source {
+            Some(source) if plan.encoded_plan.is_empty() => source.render(),
+            _ => (plan.encoded_plan.clone(), plan.summary_binary_plan.clone()),
+        };
         let plan_digest = if observation.routed {
             String::new()
         } else {
@@ -1418,13 +1442,13 @@ impl Session {
                 String::new()
             },
             plan: if !observation.routed
-                && !plan.encoded_plan.is_empty()
+                && !encoded_plan.is_empty()
                 && self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_RECORD_PLAN_IN_SLOW_LOG)
             {
                 format!(
                     "{}{}{}",
                     crate::slow_log::SLOW_LOG_PLAN_PREFIX,
-                    plan.encoded_plan,
+                    encoded_plan,
                     crate::slow_log::SLOW_LOG_PLAN_SUFFIX
                 )
             } else {
@@ -1432,7 +1456,7 @@ impl Session {
             },
             plan_digest,
             binary_plan: if !observation.routed
-                && !plan.summary_binary_plan.is_empty()
+                && !summary_binary_plan.is_empty()
                 && self
                     .vars
                     .get_global(tidb_vardef::tidb_vars::TIDB_GENERATE_BINARY_PLAN)
@@ -1441,7 +1465,7 @@ impl Session {
                 format!(
                     "{}{}{}",
                     crate::slow_log::SLOW_LOG_BINARY_PLAN_PREFIX,
-                    plan.summary_binary_plan,
+                    summary_binary_plan,
                     crate::slow_log::SLOW_LOG_PLAN_SUFFIX
                 )
             } else {

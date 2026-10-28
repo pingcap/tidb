@@ -17,7 +17,7 @@
 //! (`server.go`'s two `startNetworkListener` calls).
 
 use std::io::{self, IoSlice, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::net::{Shutdown, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
@@ -30,65 +30,6 @@ pub enum ClientSocket {
     /// From the Unix-domain socket listener.
     #[cfg(unix)]
     Unix(UnixStream),
-}
-
-/// Where a client connected from: Go's `RemoteAddr`, with `isUnixSocket`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PeerAddress {
-    /// A TCP peer.
-    Tcp(SocketAddr),
-    /// A Unix-domain socket peer, which has no address.
-    Unix,
-}
-
-impl PeerAddress {
-    /// Go `clientConn.PeerHost`: the peer's IP, and `localhost`
-    /// (`vardef.DefHostname`) for a Unix-domain socket.
-    #[must_use]
-    pub fn host(&self) -> String {
-        match self {
-            Self::Tcp(address) => address.ip().to_string(),
-            Self::Unix => tidb_vardef::defaults::DEF_HOSTNAME.to_owned(),
-        }
-    }
-
-    /// Go `RemoteAddr().String()`: `ip:port`, and an unnamed Unix peer's
-    /// empty name.
-    #[must_use]
-    pub fn remote_addr(&self) -> String {
-        match self {
-            Self::Tcp(address) => address.to_string(),
-            Self::Unix => String::new(),
-        }
-    }
-
-    /// The process list's `Host`: Go's `peerHost:peerPort`, and a Unix
-    /// socket's `localhost`, which has no port.
-    #[must_use]
-    pub fn process_host(&self) -> String {
-        match self {
-            Self::Tcp(address) => address.to_string(),
-            Self::Unix => tidb_vardef::defaults::DEF_HOSTNAME.to_owned(),
-        }
-    }
-
-    /// Go `clientConn.isUnixSocket`.
-    #[must_use]
-    pub const fn is_unix_socket(&self) -> bool {
-        matches!(self, Self::Unix)
-    }
-}
-
-impl From<SocketAddr> for PeerAddress {
-    fn from(address: SocketAddr) -> Self {
-        Self::Tcp(address)
-    }
-}
-
-impl std::fmt::Display for PeerAddress {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.remote_addr())
-    }
 }
 
 impl From<TcpStream> for ClientSocket {

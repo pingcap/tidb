@@ -404,6 +404,7 @@ impl std::error::Error for RunConfiguredNodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::node_config::NodeOptions;
     use crate::domain::secure_transport::TransportKind;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -415,13 +416,13 @@ mod tests {
         if crate::domain::isolate_process_globals() {
             return;
         }
-        let mut config = NodeConfig::parse([
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
-        ])
+        let mut config = NodeConfig::with_defaults(
+            |config| config.path = "127.0.0.1:2379".to_owned(),
+            NodeOptions {
+                auth_file: Some("/tmp/users.tsv".to_owned()),
+                ..NodeOptions::default()
+            },
+        )
         .expect("base config");
         config.skip_grant_table = true;
         let users = configured_account_store(&config)
@@ -480,13 +481,13 @@ mod tests {
         if crate::domain::isolate_process_globals() {
             return;
         }
-        let mut config = NodeConfig::parse([
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
-        ])
+        let mut config = NodeConfig::with_defaults(
+            |config| config.path = "127.0.0.1:2379".to_owned(),
+            NodeOptions {
+                auth_file: Some("/tmp/users.tsv".to_owned()),
+                ..NodeOptions::default()
+            },
+        )
         .expect("base config");
         config.skip_grant_table = true;
         // The test nudges the worker; a long tick proves the observed update
@@ -566,13 +567,13 @@ mod tests {
         if crate::domain::isolate_process_globals() {
             return;
         }
-        let mut config = NodeConfig::parse([
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
-        ])
+        let mut config = NodeConfig::with_defaults(
+            |config| config.path = "127.0.0.1:2379".to_owned(),
+            NodeOptions {
+                auth_file: Some("/tmp/users.tsv".to_owned()),
+                ..NodeOptions::default()
+            },
+        )
         .expect("base config");
         config.schema_lease = Duration::from_secs(120);
         let users = ConfiguredUserStore::from_accounts(

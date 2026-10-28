@@ -30,7 +30,7 @@ use crate::txn_manager::TxnManager;
 use crate::Session;
 
 use super::{
-    cluster_session_catalog_with_templates, ClusterStatisticsLoading,
+    cluster_session_catalog_with_templates,
     SharedClusterCatalog, SkippedTable, TableAutoIds,
 };
 
@@ -45,7 +45,6 @@ pub(super) struct CatalogFollower {
     /// The node's auto-increment allocators, needed on every rebuild so the
     /// rebuilt tables keep the ranges the old ones had reserved.
     auto_ids: Arc<dyn TableAutoIds>,
-    statistics_loading: ClusterStatisticsLoading,
     /// The schema version the session's tables were built from. A move in
     /// `catalog` past this is what makes the connection rebuild them.
     schema_version: i64,
@@ -59,7 +58,6 @@ impl CatalogFollower {
         catalog: Arc<SharedClusterCatalog>,
         storage: ClusterTableStorage,
         auto_ids: Arc<dyn TableAutoIds>,
-        statistics_loading: ClusterStatisticsLoading,
         schema_version: i64,
         skipped: Vec<SkippedTable>,
     ) -> Self {
@@ -67,7 +65,6 @@ impl CatalogFollower {
             catalog,
             storage,
             auto_ids,
-            statistics_loading,
             schema_version,
             skipped,
         }

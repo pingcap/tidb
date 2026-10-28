@@ -30,7 +30,7 @@ use tidb_server::{resolve_server_tls, ClientStream, MysqlServerTls};
 
 fn tls_config(cert: Option<&Path>, key: Option<&Path>, auto_tls: bool) -> tidb_server::NodeConfig {
     let mut config =
-        tidb_server::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
+        tidb_server::parse_node_config(["tidb-server", "--store", "unistore", "--load-privileges"])
             .unwrap();
     config.ssl_cert = cert.map(Path::to_owned);
     config.ssl_key = key.map(Path::to_owned);

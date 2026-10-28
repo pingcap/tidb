@@ -153,6 +153,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::node_config::NodeOptions;
 
     struct RestoreMemoryUsageAlarmRatio(f64);
 
@@ -185,21 +186,16 @@ mod tests {
         );
 
         // The config override: engines `tikv,tidb`, an explicit socket, and
-        // the port. Parse carries Go's `{Port}` substitution.
-        let config = NodeConfig::parse(
-            [
-                "tidb-server",
-                "--store",
-                "unistore",
-                "--cluster-session",
-                "--port",
-                "4157",
-                "--auth-file",
-                "/dev/null",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>(),
+        // the port. The projection carries Go's `{Port}` substitution.
+        let config = NodeConfig::with_defaults(
+            |config| {
+                config.store = tidb_config::store::StoreType("unistore".to_owned());
+                config.port = 4157;
+            },
+            NodeOptions {
+                auth_file: Some("/dev/null".to_owned()),
+                ..NodeOptions::default()
+            },
         )
         .expect("parses");
         assert_eq!(config.socket, "/tmp/tidb-4157.sock");

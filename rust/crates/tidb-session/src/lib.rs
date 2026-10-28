@@ -1737,21 +1737,8 @@ impl Session {
         rows
     }
 
-    /// Go `clusterServerInfoRetriever.retrieve` after its privilege check.
-    pub(crate) fn cluster_server_info_table_rows(
-        &mut self,
-        tp: tidb_proto::diagnosticspb::ServerInfoType,
-        extractors: &[tidb_planner::memtable_predicate_extractor::ClusterTableExtractor],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let ctx = self.statement_context(false);
-        let rows = self
-            .viewer_state()
-            .cluster_server_info_rows(&ctx, tp, extractors);
-        self.drain_eval_warnings(&ctx);
-        rows
-    }
-
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.
+    #[cfg(test)]
     pub(crate) fn cluster_info_table_rows(
         &mut self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
@@ -1763,12 +1750,14 @@ impl Session {
 
     /// Go infoschema.GetInstanceAddr uses local status identity. This does not
     /// discover peers: loss of etcd cannot relabel or hide local process rows.
+    #[cfg(test)]
     pub(crate) fn cluster_instance_address(&self) -> String {
         self.viewer_state().cluster_instance_address()
     }
 
     /// Go `setDataForServersInfo`: one row per server `GetAllServerInfo`
     /// reports, in Go's column order.
+    #[cfg(test)]
     pub(crate) fn tidb_servers_info_table_rows(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
@@ -1787,6 +1776,7 @@ impl Session {
     /// (booting one over that table when none does yet), with `accounts`
     /// attached: Go testkit's session on the store whose privilege tables a
     /// test provisioned.
+    #[cfg(test)]
     pub(crate) fn on_accounts(accounts: &privilege::PrivilegeRegistry) -> Self {
         let domain = match crate::domain::mock_store::domain_of_accounts(accounts) {
             Some(domain) => domain,

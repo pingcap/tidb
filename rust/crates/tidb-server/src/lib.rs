@@ -39,15 +39,19 @@ pub use tidb_session::domain::cluster_session_node;
 pub use tidb_session::domain::cluster_stats_lock_seam;
 pub use tidb_session::domain::cluster_sysvar_seam;
 pub(crate) use tidb_session::domain::configured_user_store;
+mod client_socket;
 pub mod connection_resultset;
 mod connection_writers;
 mod cursor_state;
+pub mod driver;
+mod driver_tidb;
 pub mod handshake;
 mod handshake_response;
 pub mod http_settings;
 pub mod http_status;
-pub use tidb_session::domain::main_flags;
+pub mod main_flags;
 mod mysql_connection;
+pub mod node_flags;
 mod mysql_tls;
 pub(crate) use tidb_session::domain::native_password;
 pub(crate) use tidb_session::domain::node_config;
@@ -102,7 +106,9 @@ pub use handshake::{
     InitialHandshake,
 };
 pub use handshake_response::{HandshakeResponse41, WireString};
-pub use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
+pub use client_socket::ClientSocket;
+pub use tidb_session::domain::peer_address::PeerAddress;
+
 pub use mysql_connection::{
     serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,
     ConnectionExit, ConnectionReport, MysqlConnectionError,
@@ -112,7 +118,11 @@ pub use native_password::{
     generate_handshake_salt, verify_candidate, NativePasswordHash, NativePasswordHashError,
     HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
-pub use node_config::{NodeConfig, NodeConfigError};
+pub use node_config::{NodeConfig, NodeConfigError, NodeOptions};
+pub use node_flags::{
+    initialize_versions_for_display, install_process_globals, node_config_help_text,
+    parse_node_config,
+};
 pub use pipeline_session::MaterializedResultSetSource;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -122,11 +132,11 @@ pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
+pub use driver::{QuerySession, QuerySessionFactory};
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
-    QueryCancellationLease, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
+    QueryCancellationLease, QueryResult, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,
@@ -136,7 +146,7 @@ pub use wire_status::{
 /// Starts the shared SQL session/catalog lifecycle over the selected storage engine.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
-    config.install_process_globals();
+    crate::install_process_globals(&config);
     setup_log()?;
     let result = run_node_with_log(config);
     // Go `main`: `syncLog()` after the server exited; a failed sync turns
@@ -406,7 +416,7 @@ mod skip_grant_startup_tests {
 
     #[test]
     fn enabled_startup_memory_policy_builds_one_running_process_arbitrator() {
-        let mut config = NodeConfig::parse([
+        let mut config = crate::parse_node_config([
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
@@ -498,8 +508,8 @@ mod setup_log_tests {
             &config_path,
         ];
         arguments.extend_from_slice(flags);
-        let config = crate::NodeConfig::parse(arguments).expect("node config");
-        config.install_process_globals();
+        let config = crate::parse_node_config(arguments).expect("node config");
+        crate::install_process_globals(&config);
         super::setup_log().expect("setupLog");
     }
 

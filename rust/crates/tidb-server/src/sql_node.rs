@@ -24,13 +24,15 @@ use std::time::{Duration, Instant};
 use tidb_util::globalconn::Allocator;
 
 use crate::configured_user_store::ConfiguredUserStore;
-use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
+use crate::client_socket::ClientSocket;
+use tidb_session::domain::peer_address::PeerAddress;
 use crate::mysql_connection::{
     serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
 use crate::mysql_tls::{MysqlTlsManager, TlsRotation};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
 pub use crate::session_api::*;
+use crate::driver::QuerySessionFactory;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -1533,6 +1535,7 @@ pub(crate) fn prepare_accepted_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::QuerySession;
     use crate::node_config::MemoryArbitratorConfig;
     use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};

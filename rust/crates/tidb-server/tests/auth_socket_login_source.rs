@@ -30,7 +30,7 @@ use tidb_server::{
     ConnectionReport, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory,
     SessionContext, SqlQueryError,
 };
-use tidb_session::domain::client_socket::PeerAddress;
+use tidb_session::domain::peer_address::PeerAddress;
 use tidb_session::privilege::PrivilegeRegistry;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

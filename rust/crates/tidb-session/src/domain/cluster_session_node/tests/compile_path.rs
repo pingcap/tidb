@@ -22,7 +22,6 @@ use super::super::*;
 use super::node_fixture::*;
 use super::unistore_cop::{cop_backed_stack, displayed};
 use crate::domain::configured_user_store::ConfiguredUserStore;
-use crate::domain::session_api::QuerySessionFactory;
 
 /// The salt every unistore login in this module answers with.
 const LOGIN_SALT: &[u8; 20] = b"01234567890123456789";

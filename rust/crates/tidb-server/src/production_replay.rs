@@ -39,9 +39,10 @@ use crate::domain_test_support::{
     scramble, session_context, session_context_with_identity, ABC_HASH, SALT,
 };
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
-use tidb_session::domain::session_api::{QuerySession, SqlQueryError};
+use tidb_session::domain::session_api::SqlQueryError;
+
+use crate::driver::QuerySession;
 use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
-use crate::QuerySessionFactory;
 
 /// The connection mysql-tester starts every script on.
 const DEFAULT_CONNECTION: &str = "default";
@@ -372,7 +373,7 @@ impl ReplayBackend for UnistoreConnections {
         let recording_config =
             difftest_result_tests::replay::integrationtest_dir().join("config.toml");
         let recording_config = recording_config.to_string_lossy().into_owned();
-        let config = tidb_session::domain::node_config::NodeConfig::parse([
+        let config = crate::parse_node_config([
             "tidb-server",
             "--store",
             "unistore",
@@ -390,10 +391,7 @@ impl ReplayBackend for UnistoreConnections {
         );
         let stack = unistore_cluster_session_stack(&config, &users, None, None)
             .map_err(|error| format!("unistore stack: {error:?}"))?;
-        let expensive_query = stack
-            .factory
-            .session_manager()
-            .map(ExpensiveQuerySweep::start);
+        let expensive_query = Some(ExpensiveQuerySweep::start(stack.factory.session_manager()));
         let mut pool = UnistoreConnections {
             stack,
             users,

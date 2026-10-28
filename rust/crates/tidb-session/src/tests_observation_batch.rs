@@ -1153,4 +1153,15 @@ fn observation_binary_point_get_reaches_summary_and_top_sql() {
         .lock()
         .unwrap();
     assert_eq!(record.table_names, "test.observation_point_get");
+    // Go copies the cached plan's digest onto the statement and samples its
+    // plan for the summary (`LazyInfo`), compile time included.
+    assert!(!record.plan_digest.is_empty(), "the point plan has a digest");
+    let compile = record.cumulative.sum_compile_latency;
+    drop(record);
+    assert!(compile > std::time::Duration::ZERO, "the point plan's compile time");
+    let (encoded, binary) = observation_plan_samples(sql);
+    assert!(!encoded.is_empty(), "the summary samples the point plan");
+    assert!(tidb_util::plancodec::decode_binary_plan(binary)
+        .unwrap()
+        .contains("observation_point_get"));
 }

@@ -33,6 +33,7 @@ signal-hook.workspace = true
 openssl = "0.10.81"
 rcgen.workspace = true
 rustix = { workspace = true, features = ["net"] }
+nix = { workspace = true, features = ["socket", "user"] }
 rustls.workspace = true
 rustls-pemfile.workspace = true
 x509-parser = { version = "=0.18.1", default-features = false }

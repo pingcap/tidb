@@ -1541,11 +1541,11 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
             RECORDER.resize(0);
             RECORDER.resize(32);
             let sql = "UPDATE t SET v = v + ? WHERE id = ?";
-            let prepared = binary.then(|| session.prepare_general(sql).unwrap());
+            let prepared = binary.then(|| session.node_conn().prepare_general(sql).unwrap());
             session.node_conn().control_transaction("BEGIN").unwrap();
             let executed = if let Some(prepared) = &prepared {
                 session
-                    .execute_general(
+                    .node_conn().execute_general(
                         prepared,
                         &[
                             tidb_protocol::PreparedValue::SignedLongLong(1),

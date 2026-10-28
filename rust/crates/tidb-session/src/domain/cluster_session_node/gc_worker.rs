@@ -35,7 +35,7 @@ use tidb_util::sqlescape::{escape_sql, SqlArg};
 use super::{ClusterServerSession, Domain};
 use crate::Session;
 use crate::domain::session_api::SessionContext;
-use crate::domain::session_api::{QuerySessionFactory, SqlQueryError};
+use crate::domain::session_api::SqlQueryError;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -122,7 +122,7 @@ impl GcSessionFactory for NodeGcSessions {
                 factory
                     .open_session(SessionContext {
                         connection_id: self.next_connection_id.fetch_add(1, Ordering::Relaxed),
-                        peer_addr: crate::domain::client_socket::PeerAddress::Tcp(
+                        peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
                 "127.0.0.1:0".parse().expect("loopback socket address"),
             ),
                         identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),

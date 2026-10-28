@@ -80,6 +80,9 @@ pub(crate) enum PointResidualBound {
 /// absent: both are rebuilt for every cache hit.
 #[derive(Debug)]
 pub struct PreparedPointGetPlan {
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest` of the point plan
+    /// (`TryFastPlan`'s), computed once and copied onto each execution.
+    plan_digest: std::sync::OnceLock<(String, String)>,
     /// The catalog's KEY-DECODE METADATA version at resolve time — the
     /// counter DDL moves and DML never touches (`Catalog::metadata_version`).
     /// A transaction's own writes bump the mutation counter every statement,
@@ -155,6 +158,7 @@ fn contradiction_plan(
     output: FastPointOutput,
 ) -> Option<PreparedPointGetPlan> {
     Some(PreparedPointGetPlan {
+        plan_digest: std::sync::OnceLock::new(),
         schema_version,
         current_database: current_database.to_owned(),
         database: database.to_owned(),
@@ -182,6 +186,12 @@ fn contradiction_plan(
 }
 
 impl PreparedPointGetPlan {
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest` of this point plan.
+    #[must_use]
+    pub fn plan_digest(&self) -> &std::sync::OnceLock<(String, String)> {
+        &self.plan_digest
+    }
+
     /// The catalog version against which the point shape was resolved.
     #[must_use]
     pub const fn schema_version(&self) -> u64 {
@@ -266,6 +276,7 @@ impl PreparedPointGetPlan {
                 range_values,
                 residuals,
                 cache_hit,
+                parameters: Arc::from(values),
             })
         };
         if self.contradiction {
@@ -400,6 +411,8 @@ pub struct PreparedPointGetExecution {
     /// `(offset into the output row, the check the decoded slot must pass)`.
     residuals: Vec<(usize, ResidualCheck)>,
     cache_hit: bool,
+    /// This execute's parameter values.
+    parameters: Arc<[Datum]>,
 }
 
 /// The retained SELECT syntax and key metadata. The session cache owns the
@@ -1216,6 +1229,15 @@ impl PreparedSelectExecution {
     /// Runs a callback while the cache-owned SELECT root is pinned to the
     /// generation rebuilt for this execution. The callback is the ordinary
     /// session statement funnel; this type does not own another executor.
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest` of the cached plan.
+    #[must_use]
+    pub fn plan_digest_cell(&self) -> Arc<std::sync::OnceLock<(String, String)>> {
+        self.cached_plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .digest()
+    }
+
     pub fn with_plan<R>(
         &self,
         callback: impl FnOnce(&tidb_ast::Stmt, &mut tidb_planner::physical::PhysicalPlan) -> R,
@@ -1274,6 +1296,12 @@ enum ResidualCheck {
 impl PreparedPointGetExecution {
     /// The immutable plan whose safety gates this execution must satisfy.
     #[must_use]
+    /// This execute's parameter values.
+    #[must_use]
+    pub fn parameters(&self) -> &Arc<[Datum]> {
+        &self.parameters
+    }
+
     pub fn plan(&self) -> &PreparedPointGetPlan {
         &self.plan
     }
@@ -1548,6 +1576,7 @@ pub fn build_prepared_point_get_plan(
         return None;
     }
     Some(PreparedPointGetPlan {
+        plan_digest: std::sync::OnceLock::new(),
         schema_version: catalog.schema_version(),
         current_database: current_database.to_owned(),
         database: database.to_owned(),
@@ -3893,4 +3922,24 @@ pub(crate) fn try_point_get(
         }));
     }
     Ok(None)
+}
+
+/// Go `TryFastPlan`'s physical point plan for `statement` and the process
+/// info Go derives from it (`EncodePlan`, `NormalizePlan`); `None` when the
+/// statement is no fast point read.
+#[must_use]
+pub fn fast_point_process_plan_info(
+    statement: &tidb_ast::Stmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Option<crate::ProcessPlanInfo> {
+    let tidb_ast::Stmt::Query(query) = statement else {
+        return None;
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        return None;
+    };
+    let physical = try_fast_point_physical_plan(select, catalog, current_database, ctx).ok()??;
+    Some(crate::explain::process_plan_info(ctx, &physical, catalog))
 }

@@ -41,7 +41,7 @@ use std::time::Duration;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
-use tidb_session::domain::client_socket::ClientSocket;
+use crate::client_socket::ClientSocket;
 
 /// Why the MySQL port could not obtain server TLS material.
 #[derive(Debug)]
@@ -1006,7 +1006,7 @@ mod account_tls_batch_tests {
 
     fn generated_config() -> crate::NodeConfig {
         let mut config =
-            crate::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
+            crate::parse_node_config(["tidb-server", "--store", "unistore", "--load-privileges"])
                 .unwrap();
         config.auto_tls = true;
         config.global_config.security.rsa_key_size = 2048;

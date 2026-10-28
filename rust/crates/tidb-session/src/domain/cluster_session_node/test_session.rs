@@ -24,10 +24,11 @@
 use std::sync::Arc;
 
 use tidb_ast::Stmt;
+use tidb_executor::ddl_exec::map_error;
 
 use super::{ClusterServerSession, Domain};
 use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::session_api::{QuerySession, SqlQueryError};
+use crate::domain::session_api::SqlQueryError;
 use crate::{Session, StmtOutput};
 
 impl Domain {
@@ -144,15 +145,19 @@ impl<'s> ClusterServerSession<'s> {
 
     /// Go `clientConn.handleQuery` for one statement, read back as the rows a
     /// [`Session::run`] caller expects: parse once, then one
-    /// [`QuerySession::execute_stmt`], its result set drained here.
+    /// [`ClusterServerSession::execute_stmt`], its result set drained here.
     pub(crate) fn run_statement_output(
         &mut self,
         sql: &str,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        let stmt = match QuerySession::parse_statement(&mut *self.session, sql) {
+        let stmt = match self.session.parse_at_statement_boundary(sql).map_err(map_error) {
             Ok(stmt) => stmt,
             Err(error) => {
-                QuerySession::record_parse_failure(&mut *self.session, &error);
+                self.session.record_parse_failure_coded(
+                    error.code,
+                    error.message.clone(),
+                    error.identity,
+                );
                 return Err(driver_error(error));
             }
         };
@@ -162,6 +167,7 @@ impl<'s> ClusterServerSession<'s> {
     /// Replaces the domain's analyzer this session's statements reach (its
     /// services' `analyze`, which `AnalyzeExec` runs through), for a test
     /// that observes or fails the analysis.
+    #[cfg(test)]
     pub(crate) fn set_analyzer(
         &mut self,
         factory: &Domain,
@@ -178,6 +184,7 @@ impl<'s> ClusterServerSession<'s> {
     }
 
     /// Rebuilds the session's catalog when the node's schema moved on.
+    #[cfg(test)]
     pub(crate) fn refresh_catalog(&mut self) {
         self.rebuild_catalog_if_stale();
     }
@@ -263,6 +270,7 @@ impl super::NodeConn {
 
     /// A fresh timestamp from the store's oracle, for a test transaction
     /// written straight into the store.
+    #[cfg(test)]
     pub(crate) fn fresh_timestamp_for_test(&self) -> Result<u64, String> {
         self.domain.transactions.fresh_timestamp()
     }

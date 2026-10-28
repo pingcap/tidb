@@ -23,7 +23,7 @@ use std::process::ExitCode;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use tidb_server::{run_configured_node, NodeConfig, NodeConfigError};
+use tidb_server::{run_configured_node, NodeConfigError};
 
 fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
     match result {
@@ -47,11 +47,11 @@ fn main() -> ExitCode {
         .skip(1)
         .any(|argument| argument == "-h" || argument == "--help")
     {
-        println!("{}", NodeConfig::help_text());
+        println!("{}", tidb_server::node_config_help_text());
         return ExitCode::SUCCESS;
     }
     if arguments.iter().skip(1).any(|argument| argument == "-V") {
-        return match NodeConfig::initialize_versions_for_display(arguments) {
+        return match tidb_server::initialize_versions_for_display(arguments) {
             Ok(()) => {
                 println!("{}", tidb_util::printer::get_tidb_info());
                 ExitCode::SUCCESS
@@ -62,7 +62,7 @@ fn main() -> ExitCode {
             }
         };
     }
-    match NodeConfig::parse(arguments) {
+    match tidb_server::parse_node_config(arguments) {
         Ok(config) => {
             if !config.affinity_cpus.is_empty() {
                 if let Err(error) = tidb_util::sys::linux::set_affinity(&config.affinity_cpus) {
@@ -73,7 +73,7 @@ fn main() -> ExitCode {
             runtime_exit_code(run_configured_node(config))
         }
         Err(NodeConfigError::HelpRequested) => {
-            println!("{}", NodeConfig::help_text());
+            println!("{}", tidb_server::node_config_help_text());
             ExitCode::SUCCESS
         }
         Err(NodeConfigError::ConfigCheckSucceeded) => {

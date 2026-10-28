@@ -20,7 +20,6 @@ use super::mock_cluster::MockTransactions;
 use super::mock_seams::MockAnalyze;
 use super::node_fixture::*;
 use crate::domain::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChange};
-use crate::domain::session_api::{QuerySession, QuerySessionFactory};
 use std::sync::Arc;
 use tidb_datatype::Datum;
 use crate::GlobalSysvars;
@@ -190,7 +189,7 @@ fn prepared_system_variable_scope_errors_survive_cluster_metadata_probe() {
             "Unknown system variable 'tidb_redact_log'",
         ),
     ] {
-        let Err(query_error) = session.prepare_general(sql) else {
+        let Err(query_error) = session.node_conn().prepare_general(sql) else {
             panic!("{sql} must fail during PREPARE");
         };
         assert_eq!(query_error.code, code, "{sql}");
@@ -211,7 +210,7 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
     let mut peer = factory.open_session(session_context(62)).unwrap();
     let mut other = other_factory.open_session(session_context(63)).unwrap();
     for session in [&mut first, &mut peer, &mut other] {
-        QuerySession::select_database(session, "app").unwrap();
+        session.node_conn().select_database("app").unwrap();
     }
     first
         .node_conn()
@@ -309,7 +308,7 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
     let mut first = factory.open_session(session_context(71)).unwrap();
     let mut peer = factory.open_session(session_context(72)).unwrap();
     for session in [&mut first, &mut peer] {
-        QuerySession::select_database(session, "app").unwrap();
+        session.node_conn().select_database("app").unwrap();
     }
     first
         .node_conn()

@@ -3329,8 +3329,12 @@ pub fn process_plan_info_with_brief(
         tidb_util::plancodec::compress(encoded.as_bytes())
     };
     let binary = binary_plan_from_roots(statement_context, physical, catalog, full);
-    let (normalized_plan, plan_digest) =
-        normalize_physical_plan(statement_context, physical, catalog);
+    let (normalized_plan, plan_digest) = match statement_context.cached_plan_digest() {
+        Some(cached) => cached
+            .get_or_init(|| normalize_physical_plan(statement_context, physical, catalog))
+            .clone(),
+        None => normalize_physical_plan(statement_context, physical, catalog),
+    };
     let fast_candidate = match physical {
         PhysicalPlan::Projection(projection) => {
             projection.base.children().first().unwrap_or(physical)

@@ -107,9 +107,9 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
                SET_VAR(tidb_max_chunk_size=64) */ 1";
     let prepared = crate::tests_support::prepare_binary(&mut session, sql);
     {
-        use crate::domain::session_api::{GeneralExecuteOutcome, QuerySession};
+        use crate::domain::session_api::GeneralExecuteOutcome;
         let GeneralExecuteOutcome::Rows(mut result) =
-            QuerySession::execute_general(&mut session, &prepared, &[]).unwrap()
+            session.node_conn().execute_general(&prepared, &[]).unwrap()
         else {
             panic!("SELECT must retain its executor");
         };

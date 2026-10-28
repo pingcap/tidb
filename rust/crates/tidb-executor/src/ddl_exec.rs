@@ -128,7 +128,7 @@ fn unplanned_ddl() -> SqlQueryError {
 
 /// A session failure as the connection answers it, keeping the typed
 /// error as its cause.
-fn map_error(error: DriverError) -> SqlQueryError {
+pub fn map_error(error: DriverError) -> SqlQueryError {
     let mapped = error.clone().to_mysql_error();
     SqlQueryError::from(mapped).with_cause(error)
 }

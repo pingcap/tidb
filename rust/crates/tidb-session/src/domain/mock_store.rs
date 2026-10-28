@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::domain::cluster_session_node::NodeConn;
 use crate::domain::configured_user_store::ConfiguredUserStore;
+use crate::domain::node_config::{NodeConfig, NodeOptions, StatsLease};
 use crate::domain::unistore_node::{
     unistore_cluster_session_stack_from, BootstrapImage, UnistoreClusterStack,
 };
@@ -36,6 +37,7 @@ use crate::Session;
 pub struct MockStoreDomain {
     stack: UnistoreClusterStack,
     /// The node's account table and the rest of its configured users.
+    #[cfg(test)]
     users: Arc<ConfiguredUserStore>,
     /// Go testkit's `testKitIDGenerator`.
     next_connection_id: AtomicU64,
@@ -43,6 +45,7 @@ pub struct MockStoreDomain {
 
 impl MockStoreDomain {
     /// The domain booted over this store.
+    #[cfg(test)]
     pub(crate) fn domain(&self) -> &Arc<crate::domain::cluster_session_node::Domain> {
         &self.stack.factory
     }
@@ -96,7 +99,7 @@ impl MockStoreDomain {
     }
 
     fn boot(
-        config: crate::domain::node_config::NodeConfig,
+        config: NodeConfig,
         users: Arc<ConfiguredUserStore>,
         mock_tiflash: usize,
     ) -> Result<Arc<Self>, String> {
@@ -106,6 +109,7 @@ impl MockStoreDomain {
             .map_err(|error| format!("unistore stack: {error:?}"))?;
         let domain = Arc::new(Self {
             stack,
+            #[cfg(test)]
             users: Arc::clone(&users),
             next_connection_id: AtomicU64::new(1),
         });
@@ -132,22 +136,22 @@ impl MockStoreDomain {
 /// stats lease (`session.DisableStats4Test()`). With it Go loads every
 /// histogram an ANALYZE or `h.Update` reads (`columnStatsFromStorage`'s
 /// `lease > 0` condition), and no background worker reloads statistics.
-fn testkit_config() -> Result<crate::domain::node_config::NodeConfig, String> {
-    let mut config = crate::domain::node_config::NodeConfig::parse([
-        "tidb-server",
-        "--store",
-        "unistore",
-        "--port",
-        "0",
-        "--lease-ms",
-        "500",
-        // Parse-time requirement only: the node's user store is the one the
-        // bootstrap seeds.
-        "--auth-file",
-        "/dev/null",
-    ])
+fn testkit_config() -> Result<NodeConfig, String> {
+    let mut config = NodeConfig::with_defaults(
+        |config| {
+            config.store = tidb_config::store::StoreType("unistore".to_owned());
+            config.port = 0;
+            config.lease = "500ms".to_owned();
+        },
+        NodeOptions {
+            // A requirement of the account source only: the node's user
+            // store is the one the bootstrap seeds.
+            auth_file: Some("/dev/null".to_owned()),
+            ..NodeOptions::default()
+        },
+    )
     .map_err(|error| format!("node config: {error:?}"))?;
-    config.stats_lease = crate::domain::node_config::StatsLease::Disabled;
+    config.stats_lease = StatsLease::Disabled;
     Ok(config)
 }
 
@@ -244,6 +248,7 @@ fn remember_accounts_domain(domain: &Arc<MockStoreDomain>) {
 }
 
 /// The live domain whose node keeps its accounts in `accounts`.
+#[cfg(test)]
 pub(crate) fn domain_of_accounts(
     accounts: &crate::privilege::PrivilegeRegistry,
 ) -> Option<Arc<MockStoreDomain>> {

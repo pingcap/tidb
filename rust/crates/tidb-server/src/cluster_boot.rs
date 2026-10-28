@@ -147,7 +147,7 @@ mod status_tests {
 
     #[test]
     fn cluster_status_respects_disabled_flag_and_bind_failure() {
-        let mut config = NodeConfig::parse([
+        let mut config = crate::parse_node_config([
             "--store=tikv",
             "--path=127.0.0.1:2379",
             "--status=0",
@@ -180,7 +180,7 @@ mod status_tests {
 
     #[test]
     fn cluster_status_serves_health_settings_and_metrics() {
-        let config = NodeConfig::parse([
+        let config = crate::parse_node_config([
             "--store=tikv",
             "--path=127.0.0.1:2379",
             "--status=0",

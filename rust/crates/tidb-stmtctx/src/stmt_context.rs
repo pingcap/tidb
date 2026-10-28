@@ -256,6 +256,32 @@ impl PartialEq for StoredPlan {
 
 /// Plan-derived fields Go publishes on `sessmgr.ProcessInfo` when the
 /// ordinary executor is built.
+/// Go `ExecStmt`'s `LazyInfo.GetEncodedPlan` / `GetBinaryPlan` for a plan
+/// published without its encodings: renders `(encoded, binary)` only when a
+/// consumer (the statement summary's sample, the slow log) needs them.
+#[derive(Clone)]
+pub struct PlanSource(pub Arc<dyn Fn() -> Option<(String, String)> + Send + Sync>);
+
+impl PlanSource {
+    /// The `(encoded, binary)` plans, empty when the plan cannot be rendered.
+    #[must_use]
+    pub fn render(&self) -> (String, String) {
+        (self.0)().unwrap_or_default()
+    }
+}
+
+impl std::fmt::Debug for PlanSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PlanSource")
+    }
+}
+
+impl PartialEq for PlanSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProcessPlanInfo {
     /// Go `ProcessInfo.BriefBinaryPlan`.
@@ -307,6 +333,8 @@ pub struct ProcessPlanInfo {
     /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
     /// the executor builder's readers add theirs from the plan.
     pub is_tiflash: bool,
+    /// The encodings of a plan published without them, rendered on demand.
+    pub plan_source: Option<PlanSource>,
 }
 
 /// Boundaries shared by statement summaries and execution counters.
@@ -983,6 +1011,10 @@ pub struct StmtContextData {
     /// plan detail in `show process` to gain performance benefits") while
     /// keeping `TableIDs`/`IndexNames`/stats.
     publish_brief_binary_plan: bool,
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest`: a cached plan's
+    /// normalized form and digest, computed once for the cache entry and
+    /// copied onto each hit (`stmtCtx.SetPlanDigest`).
+    cached_plan_digest: Option<Arc<std::sync::OnceLock<(String, String)>>>,
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     /// Go `SessionVars.RewritePhaseInfo` / `DurationOptimizer`: the
     /// session's planning-phase clocks, which this statement's planner sets.
@@ -2582,6 +2614,7 @@ impl StmtContext {
             planned_apply: session.planned_apply,
             process_plan_info: None,
             publish_brief_binary_plan: true,
+            cached_plan_digest: None,
             statement_phase_observer: None,
             phase_durations: Default::default(),
             sql_cpu_usages: None,
@@ -4117,6 +4150,33 @@ impl StmtContext {
         // Go records the start before `buildExecutor`, so the timeout covers
         // executor construction and TSO waits but not planning.
         Some((std::time::Instant::now(), chrono::Utc::now()))
+    }
+
+    /// The cache entry's normalized plan and digest, filled by the first
+    /// execution that publishes them.
+    #[must_use]
+    pub fn with_cached_plan_digest(
+        mut self,
+        digest: Arc<std::sync::OnceLock<(String, String)>>,
+    ) -> Self {
+        self.cached_plan_digest = Some(digest);
+        self
+    }
+
+    /// This context without its process-info sink: what a value the
+    /// process info itself keeps (its lazy plan source) plans under, so the
+    /// two do not own each other.
+    #[must_use]
+    pub fn without_process_plan_info(mut self) -> Self {
+        self.process_plan_info = None;
+        self
+    }
+
+    /// The cached plan's normalized form and digest, when this statement
+    /// runs a cached plan.
+    #[must_use]
+    pub fn cached_plan_digest(&self) -> Option<&std::sync::OnceLock<(String, String)>> {
+        self.cached_plan_digest.as_deref()
     }
 
     /// Whether this statement renders the brief binary plan with its process

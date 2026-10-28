@@ -15,7 +15,7 @@ fn execute_prepared_rows(
     values: &[PreparedValue],
 ) -> Vec<Vec<Datum>> {
     let outcome = session
-        .execute_general(statement, values)
+        .node_conn().execute_general(statement, values)
         .expect("execute prepared statement");
     let GeneralExecuteOutcome::Rows(mut result) = outcome else {
         panic!("a prepared query must answer with rows");
@@ -109,7 +109,7 @@ fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
         .execute_write("SET sql_mode = ''")
         .expect("default quote mode");
     let statement = session
-        .prepare_general("SELECT \"literal\", ?")
+        .node_conn().prepare_general("SELECT \"literal\", ?")
         .expect("prepare");
 
     session

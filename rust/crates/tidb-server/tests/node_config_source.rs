@@ -63,7 +63,7 @@ deadlock-history-collect-retryable = true
 "#,
     );
     let path = file.0.to_string_lossy().into_owned();
-    let config = NodeConfig::parse([
+    let config = tidb_server::parse_node_config([
         "tidb-server",
         "--config",
         &path,
@@ -146,7 +146,7 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
     let mut args = required();
     args.extend(["--config", &path]);
 
-    let config = NodeConfig::parse(args).expect("security.enable-sem is an owned startup option");
+    let config = tidb_server::parse_node_config(args).expect("security.enable-sem is an owned startup option");
     let error = run_configured_node(config).unwrap_err();
     assert!(matches!(
         error,
@@ -215,7 +215,7 @@ lease = "not-a-duration"
         "--lease-ms",
         "9000",
     ]);
-    let config = NodeConfig::parse(args).unwrap();
+    let config = tidb_server::parse_node_config(args).unwrap();
     assert_eq!(config.port, 4406);
     assert_eq!(config.schema_lease, Duration::from_secs(9));
     assert_eq!(config.pd_endpoints, ["127.0.0.1:2379", "127.0.0.1:2380"]);
@@ -243,7 +243,7 @@ engines = ["tikv", "tidb"]
     let path = file.0.to_string_lossy().into_owned();
     let mut args = required();
     args.extend(["--config", &path]);
-    let config = NodeConfig::parse(args).expect("the shared config owner accepts these options");
+    let config = tidb_server::parse_node_config(args).expect("the shared config owner accepts these options");
     assert_eq!(format!("{:?}", config.stats_lease), "Positive(17ms)");
     assert!(!config.report_status);
     assert_eq!(config.status_host, "127.0.0.2");
@@ -255,7 +255,7 @@ engines = ["tikv", "tidb"]
 
 #[test]
 fn automatic_tls_uses_the_go_config_default() {
-    let config = NodeConfig::parse(required()).unwrap();
+    let config = tidb_server::parse_node_config(required()).unwrap();
     assert!(!config.auto_tls, "Go defaults security.auto-tls to false");
 }
 
@@ -274,7 +274,7 @@ fn recognized_config_leaves_use_the_shared_config_owner() {
         let path = file.0.to_string_lossy().into_owned();
         let mut args = required();
         args.extend(["--config", &path]);
-        NodeConfig::parse(args).expect("recognized source configuration survives projection");
+        tidb_server::parse_node_config(args).expect("recognized source configuration survives projection");
     }
 }
 
@@ -291,9 +291,9 @@ fn config_check_and_strict_modes_use_source_validation_without_starting_resource
     let path = unknown.0.to_str().unwrap();
     let mut args = required();
     args.extend(["--config", path]);
-    NodeConfig::parse(args.clone()).expect("Go warns by default about unknown config");
+    tidb_server::parse_node_config(args.clone()).expect("Go warns by default about unknown config");
     args.push("--config-strict");
-    assert!(NodeConfig::parse(args)
+    assert!(tidb_server::parse_node_config(args)
         .unwrap_err()
         .to_string()
         .contains("not-a-tidb-option"));
@@ -301,7 +301,7 @@ fn config_check_and_strict_modes_use_source_validation_without_starting_resource
 
 #[test]
 fn config_path_accepts_inline_syntax_and_reports_missing_files() {
-    assert!(NodeConfig::help_text().contains("--config <tidb.toml>"));
+    assert!(tidb_server::node_config_help_text().contains("--config <tidb.toml>"));
     let file = ConfigFile::write("inline", "tmp-storage-quota = -1\n");
     let inline = format!("--config={}", file.0.display());
     let mut args = required()
@@ -309,12 +309,12 @@ fn config_path_accepts_inline_syntax_and_reports_missing_files() {
         .map(str::to_owned)
         .collect::<Vec<_>>();
     args.push(inline);
-    assert!(NodeConfig::parse(args).is_ok());
+    assert!(tidb_server::parse_node_config(args).is_ok());
 
     let mut missing = required();
     missing.extend(["--config", "/private/tmp/does-not-exist-tidb-config.toml"]);
     assert!(matches!(
-        NodeConfig::parse(missing),
+        tidb_server::parse_node_config(missing),
         Err(NodeConfigError::ConfigFile { .. })
     ));
 }
@@ -336,7 +336,7 @@ fn impossible_spill_quota_fails_before_auth_listener_or_cluster_startup() {
     let path = file.0.to_string_lossy().into_owned();
     let mut args = required();
     args.extend(["--config", &path]);
-    let config = NodeConfig::parse(args).unwrap();
+    let config = tidb_server::parse_node_config(args).unwrap();
     let error = run_configured_node(config).unwrap_err();
     assert!(matches!(
         error,
@@ -350,7 +350,7 @@ fn source_tikv_startup_uses_the_shared_catalog() {
     // cmd/tidb-server/main_test.go:50 TestRunMain
     // pkg/config/config_test.go:960 TestConfig
     // pkg/config/store_test.go:23 TestStoreType
-    let config = NodeConfig::parse(required()).unwrap();
+    let config = tidb_server::parse_node_config(required()).unwrap();
     assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
     assert_eq!(config.port, 4000);
     assert_eq!(config.pd_endpoints, ["127.0.0.1:2379", "127.0.0.1:2380"]);
@@ -369,12 +369,12 @@ fn source_tikv_startup_uses_the_shared_catalog() {
 fn source_port_alias_and_long_option_share_one_value_slot() {
     let mut source_alias = required();
     source_alias.extend(["-P", "4406"]);
-    assert_eq!(NodeConfig::parse(source_alias).unwrap().port, 4406);
+    assert_eq!(tidb_server::parse_node_config(source_alias).unwrap().port, 4406);
 
     let mut ambiguous = required();
     ambiguous.extend(["-P", "4406", "--port", "4407"]);
     assert!(matches!(
-        NodeConfig::parse(ambiguous),
+        tidb_server::parse_node_config(ambiguous),
         Err(NodeConfigError::DuplicateOption(option)) if option == "--port"
     ));
 }
@@ -385,14 +385,14 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
     let mut duplicate = required();
     duplicate.extend(["--store", "tikv", "--store", "tikv"]);
     assert!(matches!(
-        NodeConfig::parse(duplicate),
+        tidb_server::parse_node_config(duplicate),
         Err(NodeConfigError::DuplicateOption(option)) if option == "--store"
     ));
 
     let mut mock = required();
     mock.extend(["--store", "mocktikv"]);
     assert!(matches!(
-        NodeConfig::parse(mock),
+        tidb_server::parse_node_config(mock),
         Err(NodeConfigError::UnsupportedStore(store)) if store == "mocktikv"
     ));
 
@@ -400,19 +400,19 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
     let path = file.0.to_string_lossy().into_owned();
     let mut config_file = required();
     config_file.extend(["--config", &path]);
-    assert!(NodeConfig::parse(config_file).is_ok());
+    assert!(tidb_server::parse_node_config(config_file).is_ok());
 
     let mut duplicate_config = required();
     duplicate_config.extend(["--config", &path, "--config", &path]);
     assert!(matches!(
-        NodeConfig::parse(duplicate_config),
+        tidb_server::parse_node_config(duplicate_config),
         Err(NodeConfigError::DuplicateOption(option)) if option == "--config"
     ));
 
     let mut removed_parallel_id = required();
     removed_parallel_id.extend(["--column-id", "3"]);
     assert!(matches!(
-        NodeConfig::parse(removed_parallel_id),
+        tidb_server::parse_node_config(removed_parallel_id),
         Err(NodeConfigError::UnknownOption(option)) if option == "--column-id"
     ));
 }
@@ -423,14 +423,14 @@ fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
     let mut public = required();
     public.extend(["--host", "0.0.0.0"]);
     assert!(matches!(
-        NodeConfig::parse(public),
+        tidb_server::parse_node_config(public),
         Err(NodeConfigError::NonLoopbackHost(address)) if address == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
     ));
 }
 
 #[test]
 fn cluster_privilege_accounts_can_bind_a_non_loopback_listener() {
-    let config = NodeConfig::parse(vec![
+    let config = tidb_server::parse_node_config(vec![
         "tidb-server",
         "--path",
         "172.31.36.41:2379",
@@ -455,7 +455,7 @@ fn ordinary_tikv_startup_defaults_to_persisted_accounts() {
         .position(|argument| *argument == "--auth-file")
         .unwrap();
     missing.drain(option..=option + 1);
-    assert!(NodeConfig::parse(missing).unwrap().load_privileges);
+    assert!(tidb_server::parse_node_config(missing).unwrap().load_privileges);
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn connection_limit_is_go_uint32_with_zero_unlimited() {
         let mut args = required();
         args.extend(["--max-connections", count]);
         assert_eq!(
-            NodeConfig::parse(args).unwrap().max_connections,
+            tidb_server::parse_node_config(args).unwrap().max_connections,
             count.parse::<u32>().unwrap() as usize
         );
     }
@@ -474,7 +474,7 @@ fn connection_limit_is_go_uint32_with_zero_unlimited() {
         let mut args = required();
         args.extend(["--max-connections", count]);
         assert!(matches!(
-            NodeConfig::parse(args),
+            tidb_server::parse_node_config(args),
             Err(NodeConfigError::InvalidValue { option, .. }) if option == "--max-connections"
         ));
     }
@@ -485,17 +485,17 @@ fn connection_timeout_is_positive_explicit_and_documented() {
     let mut args = required();
     args.extend(["--connection-timeout-ms", "1250"]);
     assert_eq!(
-        NodeConfig::parse(args).unwrap().connection_timeout,
+        tidb_server::parse_node_config(args).unwrap().connection_timeout,
         Duration::from_millis(1250)
     );
 
     let mut zero = required();
     zero.extend(["--connection-timeout-ms", "0"]);
     assert!(matches!(
-        NodeConfig::parse(zero),
+        tidb_server::parse_node_config(zero),
         Err(NodeConfigError::InvalidValue { option, .. }) if option == "--connection-timeout-ms"
     ));
-    assert!(NodeConfig::help_text().contains("--connection-timeout-ms"));
+    assert!(tidb_server::node_config_help_text().contains("--connection-timeout-ms"));
 }
 
 #[test]
@@ -505,16 +505,16 @@ fn packet_limit_and_help_are_checked_before_startup() {
     let mut args = required();
     args.extend(["--max-allowed-packet", "0"]);
     assert!(matches!(
-        NodeConfig::parse(args),
+        tidb_server::parse_node_config(args),
         Err(NodeConfigError::InvalidValue { .. })
     ));
     assert_eq!(
-        NodeConfig::parse(["tidb-server", "--help"]),
+        tidb_server::parse_node_config(["tidb-server", "--help"]),
         Err(NodeConfigError::HelpRequested)
     );
-    assert!(NodeConfig::help_text().contains("--store tikv|unistore"));
-    assert!(!NodeConfig::help_text().contains("--read-table"));
-    assert!(!NodeConfig::help_text().contains("--column-id"));
+    assert!(tidb_server::node_config_help_text().contains("--store tikv|unistore"));
+    assert!(!tidb_server::node_config_help_text().contains("--read-table"));
+    assert!(!tidb_server::node_config_help_text().contains("--column-id"));
 }
 
 /// Go `overrideConfig`: `--advertise-address` is what a PEER dials, and
@@ -534,21 +534,21 @@ fn the_advertise_address_follows_gos_resolution() {
     let mut arguments = required();
     arguments.extend(["--advertise-address", "10.0.0.7"]);
     assert_eq!(
-        NodeConfig::parse(arguments).unwrap().advertise_address,
+        tidb_server::parse_node_config(arguments).unwrap().advertise_address,
         "10.0.0.7"
     );
 
     let mut arguments = required();
     arguments.extend(["--host", "127.0.0.1"]);
     assert_eq!(
-        NodeConfig::parse(arguments).unwrap().advertise_address,
+        tidb_server::parse_node_config(arguments).unwrap().advertise_address,
         "127.0.0.1",
         "an unset advertise address falls back to the bind host"
     );
 
     let mut arguments = required();
     arguments.extend(["--advertise-address", "10.0.0.7 10.0.0.9"]);
-    let error = NodeConfig::parse(arguments).unwrap_err();
+    let error = tidb_server::parse_node_config(arguments).unwrap_err();
     assert!(
         format!("{error:?}").contains("advertise-address"),
         "unexpected error: {error:?}"
@@ -558,7 +558,7 @@ fn the_advertise_address_follows_gos_resolution() {
 #[test]
 fn every_store_uses_the_shared_session_without_table_descriptors() {
     for store in ["tikv", "unistore"] {
-        let config = NodeConfig::parse([
+        let config = tidb_server::parse_node_config([
             "tidb-server",
             "--store",
             store,
@@ -590,7 +590,7 @@ fn static_table_options_cannot_select_an_alternate_sql_engine() {
         ];
         command.extend(args);
         assert!(
-            NodeConfig::parse(command).is_err(),
+            tidb_server::parse_node_config(command).is_err(),
             "schema must come from the shared catalog"
         );
     }
@@ -651,8 +651,8 @@ fn unistore_node_exits_when_the_status_port_cannot_bind() {
 
 #[test]
 fn legacy_cluster_session_flag_does_not_change_the_session_owner() {
-    let ordinary = NodeConfig::parse(required()).unwrap();
+    let ordinary = tidb_server::parse_node_config(required()).unwrap();
     let mut legacy = required();
     legacy.push("--cluster-session");
-    assert_eq!(NodeConfig::parse(legacy).unwrap(), ordinary);
+    assert_eq!(tidb_server::parse_node_config(legacy).unwrap(), ordinary);
 }

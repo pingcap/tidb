@@ -808,10 +808,10 @@ fn commit_survives_a_schema_move_under_the_transaction() {
         .control_transaction("BEGIN")
         .expect("begin");
     let statement = session
-        .prepare_general("UPDATE t SET v = 90 WHERE id = 9")
+        .node_conn().prepare_general("UPDATE t SET v = 90 WHERE id = 9")
         .expect("prepare");
     session
-        .execute_general(&statement, &[])
+        .node_conn().execute_general(&statement, &[])
         .expect("update inside the transaction");
 
     // The reloader's shape: a Go peer's DDL bumps the cluster catalog while

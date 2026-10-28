@@ -744,6 +744,7 @@ impl Session {
             }
             let ctx = self.prepared_point_get_context();
             let stmt_ctx = self.statement_context_for_stmt(statement, false);
+            self.publish_fast_point_plan(&execution, statement, &stmt_ctx)?;
             // Go `ExecStmt.Exec` observes the statement's execution begin for
             // every plan it runs, the point-get fast plan included.
             self.notify_before_executor_first_run();
@@ -762,6 +763,74 @@ impl Session {
             Ok(Some(execution)) => self.return_opened_record_set(Ok(execution)).map(Some),
             Err(error) => self.return_opened_record_set(Err(error)).map(Some),
         }
+    }
+
+    /// Go's plan-cache hit for a point read publishes the cached
+    /// `PointGetPlan`: its digest copied from the cache entry
+    /// (`stmtCtx.SetPlanDigest`), the plan marked fast (`IsFastPlan`), the
+    /// compile phase ended, and its encodings left to whoever asks for them
+    /// (`ExecStmt`'s `LazyInfo`).
+    fn publish_fast_point_plan(
+        &mut self,
+        execution: &tidb_executor::PreparedPointGetExecution,
+        statement: &Stmt,
+        stmt_ctx: &tidb_executor::StmtContext,
+    ) -> Result<(), DriverError> {
+        let current_database = self.vars.current_db.clone();
+        let (normalized_plan, plan_digest) = {
+            let catalog = self.lock_catalog()?;
+            execution
+                .plan()
+                .plan_digest()
+                .get_or_init(|| {
+                    // The normalized plan replaces the constants, so the
+                    // first execution's values plan it for every execution.
+                    tidb_executor::bind_statement(statement.clone(), execution.parameters())
+                        .ok()
+                        .and_then(|bound| {
+                            tidb_executor::fast_point_process_plan_info(
+                                &bound,
+                                &catalog,
+                                &current_database,
+                                stmt_ctx,
+                            )
+                        })
+                        .map(|info| (info.normalized_plan, info.plan_digest))
+                        .unwrap_or_default()
+                })
+                .clone()
+        };
+        let source = {
+            let catalog = self.shared_catalog();
+            let statement = statement.clone();
+            let parameters = std::sync::Arc::clone(execution.parameters());
+            let ctx = stmt_ctx.clone().without_process_plan_info();
+            tidb_executor::PlanSource(std::sync::Arc::new(move || {
+                let bound = tidb_executor::bind_statement(statement.clone(), &parameters).ok()?;
+                let catalog = catalog.lock().ok()?;
+                tidb_executor::fast_point_process_plan_info(
+                    &bound,
+                    &catalog,
+                    &current_database,
+                    &ctx,
+                )
+                .map(|info| (info.encoded_plan, info.summary_binary_plan))
+            }))
+        };
+        {
+            let mut info = self
+                .process_plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            info.normalized_plan = normalized_plan;
+            info.plan_digest = plan_digest;
+            info.is_fast_plan = true;
+            info.plan_source = Some(source);
+        }
+        if let Some(observer) = self.statement_phase_observer() {
+            observer(tidb_executor::StatementPhase::PlanReady);
+        }
+        Ok(())
     }
 
     /// Executes a prepared SELECT through the ordinary statement and
@@ -848,6 +917,7 @@ impl Session {
         let schema_version = execution.schema_version();
         let table_names = execution.plan().table_names().to_vec();
         let parameters = execution.parameters();
+        let plan_digest = execution.plan_digest_cell();
         self.set_statement_arbitration_key(prepared.sql());
         self.active_resource_group.clone_from(&self.vars.resource_group);
         self.publish_statement_resource_group();
@@ -868,7 +938,8 @@ impl Session {
             let current_db = self.vars.current_db.clone();
             let stmt_ctx = self
                 .statement_context_for_stmt(statement, false)
-                .with_prepared_params(parameters.clone());
+                .with_prepared_params(parameters.clone())
+                .with_cached_plan_digest(plan_digest);
             self.with_catalog_retrieving(&stmt_ctx, |catalog| {
                 if schema_version != catalog.schema_version() {
                     return Ok(None);

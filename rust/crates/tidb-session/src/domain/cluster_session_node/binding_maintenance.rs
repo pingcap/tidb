@@ -14,7 +14,7 @@
 
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
-use super::{Domain, InternalBindingWriter, QuerySession};
+use super::{Domain, InternalBindingWriter};
 use crate::Session;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -125,7 +125,7 @@ impl InternalSqlRunner for BindingRunner {
     fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
         let sql = self.render(sql, args)?;
         self.session.node_conn().execute_internal(&sql).map_err(driver_error)?;
-        Ok(QuerySession::affected_rows(&self.session))
+        Ok(self.session.affected_rows())
     }
     fn exec_rows(&mut self, sql: &str, args: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {
         let sql = self.render(sql, args)?;

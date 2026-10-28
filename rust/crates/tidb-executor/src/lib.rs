@@ -265,7 +265,8 @@ pub use tidb_infoschema::infoschema_meta;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
-        build_prepared_point_get_plan, build_prepared_select_plan, open_prepared_point_get,
+        build_prepared_point_get_plan, build_prepared_select_plan, fast_point_process_plan_info,
+        open_prepared_point_get,
         run_prepared_point_get, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
         PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
     },
@@ -293,7 +294,7 @@ pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanCompari
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use tidb_stmtctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+pub use tidb_stmtctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_distsql::ReplicaReadType;

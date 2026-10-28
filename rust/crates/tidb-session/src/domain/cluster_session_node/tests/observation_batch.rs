@@ -39,11 +39,11 @@ fn observation_batch_text_and_binary_writes_publish_after_commit_verdict() {
     let sql = "INSERT INTO t (id, v) VALUES (93, 903 + 0)";
     for binary in [false, true] {
         let (mut session, cluster) = open_session();
-        let prepared = binary.then(|| session.prepare_general(sql).unwrap());
+        let prepared = binary.then(|| session.node_conn().prepare_general(sql).unwrap());
         let before = completed(sql);
         cluster.fail_commit.store(true, Ordering::Release);
         let failed = match &prepared {
-            Some(prepared) => session.execute_general(prepared, &[]).map(|_| ()),
+            Some(prepared) => session.node_conn().execute_general(prepared, &[]).map(|_| ()),
             None => session.node_conn().execute_write(sql).map(|_| ()),
         };
         assert!(failed.is_err());
@@ -56,7 +56,7 @@ fn observation_batch_text_and_binary_writes_publish_after_commit_verdict() {
         cluster.fail_commit.store(false, Ordering::Release);
         match &prepared {
             Some(prepared) => {
-                session.execute_general(prepared, &[]).unwrap();
+                session.node_conn().execute_general(prepared, &[]).unwrap();
             }
             None => {
                 session.node_conn().execute_write(sql).unwrap();

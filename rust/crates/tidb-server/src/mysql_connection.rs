@@ -17,7 +17,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufReader, Write};
-use tidb_session::domain::client_socket::{ClientSocket, PeerAddress};
+use crate::client_socket::ClientSocket;
+use tidb_session::domain::peer_address::PeerAddress;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -55,9 +56,10 @@ use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
 use tidb_ast::Stmt;
 
+use crate::driver::{QuerySession, QuerySessionFactory};
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
-    PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    PreparedGeneral, QueryResult, SessionContext, SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 
@@ -1611,7 +1613,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // reaching a connection that is idle between commands wakes it up rather
     // than leaving the row in the process list until the client happens to
     // send something.
-    let close = ConnectionClose::with_socket(stream_for_close);
+    let close = ConnectionClose::with_wake(move || {
+        let _ = stream_for_close.shutdown(std::net::Shutdown::Both);
+    });
     // With mysql --compression-algorithms=zlib,zstd both flags are set, the
     // result is Zlib.
     let (compression, compression_algorithm) = if capabilities & CLIENT_COMPRESS != 0 {
@@ -3445,7 +3449,7 @@ mod connection_alive_tests {
 
 #[cfg(test)]
 mod check_auth_plugin_tests {
-    use tidb_session::domain::client_socket::PeerAddress;
+    use tidb_session::domain::peer_address::PeerAddress;
     use tidb_session::privilege::{
         encode_password_for_plugin, PluginCredential, PrivilegeRegistry,
     };

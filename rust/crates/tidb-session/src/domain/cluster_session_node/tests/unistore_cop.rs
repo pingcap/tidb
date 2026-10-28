@@ -39,9 +39,7 @@ use super::super::{
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
-use crate::domain::session_api::QuerySession;
 use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
-use crate::domain::session_api::QuerySessionFactory;
 
 mod go_executor_protocol;
 
@@ -52,17 +50,18 @@ pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserSto
 fn cop_backed_stack_with_stats_lease(
     stats_lease: Option<crate::domain::node_config::StatsLease>,
 ) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    let mut config = crate::domain::node_config::NodeConfig::parse([
-        "tidb-server",
-        "--store",
-        "unistore",
-        "--port",
-        "0",
-        // Parse-time requirement only: the test passes its own user store
-        // below, so the flag never has to name real rows.
-        "--auth-file",
-        "/dev/null",
-    ])
+    let mut config = crate::domain::node_config::NodeConfig::with_defaults(
+        |config| {
+            config.store = tidb_config::store::StoreType("unistore".to_owned());
+            config.port = 0;
+        },
+        crate::domain::node_config::NodeOptions {
+            // A requirement of the account source only: the test passes its
+            // own user store below, so the option never names real rows.
+            auth_file: Some("/dev/null".to_owned()),
+            ..crate::domain::node_config::NodeOptions::default()
+        },
+    )
     .expect("node config");
     if let Some(stats_lease) = stats_lease {
         config.stats_lease = stats_lease;
@@ -5383,7 +5382,19 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .factory
         .open_session(session_context(79))
         .expect("session opens");
-    let local_instance = "127.0.0.1:0";
+    // Go's test names this instance from `infosync.GetServerInfo()`, as the
+    // cleanup does.
+    let local = stack
+        .factory
+        .server_info
+        .as_ref()
+        .expect("server info")
+        .local_server_info();
+    let local_instance = tidb_domain::serverinfo_syncer::join_host_port(
+        &local.static_info.ip,
+        local.static_info.port,
+    );
+    let local_instance = local_instance.as_str();
     let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
     let old = now
         .add_duration(MySqlDuration::from_nanoseconds(-660_000_000_000, 0).unwrap())
@@ -10406,13 +10417,13 @@ fn prepared_select_replans_after_another_session_changes_columns() {
             &format!("INSERT INTO test.{table} VALUES (1, 10)"),
         );
         let statement = reader
-            .prepare_general(&format!(
+            .node_conn().prepare_general(&format!(
                 "SELECT * FROM test.{table} WHERE id {comparison} ?"
             ))
             .expect("prepare");
         let select = |session: &mut Session| {
             let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = session
-                .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+                .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
                 .expect("execute")
             else {
                 panic!("SELECT returns rows")
@@ -10467,10 +10478,10 @@ fn prepared_update_replans_after_another_session_adds_a_column() {
         "INSERT INTO test.prepared_schema VALUES (1, 10)",
     );
     let statement = writer
-        .prepare_general("UPDATE test.prepared_schema SET v = v + 1 WHERE id = ?")
+        .node_conn().prepare_general("UPDATE test.prepared_schema SET v = v + 1 WHERE id = ?")
         .expect("prepare");
     writer
-        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
         .expect("populate prepared cache");
     // Keep the prepared handle alive while a separate connection publishes DDL.
     rows(
@@ -10478,7 +10489,7 @@ fn prepared_update_replans_after_another_session_adds_a_column() {
         "ALTER TABLE test.prepared_schema ADD COLUMN extra INT DEFAULT 7",
     );
     writer
-        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
         .expect("execute against the new schema");
     assert_eq!(
         displayed(rows(&mut writer, "SELECT * FROM test.prepared_schema")),
@@ -10489,7 +10500,7 @@ fn prepared_update_replans_after_another_session_adds_a_column() {
         "ALTER TABLE test.prepared_schema DROP COLUMN extra",
     );
     writer
-        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
         .expect("execute after dropping the column");
     assert_eq!(
         displayed(rows(&mut writer, "SELECT * FROM test.prepared_schema")),
@@ -10545,7 +10556,7 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
     let statement = writer
-        .prepare_general("UPDATE test.acpess SET v = v + 1 WHERE id = ?")
+        .node_conn().prepare_general("UPDATE test.acpess SET v = v + 1 WHERE id = ?")
         .expect("prepare");
 
     holder
@@ -10561,7 +10572,7 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
         config.pessimistic_txn.pessimistic_auto_commit =
             tidb_config::config_tree::AtomicBool::new(true);
     });
-    let error = match writer.execute_general(&statement, &[PreparedValue::SignedLongLong(1)]) {
+    let error = match writer.node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)]) {
         Err(error) => error,
         Ok(_) => panic!("the held row makes the pessimistic autocommit UPDATE wait"),
     };
@@ -10890,10 +10901,10 @@ fn a_prepared_point_update_locks_its_row_before_reading_it() {
         Some(true)
     );
     let statement = first
-        .prepare_general("UPDATE test.fold SET v = v + 5 WHERE id = ?")
+        .node_conn().prepare_general("UPDATE test.fold SET v = v + 5 WHERE id = ?")
         .expect("prepare");
     let affected = match first
-        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
         .expect("execute")
     {
         crate::domain::session_api::GeneralExecuteOutcome::Write(outcome) => outcome.affected_rows,
@@ -11399,14 +11410,14 @@ fn locking_range_reselects_with_protocol(
             return rows(session, &query);
         }
         let statement = session
-            .prepare_general(&query.replace("w=1 AND d=1", "w=? AND d=?"))
+            .node_conn().prepare_general(&query.replace("w=1 AND d=1", "w=? AND d=?"))
             .expect("prepare locking range");
         let mut selected = Vec::new();
         // Execute the same prepared handle twice, covering retained-plan
         // reconstruction as well as fresh physical executor construction.
         for _ in 0..2 {
             let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = session
-                .execute_general(
+                .node_conn().execute_general(
                     &statement,
                     &[1, 1].map(tidb_protocol::PreparedValue::SignedLongLong),
                 )
@@ -11727,13 +11738,13 @@ fn a_locking_batch_locks_missing_primary_keys() {
         }
         let selected = if prepared {
             let statement = first
-                .prepare_general(&format!(
+                .node_conn().prepare_general(&format!(
                     "SELECT id FROM {table} WHERE (k,id) IN ((?,?),(?,?),(?,?)) FOR UPDATE"
                 ))
                 .expect("prepare batch");
             let params = [10, 1, 20, 2, 20, 2].map(PreparedValue::SignedLongLong);
             let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = first
-                .execute_general(&statement, &params)
+                .node_conn().execute_general(&statement, &params)
                 .expect("execute batch")
             else {
                 panic!("batch returns rows")
@@ -11832,12 +11843,12 @@ fn a_failed_prelocked_update_releases_its_row() {
         Some(true)
     );
     let statement = first
-        .prepare_general("UPDATE test.foldfail SET v = 'not-a-number' WHERE id = ?")
+        .node_conn().prepare_general("UPDATE test.foldfail SET v = 'not-a-number' WHERE id = ?")
         .expect("prepare");
     // The execute outcome borrows the session for its row source, so the
     // error check happens inside a scope that ends before the rollback.
     let failed = {
-        let outcome = first.execute_general(&statement, &[PreparedValue::SignedLongLong(1)]);
+        let outcome = first.node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(1)]);
         outcome.is_err()
     };
     if !failed {
@@ -12117,11 +12128,11 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
         [["1000", "127"]]
     );
     let prepared = session
-        .prepare_general("UPDATE generated_policy SET a=? WHERE id=1")
+        .node_conn().prepare_general("UPDATE generated_policy SET a=? WHERE id=1")
         .unwrap();
     rows(&mut session, "SET sql_mode='STRICT_TRANS_TABLES'");
     let error = session
-        .execute_general(
+        .node_conn().execute_general(
             &prepared,
             &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
         )
@@ -12134,7 +12145,7 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
     );
     rows(&mut session, "SET sql_mode=''");
     session
-        .execute_general(
+        .node_conn().execute_general(
             &prepared,
             &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
         )
@@ -13116,13 +13127,13 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=OFF",
     );
-    let insert = session.prepare_general("INSERT INTO t VALUES (?)").unwrap();
+    let insert = session.node_conn().prepare_general("INSERT INTO t VALUES (?)").unwrap();
     session
         .node_conn()
         .control_transaction("BEGIN PESSIMISTIC")
         .unwrap();
     session
-        .execute_general(&insert, &[PreparedValue::SignedLongLong(1)])
+        .node_conn().execute_general(&insert, &[PreparedValue::SignedLongLong(1)])
         .unwrap();
     assert!(session
         .node_conn()
@@ -13132,7 +13143,7 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         session.in_transaction(),
         "ordinary query errors do not invoke DML abort policy"
     );
-    let error = match session.execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
+    let error = match session.node_conn().execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
         Err(error) => error,
         Ok(_) => panic!("a local duplicate must fail"),
     };
@@ -14445,8 +14456,8 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
     // The connection's COM_QUERY order: parse at the statement boundary,
     // then the write.
     let sql = "CREATE TABLE test.a (id INT PRIMARY KEY) PAGE_CHECKSUM=1 COMPRESSION='zlib'";
-    let parsed = QuerySession::parse_statement(&mut session, sql).unwrap();
-    assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
+    let parsed = session.parse_at_statement_boundary(sql).unwrap();
+    assert!(session.node_conn().execute_stmt(sql, &parsed).unwrap().is_none());
     let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert_eq!(warnings[0][..2], ["Warning", "1064"]);
@@ -14456,8 +14467,8 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
         "{warnings:?}"
     );
     let sql = "CREATE TABLE test.b (a INT)";
-    let parsed = QuerySession::parse_statement(&mut session, sql).unwrap();
-    assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
+    let parsed = session.parse_at_statement_boundary(sql).unwrap();
+    assert!(session.node_conn().execute_stmt(sql, &parsed).unwrap().is_none());
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.a"));
     assert!(
@@ -20901,7 +20912,7 @@ fn prepare_shows_only_the_plan_cache_note() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1910)).unwrap();
     session
-        .prepare_general("FLUSH STATS_DELTA test.nosuch")
+        .node_conn().prepare_general("FLUSH STATS_DELTA test.nosuch")
         .unwrap();
     assert_eq!(
         session
@@ -21039,22 +21050,22 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
             _ => {
                 // The connection's order: one `ExecuteStmt`, then the client's
                 // file for a statement that parked a request for it.
-                let stmt = QuerySession::parse_statement(&mut session, sql).unwrap();
+                let stmt = session.parse_at_statement_boundary(sql).unwrap();
                 let outcome = (|| {
-                    assert!(session.execute_stmt(sql, &stmt)?.is_none(), "{sql} answers no rows");
-                    if session.take_local_infile_request().is_some() {
-                        session.finish_local_infile(data)?;
+                    assert!(session.node_conn().execute_stmt(sql, &stmt)?.is_none(), "{sql} answers no rows");
+                    if session.local_infile_request().is_some() {
+                        session.node_conn().finish_local_infile(data)?;
                     }
                     Ok(crate::domain::session_api::WriteOutcome {
-                        affected_rows: QuerySession::affected_rows(&session),
-                        last_insert_id: QuerySession::last_insert_id(&session),
+                        affected_rows: session.affected_rows(),
+                        last_insert_id: session.statement_last_insert_id(),
                     })
                 })();
                 let actual = match outcome {
                     Ok(outcome) => format!(
                         "ok affected={} msg={:?}",
                         outcome.affected_rows,
-                        String::from_utf8_lossy(&session.statement_info())
+                        session.statement_message()
                     ),
                     Err(error) => error_text(error),
                 };

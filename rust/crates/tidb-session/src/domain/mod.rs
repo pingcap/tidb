@@ -26,7 +26,7 @@ use self::node_config::NodeConfig;
 use self::real_tikv_node::RunConfiguredNodeError;
 use self::session_api::SqlQueryError;
 
-pub mod client_socket;
+pub mod peer_address;
 pub mod session_api;
 pub mod resultset_source;
 pub mod wire_status;
@@ -51,7 +51,6 @@ pub mod cluster_topology;
 pub mod serverinfo_etcd;
 pub mod set_global_vars;
 pub mod node_config;
-pub mod main_flags;
 pub mod real_tikv_node;
 pub mod unistore_node;
 pub(crate) mod embedded_resource_groups;

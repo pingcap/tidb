@@ -882,7 +882,7 @@ fn a_prepare_under_autocommit_off_opens_no_transaction() {
 
     set(&mut reader, "SET autocommit = 0");
     let statement = reader
-        .prepare_general("SELECT v FROM t WHERE id = 1")
+        .node_conn().prepare_general("SELECT v FROM t WHERE id = 1")
         .expect("prepare");
     assert_eq!(
         cluster.begun.load(Ordering::Acquire),
@@ -897,7 +897,7 @@ fn a_prepare_under_autocommit_off_opens_no_transaction() {
         .execute_write("UPDATE t SET v = 99 WHERE id = 1")
         .expect("the outside writer commits after the PREPARE");
 
-    let outcome = reader.execute_general(&statement, &[]).expect("execute");
+    let outcome = reader.node_conn().execute_general(&statement, &[]).expect("execute");
     let GeneralExecuteOutcome::Rows(mut result) = outcome else {
         panic!("a query must answer with rows");
     };
@@ -984,11 +984,11 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
         .expect("seed");
 
     let update = session
-        .prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
+        .node_conn().prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
         .expect("prepare");
     {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &update,
                 &[
                     PreparedValue::SignedLongLong(5),
@@ -1005,11 +1005,11 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
     assert_eq!(value, vec![vec![Datum::Int(15)]], "the bound values landed");
 
     let delete = session
-        .prepare_general("DELETE FROM t WHERE id = ?")
+        .node_conn().prepare_general("DELETE FROM t WHERE id = ?")
         .expect("prepare");
     {
         let outcome = session
-            .execute_general(&delete, &[PreparedValue::SignedLongLong(1)])
+            .node_conn().execute_general(&delete, &[PreparedValue::SignedLongLong(1)])
             .expect("the bound DELETE executes");
         let GeneralExecuteOutcome::Write(outcome) = outcome else {
             panic!("a DELETE answers with an OK, not rows");
@@ -1031,11 +1031,11 @@ fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
         .execute_write("INSERT INTO t (id,v) VALUES (1,10)")
         .unwrap();
     let update = session
-        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .node_conn().prepare_general("UPDATE t SET v = ? WHERE id = ?")
         .unwrap();
     for (id, expected_affected) in [(1, 1), (2, 0)] {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &update,
                 &[
                     PreparedValue::SignedLongLong(25),

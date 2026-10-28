@@ -3050,6 +3050,9 @@ pub(crate) struct CachedSelectPlan {
     statement: tidb_ast::Stmt,
     physical: PhysicalPlan,
     generation: u64,
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest`, shared by every
+    /// execution of this entry.
+    digest: std::sync::Arc<std::sync::OnceLock<(String, String)>>,
 }
 
 impl CachedSelectPlan {
@@ -3058,6 +3061,7 @@ impl CachedSelectPlan {
             statement: self.statement.clone(),
             physical: self.physical.deep_clone(),
             generation: self.generation,
+            digest: std::sync::Arc::clone(&self.digest),
         }
     }
 
@@ -3095,6 +3099,10 @@ impl CachedSelectPlan {
         rebuilt.map_err(CachedPlanBindFailure::rebuild_failed)?;
         self.generation = self.generation.wrapping_add(1);
         Ok(self.generation)
+    }
+
+    pub(crate) fn digest(&self) -> std::sync::Arc<std::sync::OnceLock<(String, String)>> {
+        std::sync::Arc::clone(&self.digest)
     }
 
     pub(crate) fn execution_mut(
@@ -3245,6 +3253,7 @@ pub(crate) fn cached_query_plan(
             statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
             physical,
             generation: 0,
+            digest: std::sync::Arc::default(),
         },
         cacheable,
     ))

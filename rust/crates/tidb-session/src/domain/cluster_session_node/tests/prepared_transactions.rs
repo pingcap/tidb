@@ -37,8 +37,8 @@ use tidb_cluster::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 /// `COM_STMT_PREPARE`/`COM_STMT_EXECUTE` do for a statement neither the point
 /// read nor the write planner claims.
 fn prepared(session: &mut Session, sql: &str) {
-    let statement = session.prepare_general(sql).expect("prepare");
-    session.execute_general(&statement, &[]).expect("execute");
+    let statement = session.node_conn().prepare_general(sql).expect("prepare");
+    session.node_conn().execute_general(&statement, &[]).expect("execute");
 }
 
 /// Binary prepared DML must retain its parsed tree.  Dropping it at PREPARE
@@ -47,7 +47,7 @@ fn prepared(session: &mut Session, sql: &str) {
 fn prepared_dml_retains_the_parse_tree_for_execute() {
     let (mut session, _) = open_session();
     let statement = session
-        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .node_conn().prepare_general("UPDATE t SET v = ? WHERE id = ?")
         .expect("prepare");
     assert!(statement.template().is_some());
 }
@@ -61,12 +61,12 @@ fn prepared_insert_reuses_the_planned_dml() {
 
     let (mut session, _) = open_session();
     let statement = session
-        .prepare_general("INSERT INTO t (id, v) VALUES (?, ?)")
+        .node_conn().prepare_general("INSERT INTO t (id, v) VALUES (?, ?)")
         .expect("prepare");
 
     for (id, expected_cache) in [(101, 0), (102, 1)] {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &statement,
                 &[
                     PreparedValue::SignedLongLong(id),
@@ -102,12 +102,12 @@ fn prepared_insert_with_omitted_column_reuses_common_dml() {
 
     let (mut session, _) = open_session();
     let statement = session
-        .prepare_general("INSERT INTO t (id) VALUES (?)")
+        .node_conn().prepare_general("INSERT INTO t (id) VALUES (?)")
         .expect("prepare");
 
     for (id, expected_cache) in [(111, 0), (112, 1)] {
         let outcome = session
-            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
             .expect("execute");
         assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
         drop(outcome);
@@ -142,12 +142,12 @@ fn prepared_point_update_reuses_the_planned_dml() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let statement = session
-        .prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
+        .node_conn().prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
         .expect("prepare");
 
     for (delta, expected_cache) in [(1, 0), (2, 1)] {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &statement,
                 &[
                     PreparedValue::SignedLongLong(delta),
@@ -180,12 +180,12 @@ fn prepared_point_delete_reuses_the_planned_dml() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
         .expect("seed");
     let statement = session
-        .prepare_general("DELETE FROM t WHERE id = ?")
+        .node_conn().prepare_general("DELETE FROM t WHERE id = ?")
         .expect("prepare");
 
     for (id, expected_cache) in [(1, 0), (2, 1)] {
         let outcome = session
-            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
             .expect("execute");
         assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
         drop(outcome);
@@ -207,10 +207,10 @@ fn prepared_point_update_preserves_typed_handle_coercion() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let statement = session
-        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .node_conn().prepare_general("UPDATE t SET v = ? WHERE id = ?")
         .expect("prepare");
     let outcome = session
-        .execute_general(
+        .node_conn().execute_general(
             &statement,
             &[
                 PreparedValue::SignedLongLong(20),
@@ -229,8 +229,8 @@ fn prepared_point_update_preserves_typed_handle_coercion() {
 /// Reads through the prepared path, so the snapshot under test is the one an
 /// EXECUTE takes.
 fn prepared_rows(session: &mut Session, sql: &str) -> Vec<Vec<Datum>> {
-    let statement = session.prepare_general(sql).expect("prepare");
-    let outcome = session.execute_general(&statement, &[]).expect("execute");
+    let statement = session.node_conn().prepare_general(sql).expect("prepare");
+    let outcome = session.node_conn().execute_general(&statement, &[]).expect("execute");
     let GeneralExecuteOutcome::Rows(mut result) = outcome else {
         panic!("a query must answer with rows");
     };
@@ -351,9 +351,9 @@ fn a_prepared_transaction_that_lost_the_race_fails_at_commit() {
         .node_conn()
         .execute_write("UPDATE t SET v = 50 WHERE id = 1")
         .expect("the statement itself succeeds; nothing is published yet");
-    let statement = loser.prepare_general("COMMIT").expect("prepare commit");
+    let statement = loser.node_conn().prepare_general("COMMIT").expect("prepare commit");
     let error = loser
-        .execute_general(&statement, &[])
+        .node_conn().execute_general(&statement, &[])
         .err()
         .expect("a prewrite at the BEGIN timestamp must lose to a newer commit");
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
@@ -459,9 +459,9 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
             .node_conn()
             .execute_write("UPDATE t SET v = 51 WHERE id = 1")
             .expect("the statement itself succeeds; nothing is published yet");
-        let statement = holder.prepare_general("COMMIT").expect("prepare commit");
+        let statement = holder.node_conn().prepare_general("COMMIT").expect("prepare commit");
         let error = holder
-            .execute_general(&statement, &[])
+            .node_conn().execute_general(&statement, &[])
             .err()
             .expect("the holder loses its own row, where Go's holder wins");
         assert_eq!(
@@ -501,11 +501,11 @@ fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
         .expect("seed");
 
     let statement = session
-        .prepare_general("UPDATE dist SET ytd = ytd + ? WHERE w = ? AND d = ?")
+        .node_conn().prepare_general("UPDATE dist SET ytd = ytd + ? WHERE w = ? AND d = ?")
         .expect("prepare");
     let affected = {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &statement,
                 &[
                     PreparedValue::Double(25.5),
@@ -537,7 +537,7 @@ fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
     prepared(&mut session, "BEGIN");
     let affected = {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &statement,
                 &[
                     PreparedValue::Double(0.5),

@@ -80,7 +80,7 @@ fn config() -> NodeConfig {
 }
 
 fn config_with_token_limit(limit: &str) -> NodeConfig {
-    NodeConfig::parse([
+    tidb_server::parse_node_config([
         "tidb-server",
         "--path",
         "127.0.0.1:2379",

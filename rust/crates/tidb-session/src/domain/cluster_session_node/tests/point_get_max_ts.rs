@@ -85,7 +85,7 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
         .execute_write("INSERT INTO indexed_read VALUES (1, 7, 10), (2, 7, 20), (3, 8, 30)")
         .unwrap();
     let statement = session
-        .prepare_general("SELECT id, v FROM indexed_read WHERE a = ?")
+        .node_conn().prepare_general("SELECT id, v FROM indexed_read WHERE a = ?")
         .unwrap();
     assert!(
         statement.prepared_ast().unwrap().select_plan().is_some(),
@@ -104,7 +104,7 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
     ] {
         let observed = opens_of(&node, || {
             let GeneralExecuteOutcome::Rows(mut result) = session
-                .execute_general(&statement, &[PreparedValue::SignedLongLong(value)])
+                .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(value)])
                 .unwrap()
             else {
                 panic!("expected rows");
@@ -139,11 +139,11 @@ fn prepared_cursor_retains_its_statement_overlay() {
         .node_conn()
         .execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024")
         .unwrap();
-    let prepared = session.prepare_general(
+    let prepared = session.node_conn().prepare_general(
         "SELECT /*+ SET_VAR(tidb_init_chunk_size=8) SET_VAR(tidb_max_chunk_size=128) */ v FROM t WHERE id=?",
     ).unwrap();
     let GeneralExecuteOutcome::Rows(mut result) = session
-        .execute_general(
+        .node_conn().execute_general(
             &prepared,
             &[tidb_protocol::PreparedValue::SignedLongLong(1)],
         )
@@ -223,11 +223,11 @@ fn a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp() {
         ("SELECT v FROM t WHERE id >= ? LIMIT 1", PAID),
         ("SELECT v FROM t WHERE id = ? LIMIT 1", FREE),
     ] {
-        let prepared = session.prepare_general(sql).unwrap();
+        let prepared = session.node_conn().prepare_general(sql).unwrap();
         for value in [1, 2] {
             let opens = opens_of(&node, || {
                 let GeneralExecuteOutcome::Rows(mut result) = session
-                    .execute_general(&prepared, &[PreparedValue::SignedLongLong(value)])
+                    .node_conn().execute_general(&prepared, &[PreparedValue::SignedLongLong(value)])
                     .unwrap()
                 else {
                     panic!("expected rows");
@@ -260,14 +260,14 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
     let (mut session, node) = open_session();
     seed(&mut session);
     let statement = session
-        .prepare_general("SELECT v FROM t WHERE id = ?")
+        .node_conn().prepare_general("SELECT v FROM t WHERE id = ?")
         .expect("prepare");
     let prepared = node.prepared.load(Ordering::Acquire);
 
     let mut answer = Vec::new();
     let opens = opens_of(&node, || {
         let outcome = session
-            .execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
+            .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
             .expect("execute");
         let GeneralExecuteOutcome::Rows(mut result) = outcome else {
             panic!("a query must answer with rows");
@@ -297,12 +297,12 @@ fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
     let (mut session, _) = open_session();
     seed(&mut session);
     let statement = session
-        .prepare_general("SELECT id, v, v FROM t WHERE id = ?")
+        .node_conn().prepare_general("SELECT id, v, v FROM t WHERE id = ?")
         .expect("prepare");
 
     let execute = |session: &mut Session, id| {
         let outcome = session
-            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
             .expect("execute");
         let GeneralExecuteOutcome::Rows(mut result) = outcome else {
             panic!("a query must answer with rows");
@@ -350,13 +350,13 @@ fn a_prepared_range_executes_the_general_cached_plan() {
     let (mut session, node) = open_session();
     seed(&mut session);
     let statement = session
-        .prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
+        .node_conn().prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
         .expect("prepare");
 
     let mut answer = Vec::new();
     let opens = opens_of(&node, || {
         let outcome = session
-            .execute_general(
+            .node_conn().execute_general(
                 &statement,
                 &[
                     PreparedValue::SignedLongLong(1),
@@ -395,7 +395,7 @@ fn preparing_a_range_only_plans_metadata() {
 
     let opens = opens_of(&node, || {
         let statement = session
-            .prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
+            .node_conn().prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
             .expect("prepare");
         assert_eq!(statement.result_columns().len(), 1);
     });
@@ -508,13 +508,13 @@ fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
     );
 
     let statement = session
-        .prepare_general(
+        .node_conn().prepare_general(
             "SELECT /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ v FROM t WHERE id=?",
         )
         .expect("prepare hinted point");
     let opens = opens_of(&node, || {
         let outcome = session
-            .execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
+            .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
             .expect("execute hinted point");
         let GeneralExecuteOutcome::Rows(mut result) = outcome else {
             panic!("a query must answer with rows");
@@ -916,14 +916,14 @@ fn a_prepared_unique_index_point_get_does_not_take_the_shortcut() {
         .execute_write("INSERT INTO u (id, uk, v) VALUES (1, 10, 100), (2, 20, 200)")
         .expect("seed");
     let statement = session
-        .prepare_general("SELECT v FROM u WHERE uk = ?")
+        .node_conn().prepare_general("SELECT v FROM u WHERE uk = ?")
         .expect("prepare");
 
     for (key, expected) in [(10, 100), (20, 200)] {
         let mut answer = Vec::new();
         let opens = opens_of(&node, || {
             let outcome = session
-                .execute_general(&statement, &[PreparedValue::SignedLongLong(key)])
+                .node_conn().execute_general(&statement, &[PreparedValue::SignedLongLong(key)])
                 .expect("execute");
             let GeneralExecuteOutcome::Rows(mut result) = outcome else {
                 panic!("a query must answer with rows");

@@ -128,11 +128,10 @@ fn prepared_joined_update_resolves_targets_again_after_ddl() {
     boot.run("ALTER TABLE t RENAME COLUMN b TO old_b").unwrap();
     boot.run("ALTER TABLE v RENAME COLUMN x TO b").unwrap();
     assert_eq!(denied(&mut bob, "EXECUTE s USING @b").0, 8121);
-    match crate::domain::session_api::QuerySession::execute_general(
-        &mut bob,
-        &binary,
-        &[tidb_protocol::PreparedValue::SignedLongLong(30)],
-    ) {
+    match bob
+        .node_conn()
+        .execute_general(&binary, &[tidb_protocol::PreparedValue::SignedLongLong(30)])
+    {
         Err(error) => assert_eq!(error.code, 8121),
         Ok(_) => panic!("binary EXECUTE must check the newly resolved write table"),
     }
