@@ -5580,6 +5580,12 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaReferConstExtractor()
 		case infoschema.TableTiDBIndexes:
 			p.Extractor = NewInfoSchemaIndexesExtractor()
+		case infoschema.TableTiDBMViews:
+			p.Extractor = NewInfoSchemaTiDBMViewsExtractor()
+		case infoschema.TableTiDBMLogs:
+			p.Extractor = NewInfoSchemaTiDBMLogsExtractor()
+		case infoschema.TableTiDBTableMViewDependencies:
+			p.Extractor = NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
 		case infoschema.TableKeyColumn:
