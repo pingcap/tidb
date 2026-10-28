@@ -475,6 +475,24 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	}
 }
 
+// isAboveRollupAgg reports whether p is built on top of the aggregation fed by expand,
+// rather than on the expand itself (as aggregate arguments are).
+func isAboveRollupAgg(p base.LogicalPlan, expand *logicalop.LogicalExpand) bool {
+	for p != nil {
+		if p == expand {
+			return false
+		}
+		if _, ok := p.(*logicalop.LogicalAggregation); ok {
+			return true
+		}
+		if len(p.Children()) == 0 {
+			return false
+		}
+		p = p.Children()[0]
+	}
+	return false
+}
+
 // buildSubquery translates the subquery ast to plan.
 // Subquery related hints are returned through hintFlags. Please see comments around HintFlagSemiJoinRewrite and PlanBuilder.subQueryHintFlags for details.
 func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
@@ -482,6 +500,15 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	b := planCtx.builder
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
+		if b.currentBlockExpand != nil && isAboveRollupAgg(planCtx.plan, b.currentBlockExpand) {
+			// Above the rollup aggregation, a grouping column referenced by the subquery
+			// must be the expanded one, which is NULL in the super-aggregate rows.
+			for i, col := range outerSchema.Columns {
+				if gCol, ok := b.currentBlockExpand.TrySubstituteExprWithGroupingSetCol(col); ok {
+					outerSchema.Columns[i] = gCol.(*expression.Column)
+				}
+			}
+		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, er.names)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)

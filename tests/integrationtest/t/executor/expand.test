@@ -316,3 +316,18 @@ EXPLAIN SELECT
      ) AS 'PROFIT'
 FROM  (select tr.a as DATE from tr) T0
 GROUP BY T0.DATE WITH ROLLUP;
+
+# correlated subqueries over a rollup see the super-aggregate row's NULL grouping key
+drop table if exists ta, tb;
+create table ta (id int primary key, c0 int);
+create table tb (id int primary key, c0 int, c1 int);
+insert into ta values (1, 10), (2, 20), (3, 30);
+insert into tb values (1, 10, 100), (2, 20, 200), (3, 20, 300);
+--sorted_result
+select c0, grouping(c0) g, (select tb.c1 from tb where tb.c0 = ta.c0 order by tb.c1 limit 1) s from ta group by c0 with rollup;
+--sorted_result
+select c0, grouping(c0) g, exists(select 1 from tb where tb.c0 = ta.c0) ex from ta group by c0 with rollup;
+--sorted_result
+select c0, grouping(c0) g, (select count(*) from tb where tb.c0 = ta.c0) cnt from ta group by c0 with rollup;
+--sorted_result
+select c0, sum((select count(*) from tb where tb.c0 = ta.c0)) s from ta group by c0 with rollup;
