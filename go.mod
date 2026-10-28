@@ -365,14 +365,6 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260928125856-df8de1988559
-
-replace github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
-
-replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260722071941-b41ad2375362
-
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260819031445-84f60546f02f
-
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
@@ -384,3 +376,12 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+// PingKai cross-repository dependency overrides.
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260928125856-df8de1988559
+
+replace github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
+
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260722071941-b41ad2375362
+
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260819031445-84f60546f02f

@@ -1,0 +1,8 @@
+owners:
+  - name: ci-bot
+    email: admin@pingcap.cn
+
+owner_tree:
+  path: .
+  owners:
+    - admin@pingcap.cn

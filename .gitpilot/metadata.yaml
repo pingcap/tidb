@@ -1,0 +1,6 @@
+repo_id: tidb
+branches:
+  release-7.1.9-0:
+    upstream_remote: git@github.com:pingcap/tidb.git
+    upstream_branch: release-8.5
+    upstream_commit: 202b7f47286a1109b5c957401d34c9358d130ae0
