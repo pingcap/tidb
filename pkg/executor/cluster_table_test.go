@@ -118,19 +118,15 @@ func TestClusterTableSlowQueryInMemoryOriginalQuery(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			tk := testkit.NewTestKitWithSession(t, store, tk.Session())
 			tk.MustExec("set global tidb_redact_log = '" + mode + "'")
-			// The remote session must use the global value, independently of the
-			// requesting session's cached value or the previous RPC session.
+			// Reading ignores tidb_redact_log, including a requesting session whose
+			// value differs from the global mode and the coprocessor session.
 			vars := tk.Session().GetSessionVars()
 			vars.EnableRedactLog = vardef.Off
 			if mode == vardef.Off {
 				vars.EnableRedactLog = vardef.On
 			}
-			unredacted := "select 7123456789"
-			if mode == vardef.Off {
-				unredacted = ""
-			}
 			tk.MustQuery("select query, in_memory_original_query from information_schema.cluster_slow_query where query = 'select ?;'").
-				Check(testkit.Rows("select ?; " + unredacted))
+				Check(testkit.Rows("select ?; select 7123456789"))
 		})
 	}
 }

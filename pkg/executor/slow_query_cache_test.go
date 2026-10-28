@@ -21,11 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -235,8 +233,6 @@ func TestSlowQueryCacheDiagnosticModeDoesNotStartOrEnqueue(t *testing.T) {
 
 	// dataForSlowLog must skip the lookup. The column keeps the parsed value.
 	row := []types.Datum{types.NewStringDatum("from-log")}
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().EnableRedactLog = errors.RedactLogEnable
 	retriever := &slowQueryRetriever{
 		inMemoryOriginalQueryIndex: 0,
 		taskList:                   make(chan slowLogTask, 1),
@@ -244,7 +240,7 @@ func TestSlowQueryCacheDiagnosticModeDoesNotStartOrEnqueue(t *testing.T) {
 	resultCh := make(chan parsedSlowLog, 1)
 	resultCh <- parsedSlowLog{rows: [][]types.Datum{row}, keys: []slowQueryKey{key}}
 	retriever.taskList <- slowLogTask{resultCh: resultCh}
-	rows, err := retriever.dataForSlowLog(context.Background(), sctx)
+	rows, err := retriever.dataForSlowLog(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "from-log", rows[0][0].GetString())
 }
@@ -262,6 +258,14 @@ func TestSlowQueryCacheLookupRespectsContext(t *testing.T) {
 func TestSlowQueryCacheAsyncReadWrite(t *testing.T) {
 	cache := newSlowQueryCache()
 	cache.start()
+	// An empty cache returns without queueing a read.
+	missing := slowQueryKeyOf(1, 1, "missing")
+	got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{missing})
+	require.NoError(t, err)
+	require.Equal(t, []string{""}, got)
+	require.Zero(t, len(cache.readCh))
+	require.False(t, cache.hasSQL.Load())
+
 	key := slowQueryKeyOf(7, 1.5, "0123456789abcdef")
 	cache.putIntoCache(key, "select 1;")
 	require.Eventually(t, func() bool {
@@ -281,6 +285,17 @@ func TestSlowQueryCacheEntrypointsWithoutWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, values)
 	require.False(t, cache.running)
+
+	// running is set without a worker. A missing empty-cache check would enqueue
+	// the read and then wait until the context ends.
+	cache.running = true
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	values, err = cache.getUnredactedQueries(ctx, []slowQueryKey{key})
+	require.NoError(t, err)
+	require.Equal(t, []string{""}, values)
+	require.Zero(t, len(cache.readCh))
+	require.False(t, cache.hasSQL.Load())
 }
 
 func TestSlowQueryTimeKeyMatchesSlowLogFormat(t *testing.T) {

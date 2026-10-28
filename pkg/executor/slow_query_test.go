@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -98,8 +97,8 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 }
 
 func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().EnableRedactLog = errors.RedactLogEnable
+	// The lookup does not consult tidb_redact_log. The column is filled whenever
+	// the cache has retained SQL.
 	sqlText := "select secret_value;"
 	key := slowQueryKeyOf(42, 1.5, "mem-digest")
 	// The production Server.Run path starts the process-wide worker before
@@ -122,14 +121,14 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 	resultCh <- parsedSlowLog{rows: [][]types.Datum{row}, keys: []slowQueryKey{key}}
 	retriever.taskList <- slowLogTask{resultCh: resultCh}
 
-	rows, err := retriever.dataForSlowLog(context.Background(), sctx)
+	rows, err := retriever.dataForSlowLog(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, sqlText, rows[0][0].GetString())
 	require.Equal(t, types.EstimatedMemUsage(rows[0], 1), retriever.memTracker.BytesConsumed())
 	require.Equal(t, retriever.lastFetchSize, retriever.memTracker.BytesConsumed())
 
 	close(retriever.taskList)
-	rows, err = retriever.dataForSlowLog(context.Background(), sctx)
+	rows, err = retriever.dataForSlowLog(context.Background())
 	require.NoError(t, err)
 	require.Nil(t, rows)
 	require.Zero(t, retriever.memTracker.BytesConsumed())
@@ -137,32 +136,31 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 
 func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
 	selectStmt := &ast.SelectStmt{Kind: ast.SelectStmtKindSelect}
-	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQuerySelect())
 	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQueryCacheable())
-	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindTable}}).isSlowQuerySelect())
-	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindValues}}).isSlowQuerySelect())
-	require.False(t, (&ExecStmt{StmtNode: &ast.InsertStmt{}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindTable}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindValues}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.InsertStmt{}}).isSlowQueryCacheable())
 	sensitiveStmt := &ast.SetStmt{}
 	_, ok := any(sensitiveStmt).(ast.SensitiveStmtNode)
 	require.True(t, ok)
 	require.False(t, (&ExecStmt{StmtNode: sensitiveStmt}).isSlowQueryCacheable())
-	require.False(t, (&ExecStmt{StmtNode: &ast.SetOprStmt{}}).isSlowQuerySelect())
-	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQuerySelect())
-	require.False(t, (&ExecStmt{}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SetOprStmt{}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{}).isSlowQueryCacheable())
 
 	require.False(t, (&ExecStmt{
 		StmtNode: &ast.ExecuteStmt{},
 		Plan:     &plannercore.Execute{Stmt: selectStmt},
-	}).isSlowQuerySelect())
+	}).isSlowQueryCacheable())
 	require.False(t, (&ExecStmt{
 		StmtNode: &ast.ExecuteStmt{},
 		Plan:     &plannercore.Execute{Stmt: &ast.UpdateStmt{}},
-	}).isSlowQuerySelect())
+	}).isSlowQueryCacheable())
 	require.False(t, (&ExecStmt{
 		StmtNode: &ast.ExecuteStmt{},
 		PsStmt:   &plannercore.PlanCacheStmt{PreparedAst: &ast.Prepared{Stmt: selectStmt}},
-	}).isSlowQuerySelect())
-	require.False(t, (&ExecStmt{StmtNode: selectStmt, isPreparedStmt: true}).isSlowQuerySelect())
+	}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: selectStmt, isPreparedStmt: true}).isSlowQueryCacheable())
 }
 
 func TestParseSlowLogPanic(t *testing.T) {
@@ -661,15 +659,23 @@ select 7;`
 			err = retriever.initialize(context.Background(), sctx)
 			require.NoError(t, err)
 			comment := fmt.Sprintf("compressed: %v, case id: %v", k, i)
+			queryIdx := -1
+			for idx, col := range retriever.outputCols {
+				if col.Name.O == variable.SlowLogQuerySQLStr {
+					queryIdx = idx
+					break
+				}
+			}
+			require.NotEqual(t, -1, queryIdx, comment)
 			if len(retriever.files) > 0 {
 				var reader *bufio.Reader
 				reader, err := retriever.getNextReader()
 				require.NoError(t, err, comment)
 				rows, err := parseLog(retriever, sctx, reader)
 				require.NoError(t, err, comment)
-				require.Equal(t, len(rows), len(cas.querys), comment)
+				require.Equal(t, len(cas.querys), len(rows), comment)
 				for i, row := range rows {
-					require.Equal(t, row[len(row)-1].GetString(), cas.querys[i], comment)
+					require.Equal(t, cas.querys[i], row[queryIdx].GetString(), comment)
 				}
 			}
 

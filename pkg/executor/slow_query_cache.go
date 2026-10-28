@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -48,10 +49,11 @@ type slowQueryKey struct {
 
 // SlowQuery is one cached slow query. Only the unredacted SQL is retained;
 // the key is kept so the slot can be removed from the index when it is reused.
+// Every element of slowQueries is occupied. A slot that no longer holds its
+// original key is identified by comparing Key with the lookup key.
 type SlowQuery struct {
 	Key           slowQueryKey
 	UnredactedSQL string
-	valid         bool
 }
 
 type slowQueryCacheWriteTask struct {
@@ -78,6 +80,9 @@ type slowQueryCache struct {
 	writeCh chan slowQueryCacheWriteTask
 	readCh  chan *slowQueryCacheReadTask
 	running bool
+	// hasSQL is set after the first retained SQL so a lookup can return
+	// without queueing while the cache is empty. It is never cleared.
+	hasSQL atomic.Bool
 
 	slowQueries []SlowQuery
 	writePos    int
@@ -107,9 +112,9 @@ func newSlowQueryCacheWithLimits(capacity int, maxMem int64, chanSize int) *slow
 
 // StartSlowQueryCache starts the process-wide worker that retains plaintext
 // slow-query SQL. Server.Run calls it before accepting connections, whether or
-// not tidb_redact_log is enabled. That setting only decides whether SQL text is
-// recorded and looked up. Extra calls do not start another worker.
-// Diagnostic mode leaves the worker unstarted.
+// not tidb_redact_log is enabled. That setting only decides whether a slow
+// query is inserted. Lookups always read the cache. Extra calls do not start
+// another worker. Diagnostic mode leaves the worker unstarted.
 func StartSlowQueryCache() {
 	globalSlowQueryCache.start()
 }
@@ -208,7 +213,7 @@ func (c *slowQueryCache) getUnredactedQueries(ctx context.Context, keys []slowQu
 	if diagnosticmode.Enabled() {
 		return nil, nil
 	}
-	if !c.checkRunning() {
+	if !c.checkRunning() || !c.hasSQL.Load() {
 		return make([]string, len(keys)), nil
 	}
 
@@ -241,6 +246,9 @@ func (c *slowQueryCache) getUnredactedQueries(ctx context.Context, keys []slowQu
 
 func (c *slowQueryCache) handleRead(task *slowQueryCacheReadTask) {
 	defer close(task.done)
+	if len(c.slowQueries) == 0 {
+		return
+	}
 	for i, key := range task.keys {
 		index, ok := c.locations[key]
 		if !ok || index < 0 || index >= len(c.slowQueries) {
@@ -248,7 +256,7 @@ func (c *slowQueryCache) handleRead(task *slowQueryCacheReadTask) {
 		}
 
 		query := &c.slowQueries[index]
-		if query.valid && query.Key == key {
+		if query.Key == key {
 			task.values[i] = query.UnredactedSQL
 		}
 	}
@@ -284,41 +292,34 @@ func (c *slowQueryCache) handleWrite(task slowQueryCacheWriteTask) {
 func (c *slowQueryCache) appendSlowQuery(key slowQueryKey, sql string) {
 	// A repeated key leaves the older slot in place until the ring reuses it.
 	// The map always refers to the latest insert and is not part of memoryUsage.
-	c.memoryUsage += c.appendDelta(key, sql)
-	c.slowQueries = append(c.slowQueries, SlowQuery{Key: key, UnredactedSQL: sql, valid: true})
+	c.memoryUsage += getSlowQueryValueMemUsage(key, sql)
+	c.slowQueries = append(c.slowQueries, SlowQuery{Key: key, UnredactedSQL: sql})
 	c.locations[key] = len(c.slowQueries) - 1
+	c.hasSQL.Store(true)
 }
 
 func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 	index := c.writePos
 	delta := c.getReplacementDelta(index, key, sql)
 	old := &c.slowQueries[index]
-	if old.valid {
-		if oldIndex, ok := c.locations[old.Key]; ok && oldIndex == index {
-			delete(c.locations, old.Key)
-		}
+	// A duplicate key keeps the older copy until this slot is reused. Drop the
+	// index entry only when it still names this slot.
+	if oldIndex, ok := c.locations[old.Key]; ok && oldIndex == index {
+		delete(c.locations, old.Key)
 	}
 
-	*old = SlowQuery{Key: key, UnredactedSQL: sql, valid: true}
+	*old = SlowQuery{Key: key, UnredactedSQL: sql}
 	c.locations[key] = index
 	c.memoryUsage += delta
 	c.advanceWritePos()
-}
-
-// appendDelta is the memory added by retaining one more SlowQuery.
-func (*slowQueryCache) appendDelta(key slowQueryKey, sql string) int64 {
-	return getSlowQueryValueMemUsage(key, sql)
+	c.hasSQL.Store(true)
 }
 
 // getReplacementDelta is the retained SlowQuery memory change when a slot is
 // overwritten. The index map is not included.
 func (c *slowQueryCache) getReplacementDelta(index int, key slowQueryKey, sql string) int64 {
-	added := getSlowQueryValueMemUsage(key, sql)
 	old := &c.slowQueries[index]
-	if !old.valid {
-		return added
-	}
-	return added - getSlowQueryValueMemUsage(old.Key, old.UnredactedSQL)
+	return getSlowQueryValueMemUsage(key, sql) - getSlowQueryValueMemUsage(old.Key, old.UnredactedSQL)
 }
 
 // getSlowQueryValueMemUsage is one retained SlowQuery: the struct, the SQL bytes, and

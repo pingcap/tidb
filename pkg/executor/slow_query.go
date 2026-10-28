@@ -99,7 +99,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		ctx, e.cancel = context.WithCancel(ctx)
 		e.initializeAsyncParsing(ctx, sctx)
 	}
-	return e.dataForSlowLog(ctx, sctx)
+	return e.dataForSlowLog(ctx)
 }
 
 func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
@@ -260,7 +260,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 	e.parseSlowLog(ctx, sctx, reader, batchSize)
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, error) {
 	var (
 		task slowLogTask
 		ok   bool
@@ -291,9 +291,11 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		accounted := calculateDatumsSize(rows)
 
 		// Diagnostic mode does not read the cache; in_memory_original_query stays at the
-		// zero value set while parsing. A successful lookup returns one string per
-		// key, and parseLog keeps keys aligned with rows.
-		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 && sctx.GetSessionVars().EnableRedactLog != errors.RedactLogDisable {
+		// zero value set while parsing. Lookups do not consult tidb_redact_log.
+		// An empty cache returns the parsed rows without waiting on the worker.
+		// A successful lookup returns one string per key, and parseLog keeps keys
+		// aligned with rows.
+		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 && globalSlowQueryCache.hasSQL.Load() {
 			unredactedQueries, err := globalSlowQueryCache.getUnredactedQueries(ctx, result.keys)
 			if err != nil {
 				return nil, err

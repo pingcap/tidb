@@ -2131,8 +2131,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	}
 
 	var unredactedSQL string
-	// Only non-sensitive SELECT statements are queued. Other statements never
-	// touch the cache channel, and SensitiveStmtNode must never retain its
+	// tidb_redact_log off already writes the original SQL to the slow log, so
+	// skip the cache. ON and MARKER redact that line. Only non-sensitive SELECT
+	// statements are queued, and SensitiveStmtNode must never retain its
 	// original SQL in memory.
 	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQueryCacheable() {
 		// Capture the original text before it is redacted into the slow log line.
@@ -2542,21 +2543,18 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	return sql
 }
 
-// isSlowQuerySelect only admits directly executed SELECT statements to the
-// plaintext cache. Prepared executions, TABLE, and VALUES are excluded.
-func (a *ExecStmt) isSlowQuerySelect() bool {
+// isSlowQueryCacheable reports whether this statement may keep its original SQL
+// in the plaintext slow-query cache. Only a directly executed SELECT qualifies.
+// Prepared executions, TABLE, VALUES, and sensitive statements do not.
+func (a *ExecStmt) isSlowQueryCacheable() bool {
 	if a.isPreparedStmt {
+		return false
+	}
+	if _, sensitive := a.StmtNode.(ast.SensitiveStmtNode); sensitive {
 		return false
 	}
 	sel, ok := a.StmtNode.(*ast.SelectStmt)
 	return ok && sel.Kind == ast.SelectStmtKindSelect
-}
-
-func (a *ExecStmt) isSlowQueryCacheable() bool {
-	if _, sensitive := a.StmtNode.(ast.SensitiveStmtNode); sensitive {
-		return false
-	}
-	return a.isSlowQuerySelect()
 }
 
 func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {

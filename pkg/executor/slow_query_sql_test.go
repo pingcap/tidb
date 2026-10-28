@@ -208,8 +208,13 @@ func TestSlowQueryInMemoryOriginalQuery(t *testing.T) {
 	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select disk_only_999;'").
 		Check(testkit.Rows("select disk_only_999; "))
 
-	// Redact off keeps the plaintext in query and leaves in_memory_original_query empty.
+	// Turning tidb_redact_log off stops new inserts. A query cached while it was
+	// on is still readable; the lookup does not consult the variable.
 	tk.MustExec("set @@global.tidb_redact_log=off")
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query " +
+		"where in_memory_original_query = 'select 123456789'").
+		Check(testkit.Rows("select ?; select 123456789"))
+	// Redact off keeps the plaintext in query and leaves in_memory_original_query empty.
 	tk.MustExec("select 987654321")
 	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select 987654321;'").
 		Check(testkit.Rows("select 987654321; "))
