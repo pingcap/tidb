@@ -504,7 +504,7 @@ pub fn unistore_cluster_session_stack_from(
     // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
     // `TABLESAMPLE REGIONS()` reach them: client-go's `SplitRegions` and
     // `LoadRegionsInKeyRange` over the store, as Go's mockstore runs them.
-    let region_store: Arc<dyn tidb_executor::region_map::RegionStore> = Arc::new(
+    let region_store: Arc<dyn tidb_kv::region_map::RegionStore> = Arc::new(
         tidb_exec::tikv_region_store::TikvRegionStore::new((*tikv_store).clone(), Vec::new()),
     );
     // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the

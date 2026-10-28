@@ -505,7 +505,7 @@ impl Catalog {
         }
         /// Go `SyncWaitStatsLoad`'s deferred `DurationOptimizer.StatsSyncWait`.
         struct RecordStatsSyncWait<'a>(
-            &'a crate::phase_durations::SessionPhaseDurations,
+            &'a tidb_variable::phase_durations::SessionPhaseDurations,
             std::time::Instant,
         );
         impl Drop for RecordStatsSyncWait<'_> {

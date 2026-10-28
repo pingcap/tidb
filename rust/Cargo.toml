@@ -31,6 +31,7 @@ members = [
     "crates/tidb-vardef",
     "crates/tidb-chunk",
     "crates/tidb-executor",
+    "crates/tidb-stmtctx",
     "crates/tidb-ast",
     "crates/tidb-model",
     "crates/tidb-parser",

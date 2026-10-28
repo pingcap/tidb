@@ -19,12 +19,12 @@
 //! (`pkg/executor/split.go`): for every physical table, the regions covering
 //! its record range and then each index range, de-duplicated by region id,
 //! each key rendered by `regionKeyDecoder`. The regions come from the store's
-//! region cache and PD ([`crate::region_map::RegionStore`]).
+//! region cache and PD ([`tidb_kv::region_map::RegionStore`]).
 
 use std::collections::HashSet;
 
 use crate::kv_table::KvTable;
-use crate::region_map::{RegionMeta, RegionStore};
+use tidb_kv::region_map::{RegionMeta, RegionStore};
 use crate::{Catalog, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::Datum;

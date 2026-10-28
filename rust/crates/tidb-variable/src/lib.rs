@@ -18,6 +18,7 @@
 //! package does.
 
 mod error;
+pub mod phase_durations;
 pub mod session_vars;
 pub mod set_hooks;
 pub mod slow_log_rules;

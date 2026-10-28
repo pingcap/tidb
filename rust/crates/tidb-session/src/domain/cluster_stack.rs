@@ -141,7 +141,7 @@ pub fn cluster_session_stack(
     let etcd = crate::domain::real_tikv_node::connect_etcd_client(config);
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
-    let region_store: Arc<dyn tidb_executor::region_map::RegionStore> =
+    let region_store: Arc<dyn tidb_kv::region_map::RegionStore> =
         Arc::new(tidb_exec::tikv_region_store::TikvRegionStore::new(
             tikv_store.clone(),
             config.pd_endpoints.clone(),

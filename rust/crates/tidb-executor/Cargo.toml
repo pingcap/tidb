@@ -18,6 +18,7 @@ tidb-variable = { path = "../tidb-variable" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-table = { path = "../tidb-table" }
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }

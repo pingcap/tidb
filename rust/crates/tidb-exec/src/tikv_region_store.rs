@@ -22,7 +22,7 @@
 //! one `KVStore` to region splitting, and asks PD through that store's PD
 //! HTTP client (Go `store.GetPDHTTPClient()`).
 
-use tidb_executor::region_map::{RegionMeta, RegionStore};
+use tidb_kv::region_map::{RegionMeta, RegionStore};
 use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// Go `tikv.NewBackofferWithVars(ctx, 20000, nil)` in `getTableRegions`.

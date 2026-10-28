@@ -24,7 +24,7 @@
 use tidb_codec::table_key::{
     encode_row_key_with_handle, encode_table_index_prefix, gen_table_prefix, RecordHandle,
 };
-use tidb_executor::region_map::RegionStore;
+use tidb_kv::region_map::RegionStore;
 use tidb_log::{Field, Value};
 use tidb_model::TableInfo;
 

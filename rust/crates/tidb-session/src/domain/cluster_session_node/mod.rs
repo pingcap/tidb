@@ -1025,7 +1025,7 @@ pub struct ClusterSessionFactory {
     session_kv_cache: Arc<Mutex<KvTableTemplates>>,
     /// The store's regions every session of this node reads (Go
     /// `kv.SplittableStore` and the region cache).
-    region_store: Option<Arc<dyn tidb_executor::region_map::RegionStore>>,
+    region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go Domain's single workload-repository worker.
     workload_repository: std::sync::OnceLock<Arc<tidb_workloadrepo::Worker>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
@@ -2119,7 +2119,7 @@ impl ClusterSessionFactory {
     #[must_use]
     pub fn with_region_store(
         mut self,
-        regions: Arc<dyn tidb_executor::region_map::RegionStore>,
+        regions: Arc<dyn tidb_kv::region_map::RegionStore>,
     ) -> Self {
         self.region_store = Some(regions);
         self

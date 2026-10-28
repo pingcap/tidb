@@ -764,7 +764,7 @@ pub struct Session {
     /// The session's store's regions (Go `sctx.GetStore()` as
     /// `kv.SplittableStore` and the region cache), installed by the node; a
     /// session with no store behind it keeps one in-process region map.
-    regions: std::sync::Arc<dyn tidb_executor::region_map::RegionStore>,
+    regions: std::sync::Arc<dyn tidb_kv::region_map::RegionStore>,
     /// Where `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS` read
     /// the cluster's DDL jobs; the catalog's own history without one.
     ddl_job_history_store: Option<std::sync::Arc<dyn DdlJobHistoryStore>>,
@@ -914,7 +914,7 @@ pub struct Session {
     process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
     /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
     /// `DurationWaitTS`, set by the planner and the transaction tier.
-    phase_durations: tidb_executor::phase_durations::SessionPhaseDurations,
+    phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
     /// Go `SessionVars.SQLCPUUsages`: the running statement's TiDB and TiKV
     /// CPU time.
     sql_cpu_usages: Arc<tidb_util::ppcpuusage::SqlCpuUsages>,
@@ -1051,7 +1051,7 @@ impl Session {
             table_storage_stats: None,
             bdr_role_store: None,
             global_ids: None,
-            regions: std::sync::Arc::new(tidb_executor::region_map::LocalRegionStore::default()),
+            regions: std::sync::Arc::new(tidb_kv::region_map::LocalRegionStore::default()),
             ddl_job_history_store: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
@@ -1351,7 +1351,7 @@ impl Session {
     /// Go `SessionVars`' planning-phase clocks, shared with the transaction
     /// tier that waits for the statement's timestamp (`DurationWaitTS`).
     #[must_use]
-    pub fn phase_durations(&self) -> tidb_executor::phase_durations::SessionPhaseDurations {
+    pub fn phase_durations(&self) -> tidb_variable::phase_durations::SessionPhaseDurations {
         self.phase_durations.clone()
     }
 
@@ -1755,14 +1755,14 @@ impl Session {
     /// Installs the session's store's regions.
     pub fn set_region_store(
         &mut self,
-        regions: std::sync::Arc<dyn tidb_executor::region_map::RegionStore>,
+        regions: std::sync::Arc<dyn tidb_kv::region_map::RegionStore>,
     ) {
         self.regions = regions;
     }
 
     /// The session's store's regions (Go `kv.SplittableStore`).
     #[must_use]
-    pub fn region_store(&self) -> std::sync::Arc<dyn tidb_executor::region_map::RegionStore> {
+    pub fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore> {
         std::sync::Arc::clone(&self.regions)
     }
 

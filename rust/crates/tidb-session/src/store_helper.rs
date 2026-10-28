@@ -29,7 +29,7 @@ use tidb_codec::table_key::{
     decode_key_head, decode_record_key, encode_index_seek_key, encode_table_prefix,
     get_table_handle_key_range, KeyHead, RecordHandle, TABLE_PREFIX, TABLE_SPLIT_KEY_LEN,
 };
-use tidb_executor::region_map::RegionStore;
+use tidb_kv::region_map::RegionStore;
 use tidb_executor::{Catalog, TableEntry};
 use tidb_hack::GoToLower;
 use tikv_client::pd_http;

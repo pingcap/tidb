@@ -1946,7 +1946,7 @@ mod tests {
         assert_eq!(flags, vec![ctx.push_down_flags()]);
         assert_eq!(
             flags[0],
-            crate::statement_pushdown::FLAG_IN_INSERT_STMT,
+            tidb_stmtctx::statement_pushdown::FLAG_IN_INSERT_STMT,
             "a strict INSERT tolerates nothing, and says only which statement \
              it is"
         );

@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tidb_datatype::Datum;
-use tidb_executor::region_map::RegionStore;
+use tidb_kv::region_map::RegionStore;
 use tidb_executor::{Catalog, DriverError};
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::logical::mem_table::QueryTimeRange;

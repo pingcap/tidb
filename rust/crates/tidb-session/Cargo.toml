@@ -32,6 +32,8 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }

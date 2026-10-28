@@ -16,6 +16,7 @@
 //! through (with the store's `kv.Client` and `kv.MPPClient`), and a
 //! transaction's staged writes. The coprocessor request a reader builds is
 //! the executor's (`tidb_executor::remote_scan`).
+pub mod region_map;
 pub mod storage;
 pub mod mem_quota;
 pub mod mpp_query;

@@ -27,7 +27,7 @@ use tidb_exec::exec_details::{
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
-use tidb_executor::used_stats::UsedStatsInfoForTable;
+use tidb_stmtctx::used_stats::UsedStatsInfoForTable;
 use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`.
@@ -228,7 +228,7 @@ pub struct JsonSqlWarnForSlowLog {
 }
 
 /// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
-pub use tidb_executor::phase_durations::{DurationOptimizer, RewritePhaseInfo};
+pub use tidb_variable::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
 pub use tidb_util::execdetails::exec_details::KvExecDetails;
 

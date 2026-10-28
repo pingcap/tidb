@@ -32,7 +32,7 @@ const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
 use crate::mem_quota::{OomAction, StatementMemory};
-use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
+use tidb_stmtctx::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;
 use tidb_error::errctx::{ErrGroup, Level, LevelMap};
 use tidb_util::spill_storage::SpillStorage;
@@ -300,7 +300,7 @@ pub struct ProcessPlanInfo {
     pub previous_explain: bool,
     /// Go `StmtCtx.GetUsedStatsInfo(false)`: the statistics planning used,
     /// keyed by physical table id, for the slow log's `Stats`.
-    pub used_stats: BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>,
+    pub used_stats: BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
     /// Go `StmtCtx.IsSyncStatsFailed`.
     pub is_sync_stats_failed: bool,
     /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
@@ -455,7 +455,7 @@ pub struct StmtContextSessionState {
     pub ddl_sql_mode: i64,
     /// The session's store's regions (Go `sctx.GetStore()` as
     /// `kv.SplittableStore` and `helper.Storage`'s region cache).
-    pub regions: Arc<dyn crate::region_map::RegionStore>,
+    pub regions: Arc<dyn tidb_kv::region_map::RegionStore>,
 }
 
 impl Default for StmtContextSessionState {
@@ -491,7 +491,7 @@ impl Default for StmtContextSessionState {
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
             // A context with no store behind it: one in-process region map.
-            regions: Arc::new(crate::region_map::LocalRegionStore::default()),
+            regions: Arc::new(tidb_kv::region_map::LocalRegionStore::default()),
         }
     }
 }
@@ -588,7 +588,7 @@ pub struct StmtContextData {
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
     /// Go `StatementContext.UsedStatsInfo`, keyed by physical table ID.
-    used_stats_info: Arc<Mutex<BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>>>,
+    used_stats_info: Arc<Mutex<BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>>>,
     /// Shared by every rebuilt executor of one statement attempt. Go emits
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
@@ -999,7 +999,7 @@ pub struct StmtContextData {
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     /// Go `SessionVars.RewritePhaseInfo` / `DurationOptimizer`: the
     /// session's planning-phase clocks, which this statement's planner sets.
-    phase_durations: crate::phase_durations::SessionPhaseDurations,
+    phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
     /// Go `SessionVars.SQLCPUUsages`, which point readers charge their TiKV
     /// process time to.
     sql_cpu_usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
@@ -1065,7 +1065,7 @@ pub struct StmtContextData {
     /// tier wrote itself, which Go parses without the client's settings.
     parser_config: tidb_parser::ParserConfig,
     /// See [`StmtContextSessionState::regions`].
-    regions: crate::region_map::StoreRegions,
+    regions: tidb_kv::region_map::StoreRegions,
     /// Go `SessionVars.SQLMode`, the one source of every mode bit this
     /// statement reads: the zero-date and invalid-date modes, strictness,
     /// `ONLY_FULL_GROUP_BY`, `NO_UNSIGNED_SUBTRACTION`,
@@ -1948,7 +1948,7 @@ context_configuration! {
     #[must_use]
     pub fn with_phase_durations(
         mut self,
-        durations: crate::phase_durations::SessionPhaseDurations,
+        durations: tidb_variable::phase_durations::SessionPhaseDurations,
     ) -> Self {
         self.phase_durations = durations;
         self
@@ -2606,7 +2606,7 @@ impl StmtContext {
             enable_vectorized_expression: true,
             parser_config: tidb_parser::ParserConfig::default(),
             ddl_sql_mode: session.ddl_sql_mode,
-            regions: crate::region_map::StoreRegions(session.regions),
+            regions: tidb_kv::region_map::StoreRegions(session.regions),
             ddl_query: String::new(),
             ddl_query_rewrite: Arc::default(),
             hypo_tiflash_replica_writes: Arc::default(),
@@ -3115,7 +3115,7 @@ impl StmtContext {
     /// Go `sctx.GetStore()`'s regions: `SPLIT`, `SHOW TABLE REGIONS` and
     /// `TABLESAMPLE` read and cut them.
     #[must_use]
-    pub fn region_store(&self) -> &Arc<dyn crate::region_map::RegionStore> {
+    pub fn region_store(&self) -> &Arc<dyn tidb_kv::region_map::RegionStore> {
         &self.regions.0
     }
 
@@ -3323,7 +3323,7 @@ impl StmtContext {
     /// The session's planning-phase clocks (Go `SessionVars`'
     /// `RewritePhaseInfo` and `DurationOptimizer`).
     #[must_use]
-    pub fn phase_durations(&self) -> &crate::phase_durations::SessionPhaseDurations {
+    pub fn phase_durations(&self) -> &tidb_variable::phase_durations::SessionPhaseDurations {
         &self.phase_durations
     }
 
@@ -3390,12 +3390,12 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 physical_table_id,
-                crate::used_stats::UsedStatsInfoForTable {
+                tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                     name,
                     version,
                     realtime_count,
                     modify_count,
-                    ..crate::used_stats::UsedStatsInfoForTable::default()
+                    ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
                 },
             );
     }
@@ -3421,12 +3421,12 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = used_stats.entry(physical_table_id).or_insert_with(|| {
-            crate::used_stats::UsedStatsInfoForTable {
+            tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                 name: table_name.to_owned(),
                 version,
                 realtime_count,
                 modify_count,
-                ..crate::used_stats::UsedStatsInfoForTable::default()
+                ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
             }
         });
         let statuses = if is_index {
@@ -3442,7 +3442,7 @@ impl StmtContext {
     pub fn used_stats_info(
         &self,
         physical_table_id: i64,
-    ) -> Option<crate::used_stats::UsedStatsInfoForTable> {
+    ) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
         self.used_stats_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

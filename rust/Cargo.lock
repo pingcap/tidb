@@ -3929,6 +3929,7 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-stmtctx",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -4503,6 +4504,7 @@ dependencies = [
  "tidb-gcworker",
  "tidb-hack",
  "tidb-hint",
+ "tidb-kv",
  "tidb-lexer",
  "tidb-log",
  "tidb-meta",
@@ -4535,6 +4537,7 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
+ "tidb-stmtctx",
  "tidb-stmtsummary",
  "tidb-syssession",
  "tidb-sysutil",
@@ -4805,6 +4808,14 @@ version = "0.0.0"
 dependencies = [
  "tidb-txnkv",
  "tikv-client",
+]
+
+[[package]]
+name = "tidb-stmtctx"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-error",
 ]
 
 [[package]]

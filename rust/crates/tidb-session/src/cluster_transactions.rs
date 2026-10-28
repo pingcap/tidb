@@ -655,7 +655,7 @@ pub struct StatementReadTs {
     current_tso: tidb_executor::CurrentTso,
     observer: Option<crate::process::ProcessTransactionObserver>,
     /// Where the open records Go's `DurationWaitTS`.
-    phase_durations: Option<tidb_executor::phase_durations::SessionPhaseDurations>,
+    phase_durations: Option<tidb_variable::phase_durations::SessionPhaseDurations>,
 }
 
 impl StatementReadTs {
@@ -671,7 +671,7 @@ impl StatementReadTs {
     /// Records the statement's timestamp wait on the session's clocks.
     pub fn with_phase_durations(
         mut self,
-        phase_durations: tidb_executor::phase_durations::SessionPhaseDurations,
+        phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
     ) -> Self {
         self.phase_durations = Some(phase_durations);
         self

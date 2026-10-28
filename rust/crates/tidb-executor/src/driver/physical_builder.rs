@@ -1450,7 +1450,7 @@ fn build_table_sample(
         ranges.extend(
             ctx.region_store()
                 .load_regions_in_key_range(&start, end.as_bytes())
-                .map(|regions| crate::region_map::clip_regions(&regions, &start, end.as_bytes()))
+                .map(|regions| tidb_kv::region_map::clip_regions(&regions, &start, end.as_bytes()))
                 .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?
                 .into_iter()
                 .map(|(start, end)| crate::table_sample::SampleRange {

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-stmtctx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statement context: Go pkg/sessionctx/stmtctx (Rust rewrite)."
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+
+[lints]
+workspace = true
