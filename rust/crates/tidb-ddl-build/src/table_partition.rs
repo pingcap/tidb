@@ -199,14 +199,15 @@ fn build_table_partitioning_inner(
                 &tidb_error::catalog::ast::ERR_SUBPARTITION.generate_with_stack_by_args(&[]),
             ));
         }
+        // Go `FastGen(fmt.Sprintf(...))`: the text replaces the template.
         ctx.append_warning(tidb_util::context::WarnErr::Terror(
-            tidb_util::dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_generate_by_args(&[
-                format!(
-                    "subpartitioning, only using {} partitioning",
+            tidb_util::dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_generate(
+                &format!(
+                    "Unsupported subpartitioning, only using {} partitioning",
                     method.kind.sql()
-                )
-                .into(),
-            ]),
+                ),
+                &[],
+            ),
         ));
     }
 

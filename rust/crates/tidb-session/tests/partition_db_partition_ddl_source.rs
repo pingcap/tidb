@@ -49,6 +49,25 @@ fn assert_partitions_must_be_defined(tk: &mut TestKit, sql: &str) {
 // `[ddl:1500]It is only possible to mix RANGE/LIST partitioning with
 // HASH/KEY partitioning for subpartitioning`
 // (`ast.ErrSubpartition`, raised from `pkg/ddl/partition.go:560`).
+// The two warning rows (db_partition_test.go:427-439): under RANGE or LIST,
+// Go builds the table with the first-level partitioning alone and warns
+// with its own text (`ErrUnsupportedCreatePartition.FastGen`, not the
+// template's).
+#[test]
+fn sub_partitioning_under_range_list_warns_8200() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 \
+         (partition pMax values less than (maxvalue))");
+    tk.must_query("show warnings")
+        .check(["Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"]);
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (a int) partition by list (a) subpartition by key (a) subpartitions 2 \
+         (partition pMax values in (1,3,4))");
+    tk.must_query("show warnings")
+        .check(["Warning 8200 Unsupported subpartitioning, only using LIST partitioning"]);
+}
+
 #[test]
 fn sub_partitioning_hash_key_mix_errors_1500() {
     let mut tk = TestKit::new();
