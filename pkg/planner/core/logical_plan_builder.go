@@ -4550,7 +4550,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				if b.ctx.GetSessionVars().StmtCtx.LockTableIDs == nil {
 					b.ctx.GetSessionVars().StmtCtx.LockTableIDs = make(map[int64]struct{})
 				}
-				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+				lockTableIDs := b.ctx.GetSessionVars().StmtCtx.LockTableIDs
+				lockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+				// Row keys and local index keys of a partitioned table carry the partition ID.
+				if pi := tNameW.TableInfo.GetPartitionInfo(); pi != nil {
+					for _, defs := range [][]model.PartitionDefinition{pi.Definitions, pi.AddingDefinitions, pi.DroppingDefinitions} {
+						for _, def := range defs {
+							lockTableIDs[def.ID] = struct{}{}
+						}
+					}
+				}
 			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.
 			// For OF-alias targets, tName.Schema is empty; falling back to currentDB via getLowerDB would

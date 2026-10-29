@@ -800,3 +800,62 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk.MustExec("commit")
 	}
 }
+
+func TestSelectForUpdateOfPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	// checkLocked tries to lock the rows a = 1 and a = 12 of tbl from tk2 with NOWAIT.
+	checkLocked := func(tbl string, locked bool, comment string) {
+		for _, a := range []int{1, 12} {
+			tk2.MustExec("begin pessimistic")
+			err := tk2.ExecToErr(fmt.Sprintf("select * from %s where a = %d for update nowait", tbl, a))
+			if locked {
+				require.ErrorContains(t, err, "NOWAIT is set", "%s: %s.a = %d", comment, tbl, a)
+			} else {
+				require.NoError(t, err, "%s: %s.a = %d", comment, tbl, a)
+			}
+			tk2.MustExec("rollback")
+		}
+	}
+	cases := []struct {
+		sql              string
+		tLocked, sLocked bool
+	}{
+		{"select * from t where a in (1, 12) for update of t", true, false},
+		{"select * from t t1 where t1.a in (1, 12) for update of t1", true, false},
+		{"select * from t join s on t.a = s.a where t.a in (1, 12) for update of t", true, false},
+		{"select * from t join s on t.b = s.b where t.b in (100, 200) for update of t", true, false},
+		{"select * from t join s on t.a = s.a where t.a in (1, 12) for update of s", false, true},
+	}
+	for _, mode := range []string{"dynamic", "static"} {
+		tk.MustExec("set tidb_partition_prune_mode = '" + mode + "'")
+		for _, part := range []string{
+			"partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+			"partition by hash (a) partitions 4",
+		} {
+			for _, cols := range []string{
+				"a int, b int, key ka (a)",
+				"a int, b int, primary key (a) nonclustered",
+				"a int, b int, primary key (a) clustered",
+				"a int, b int, primary key (a) nonclustered, unique key ub (b) global",
+			} {
+				tk.MustExec("drop table if exists t, s")
+				tk.MustExec("create table t (" + cols + ") " + part)
+				tk.MustExec("create table s (a int, b int, key ka (a))")
+				tk.MustExec("insert into t values (1, 100), (12, 200)")
+				tk.MustExec("insert into s values (1, 100), (12, 200)")
+				for _, c := range cases {
+					comment := fmt.Sprintf("%s, %s, %s, %s", mode, part, cols, c.sql)
+					tk.MustExec("begin pessimistic")
+					tk.MustQuery(c.sql)
+					checkLocked("t", c.tLocked, comment)
+					checkLocked("s", c.sLocked, comment)
+					tk.MustExec("rollback")
+				}
+			}
+		}
+	}
+}
