@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
+use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::VecDeque;
 
 use tidb_datatype::{

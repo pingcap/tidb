@@ -45,7 +45,7 @@ fn one_database(tables: Vec<TableInfo>) -> ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 7,
-        databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
+        databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
             info: DBInfo {
                 id: 5,
                 name: CiString::new("app"),

@@ -206,7 +206,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
             .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
             .collect())
     }
-    fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
         Ok(crate::domain::pipeline_session::result_set_fields(
             self.state.columns(),
             self.state.output_names(),

@@ -29,8 +29,8 @@ use crate::mysql_bootstrap::{
     BootstrapEnvironment, BootstrapLayout,
     BootstrapSplits,
 };
-use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_ddl::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{

@@ -26,7 +26,7 @@
 //! every other node's etcd watch fires instead of waiting out its lease. The
 //! notification is deliberately *after* the commit and deliberately not fatal
 //! — see [`SchemaVersionNotifier`] — and the etcd key, value encoding, and
-//! watch side are documented in [`tidb_cluster::catalog_watch`]'s module doc.
+//! watch side are documented in [`tidb_infoschema_issyncer::catalog_watch`]'s module doc.
 
 use tidb_ddl_build::session_context::DdlSessionContext;
 use std::fmt;
@@ -38,7 +38,7 @@ use tidb_model::{ActionType, Job};
 use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
 
-use tidb_cluster::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation,
@@ -46,11 +46,11 @@ use crate::cluster_ddl::{
     MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan,
 };
 
-use tidb_cluster::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
+use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::ddl_job_table::DdlJobTable;
-use tidb_cluster::pessimistic_lock_error::LockSqlError;
-use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 mod add_index_reorg;
 pub mod delete_range;
@@ -794,7 +794,7 @@ fn refresh_ddl_error_count_limit<S: StoreClient>(
         let result = (|| {
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-            tidb_cluster::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
+            tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
                 .map_err(|error| error.to_string())
         })();
         let finished = tx
@@ -1473,7 +1473,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     upgrading: bool,
     min_job_id: i64,
     backfiller: &dyn IndexBackfiller,
-    auto_ids: Option<&Arc<tidb_cluster::auto_id_client::AutoIdClient>>,
+    auto_ids: Option<&Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
     done_channels: Option<&DdlJobDoneChMap>,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
@@ -2210,7 +2210,7 @@ mod tests {
                 detail: "commit response lost".to_owned(),
             },
         });
-        let error = tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+        let error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
             .expect_err("an unknown commit verdict must not answer success");
         assert!(matches!(
             classify_session_ddl_commit_error(61, error),
@@ -2278,17 +2278,17 @@ mod tests {
 
 /// Preserves the one DDL outcome that is not a failure verdict while mapping
 /// every determinate catalog error to its ordinary client diagnostic.
-pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_cluster::sql_query_error::SqlQueryError {
+pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver::sql_query_error::SqlQueryError {
     match error {
-        ClusterDdlError::Undetermined(_) => tidb_cluster::sql_query_error::SqlQueryError::result_undetermined(),
-        ClusterDdlError::Commit(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
-        ClusterDdlError::IndexBackfill(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
+        ClusterDdlError::Undetermined(_) => tidb_store_driver::sql_query_error::SqlQueryError::result_undetermined(),
+        ClusterDdlError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterDdlError::IndexBackfill(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
         // The wire triple of the persisted job error, labelled with the Go
         // identity only when the refusal was a Go error (a plain one has none).
-        ClusterDdlError::Plan(error) => tidb_cluster::sql_query_error::SqlQueryError::from(
+        ClusterDdlError::Plan(error) => tidb_store_driver::sql_query_error::SqlQueryError::from(
             tidb_error::mysql::MysqlError::from_sql_error(error.to_sql_error()),
         )
         .with_identity(error.identity()),
-        other => tidb_cluster::sql_query_error::SqlQueryError::unknown(other.to_string()),
+        other => tidb_store_driver::sql_query_error::SqlQueryError::unknown(other.to_string()),
     }
 }

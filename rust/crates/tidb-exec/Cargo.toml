@@ -12,6 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-syssession = { path = "../tidb-syssession" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
@@ -19,7 +22,6 @@ tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexu
 tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-keydecoder = { path = "../tidb-keydecoder" }
-tidb-cluster = { path = "../tidb-cluster" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-privilege = { path = "../tidb-privilege" }

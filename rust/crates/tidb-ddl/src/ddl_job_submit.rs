@@ -28,7 +28,7 @@ use tidb_model::{
 };
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_ddl::{DdlAdmissionError, DdlPlanError};
 use crate::ddl_job_table::DdlJobTable;
 

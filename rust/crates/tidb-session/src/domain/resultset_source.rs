@@ -15,7 +15,7 @@
 //! Server-facing result-set source contracts.
 
 use tidb_datatype::Datum;
-use tidb_exec::ResultFieldMetadata;
+use tidb_executor::adapter::ResultFieldMetadata;
 
 /// Statement values read at the metadata/terminal boundary, not before Next.
 pub struct StatementStatus<'a> {

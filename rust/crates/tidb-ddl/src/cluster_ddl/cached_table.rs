@@ -17,7 +17,7 @@
 
 use tidb_error::mysql::MysqlError;
 
-use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 
 /// Go `executor.AlterTable` (anything but one CACHE / NOCACHE spec),
 /// `createIndex`, `dropIndex`, `TruncateTable`, and `renameTable` /

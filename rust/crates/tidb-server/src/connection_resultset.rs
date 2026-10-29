@@ -637,7 +637,7 @@ mod tests {
             std::thread::sleep(self.pull_delay);
             self.inner.next_batch(max_rows)
         }
-        fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
             self.inner.fields()
         }
         fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {

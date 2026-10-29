@@ -3660,7 +3660,7 @@ impl KvTable {
     /// table's handle from its key columns. `lazy_dup_check` is the
     /// statement's `DupKeyCheckLazy` option (Go
     /// `optimizeDupKeyCheckForNormalInsert`). The system-table writers
-    /// (`tidb_cluster::system_row_write`) write through this.
+    /// (`tidb_syssession::system_row_write`) write through this.
     pub fn add_record_with_record_id(
         &mut self,
         row: &[Datum],

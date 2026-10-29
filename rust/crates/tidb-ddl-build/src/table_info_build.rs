@@ -3452,3 +3452,17 @@ fn describe_column_option(option: &ColumnOption) -> &'static str {
         | ColumnOption::Collate(_) => "a key, nullability, default, or comment option",
     }
 }
+
+/// TiDB's shipped DDL mode in UTC, for non-session live compatibility
+/// callers.
+///
+/// Live statement paths must pass their own context through
+/// [`build_table_info_with_context`]. Keeping this constructor explicit makes
+/// the legacy live wrappers deterministic without leaking bootstrap's
+/// `ModeNone` into user DDL.
+pub fn default_ddl_statement_context() -> tidb_sessionctx::StmtContext {
+    tidb_sessionctx::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(tidb_datatype::SessionTimeZone::utc())
+}

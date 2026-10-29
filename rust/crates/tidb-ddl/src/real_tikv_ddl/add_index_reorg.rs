@@ -23,7 +23,7 @@ use tidb_model::JobState;
 use tidb_txnkv::transaction::BufferMutation;
 
 use super::*;
-use tidb_cluster::cluster_catalog::PagedMetaSnapshot;
+use tidb_infoschema::cluster_catalog::PagedMetaSnapshot;
 use crate::cluster_ddl::add_index::{
     AddIndexReorg, ReorgHandle, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY,
     INDEX_ELEMENT_KEY, TEMP_INDEX_PREFIX,

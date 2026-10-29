@@ -97,7 +97,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
 
     /// Every stored row under the DDL's default statement context.
     fn check_constraint_rows(&self, table: &mut KvTable) -> Result<(), KvTableError> {
-        let context = crate::table_info_build::default_ddl_statement_context();
+        let context = tidb_ddl_build::table_info_build::default_ddl_statement_context();
         let rows = table.scan_rows_with_context(&RowDecodeContext::for_query(&context))?;
         for row in rows {
             table.validate_check_constraints(&row, &context)?;
@@ -153,7 +153,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
 /// The session the check's SQL runs in: the job's SQL mode and time zone
 /// over the DDL's default statement context, as a reorganization.
 fn reorg_statement_context(vars: &ReorgSessionVars) -> StmtContext {
-    crate::table_info_build::default_ddl_statement_context()
+    tidb_ddl_build::table_info_build::default_ddl_statement_context()
         .with_ddl_sql_mode(vars.sql_mode)
         .with_lazy_clock(None, vars.time_zone.clone())
         .for_reorg()

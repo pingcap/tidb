@@ -19,7 +19,7 @@
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
-use tidb_exec::{col_names_to_result_fields, ResultFieldMetadata, ResultFieldTypeMetadata};
+use tidb_executor::adapter::{col_names_to_result_fields, ResultFieldMetadata, ResultFieldTypeMetadata};
 
 use crate::SessionRecordSet;
 

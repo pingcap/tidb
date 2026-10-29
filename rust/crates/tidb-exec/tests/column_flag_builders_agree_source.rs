@@ -18,7 +18,7 @@
 //! Go stamps them once, in `processColumnFlags` (`pkg/ddl/add_column.go:1297`),
 //! and this workspace now has one implementation of it too -- in
 //! `tidb_executor::ddl::column_field_type`, called by
-//! `tidb_exec::table_info_build`'s `TableInfo` builder and by the runnable
+//! `tidb_ddl_build::table_info_build`'s `TableInfo` builder and by the runnable
 //! path's `column_types::field_type_of`. This test is the guard on the CALL:
 //! sharing the function stops the two rule sets drifting, but not one builder
 //! forgetting to run it, which is exactly the state this unit found -- the
@@ -36,7 +36,7 @@
 //! while the live builder answered `-10`.
 
 use tidb_datatype::FieldTypeFlags;
-use tidb_exec::table_info_build::build_table_info_with_context;
+use tidb_ddl_build::table_info_build::build_table_info_with_context;
 
 /// Every column shape whose flags come from the TYPE, from a DECLARED
 /// modifier, or from neither -- so a builder that ran the pass on only some of

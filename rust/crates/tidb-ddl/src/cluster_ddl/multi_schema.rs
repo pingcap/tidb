@@ -23,7 +23,7 @@
 
 use super::add_index::{action_step, table_step, AddIndexSubmission, ReorgOutcome};
 use super::*;
-use tidb_cluster::cluster_catalog::MetaPairs;
+use tidb_infoschema::cluster_catalog::MetaPairs;
 use tidb_model::{GoAny, JobArgs, MultiSchemaInfo, SubJob};
 use tidb_txnkv::transaction::BufferMutationOp;
 

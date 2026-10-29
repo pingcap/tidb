@@ -16,7 +16,7 @@
 //! column definition of a resolved result field.
 
 use tidb_datatype::{Charset, Collation, FieldTypeCode};
-use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC};
+use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC};
 use tidb_protocol::{ColumnInfo, TYPE_VAR_STRING};
 
 /// Converts one resolved result field to protocol column metadata.
@@ -161,7 +161,7 @@ fn default_field_length(code: FieldTypeCode) -> u32 {
 #[cfg(test)]
 mod tests {
     use tidb_datatype::{Collation, FieldTypeCode};
-    use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC, UNSIGNED_FLAG};
+    use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC, UNSIGNED_FLAG};
     use tidb_protocol::{ColumnDefault, TYPE_VAR_STRING};
 
     use super::convert_column_info;

@@ -18,6 +18,9 @@
 //! `EXPLAIN ANALYZE` attaches row counters while draining that executor tree;
 //! plain `EXPLAIN` only renders it and never executes the target statement.
 
+
+mod exec;
+pub use exec::*;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};

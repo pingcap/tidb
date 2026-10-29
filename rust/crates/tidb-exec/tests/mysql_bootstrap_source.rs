@@ -15,9 +15,9 @@
 //! A bootstrap is only real if this node's OWN readers can read it back.
 //!
 //! Every assertion here goes through the code paths that serve a live cluster —
-//! [`tidb_cluster::cluster_catalog::load_cluster_catalog`],
-//! [`tidb_cluster::cluster_privilege_load::read_bootstrap_state`], and
-//! [`tidb_cluster::cluster_privilege_load::load_cluster_privileges`] — rather than
+//! [`tidb_infoschema::cluster_catalog::load_cluster_catalog`],
+//! [`tidb_privilege::cluster_privilege_load::read_bootstrap_state`], and
+//! [`tidb_privilege::cluster_privilege_load::load_cluster_privileges`] — rather than
 //! inspecting the mutation list. Writing bytes only this test understands would
 //! prove nothing.
 //!
@@ -28,10 +28,10 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
-use tidb_cluster::cluster_catalog::{
+use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_cluster::cluster_privilege_load::{
+use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
 };
 use tidb_exec::mysql_bootstrap::{

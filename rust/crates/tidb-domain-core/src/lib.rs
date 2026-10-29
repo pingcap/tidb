@@ -37,3 +37,4 @@ pub mod session_time_zone;
 pub mod session_transaction;
 pub mod sys_session;
 pub mod util;
+pub mod real_tikv_privileges;

@@ -23,9 +23,9 @@ use std::time::Duration;
 use tidb_datatype::Datum;
 use tidb_model::{GoShared, GoSharedSlice, Job, JobW};
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::ddl_job_table::{DdlJobTable, DdlJobTableError};
-use tidb_cluster::mysql_system_tables::{
+use tidb_syssession::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
 
@@ -70,14 +70,14 @@ impl MetaSnapshot for SnapshotRef<'_> {
     fn get(
         &mut self,
         key: &[u8],
-    ) -> Result<Option<Vec<u8>>, tidb_cluster::cluster_catalog::ClusterCatalogError> {
+    ) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
         self.0.get(key)
     }
 
     fn scan_prefix(
         &mut self,
         prefix: &[u8],
-    ) -> Result<tidb_cluster::cluster_catalog::MetaPairs, tidb_cluster::cluster_catalog::ClusterCatalogError>
+    ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError>
     {
         self.0.scan_prefix(prefix)
     }
@@ -86,7 +86,7 @@ impl MetaSnapshot for SnapshotRef<'_> {
         &mut self,
         start: &[u8],
         end: &[u8],
-    ) -> Result<tidb_cluster::cluster_catalog::MetaPairs, tidb_cluster::cluster_catalog::ClusterCatalogError>
+    ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError>
     {
         self.0.scan_range(start, end)
     }

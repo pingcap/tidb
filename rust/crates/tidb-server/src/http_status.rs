@@ -47,7 +47,7 @@ impl Drop for StatusServer {
 ///
 /// A closure rather than a snapshot because the node's catalog moves as DDL
 /// lands, and Go answers `/schema` from `GetLatest()` each time.
-pub type SchemaSource = Arc<dyn Fn() -> tidb_cluster::cluster_catalog::ClusterCatalog + Send + Sync>;
+pub type SchemaSource = Arc<dyn Fn() -> tidb_infoschema::cluster_catalog::ClusterCatalog + Send + Sync>;
 
 /// Binds and serves `GET /status` in a background thread.
 pub fn start_status_listener(
@@ -561,7 +561,7 @@ fn settings_response(
 
 /// Go getTableByIDStr searches all schemas by globally unique table ID.
 fn find_table_by_id(
-    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     id: i64,
 ) -> Option<&tidb_model::TableInfo> {
     catalog
@@ -583,7 +583,7 @@ fn find_table_by_id(
 /// `tidb_meta::value`'s serializers.
 fn schema_response(
     path: &str,
-    source: &dyn Fn() -> tidb_cluster::cluster_catalog::ClusterCatalog,
+    source: &dyn Fn() -> tidb_infoschema::cluster_catalog::ClusterCatalog,
 ) -> Option<Result<String, String>> {
     // Go's mux strips the query string before matching, and the handler then
     // reads its own form values from it.
@@ -615,7 +615,7 @@ fn schema_response(
             return Some(match id.parse::<i64>() {
                 Ok(id) => match find_table_by_id(&catalog, id) {
                     Some(found) => {
-                        encode(tidb_cluster::cluster_catalog::stored_table_info_json(found))
+                        encode(tidb_infoschema::cluster_catalog::stored_table_info_json(found))
                     }
                     // Go `getTableByIDStr`'s own message.
                     None => Err(format!(
@@ -634,7 +634,7 @@ fn schema_response(
                 let Some(found) = find_table_by_id(&catalog, id) else {
                     continue;
                 };
-                match encode(tidb_cluster::cluster_catalog::stored_table_info_json(found)) {
+                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(found)) {
                     Ok(body) => {
                         if found_any {
                             out.push(',');
@@ -661,7 +661,7 @@ fn schema_response(
                 if index > 0 {
                     out.push(',');
                 }
-                match encode(tidb_cluster::cluster_catalog::stored_db_info_json(
+                match encode(tidb_infoschema::cluster_catalog::stored_db_info_json(
                     &database.info,
                 )) {
                     Ok(body) => out.push_str(&body),
@@ -706,7 +706,7 @@ fn schema_response(
                 if index > 0 {
                     out.push(',');
                 }
-                match encode(tidb_cluster::cluster_catalog::stored_table_info_json(table)) {
+                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(table)) {
                     Ok(body) => out.push_str(&body),
                     Err(error) => return Some(Err(error)),
                 }
@@ -733,7 +733,7 @@ fn schema_response(
                         .find(|candidate| candidate.name.original().eq_ignore_ascii_case(table))
                 });
             match found {
-                Some(found) => Some(encode(tidb_cluster::cluster_catalog::stored_table_info_json(
+                Some(found) => Some(encode(tidb_infoschema::cluster_catalog::stored_table_info_json(
                     found,
                 ))),
                 None => Some(Err(format!(
@@ -749,8 +749,8 @@ fn schema_response(
 mod schema_route_tests {
     use super::*;
 
-    fn catalog_with(databases: Vec<tidb_cluster::cluster_catalog::LoadedDatabase>) -> SchemaSource {
-        let catalog = tidb_cluster::cluster_catalog::ClusterCatalog {
+    fn catalog_with(databases: Vec<tidb_infoschema::cluster_catalog::LoadedDatabase>) -> SchemaSource {
+        let catalog = tidb_infoschema::cluster_catalog::ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
@@ -762,8 +762,8 @@ mod schema_route_tests {
     fn database(
         name: &str,
         tables: Vec<tidb_model::TableInfo>,
-    ) -> tidb_cluster::cluster_catalog::LoadedDatabase {
-        tidb_cluster::cluster_catalog::LoadedDatabase {
+    ) -> tidb_infoschema::cluster_catalog::LoadedDatabase {
+        tidb_infoschema::cluster_catalog::LoadedDatabase {
             info: tidb_model::DBInfo {
                 id: 2,
                 name: tidb_ast::CiString::new(name),

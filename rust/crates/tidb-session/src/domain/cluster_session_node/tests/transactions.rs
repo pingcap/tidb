@@ -13,7 +13,7 @@ use super::super::*;
 use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_cluster::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
+use tidb_store_driver::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
     UndeterminedTransaction,
@@ -93,7 +93,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
         return;
     }
     use tidb_config::config_tree::config::update_global;
-    use tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with;
+    use tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with;
     use tidb_txnkv::transaction::BufferMutation;
 
     let (session, _) = open_session();

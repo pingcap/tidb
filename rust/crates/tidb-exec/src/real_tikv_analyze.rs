@@ -48,7 +48,7 @@ use crate::cluster_analyze::{
     analyze_independent_index_with_progress, lower_analyze, resolve_analyze_options,
     AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
-use tidb_cluster::cluster_catalog::load_cluster_catalog;
+use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
@@ -59,13 +59,13 @@ use crate::cluster_stats_write::{
     plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta,
     AnalyzeStatsWriteScope, StatsWritePlan,
 };
-use tidb_cluster::cluster_table_storage::{
+use tidb_store_driver::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
-use tidb_cluster::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
-use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_store_driver::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_hack::GoToLower;
 pub use tidb_executor::analyze::{sample_rate_reason, ApproximateTableCountProvider};
 
@@ -742,7 +742,7 @@ fn select_index_tasks(
 /// missing fails later in its own way; it keeps the flush.
 #[must_use]
 pub fn analyze_builds_column_task(
-    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     statement: &AnalyzeStatement,
 ) -> bool {
     let Ok(table) = find_statement_table(catalog, statement) else {
@@ -884,7 +884,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
 }
 
 fn find_statement_table<'catalog>(
-    catalog: &'catalog tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &'catalog tidb_infoschema::cluster_catalog::ClusterCatalog,
     statement: &AnalyzeStatement,
 ) -> Result<&'catalog tidb_model::table_info::TableInfo, ClusterAnalyzeError> {
     catalog
@@ -1673,7 +1673,7 @@ struct AsyncGlobalItem<'a> {
     partitions: Vec<&'a AsyncGlobalPartition>,
 }
 
-fn prepare_async_global_partitions<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
+fn prepare_async_global_partitions<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
     loader: &ClusterStatsLoader,
     definitions: impl IntoIterator<Item = (i64, String)>,
@@ -1739,7 +1739,7 @@ fn merge_global_items_async<S, TZ>(
     killer: &SqlKiller,
 ) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
 where
-    S: tidb_cluster::cluster_catalog::MetaSnapshot,
+    S: tidb_infoschema::cluster_catalog::MetaSnapshot,
     TZ: TimeZone + Sync,
 {
     let mut items = Vec::with_capacity(column_ids.len() + index_ids.len());
@@ -2607,9 +2607,9 @@ fn finish_analyze_save<S: StoreClient>(
     Ok(version)
 }
 
-fn selected_columns<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
+fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>
@@ -2650,9 +2650,9 @@ fn selected_columns<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
     }
 }
 
-fn selected_columns_for_choice<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
+fn selected_columns_for_choice<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     choice: &AnalyzeColumnChoice,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>

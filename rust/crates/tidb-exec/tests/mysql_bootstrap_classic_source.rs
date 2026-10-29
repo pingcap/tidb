@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 use tidb_datatype::{Time, TimeType};
-use tidb_cluster::cluster_catalog::{
+use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
@@ -377,7 +377,7 @@ fn the_first_user_table_is_117() {
 /// the tables the DDL owner and the advisory locks use.
 #[test]
 fn a_keyspace_of_either_layout_is_served_by_name() {
-    use tidb_cluster::cluster_privilege_load::{
+    use tidb_privilege::cluster_privilege_load::{
         load_cluster_privileges, read_bootstrap_state, read_system_tz,
     };
 

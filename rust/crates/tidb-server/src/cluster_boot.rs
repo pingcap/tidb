@@ -179,7 +179,7 @@ mod status_tests {
         .unwrap();
         let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
         let schema: crate::http_status::SchemaSource =
-            Arc::new(|| tidb_cluster::cluster_catalog::ClusterCatalog {
+            Arc::new(|| tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 databases: Vec::new(),
@@ -210,7 +210,7 @@ mod status_tests {
         ])
         .unwrap();
         let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
-        let schema = Arc::new(|| tidb_cluster::cluster_catalog::ClusterCatalog {
+        let schema = Arc::new(|| tidb_infoschema::cluster_catalog::ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             databases: Vec::new(),

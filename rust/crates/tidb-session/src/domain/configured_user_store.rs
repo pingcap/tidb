@@ -833,7 +833,7 @@ mod account_tls_batch_admission_controls {
     use crate::privilege::PrivilegeRegistry;
     use crate::domain::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
     use crate::domain::secure_transport::TransportKind;
-    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_privilege::cluster_privilege_load::LoadedGlobalPriv;
     use crate::privilege::SslType;
 
     #[test]

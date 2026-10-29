@@ -22,7 +22,7 @@
 //! and `StatsMetaCountAndModifyCount` this file follows statement for
 //! statement, minus the `SELECT` — the rows come from the record range, the
 //! way every `mysql.*` read on this node does (see
-//! [`tidb_cluster::mysql_system_tables`]).
+//! [`tidb_syssession::mysql_system_tables`]).
 //!
 //! # The bound encoding, which is the whole correctness question
 //!
@@ -73,8 +73,8 @@ use tidb_stats::{
 };
 use tidb_stats_handle_cache::StatsMetaRow;
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_cluster::mysql_system_tables::{
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_syssession::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, SystemRow,
     SystemTableError, SystemTableView,
 };

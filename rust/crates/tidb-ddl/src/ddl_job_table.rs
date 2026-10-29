@@ -33,12 +33,12 @@ use tidb_datatype::Datum;
 use tidb_model::Job;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_cluster::mysql_system_tables::{
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_syssession::mysql_system_tables::{
     scan_system_table_from_int_handle, scan_system_table_prefixed, SystemRow, SystemTableError,
     SystemTableView,
 };
-use tidb_cluster::system_row_write::{
+use tidb_syssession::system_row_write::{
     delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
 };
 

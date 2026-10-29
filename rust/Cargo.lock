@@ -3420,8 +3420,16 @@ name = "tidb-autoid"
 version = "0.0.0"
 dependencies = [
  "tidb-kv",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-pd-client",
+ "tidb-store-driver",
  "tidb-txnkv",
  "tidb-util",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]
@@ -3475,48 +3483,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-util",
  "tracing",
-]
-
-[[package]]
-name = "tidb-cluster"
-version = "0.0.0"
-dependencies = [
- "reqwest 0.13.4",
- "serde_json",
- "tidb-ast",
- "tidb-autoid",
- "tidb-codec",
- "tidb-config",
- "tidb-datatype",
- "tidb-ddl-build",
- "tidb-deadlockhistory",
- "tidb-distsql",
- "tidb-error",
- "tidb-executor",
- "tidb-expr",
- "tidb-hack",
- "tidb-infoschema-isvalidator",
- "tidb-keydecoder",
- "tidb-kv",
- "tidb-log",
- "tidb-meta",
- "tidb-metadef",
- "tidb-model",
- "tidb-parser",
- "tidb-pd-client",
- "tidb-planner",
- "tidb-privilege",
- "tidb-proto",
- "tidb-store-driver",
- "tidb-table",
- "tidb-tablecodec",
- "tidb-txnkv",
- "tidb-util",
- "tidb-vardef",
- "tikv-client",
- "tokio",
- "tokio-stream",
- "tonic",
 ]
 
 [[package]]
@@ -3606,7 +3572,6 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -3624,6 +3589,8 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-hack",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-keydecoder",
  "tidb-kv",
@@ -3642,6 +3609,7 @@ dependencies = [
  "tidb-proto",
  "tidb-schemaver",
  "tidb-store-driver",
+ "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3722,8 +3690,8 @@ dependencies = [
 name = "tidb-ddl-mock"
 version = "0.0.0"
 dependencies = [
- "tidb-cluster",
  "tidb-ddl",
+ "tidb-infoschema",
  "tidb-model",
 ]
 
@@ -3858,8 +3826,8 @@ dependencies = [
  "rand 0.10.2",
  "serde_json",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-bindinfo",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -3872,6 +3840,8 @@ dependencies = [
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-expr",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-kv",
  "tidb-log",
@@ -3897,6 +3867,7 @@ dependencies = [
  "tidb-stats-handle-util",
  "tidb-store-driver",
  "tidb-syssession",
+ "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -3973,7 +3944,6 @@ dependencies = [
  "tidb-ast",
  "tidb-autoid",
  "tidb-chunk",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-copr",
@@ -3992,6 +3962,8 @@ dependencies = [
  "tidb-expr",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-keydecoder",
  "tidb-keyspace",
@@ -4016,6 +3988,7 @@ dependencies = [
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtsummary",
  "tidb-store-driver",
+ "tidb-syssession",
  "tidb-sysutil",
  "tidb-table",
  "tidb-tablecodec",
@@ -4060,7 +4033,6 @@ dependencies = [
  "tidb-autoid",
  "tidb-bindinfo",
  "tidb-chunk",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-copr",
@@ -4093,6 +4065,7 @@ dependencies = [
  "tidb-planner",
  "tidb-privilege",
  "tidb-proto",
+ "tidb-protocol",
  "tidb-resolve",
  "tidb-sessionctx",
  "tidb-sessionstates",
@@ -4104,6 +4077,7 @@ dependencies = [
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
+ "tidb-store-driver",
  "tidb-sysutil",
  "tidb-table",
  "tidb-tablecodec",
@@ -4203,7 +4177,6 @@ dependencies = [
  "chrono",
  "fail",
  "serde_json",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -4267,6 +4240,7 @@ dependencies = [
  "crossbeam-channel",
  "serde_json",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -4276,6 +4250,7 @@ dependencies = [
  "tidb-expr",
  "tidb-hack",
  "tidb-kv",
+ "tidb-meta",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -4286,8 +4261,31 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-variable",
+]
+
+[[package]]
+name = "tidb-infoschema-issyncer"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tidb-ast",
+ "tidb-autoid",
+ "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-error",
+ "tidb-infoschema",
+ "tidb-infoschema-isvalidator",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-store-driver",
+ "tidb-syssession",
+ "tidb-txnkv",
+ "tidb-util",
 ]
 
 [[package]]
@@ -4302,8 +4300,11 @@ name = "tidb-keydecoder"
 version = "0.0.0"
 dependencies = [
  "serde",
+ "tidb-ast",
  "tidb-codec",
+ "tidb-datatype",
  "tidb-infoschema",
+ "tidb-model",
  "tidb-table",
 ]
 
@@ -4586,8 +4587,12 @@ dependencies = [
  "tidb-datatype",
  "tidb-error",
  "tidb-hack",
+ "tidb-infoschema",
+ "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-syssession",
+ "tidb-txnkv",
  "tidb-util",
 ]
 
@@ -4704,7 +4709,6 @@ dependencies = [
  "tempfile",
  "tidb-ast",
  "tidb-chunk",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-copr",
@@ -4726,6 +4730,8 @@ dependencies = [
  "tidb-expr",
  "tidb-gcworker",
  "tidb-hack",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
  "tidb-keyspace",
  "tidb-log",
  "tidb-meta",
@@ -4738,6 +4744,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-placement",
  "tidb-planner",
+ "tidb-privilege",
  "tidb-proto",
  "tidb-protocol",
  "tidb-resolve",
@@ -4804,9 +4811,9 @@ dependencies = [
  "signal-hook",
  "subtle",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-bindinfo",
  "tidb-chunk",
- "tidb-cluster",
  "tidb-codec",
  "tidb-config",
  "tidb-copr",
@@ -4832,6 +4839,8 @@ dependencies = [
  "tidb-gcutil",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-keyspace",
  "tidb-kv",
@@ -5219,13 +5228,19 @@ dependencies = [
 name = "tidb-store-driver"
 version = "0.0.0"
 dependencies = [
+ "tidb-codec",
  "tidb-config",
+ "tidb-deadlockhistory",
  "tidb-distsql",
+ "tidb-error",
+ "tidb-hack",
  "tidb-kv",
+ "tidb-meta",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-tablecodec",
  "tidb-txnkv",
+ "tidb-util",
  "tidb-vardef",
  "tikv-client",
 ]
@@ -5234,11 +5249,24 @@ dependencies = [
 name = "tidb-syssession"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
  "tidb-ast",
+ "tidb-codec",
  "tidb-datatype",
+ "tidb-ddl-build",
+ "tidb-expr",
+ "tidb-infoschema",
+ "tidb-kv",
+ "tidb-meta",
+ "tidb-metadef",
+ "tidb-model",
  "tidb-parser",
  "tidb-resolve",
+ "tidb-sessionctx",
  "tidb-sqlexec",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-txnkv",
  "tidb-util",
 ]
 
@@ -5280,6 +5308,7 @@ dependencies = [
  "tidb-expr",
  "tidb-hack",
  "tidb-kv",
+ "tidb-meta",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -5287,6 +5316,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
+ "tikv-client",
 ]
 
 [[package]]

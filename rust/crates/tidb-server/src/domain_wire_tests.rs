@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn commit_backoff_error_is_coded_on_the_wire() {
-        let driver_error = tidb_cluster::pessimistic_lock_error::transaction_cause_to_sql_error(
+        let driver_error = tidb_store_driver::pessimistic_lock_error::transaction_cause_to_sql_error(
             &TransactionCause::BackoffExhausted {
                 kind: RegionBackoffKind::StaleCommand,
                 detail: "staleCommand backoffer exhausted".to_owned(),

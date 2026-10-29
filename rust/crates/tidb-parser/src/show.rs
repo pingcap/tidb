@@ -28,6 +28,23 @@ use tidb_lexer::TokenKind;
 
 use crate::{prec, PResult, Parser};
 
+/// A fresh `ShowStmt` of `tp`. Go's `showSimpleTypes` gives the four stats
+/// SHOWs the system table they read (`tableName`, set as
+/// `stmt.Table = mysql.<tableName>`), which is what the planner's privilege
+/// check and `resolveShowStmt` then see.
+fn show_stmt(tp: ShowStmtType) -> ShowStmt {
+    let mut show = ShowStmt::new(tp);
+    let table = match tp {
+        ShowStmtType::StatsMeta => "STATS_META",
+        ShowStmtType::StatsLocked => "STATS_TABLE_LOCKED",
+        ShowStmtType::StatsHistograms => "STATS_HISTOGRAMS",
+        ShowStmtType::StatsBuckets => "STATS_BUCKETS",
+        _ => return show,
+    };
+    show.table = Some(vec!["mysql".to_owned(), table.to_owned()]);
+    show
+}
+
 impl Parser {
     /// Parses the currently typed ordinary `SHOW` inspection forms after the
     /// top-level dispatcher has excluded bindings and security-owned forms.
@@ -54,15 +71,15 @@ impl Parser {
         if self.is_kw("MASTER") {
             self.bump();
             self.expect_keyword_or_ident("STATUS")?;
-            return Ok(AdminStmt::Show(Box::new(ShowStmt::new(ShowStmtType::MasterStatus))));
+            return Ok(AdminStmt::Show(Box::new(show_stmt(ShowStmtType::MasterStatus))));
         }
         if self.is_kw("PRIVILEGES") {
             self.bump();
-            return Ok(AdminStmt::Show(Box::new(ShowStmt::new(ShowStmtType::Privileges))));
+            return Ok(AdminStmt::Show(Box::new(show_stmt(ShowStmtType::Privileges))));
         }
         if self.is_kw("BUILTINS") {
             self.bump();
-            return Ok(AdminStmt::Show(Box::new(ShowStmt::new(ShowStmtType::Builtins))));
+            return Ok(AdminStmt::Show(Box::new(show_stmt(ShowStmtType::Builtins))));
         }
         if let Some(show) = self.parse_common_show_inspection()? {
             return Ok(AdminStmt::Show(Box::new(show)));
@@ -177,7 +194,7 @@ impl Parser {
         };
         if let Some((kind, with_database, with_filter)) = generic {
             self.bump();
-            let mut show = ShowStmt::new(kind);
+            let mut show = show_stmt(kind);
             if with_database {
                 show.db_name = self.parse_show_database_name_opt().unwrap_or_default();
             }
@@ -210,13 +227,13 @@ impl Parser {
             }
             "PRIVILEGES" => {
                 self.bump();
-                Ok(Some(AdminStmt::Show(Box::new(ShowStmt::new(
+                Ok(Some(AdminStmt::Show(Box::new(show_stmt(
                     ShowStmtType::Privileges,
                 )))))
             }
             "BUILTINS" => {
                 self.bump();
-                Ok(Some(AdminStmt::Show(Box::new(ShowStmt::new(
+                Ok(Some(AdminStmt::Show(Box::new(show_stmt(
                     ShowStmtType::Builtins,
                 )))))
             }
@@ -259,7 +276,7 @@ impl Parser {
             "BINDING_CACHE" if self.keyword_or_ident_is_at(1, "STATUS") => {
                 self.bump();
                 self.bump();
-                Ok(Some(AdminStmt::Show(Box::new(ShowStmt::new(
+                Ok(Some(AdminStmt::Show(Box::new(show_stmt(
                     ShowStmtType::BindingCacheStatus,
                 )))))
             }
@@ -288,7 +305,7 @@ impl Parser {
             "SLAVE" if self.keyword_or_ident_is_at(1, "STATUS") => {
                 self.bump();
                 self.bump();
-                Ok(Some(AdminStmt::Show(Box::new(ShowStmt::new(
+                Ok(Some(AdminStmt::Show(Box::new(show_stmt(
                     ShowStmtType::ReplicaStatus,
                 )))))
             }
@@ -324,7 +341,7 @@ impl Parser {
 
     /// A `ShowStmt` of type `tp` followed by Go's `ShowLikeOrWhereOpt`.
     fn show_with_like_or_where(&mut self, tp: ShowStmtType) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(tp);
+        let mut show = show_stmt(tp);
         self.parse_show_like_or_where(&mut show)?;
         Ok(AdminStmt::Show(Box::new(show)))
     }
@@ -343,7 +360,7 @@ impl Parser {
     /// A `ShowStmt` of type `tp` followed by Go's `ShowDatabaseNameOpt` and
     /// `ShowLikeOrWhereOpt`.
     fn show_with_database_name_opt(&mut self, tp: ShowStmtType) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(tp);
+        let mut show = show_stmt(tp);
         show.db_name = self.parse_show_database_name_opt().unwrap_or_default();
         self.parse_show_like_or_where(&mut show)?;
         Ok(AdminStmt::Show(Box::new(show)))
@@ -414,7 +431,7 @@ impl Parser {
         for _ in 0..words {
             self.bump();
         }
-        let mut show = ShowStmt::new(kind);
+        let mut show = show_stmt(kind);
         show.full = full;
         if allow_database {
             show.db_name = self.parse_show_database_name_opt().unwrap_or_default();
@@ -450,7 +467,7 @@ impl Parser {
             } else {
                 None
             };
-            let mut show = ShowStmt::new(ShowStmtType::ImportJobs);
+            let mut show = show_stmt(ShowStmtType::ImportJobs);
             show.import_job_raw = raw;
             show.import_job_id = job_id;
             if !singular {
@@ -473,7 +490,7 @@ impl Parser {
             } else {
                 String::new()
             };
-            let mut show = ShowStmt::new(ShowStmtType::ImportGroups);
+            let mut show = show_stmt(ShowStmtType::ImportGroups);
             show.show_group_key = group_key;
             self.parse_show_like_or_where(&mut show)?;
             return Ok(AdminStmt::Show(Box::new(show)));
@@ -493,7 +510,7 @@ impl Parser {
             return Err(self.err_here("expected DISTRIBUTION JOB or JOBS"));
         };
         self.bump();
-        let mut show = ShowStmt::new(ShowStmtType::DistributionJobs);
+        let mut show = show_stmt(ShowStmtType::DistributionJobs);
         if singular {
             show.distribution_job_id = match self.parse_expr(prec::NONE)? {
                 tidb_ast::Expr::Int(value) => value.parse::<i64>().ok(),
@@ -514,7 +531,7 @@ impl Parser {
     /// Go `parseShowPlacement`: LABELS and the unscoped form take LIKE /
     /// WHERE; the FOR DATABASE / TABLE / PARTITION forms take none.
     fn parse_show_placement_tail(&mut self) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(ShowStmtType::Placement);
+        let mut show = show_stmt(ShowStmtType::Placement);
         if self.token_literal_is_at(0, "LABELS") {
             self.bump();
             show.tp = ShowStmtType::PlacementLabels;
@@ -613,7 +630,7 @@ impl Parser {
         } else {
             None
         };
-        let mut show = ShowStmt::new(ShowStmtType::Profile);
+        let mut show = show_stmt(ShowStmtType::Profile);
         show.show_profile_types = types;
         show.show_profile_args = query_id;
         show.show_profile_limit = limit;
@@ -624,7 +641,7 @@ impl Parser {
         self.expect_kw("MASKING")?;
         self.expect_kw("POLICIES")?;
         self.expect_kw("FOR")?;
-        let mut show = ShowStmt::new(ShowStmtType::MaskingPolicies);
+        let mut show = show_stmt(ShowStmtType::MaskingPolicies);
         show.table = Some(self.parse_table_name()?);
         if self.is_kw("WHERE") {
             self.bump();
@@ -648,7 +665,7 @@ impl Parser {
             return Err(self.err_here("expected WARNINGS or ERRORS"));
         };
         self.bump();
-        let mut show = ShowStmt::new(tp);
+        let mut show = show_stmt(tp);
         show.count_warnings_or_errors = true;
         self.parse_show_like_or_where(&mut show)?;
         Ok(AdminStmt::Show(Box::new(show)))
@@ -662,18 +679,18 @@ impl Parser {
         let show = if self.ident_like_literal_is_at(0, "PLACEMENT") {
             self.bump();
             self.expect_token_literal("POLICY")?;
-            let mut show = ShowStmt::new(ShowStmtType::CreatePlacementPolicy);
+            let mut show = show_stmt(ShowStmtType::CreatePlacementPolicy);
             show.db_name = self.parse_any_token_name();
             show
         } else if self.ident_like_literal_is_at(0, "RESOURCE") {
             self.bump();
             self.expect_token_literal("GROUP")?;
-            let mut show = ShowStmt::new(ShowStmtType::CreateResourceGroup);
+            let mut show = show_stmt(ShowStmtType::CreateResourceGroup);
             show.resource_group_name = self.parse_any_token_name();
             show
         } else if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
             self.bump();
-            let mut show = ShowStmt::new(ShowStmtType::CreateDatabase);
+            let mut show = show_stmt(ShowStmtType::CreateDatabase);
             if self.is_kw("IF") {
                 self.bump();
                 self.expect_kw("NOT")?;
@@ -695,7 +712,7 @@ impl Parser {
                 return Err(self.err_here("unsupported SHOW CREATE object"));
             };
             self.bump();
-            let mut show = ShowStmt::new(tp);
+            let mut show = show_stmt(tp);
             let name = self.parse_table_name()?;
             if tp == ShowStmtType::CreateProcedure {
                 show.procedure = Some(name);
@@ -709,7 +726,7 @@ impl Parser {
 
     /// Go `"SHOW" GlobalScope "VARIABLES" ShowLikeOrWhereOpt`.
     fn parse_show_variables(&mut self) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(ShowStmtType::Variables);
+        let mut show = show_stmt(ShowStmtType::Variables);
         show.global_scope = self.parse_show_global_scope();
         self.expect_kw("VARIABLES")?;
         self.parse_show_like_or_where(&mut show)?;
@@ -730,7 +747,7 @@ impl Parser {
 
     /// Go `"SHOW" GlobalScope "STATUS" ShowLikeOrWhereOpt`.
     fn parse_show_status(&mut self) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(ShowStmtType::Status);
+        let mut show = show_stmt(ShowStmtType::Status);
         show.global_scope = self.parse_show_global_scope();
         self.expect_kw("STATUS")?;
         self.parse_show_like_or_where(&mut show)?;
@@ -757,7 +774,7 @@ impl Parser {
                 .ok_or_else(|| self.err_here("expected table name"))?;
             table = vec![database, object];
         }
-        let mut show = ShowStmt::new(ShowStmtType::Index);
+        let mut show = show_stmt(ShowStmtType::Index);
         show.table = Some(table);
         self.parse_show_like_or_where(&mut show)?;
         Ok(AdminStmt::Show(Box::new(show)))
@@ -765,7 +782,7 @@ impl Parser {
 
     /// Go `"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt`.
     fn parse_show_tables(&mut self) -> PResult<AdminStmt> {
-        let mut show = ShowStmt::new(ShowStmtType::Tables);
+        let mut show = show_stmt(ShowStmtType::Tables);
         if self.is_kw("FULL") {
             self.bump();
             show.full = true;
@@ -787,7 +804,7 @@ impl Parser {
     /// REGIONS / DISTRIBUTIONS take optional partitions, an index, and WHERE.
     fn parse_show_table_inspection(&mut self) -> PResult<AdminStmt> {
         self.expect_kw("TABLE")?;
-        let mut show = ShowStmt::new(ShowStmtType::TableNextRowId);
+        let mut show = show_stmt(ShowStmtType::TableNextRowId);
         show.table = Some(self.parse_table_name()?);
         if self.is_kw("NEXT_ROW_ID") {
             self.bump();
@@ -864,7 +881,7 @@ impl Parser {
         } else {
             return Err(self.err_here("expected FROM or IN"));
         }
-        let mut show = ShowStmt::new(ShowStmtType::Columns);
+        let mut show = show_stmt(ShowStmtType::Columns);
         show.full = full;
         show.extended = extended;
         show.table = Some(self.parse_table_name()?);

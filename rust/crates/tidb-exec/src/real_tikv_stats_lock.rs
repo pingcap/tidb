@@ -24,20 +24,20 @@ use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::StatsLockTransaction;
 use tidb_txnkv::transaction::{BufferMutation, RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_cluster::cluster_catalog::load_cluster_catalog;
+use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_lock::{
     apply_cluster_stats_lock, plan_cluster_delete_lock, plan_cluster_insert_lock,
     plan_cluster_update_meta_delta, plan_cluster_update_meta_version, query_cluster_lock_delta,
     query_cluster_locked_tables, ClusterStatsLockApplyError, ClusterStatsLockError,
     ClusterStatsLockStatement,
 };
-use tidb_cluster::cluster_table_storage::{
+use tidb_store_driver::cluster_table_storage::{
     lock_pessimistic_statement, overlay_staged_mutations, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
-use tidb_cluster::pessimistic_lock_error::LockSqlError;
-use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 
 /// What one committed statistics-lock statement reports to the session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -129,7 +129,7 @@ where
 {
     transaction: &'a SessionTransaction<S>,
     staged: &'a MutationBuffer,
-    catalog: &'a tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &'a tidb_infoschema::cluster_catalog::ClusterCatalog,
     now: Time,
 }
 

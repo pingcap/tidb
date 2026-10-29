@@ -40,7 +40,7 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 /// catalog rebuild would reserve a fresh range and leave a hole in the ids.
 ///
 /// The cluster node implements it over the meta keys
-/// (`tidb_cluster::cluster_auto_id`); tests that only need the old in-process
+/// (`tidb_autoid::cluster_auto_id`); tests that only need the old in-process
 /// behaviour use [`LocalTableAutoIds`].
 pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
     /// The live allocator for `table`, which is stored in database `db_id`.

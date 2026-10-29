@@ -197,7 +197,7 @@ fn foreign_key_global_policy_batch() {
     let mut table = build.template().clone_like_go();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
     assert!(table.indices.is_empty());
-    let catalog = tidb_cluster::cluster_catalog::ClusterCatalog {
+    let catalog = tidb_infoschema::cluster_catalog::ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 1,
@@ -217,8 +217,8 @@ fn foreign_key_global_policy_batch() {
 /// Lowers `statement` into schema `test` under TiDB's default DDL session.
 fn lower_ddl(
     statement: &tidb_ast::Stmt,
-) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, tidb_exec::table_info_build::DdlAdmissionError> {
+) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, tidb_ddl_build::table_info_build::DdlAdmissionError> {
     let context: tidb_ddl::cluster_ddl::DdlContext =
-        std::sync::Arc::new(tidb_exec::table_info_build::default_ddl_statement_context());
+        std::sync::Arc::new(tidb_ddl_build::table_info_build::default_ddl_statement_context());
     tidb_ddl::cluster_ddl::lower_ddl_with_context(statement, "test", &context)
 }

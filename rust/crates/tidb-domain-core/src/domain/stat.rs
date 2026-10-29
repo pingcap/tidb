@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tidb_cluster::catalog_watch::SharedCatalog;
+use tidb_infoschema_issyncer::catalog_watch::SharedCatalog;
 
 use tidb_bindinfo::binding_cache::SharedBindingCache;
 use tidb_variable::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};

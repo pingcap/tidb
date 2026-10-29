@@ -14,7 +14,7 @@
 
 //! Turning a cluster's `mysql.*` rows into this node's live account table.
 //!
-//! [`tidb_cluster::cluster_privilege_load`] reads the rows; this turns them into
+//! [`tidb_privilege::cluster_privilege_load`] reads the rows; this turns them into
 //! the one [`PrivilegeRegistry`] that the login path, `SHOW GRANTS`, and every
 //! privilege check share. The two halves are deliberately separate crates:
 //! `tidb-exec` owns cluster reads and has no idea what a registry is, and this
@@ -33,11 +33,11 @@ use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_cluster::cluster_privilege_load::{
+use tidb_privilege::cluster_privilege_load::{
     ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
     LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
-use tidb_exec::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
+use crate::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use tidb_privilege::PrivilegeRegistry;
@@ -494,7 +494,7 @@ fn run_one_privilege_reload_pass(
 
 #[cfg(test)]
 mod tests {
-    use tidb_cluster::cluster_privilege_load::{
+    use tidb_privilege::cluster_privilege_load::{
         LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant,
     };
     use tidb_privilege::{Account, PrivilegeTypeExt};
@@ -866,8 +866,8 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
-    use tidb_cluster::cluster_privilege_load::ClusterBootstrapState;
-    use tidb_exec::real_tikv_privileges::ClusterAccounts;
+    use tidb_privilege::cluster_privilege_load::ClusterBootstrapState;
+    use crate::real_tikv_privileges::ClusterAccounts;
 
     fn bootstrapped(privileges: ClusterPrivileges) -> ClusterAccounts {
         ClusterAccounts {
@@ -1075,7 +1075,7 @@ mod tests {
 #[cfg(test)]
 mod account_tls_batch_tests {
     use super::*;
-    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_privilege::cluster_privilege_load::LoadedGlobalPriv;
     use tidb_privilege::SslType;
 
     fn policy(json: &str) -> ClusterPrivileges {
@@ -1124,7 +1124,7 @@ mod account_tls_batch_tests {
 #[cfg(test)]
 mod account_tls_batch_policy_controls {
     use super::*;
-    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_privilege::cluster_privilege_load::LoadedGlobalPriv;
     use tidb_privilege::SslType;
 
     #[test]

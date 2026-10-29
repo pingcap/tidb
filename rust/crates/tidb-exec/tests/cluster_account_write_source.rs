@@ -25,11 +25,11 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
-use tidb_cluster::cluster_account_write::{AccountWriteError, AccountWritePlan};
-use tidb_cluster::cluster_catalog::{
+use tidb_privilege::cluster_account_write::{AccountWriteError, AccountWritePlan};
+use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_cluster::cluster_privilege_load::{
+use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant,
     LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
@@ -63,7 +63,7 @@ fn plan_account_write(
     now: Time,
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut snapshot = store.clone();
-    tidb_cluster::cluster_account_write::plan_account_write(
+    tidb_privilege::cluster_account_write::plan_account_write(
         &mut snapshot,
         catalog,
         desired,
@@ -625,7 +625,7 @@ fn expiry_policy_roundtrips_typed_null_never_and_original_epoch() {
 
 #[test]
 fn history_policy_attributes_and_microsecond_keys_roundtrip_without_rewrites() {
-    use tidb_cluster::cluster_privilege_load::LoadedPasswordHistory;
+    use tidb_privilege::cluster_privilege_load::LoadedPasswordHistory;
     let mut store = bootstrapped();
     let mut image = store.accounts();
     let attributes = r#"{"Password_locking":{"failed_login_attempts":3,"password_lock_time_days":-1,"failed_login_count":2,"auto_account_locked":"Y","auto_locked_last_changed":"Sat Feb  3 04:05:06 UTC 2001"},"metadata":{"email":"kept@example.test"},"additional_password":"kept"}"#;
@@ -688,7 +688,7 @@ fn history_policy_attributes_and_microsecond_keys_roundtrip_without_rewrites() {
 
 #[test]
 fn account_tls_batch_durable_global_priv_roundtrip_update_rename_and_delete() {
-    use tidb_cluster::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_privilege::cluster_privilege_load::LoadedGlobalPriv;
     let assert_policy = |mut actual: Vec<LoadedGlobalPriv>, mut expected: Vec<LoadedGlobalPriv>| {
         // Stored key order can change when rename replaces the identity.
         actual.sort_by(|a, b| (&a.host, &a.user).cmp(&(&b.host, &b.user)));

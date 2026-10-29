@@ -17,7 +17,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use tidb_cluster::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_ddl::ddl_job_scheduler::SchemaLoader;
 use tidb_ddl::ddl_systable::{Manager, SystemTableManagerError};
 use tidb_model::JobW;

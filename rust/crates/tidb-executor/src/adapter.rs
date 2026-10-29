@@ -18,6 +18,9 @@
 //! this policy before publishing to `tidb-stmtsummary`. Detailed statement
 //! measurements and slow-log rule evaluation remain separate obligations.
 
+mod result_fields;
+pub use result_fields::*;
+
 /// The statement kinds `SummaryStmt` special-cases.
 ///
 /// Go: `pkg/executor/adapter.go:2204, 2217`.

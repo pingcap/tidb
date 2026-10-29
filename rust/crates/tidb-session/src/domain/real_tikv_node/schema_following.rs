@@ -9,7 +9,7 @@
 //! availability property for a latency one.
 
 use super::*;
-use tidb_cluster::real_tikv_catalog::note_reload;
+use tidb_infoschema_issyncer::real_tikv_catalog::note_reload;
 use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 
 /// Connects the node's one etcd client (Go `domain.NewDomain`'s
@@ -328,7 +328,7 @@ where
 /// what Go's reload loop does with a failed `Reload`.
 ///
 /// `startup_lease_grant_ts` is the timestamp `startup` was read at
-/// ([`tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at`]).
+/// ([`tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at`]).
 pub fn spawn_catalog_reloader<S>(
     startup: ClusterCatalog,
     startup_lease_grant_ts: u64,
@@ -377,7 +377,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_cluster::cluster_catalog::LoadedDatabase;
+    use tidb_infoschema::cluster_catalog::LoadedDatabase;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
     use tidb_model::table_info::TableInfo;

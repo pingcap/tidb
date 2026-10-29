@@ -46,12 +46,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_cluster::cluster_account_write::{plan_account_write, AccountWriteError};
-use tidb_cluster::cluster_auto_id::ClusterAutoIdStore;
-use tidb_cluster::cluster_catalog::load_cluster_catalog;
-use tidb_cluster::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
+use tidb_privilege::cluster_account_write::{plan_account_write, AccountWriteError};
+use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
+use tidb_infoschema::cluster_catalog::load_cluster_catalog;
+use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
-use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
@@ -60,7 +60,7 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
 use crate::errors::cluster_commit_error;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
 /// transaction (Go's autoid allocator, `RunInNewTxn`), never below

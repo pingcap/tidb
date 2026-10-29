@@ -46,18 +46,18 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
-use tidb_cluster::cluster_sysvar_load::load_cluster_sysvars;
-use tidb_cluster::cluster_sysvar_write::plan_sysvar_write;
+use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
+use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
-use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 
 use crate::errors::cluster_commit_error;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored `SET GLOBAL` overrides.
 ///
@@ -474,7 +474,7 @@ where
                     ));
                 }
                 plan.mutations.push(
-                    tidb_cluster::cluster_sysvar_write::metadata_lock_mutation(enable)
+                    tidb_syssession::cluster_sysvar_write::metadata_lock_mutation(enable)
                         .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
                 );
             }
@@ -508,7 +508,7 @@ where
             &changed,
             commit_ts,
             || {
-                tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
+                crate::real_tikv_privileges::load_sysvars_from_cluster(
                     &self.reload_opener,
                     self.timeout,
                 )
@@ -656,7 +656,7 @@ impl SysvarReloader {
             interval,
             publication_fence,
             Box::new(move || {
-                tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(&opener, timeout)
+                crate::real_tikv_privileges::load_sysvars_from_cluster(&opener, timeout)
                     .map_err(|error| error.to_string())
             }),
         )

@@ -11,9 +11,24 @@ description = "TiDB system-internal session ownership and pooling."
 workspace = true
 
 [dependencies]
+tidb-codec = { path = "../tidb-codec" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-model = { path = "../tidb-model" }
+tidb-table = { path = "../tidb-table" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-util = { path = "../tidb-util" }
 tidb-parser = { path = "../tidb-parser" }
+
+[dev-dependencies]
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+serde_json = { workspace = true }

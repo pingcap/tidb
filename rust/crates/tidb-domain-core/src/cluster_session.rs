@@ -34,10 +34,10 @@
 //! rather than making the table silently disappear -- the same choice
 //! [`configure_loaded_table`] makes for the bounded read path.
 //!
-//! [`configure_loaded_table`]: tidb_cluster::cluster_catalog::configure_loaded_table
+//! [`configure_loaded_table`]: tidb_infoschema::cluster_catalog::configure_loaded_table
 
 use std::sync::{Arc, Mutex};
-use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
@@ -672,7 +672,7 @@ use super::*;
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
+            databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
                     id: 5,
                     name: CiString::new("app"),

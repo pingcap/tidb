@@ -24,7 +24,7 @@
 //! # Why this is shared rather than per-tier
 //!
 //! There are two `CREATE TABLE` metadata builders in this workspace --
-//! `tidb_executor::ddl`'s runnable-path one and `tidb_exec::table_info_build`'s
+//! `tidb_executor::ddl`'s runnable-path one and `crate::table_info_build`'s
 //! `TableInfo` one -- and four of the accept-then-discard bugs this campaign
 //! found were the two disagreeing about the same statement. Their column-type
 //! halves had drifted apart on five separate rules; captured from real TiDB

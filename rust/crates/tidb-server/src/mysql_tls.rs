@@ -946,8 +946,8 @@ mod tiflash_cluster_http_tests {
             String::new(),
             vec![],
         );
-        let catalog = Arc::new(tidb_cluster::catalog_watch::SharedCatalog::new(
-            tidb_cluster::cluster_catalog::ClusterCatalog {
+        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+            tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
@@ -1249,7 +1249,7 @@ mod account_tls_batch_handshake_tests {
             registry.set_ssl_type("root", "%", SslType::X509);
             if let Some(policy) = policy {
                 registry.load_global_priv(vec![
-                    tidb_cluster::cluster_privilege_load::LoadedGlobalPriv {
+                    tidb_privilege::cluster_privilege_load::LoadedGlobalPriv {
                         user: "root".into(),
                         host: "%".into(),
                         priv_json: policy,

@@ -5,7 +5,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
+use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex};

@@ -150,7 +150,7 @@
 //!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`SEQUENCE`, the index shapes whose
 //!   entries this node would not go on to maintain (prefix, expression,
 //!   partial, `GLOBAL`, `FULLTEXT`/`SPATIAL`/`VECTOR`), and the
-//!   `CREATE TABLE` clauses [`tidb_exec::table_info_build`] refuses (foreign
+//!   `CREATE TABLE` clauses [`tidb_ddl_build::table_info_build`] refuses (foreign
 //!   keys, partitions, ...). Each is refused with its own reason rather than a
 //!   generic unsupported error.
 //! * A table the storage tier cannot lay out (a view, a sequence, a
@@ -163,8 +163,8 @@
 //! driver's own error where it cannot.
 //!
 //! [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
-//! [`StatementSnapshot`]: tidb_cluster::cluster_table_storage::StatementSnapshot
-//! [`SessionTransaction`]: tidb_cluster::cluster_table_storage::SessionTransaction
+//! [`StatementSnapshot`]: tidb_store_driver::cluster_table_storage::StatementSnapshot
+//! [`SessionTransaction`]: tidb_store_driver::cluster_table_storage::SessionTransaction
 
 use crate::statement_lifecycle::CatalogFollowing as _;
 use crate::store_session::{sql_query_error, StoreTxnOps};
@@ -181,9 +181,9 @@ use crate::identity::CompiledExecutor;
 use crate::privilege::PrivilegeRegistry;
 use crate::{GlobalSysvars, Session, StmtKind, StmtOutput};
 use tidb_ast::Stmt;
-use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_cluster::cluster_catalog::ClusterCatalog;
-use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
@@ -238,7 +238,7 @@ use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF
 use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
 use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 #[cfg(test)]
-use tidb_cluster::cluster_table_storage::LockKeysOutcome;
+use tidb_store_driver::cluster_table_storage::LockKeysOutcome;
 mod non_transactional_dml;
 mod record_set;
 pub use tidb_domain_core::schema_sync;
@@ -1436,7 +1436,7 @@ impl<'s> ClusterServerSession<'s> {
                 let snapshot = transaction
                     .snapshot_for(false)
                     .map_err(SqlQueryError::unknown)?;
-                let snapshot = tidb_cluster::cluster_table_storage::overlay_staged_mutations(
+                let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
                     snapshot,
                     &self.node.buffer,
                 );
@@ -1458,7 +1458,7 @@ impl<'s> ClusterServerSession<'s> {
             let snapshot = transaction
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
-            let snapshot = tidb_cluster::cluster_table_storage::overlay_staged_mutations(
+            let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
                 snapshot,
                 &self.node.buffer,
             );
@@ -1566,7 +1566,7 @@ impl<'s> ClusterServerSession<'s> {
         let snapshot = transaction
             .snapshot_for(false)
             .map_err(SqlQueryError::unknown)?;
-        let snapshot = tidb_cluster::cluster_table_storage::overlay_staged_mutations(
+        let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
             snapshot,
             &self.node.buffer,
         );
@@ -1641,7 +1641,7 @@ impl<'s> ClusterServerSession<'s> {
                     None
                 } else {
                     Some(
-                        tidb_cluster::system_row_write::origin_default(column, table.name.original())
+                        tidb_syssession::system_row_write::origin_default(column, table.name.original())
                             .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
                     )
                 };
@@ -1652,7 +1652,7 @@ impl<'s> ClusterServerSession<'s> {
             let snapshot = transaction
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
-            let snapshot = tidb_cluster::cluster_table_storage::overlay_staged_mutations(
+            let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
                 snapshot,
                 &self.node.buffer,
             );
@@ -3162,7 +3162,7 @@ pub fn build_mpp_client(
 /// accordingly.
 #[must_use]
 pub fn build_tiflash_replica_poll(
-    catalog: std::sync::Arc<tidb_cluster::catalog_watch::SharedCatalog>,
+    catalog: std::sync::Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
     pd_http_client: Option<tikv_client::pd_http::Client>,
     security: &tidb_pd_client::ClusterSecurity,
     ddl: Arc<dyn tidb_ddl::tiflash_replica_manager::TiFlashReplicaControl>,

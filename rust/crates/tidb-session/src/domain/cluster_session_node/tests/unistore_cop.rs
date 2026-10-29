@@ -25142,7 +25142,7 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
 }
 
 fn partition_id_map(
-    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     schema: &str,
     table: &str,
 ) -> Option<(i64, Vec<(String, i64)>)> {

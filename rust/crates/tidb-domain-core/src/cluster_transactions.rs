@@ -62,12 +62,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_cluster::cluster_table_storage::{
+use tidb_store_driver::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
     overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
-use tidb_cluster::pessimistic_lock_error::LockSqlError;
+use tidb_store_driver::pessimistic_lock_error::LockSqlError;
 use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::advisory_lock_state::{
@@ -83,12 +83,12 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealTransaction};
 use tidb_txnkv::Key;
 
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
 /// a 9007 instead of collapsing into the generic 1105.
 pub fn sql_error(error: LockSqlError) -> SqlQueryError {
-    tidb_cluster::sql_query_error::lock_sql_error(&error)
+    tidb_store_driver::sql_query_error::lock_sql_error(&error)
 }
 
 /// Go `session.tryReplaceWriteConflictError` (`pkg/session/session.go:913`):
@@ -207,7 +207,7 @@ pub trait ClusterTransactions: Send + Sync {
     fn record_region_stats(
         &self,
         _table_id: i64,
-    ) -> Result<Option<tidb_exec::pd_approximate_count::RegionCountStats>, String> {
+    ) -> Result<Option<tidb_executor::pd_helper::RegionCountStats>, String> {
         Ok(None)
     }
 
@@ -524,7 +524,7 @@ pub trait OpenClusterTransaction: Send {
     /// (Go `PointGetExecutor.getAndLock`) when the statement failed on it.
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_cluster::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
         None
     }
 
@@ -974,7 +974,7 @@ impl DeferredSnapshot {
 
 /// A pessimistic lock's SQL error as the storage seam reports it, keeping
 /// Go's code and SQLSTATE (1205, 1213, 3572, ...).
-fn lock_storage_error(error: tidb_cluster::pessimistic_lock_error::LockSqlError) -> StorageError {
+fn lock_storage_error(error: tidb_store_driver::pessimistic_lock_error::LockSqlError) -> StorageError {
     StorageError::Sql(
         tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
@@ -1313,7 +1313,7 @@ where
             .begin()
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         let located = {
-            let mut snapshot = tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot::new(
+            let mut snapshot = tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot::new(
                 &mut transaction,
                 self.timeout,
             );
@@ -1502,13 +1502,13 @@ where
     fn record_region_stats(
         &self,
         table_id: i64,
-    ) -> Result<Option<tidb_exec::pd_approximate_count::RegionCountStats>, String> {
+    ) -> Result<Option<tidb_executor::pd_helper::RegionCountStats>, String> {
         let store = self.opener.store();
         let Some(pd_http_client) = store.pd_http_client() else {
             return Ok(None);
         };
         store
-            .block_on(tidb_exec::pd_approximate_count::load_record_region_stats(
+            .block_on(tidb_executor::pd_helper::load_record_region_stats(
                 &pd_http_client,
                 table_id,
                 self.timeout,
@@ -1805,7 +1805,7 @@ where
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_cluster::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
         SessionTransaction::take_statement_lock_failure(self)
     }
 
@@ -1876,7 +1876,7 @@ mod write_conflict_rewrite_tests {
     };
 
     use super::try_replace_write_conflict_error;
-    use tidb_cluster::sql_query_error::SqlQueryError;
+    use tidb_store_driver::sql_query_error::SqlQueryError;
 
     /// The commit error `sql_error` hands the session for one conflict.
     fn commit_error(key: &[u8], primary: &[u8], redaction: Redaction) -> SqlQueryError {

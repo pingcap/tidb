@@ -25,9 +25,9 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
 use tidb_ddl_notifier::SchemaChangeEvent;
-use tidb_cluster::cluster_catalog::{
-    load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
-};
+use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+
+use tidb_kv::key::prefix_scan_end;
 use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
@@ -39,8 +39,8 @@ use tidb_ddl::ddl_history_table::DdlHistoryTable;
 use tidb_ddl::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_ddl::ddl_job_table::DdlJobTable;
 use tidb_ddl::ddl_systable::{SystemTableManager, SystemTableManagerError};
-use tidb_cluster::mysql_system_tables::{SystemRow, SystemTableView};
-use tidb_cluster::system_row_write::store_clustered_row;
+use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
+use tidb_syssession::system_row_write::store_clustered_row;
 use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_with_context};
 use tidb_meta::{key, value};
 use tidb_model::{ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState};
@@ -4461,7 +4461,7 @@ fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
 /// catalog` to both `INSERT` and `SELECT` for sysbench's `sbtest1` shape.
 /// That was replaced by an honest
 /// refusal, and the refusal is now gone in turn: the counter has the meta-key
-/// home Go gives it (`tidb_cluster::cluster_auto_id`), so the shape is admitted
+/// home Go gives it (`tidb_autoid::cluster_auto_id`), so the shape is admitted
 /// and served.
 #[test]
 fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
@@ -4494,7 +4494,7 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
     // detect it.
     assert!(!build.template().sep_auto_inc());
     assert_eq!(
-        tidb_cluster::cluster_auto_id::auto_id_key_for(7, build.template()),
+        tidb_autoid::cluster_auto_id::auto_id_key_for(7, build.template()),
         tidb_meta::key::auto_table_id_kv_key(7, build.template().id),
     );
 }
@@ -4517,7 +4517,7 @@ fn create_table_with_auto_random_persists_its_allocator_format() {
     assert_eq!(build.template().auto_rand_id, 100);
     assert!(build.template().is_auto_random_bit_col_unsigned());
     assert_eq!(
-        tidb_cluster::cluster_auto_id::auto_random_id_key_for(7, build.template()),
+        tidb_autoid::cluster_auto_id::auto_random_id_key_for(7, build.template()),
         tidb_meta::key::auto_random_table_id_kv_key(7, build.template().id),
     );
 
@@ -4596,7 +4596,7 @@ fn a_separate_allocator_table_counts_in_the_increment_key() {
         "an ordinary table counts in the row-id key"
     );
     assert_eq!(
-        tidb_cluster::cluster_auto_id::auto_id_key_for(7, &template),
+        tidb_autoid::cluster_auto_id::auto_id_key_for(7, &template),
         tidb_meta::key::auto_table_id_kv_key(7, 91),
     );
 
@@ -4606,7 +4606,7 @@ fn a_separate_allocator_table_counts_in_the_increment_key() {
         "AUTO_ID_CACHE 1 is Go's SepAutoInc"
     );
     assert_eq!(
-        tidb_cluster::cluster_auto_id::auto_id_key_for(7, &template),
+        tidb_autoid::cluster_auto_id::auto_id_key_for(7, &template),
         tidb_meta::key::auto_increment_id_kv_key(7, 91),
     );
 }
@@ -5925,7 +5925,7 @@ fn cluster_truncate_partition_reassigns_only_selected_physical_ids() {
 /// The physical ids of one table's partitions, in definition order.
 fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     let catalog =
-        tidb_cluster::cluster_catalog::load_cluster_catalog(store).expect("the catalog loads");
+        tidb_infoschema::cluster_catalog::load_cluster_catalog(store).expect("the catalog loads");
     let (_, info) = catalog
         .find_table("u6", table)
         .unwrap_or_else(|| panic!("table {table} exists"));

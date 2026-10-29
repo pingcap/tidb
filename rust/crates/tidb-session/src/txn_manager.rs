@@ -31,7 +31,7 @@ pub use tidb_domain_core::session_transaction::{options_from_values, transaction
 use std::sync::Arc;
 
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_executor::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 

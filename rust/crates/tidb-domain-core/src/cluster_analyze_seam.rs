@@ -50,14 +50,14 @@ use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
-use tidb_cluster::cluster_catalog::load_cluster_catalog;
+use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
     ClusterAnalyzeReport,
 };
-use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
 };
@@ -67,7 +67,7 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::errors::cluster_analyze_error;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored statistics.
 ///
@@ -315,7 +315,7 @@ where
 fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError {
     match error {
         ClusterLoadStatsCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterLoadStatsCommitError::Commit(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
+        ClusterLoadStatsCommitError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
         ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }

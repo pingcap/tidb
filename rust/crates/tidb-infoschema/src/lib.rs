@@ -74,6 +74,7 @@ pub use sequence::SequenceSnapshot;
 pub use planner_view::{PlannerCatalog, PlannerSchemaView};
 pub mod statistics_access;
 pub mod temporary;
+pub mod cluster_catalog;
 pub use tidb_stats_handle::{PseudoStatsTable, StatisticsLoadWorkers, StatisticsSchema, StatisticsSource, StatisticsView};
 pub use tidb_stats_handle::{enqueue_sync_load_failures, StatisticsItemLoader, StatsHandle};
 

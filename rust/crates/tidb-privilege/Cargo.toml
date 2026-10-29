@@ -8,6 +8,10 @@ repository.workspace = true
 description = "Go pkg/privilege/privileges (the privilege cache and account policy) for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

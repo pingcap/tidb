@@ -18,3 +18,7 @@
 pub mod tikv_region_store;
 pub mod real_tikv_read;
 pub mod session_commit_protocol;
+pub mod pessimistic_lock_error;
+pub mod cluster_table_storage;
+pub mod sql_query_error;
+pub mod meta_txn;

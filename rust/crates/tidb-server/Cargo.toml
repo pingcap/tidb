@@ -12,6 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-privilege = { path = "../tidb-privilege" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
@@ -57,7 +60,6 @@ tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-dxf = { path = "../tidb-dxf" }
-tidb-cluster = { path = "../tidb-cluster" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-planner = { path = "../tidb-planner" }

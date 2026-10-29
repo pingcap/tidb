@@ -24,10 +24,10 @@ use tidb_datatype::Datum;
 use tidb_model::{ActionType, Job, JobState, TableInfo};
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_ddl::DdlPlanError;
-use tidb_cluster::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
-use tidb_cluster::system_row_write::{delete_row, insert_row, update_row, RowValues};
+use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
+use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
 
 /// Go `batchInsertDeleteRangeSize`: drop schema records its tables in
 /// batches of this many.

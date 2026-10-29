@@ -34,7 +34,7 @@
 //! `Invalid=0, Btree=1, Hash=2, Rtree=3, Hypo=4, Vector=5, Inverted=6,
 //! HNSW=7, Fulltext=8`.
 
-use tidb_exec::table_info_build::build_table_info;
+use tidb_ddl_build::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 
 fn build(sql: &str) -> TableInfo {

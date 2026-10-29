@@ -24,7 +24,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
+use tidb_store_driver::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};

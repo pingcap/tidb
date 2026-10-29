@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tidb_ast::Stmt;
-use tidb_exec::ResultFieldMetadata;
+use tidb_executor::adapter::ResultFieldMetadata;
 
 use crate::domain::configured_user_store::AuthenticatedIdentity;
 use crate::domain::resultset_source::ResultSetSource;
@@ -248,7 +248,7 @@ impl Drop for QueryCancellationLease {
     }
 }
 
-pub use tidb_cluster::sql_query_error::{lock_sql_error, SqlQueryError};
+pub use tidb_store_driver::sql_query_error::{lock_sql_error, SqlQueryError};
 pub use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
 pub use tidb_domain_core::errors::{cluster_analyze_error, cluster_commit_error, cluster_stats_lock_error};
 

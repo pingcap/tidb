@@ -18,22 +18,22 @@
 use tidb_executor::KvTableReader;
 
 /// This session's own `mysql.*` tables, read the way
-/// `tidb_cluster::cluster_privilege_load::load_privileges` reads a cluster's.
+/// `tidb_privilege::cluster_privilege_load::load_privileges` reads a cluster's.
 pub(crate) struct SessionPrivilegeTables<'a> {
     pub(crate) catalog: &'a mut tidb_executor::Catalog,
     /// TIMESTAMP columns decode in UTC, as the cluster reader decodes them.
     pub(crate) decode: tidb_executor::RowDecodeContext,
 }
 
-impl tidb_cluster::cluster_privilege_load::PrivilegeTables for SessionPrivilegeTables<'_> {
+impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivilegeTables<'_> {
     fn rows(
         &mut self,
         table: &str,
         columns: &[&str],
         _timezone: Option<&tidb_datatype::SessionTimeZone>,
     ) -> Result<
-        Option<tidb_cluster::cluster_privilege_load::PrivilegeTableRows>,
-        tidb_cluster::mysql_system_tables::SystemTableError,
+        Option<tidb_privilege::cluster_privilege_load::PrivilegeTableRows>,
+        tidb_syssession::mysql_system_tables::SystemTableError,
     > {
         let name = format!("mysql.{table}");
         let Some(tidb_executor::TableEntry::Kv(stored)) = self.catalog.table_mut_in("mysql", table)
@@ -41,7 +41,7 @@ impl tidb_cluster::cluster_privilege_load::PrivilegeTables for SessionPrivilegeT
             return Ok(None);
         };
         let stored = std::sync::Arc::make_mut(stored);
-        let view = tidb_cluster::mysql_system_tables::SystemTableView::from_columns(
+        let view = tidb_syssession::mysql_system_tables::SystemTableView::from_columns(
             &name,
             stored.table_id(),
             stored
@@ -54,7 +54,7 @@ impl tidb_cluster::cluster_privilege_load::PrivilegeTables for SessionPrivilegeT
         let rows = stored
             .scan_rows_with_context(&self.decode)
             .map_err(
-                |error| tidb_cluster::mysql_system_tables::SystemTableError::Decode {
+                |error| tidb_syssession::mysql_system_tables::SystemTableError::Decode {
                     name: name.clone(),
                     detail: format!("{error:?}"),
                 },

@@ -44,6 +44,8 @@
 //! `tidb-table` (Go `pkg/table/tables`), above this package.
 
 pub mod service_rpc;
+pub mod cluster_auto_id;
+pub mod auto_id_client;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};

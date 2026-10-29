@@ -10,6 +10,9 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
@@ -27,7 +30,6 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
-tidb-cluster = { path = "../tidb-cluster" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-gcutil = { path = "../tidb-gcutil" }

@@ -15,7 +15,7 @@ use crate::domain::session_api::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
-use tidb_cluster::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::db::DBInfo;
 
 /// The catalog writer, offline: the meta-key encoding and the 2PC are

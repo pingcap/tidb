@@ -13,7 +13,7 @@
 
 #[allow(unused_imports)]
 pub use tidb_ddl_build::foreign_key::*;
-use tidb_cluster::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 use tidb_hack::GoToLower;

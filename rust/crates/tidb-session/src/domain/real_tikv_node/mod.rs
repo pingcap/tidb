@@ -19,9 +19,9 @@ use std::time::Duration;
 
 use crate::GlobalSysvars;
 
-use tidb_cluster::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
-use tidb_cluster::cluster_catalog::ClusterCatalog;
-use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
+use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_store_driver::real_tikv_read::{
     ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
 };
@@ -114,7 +114,7 @@ pub fn node_accounts(
         let users = configured_account_store(config, global_vars)?;
         return Ok((Arc::new(users), None));
     }
-    let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
+    let accounts = tidb_domain_core::real_tikv_privileges::load_accounts_from_cluster(
         &authority.transaction_opener(),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
@@ -173,7 +173,7 @@ pub fn load_cluster_startup_variables<S>(
 where
     S: StoreClient,
 {
-    let variables = tidb_exec::real_tikv_privileges::load_startup_variables_from_cluster(
+    let variables = tidb_domain_core::real_tikv_privileges::load_startup_variables_from_cluster(
         opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )

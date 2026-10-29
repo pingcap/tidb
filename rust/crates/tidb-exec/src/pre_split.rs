@@ -141,7 +141,7 @@ fn pre_split_physical_table_by_shard_row_id(
 ) -> Vec<u64> {
     // Go `autoid.NewShardIDFormat` over the primary key's type (or BIGINT).
     let unsigned = table.get_pk_col_info().is_some_and(|column| {
-        column.read().get_flag() & u64::from(crate::result_metadata::UNSIGNED_FLAG) != 0
+        column.read().get_flag() & u64::from(tidb_executor::adapter::UNSIGNED_FLAG) != 0
     });
     let shard_bits = sharding_bits(table);
     let mut incremental_bits = if table.auto_random_range_bits == 0 {

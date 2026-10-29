@@ -19,11 +19,11 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
-use tidb_cluster::cluster_catalog::{
+use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_cluster::cluster_sysvar_load::load_cluster_sysvars;
-use tidb_cluster::cluster_sysvar_write::plan_sysvar_write;
+use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
+use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 

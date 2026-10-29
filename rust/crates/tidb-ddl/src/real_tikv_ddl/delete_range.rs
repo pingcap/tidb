@@ -25,7 +25,7 @@ use tidb_txnkv::transaction::BufferMutation;
 
 use super::add_index_reorg::reorg_transaction;
 use super::*;
-use tidb_cluster::cluster_catalog::PagedMetaSnapshot;
+use tidb_infoschema::cluster_catalog::PagedMetaSnapshot;
 use crate::ddl_delete_range::{DelRangeTable, StoredDelRange};
 
 /// Go `delBatchSize`.

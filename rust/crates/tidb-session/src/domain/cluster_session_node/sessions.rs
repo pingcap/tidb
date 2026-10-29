@@ -445,10 +445,10 @@ impl DomainSessions for Domain {
 /// read's storage error with a SQL identity (`ErrTxnAbortedByGC` for a
 /// timestamp behind the txn safe point) is returned unwrapped.
 pub(crate) fn historical_catalog_error(
-    error: tidb_cluster::cluster_catalog::ClusterCatalogError,
+    error: tidb_infoschema::cluster_catalog::ClusterCatalogError,
 ) -> tidb_executor::DriverError {
     match error {
-        tidb_cluster::cluster_catalog::ClusterCatalogError::Sql(error) => {
+        tidb_infoschema::cluster_catalog::ClusterCatalogError::Sql(error) => {
             tidb_executor::DriverError::Mysql(error)
         }
         other => tidb_executor::DriverError::unsupported(other.to_string()),
@@ -591,7 +591,7 @@ impl ClusterStatsSessionState {
 }
 
 pub(crate) fn stats_result_fields(
-    fields: Vec<tidb_exec::ResultFieldMetadata>,
+    fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
 ) -> Vec<tidb_resolve::ResultFieldRef> {
     fields
         .into_iter()

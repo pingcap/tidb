@@ -41,8 +41,8 @@
 use std::sync::Arc;
 
 use tidb_ast::Stmt;
-use tidb_cluster::cluster_catalog::ClusterCatalog;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed;
 

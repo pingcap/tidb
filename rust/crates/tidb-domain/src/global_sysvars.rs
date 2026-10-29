@@ -1639,7 +1639,7 @@ impl GlobalSysvars {
     /// passed that validation when some earlier `SET GLOBAL` (Go's or this
     /// node's own) wrote it. A name this registry does not recognize is
     /// skipped rather than refused, the same forward/backward-compatibility
-    /// stance `tidb_cluster::cluster_privilege_load` takes on a column or
+    /// stance `tidb_privilege::cluster_privilege_load` takes on a column or
     /// privilege name the running version does not know (Go's rebuild walks
     /// only `GetSysVars()`, so such a row never reaches its cache either).
     pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {

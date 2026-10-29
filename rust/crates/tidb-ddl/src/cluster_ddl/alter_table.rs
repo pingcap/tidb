@@ -1026,7 +1026,7 @@ enum AutoIdKind {
 impl AutoIdKind {
     fn counter_key(self, db_id: i64, info: &TableInfo) -> Vec<u8> {
         match self {
-            Self::Increment => tidb_cluster::cluster_auto_id::auto_id_key_for(db_id, info),
+            Self::Increment => tidb_autoid::cluster_auto_id::auto_id_key_for(db_id, info),
             Self::Random => key::auto_random_table_id_kv_key(db_id, info.id),
         }
     }
@@ -1046,12 +1046,12 @@ fn auto_increment_service<S: MetaSnapshot>(
     kind: AutoIdKind,
     db_id: i64,
     info: &TableInfo,
-) -> Option<tidb_cluster::cluster_auto_id::AutoIdServiceAllocator<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
+) -> Option<tidb_autoid::cluster_auto_id::AutoIdServiceAllocator<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
     if kind != AutoIdKind::Increment {
         return None;
     }
     let client = snapshot.auto_id_client().filter(|_| info.sep_auto_inc())?;
-    Some(tidb_cluster::cluster_auto_id::AutoIdServiceAllocator::new(
+    Some(tidb_autoid::cluster_auto_id::AutoIdServiceAllocator::new(
         client.clone(),
         if info.auto_id_schema_id == 0 {
             db_id

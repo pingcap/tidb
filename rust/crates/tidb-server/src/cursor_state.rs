@@ -340,7 +340,7 @@ mod tests {
 
     struct CountingRows {
         current_tso: tidb_executor::CurrentTso,
-        fields: Vec<tidb_exec::ResultFieldMetadata>,
+        fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
         rows: VecDeque<Vec<Datum>>,
         lifecycle: Arc<Mutex<SourceLifecycle>>,
     }
@@ -356,7 +356,7 @@ mod tests {
                 .collect())
         }
 
-        fn fields(&mut self) -> Result<Vec<tidb_exec::ResultFieldMetadata>, tidb_executor::MysqlError> {
+        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
             Ok(self.fields.clone())
         }
 

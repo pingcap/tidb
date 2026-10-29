@@ -894,6 +894,26 @@ fn show_stats_locked_preserves_shared_show_filters() {
     };
     assert_eq!(locked.tp, tidb_ast::ShowStmtType::StatsLocked);
     assert!(locked.r#where.is_some());
+    // Go `showSimpleTypes`: each stats SHOW names the system table it reads.
+    for (sql, table) in [
+        ("show stats_meta", "STATS_META"),
+        ("show stats_locked", "STATS_TABLE_LOCKED"),
+        ("show stats_histograms", "STATS_HISTOGRAMS"),
+        ("show stats_buckets", "STATS_BUCKETS"),
+    ] {
+        let tidb_ast::Stmt::Admin(admin) = parse(sql).expect("parse") else {
+            panic!("expected SHOW administrative envelope for {sql}");
+        };
+        let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
+            panic!("expected typed SHOW for {sql}");
+        };
+        assert_eq!(
+            show.table.as_deref(),
+            Some(&["mysql".to_owned(), table.to_owned()][..]),
+            "{sql}"
+        );
+    }
+    assert_eq!(locked.table.as_deref().map(<[String]>::len), Some(2));
 
     for sql in [
         "show stats_locked like",

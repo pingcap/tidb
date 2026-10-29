@@ -122,11 +122,11 @@ fn subset_index_cardinality_after_async_statistics_load() {
 #[derive(Default)]
 struct StatsStorage(std::collections::BTreeMap<Vec<u8>, Vec<u8>>);
 
-impl tidb_cluster::cluster_catalog::MetaSnapshot for StatsStorage {
+impl tidb_infoschema::cluster_catalog::MetaSnapshot for StatsStorage {
     fn get(
         &mut self,
         key: &[u8],
-    ) -> Result<Option<Vec<u8>>, tidb_cluster::cluster_catalog::ClusterCatalogError> {
+    ) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
         Ok(self.0.get(key).cloned())
     }
 
@@ -134,8 +134,8 @@ impl tidb_cluster::cluster_catalog::MetaSnapshot for StatsStorage {
         &mut self,
         prefix: &[u8],
     ) -> Result<
-        tidb_cluster::cluster_catalog::MetaPairs,
-        tidb_cluster::cluster_catalog::ClusterCatalogError,
+        tidb_infoschema::cluster_catalog::MetaPairs,
+        tidb_infoschema::cluster_catalog::ClusterCatalogError,
     > {
         Ok(self
             .0
@@ -210,7 +210,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("not CREATE")
     };
-    let mut table = tidb_exec::table_info_build::build_table_info(
+    let mut table = tidb_ddl_build::table_info_build::build_table_info(
         create,
         "utf8mb4",
         "utf8mb4_bin",
@@ -244,7 +244,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     )
     .unwrap();
     storage.apply(&bootstrap.mutations);
-    let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut storage).unwrap();
+    let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut storage).unwrap();
     for statement in insert_table_stats_statements(&table, table_id) {
         let write =
             plan_insert_table_stats_statement(&mut storage, &catalog, &statement, 101, now, None)

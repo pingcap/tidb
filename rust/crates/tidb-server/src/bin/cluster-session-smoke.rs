@@ -37,12 +37,12 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_cluster::cluster_catalog::ClusterCatalog;
-use tidb_cluster::cluster_table_storage::{
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_store_driver::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
 use tidb_copr::cop_client::CopClient;
-use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_store_driver::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_exec::stats_watch::StatsSnapshot;
 use tidb_executor::cluster_storage::{

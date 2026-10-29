@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_cluster::cluster_auto_id::ClusterAutoIdStore;
-use tidb_exec::cluster_sequence::ClusterSequenceCounter;
+use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
+use tidb_table::cluster_sequence::ClusterSequenceCounter;
 use tidb_executor::driver::SequenceDef;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
 use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
@@ -55,7 +55,7 @@ where
 {
     opener: RealOptimisticTransactionOpener<S>,
     timeout: Duration,
-    service: Option<Arc<tidb_cluster::auto_id_client::AutoIdClient>>,
+    service: Option<Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
     allocators: Mutex<HashMap<(i64, AutoIdKind), (AllocatorMark, TableAutoId)>>,
     /// The same lifetime rule for SEQUENCE allocators: one per sequence table
     /// id and published `TableInfo` (its `update_ts`), so a reserved cache
@@ -95,7 +95,7 @@ where
     }
 
     /// Compose the process-wide AutoID service transport for cluster tables.
-    pub fn with_service(mut self, service: Arc<tidb_cluster::auto_id_client::AutoIdClient>) -> Self {
+    pub fn with_service(mut self, service: Arc<tidb_autoid::auto_id_client::AutoIdClient>) -> Self {
         self.service = Some(service);
         self
     }
@@ -250,7 +250,7 @@ where
             if let Some(service) = &self.service {
                 let unsigned = table.is_auto_inc_col_unsigned();
                 let allocator = TableAutoId::service(Arc::new(
-                    tidb_cluster::cluster_auto_id::AutoIdServiceAllocator::new(
+                    tidb_autoid::cluster_auto_id::AutoIdServiceAllocator::new(
                         service.clone(),
                         db_id,
                         table.id,
@@ -324,11 +324,11 @@ mod tests {
     use tidb_executor::KvTable;
     use tidb_model::ColumnInfo;
     struct RefusedLeader;
-    impl tidb_cluster::auto_id_client::AutoIdLeader for RefusedLeader {
+    impl tidb_autoid::auto_id_client::AutoIdLeader for RefusedLeader {
         fn leader(
             &self,
-        ) -> Result<Option<String>, tidb_cluster::cluster_auto_id::AutoIdServiceRpcError> {
-            Err(tidb_cluster::cluster_auto_id::AutoIdServiceRpcError::Other(
+        ) -> Result<Option<String>, tidb_autoid::cluster_auto_id::AutoIdServiceRpcError> {
+            Err(tidb_autoid::cluster_auto_id::AutoIdServiceRpcError::Other(
                 "service discovery reached".into(),
             ))
         }
@@ -357,7 +357,7 @@ mod tests {
     fn auto_id_owner_registry_selects_service_and_keeps_row_random_legacy_counters() {
         let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
         let service = Arc::new(
-            tidb_cluster::auto_id_client::AutoIdClient::new(
+            tidb_autoid::auto_id_client::AutoIdClient::new(
                 Arc::new(RefusedLeader),
                 tidb_pd_client::ClusterSecurity::plaintext(),
             )

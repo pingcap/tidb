@@ -39,14 +39,14 @@
 //! * **New row format.** Go's bootstrap DML runs before
 //!   `tidb_row_format_version` takes effect, so a real cluster's seed rows are
 //!   in the OLD (v1) format. This writes v2, which every reader — Go's own and
-//!   [`tidb_cluster::mysql_system_tables`] — already handles, because there is no
+//!   [`tidb_syssession::mysql_system_tables`] — already handles, because there is no
 //!   reason to reproduce an accident of Go's startup ordering.
 //!
 //! **Idempotence is refusal, not merge.** If the `mysql` database is already
 //! present (found by name: no id is reserved for it under the classic kernel),
 //! [`plan_mysql_bootstrap`] fails and writes nothing: deciding what to do with
 //! a half-bootstrapped or already-bootstrapped cluster is
-//! [`tidb_cluster::cluster_privilege_load::read_bootstrap_state`]'s job, and it reads
+//! [`tidb_privilege::cluster_privilege_load::read_bootstrap_state`]'s job, and it reads
 //! exactly the `mysql.tidb` marker this writes.
 
 use std::fmt;
@@ -62,10 +62,10 @@ use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
 use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
-use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
-use tidb_cluster::mysql_system_tables::SYSTEM_DB;
-use tidb_cluster::system_row_write::codec_table_info;
-use crate::table_info_build::{build_table_info_with_context, DdlAdmissionError};
+use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
+use tidb_syssession::mysql_system_tables::SYSTEM_DB;
+use tidb_syssession::system_row_write::codec_table_info;
+use tidb_ddl_build::table_info_build::{build_table_info_with_context, DdlAdmissionError};
 
 mod jobs;
 mod rows;
@@ -112,7 +112,7 @@ pub fn find_system_table<S: MetaSnapshot>(
             continue;
         }
         return Ok(
-            tidb_cluster::cluster_catalog::load_database_tables(snapshot, database.id)?
+            tidb_infoschema::cluster_catalog::load_database_tables(snapshot, database.id)?
                 .into_iter()
                 .find(|table| table.name.lowercase() == table_name),
         );
@@ -166,9 +166,9 @@ impl AdvisoryLockTable {
                 .ok_or_else(|| {
                     BootstrapError::Encode("advisory_locks has no lock_name column".to_owned())
                 })?;
-            let mut values = tidb_cluster::system_row_write::RowValues::new();
+            let mut values = tidb_syssession::system_row_write::RowValues::new();
             values.insert(column.read().id, Datum::new_string(lock_name));
-            return tidb_cluster::system_row_write::clustered_record_key(&self.info, &values)
+            return tidb_syssession::system_row_write::clustered_record_key(&self.info, &values)
                 .map_err(encode_error);
         }
         let primary = &self.codec_info.indices[self.primary_position];
@@ -597,7 +597,7 @@ mod source_tests {
     use tidb_datatype::{Time, TimeType};
 
     use super::*;
-    use tidb_cluster::cluster_catalog::MetaPairs;
+    use tidb_infoschema::cluster_catalog::MetaPairs;
 
     #[derive(Default)]
     struct Snapshot {

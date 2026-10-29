@@ -16,7 +16,7 @@ use super::super::transactions::{
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
@@ -75,7 +75,7 @@ pub(super) struct MockCluster {
     /// (`SelectLockExec`'s `doLockKeys`) and failed on, for the statement
     /// owner to take back.
     pub(super) statement_lock_failure:
-        Mutex<Option<tidb_cluster::cluster_table_storage::StatementLockFailure>>,
+        Mutex<Option<tidb_store_driver::cluster_table_storage::StatementLockFailure>>,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -295,11 +295,11 @@ impl ClusterSnapshot for MockSnapshot {
         _keys: &[Key],
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<(), StorageError> {
-        use tidb_cluster::cluster_table_storage::StatementLockFailure;
+        use tidb_store_driver::cluster_table_storage::StatementLockFailure;
         self.cluster.lock_waits.lock().unwrap().push(wait);
         let failure = if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             StatementLockFailure::Statement(
-                tidb_cluster::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_store_driver::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             )
         } else if self
             .cluster
@@ -663,7 +663,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_cluster::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
         self.cluster.statement_lock_failure.lock().unwrap().take()
     }
 
@@ -735,7 +735,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
         }
         if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             return Ok(LockKeysOutcome::StatementError(
-                tidb_cluster::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_store_driver::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             ));
         }
         if self

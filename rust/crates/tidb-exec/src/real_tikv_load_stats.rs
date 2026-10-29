@@ -29,7 +29,7 @@ use std::time::Duration;
 use tidb_executor::load_stats::JsonTable;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use crate::cluster_load_stats::{
     load_cluster_stats_target, resolve_cluster_load_stats, ClusterLoadStatsTarget,
     LoadedStatsTable, ResolvedClusterLoadStats,
@@ -39,13 +39,13 @@ use crate::cluster_stats_write::{
     loaded_stats_item_statements, plan_delete_table_stats, plan_loaded_stats_item_statement,
     plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
 };
-use tidb_cluster::cluster_table_storage::{
+use tidb_store_driver::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
-use tidb_cluster::pessimistic_lock_error::LockSqlError;
-use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_executor::cluster_storage::MutationBuffer;
 
 /// Go `StatsMetaHistorySourceLoadStats`.

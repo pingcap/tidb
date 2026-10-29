@@ -40,10 +40,13 @@ use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 
-use tidb_cluster::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot, RegionPagedMetaSnapshot};
+use tidb_infoschema::cluster_catalog::{PagedMetaSnapshot, RegionPagedMetaSnapshot};
+
+
+use tidb_kv::key::prefix_scan_end;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use tidb_cluster::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
-use tidb_cluster::system_row_write::origin_default;
+use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
+use tidb_syssession::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
     resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions,
@@ -549,7 +552,7 @@ fn cluster_analyze_plan(
 #[cfg(test)]
 mod tests {
     use super::{analyze_independent_index, cluster_analyze_plan, AnalyzeOptions};
-    use tidb_cluster::cluster_catalog::{
+    use tidb_infoschema::cluster_catalog::{
         ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot, RegionPagedMetaSnapshot,
     };
     use tidb_ast::CiString;

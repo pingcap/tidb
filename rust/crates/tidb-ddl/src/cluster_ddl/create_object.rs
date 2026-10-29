@@ -421,7 +421,7 @@ fn create_table_args(
 fn job_database<'a>(
     catalog: &'a ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
-) -> Result<&'a tidb_cluster::cluster_catalog::LoadedDatabase, DdlPlanError> {
+) -> Result<&'a tidb_infoschema::cluster_catalog::LoadedDatabase, DdlPlanError> {
     catalog
         .databases
         .iter()

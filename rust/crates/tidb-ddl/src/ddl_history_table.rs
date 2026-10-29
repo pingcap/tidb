@@ -27,9 +27,9 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_model::Job;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_cluster::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
-use tidb_cluster::system_row_write::{store_clustered_row, RowEncodeError, RowValues};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use tidb_syssession::system_row_write::{store_clustered_row, RowEncodeError, RowValues};
 
 /// The stored history-table definition.
 #[derive(Clone, Debug)]

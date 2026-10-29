@@ -42,3 +42,5 @@ mod table_options_source;
 mod tagged_ptr_source;
 mod taobench_repro_source;
 mod window_executor_source;
+mod explain_exec_source;
+mod pd_approximate_count_source;

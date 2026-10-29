@@ -48,7 +48,7 @@ use super::{
     BootstrapLayout, BootstrapSplits, BootstrapWrite, BOOTSTRAP_VIEWS, SYSTEM_DB,
     SYSTEM_DB_CHARSET, SYSTEM_DB_COLLATION, SYS_DB,
 };
-use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, DdlStatement,
@@ -217,7 +217,7 @@ struct JobOutcome {
 /// "to be compatible with old TiDB versions" (`BootstrapSession`), and the
 /// statement text the job carries is the statement as written.
 fn bootstrap_context(sql: &str) -> tidb_executor::StmtContext {
-    crate::table_info_build::default_ddl_statement_context()
+    tidb_ddl_build::table_info_build::default_ddl_statement_context()
         .with_strict(false)
         .with_ddl_sql_mode(0)
         .with_clustered_index_def_mode(tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY)
@@ -589,7 +589,7 @@ fn plan_with<S: MetaSnapshot>(
     overlay.show_all();
     let mut table_ids = Vec::with_capacity(table_names.len());
     if classic {
-        let stored = tidb_cluster::cluster_catalog::load_database_tables(&mut overlay, database_id)?;
+        let stored = tidb_infoschema::cluster_catalog::load_database_tables(&mut overlay, database_id)?;
         for name in &table_names {
             let info = stored
                 .iter()

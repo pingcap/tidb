@@ -28,31 +28,19 @@
 
 pub mod bootstrap_publish;
 pub mod cluster_analyze;
-use tidb_cluster::cluster_http;
+use tidb_txnkv::cluster_http;
 pub mod cluster_load_stats;
 pub mod cluster_predicate_column;
-pub mod cluster_sequence;
 pub mod cluster_stats_dump;
 pub mod cluster_stats_load;
 pub mod cluster_stats_lock;
 pub mod cluster_stats_write;
 pub mod ddl_session_pool;
-pub mod in_memory_meta;
-pub mod explain;
-pub mod meta_txn;
 pub mod mysql_bootstrap;
-pub mod pd_approximate_count;
 pub mod pre_split;
 pub mod real_tikv_analyze;
 pub mod real_tikv_load_stats;
-pub mod real_tikv_privileges;
 pub mod real_tikv_stats;
 pub mod real_tikv_stats_lock;
-mod result_metadata;
 pub mod stats_watch;
-pub mod table_info_build;
 
-pub use result_metadata::{
-    col_names_to_result_fields, AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
-    ResultFieldTypeMetadata, MAX_ALIAS_IDENTIFIER_LEN, NOT_FIXED_DEC, NOT_NULL_FLAG, UNSIGNED_FLAG,
-};

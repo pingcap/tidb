@@ -69,7 +69,7 @@ use tidb_model::{
 };
 use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
-use tidb_cluster::cluster_catalog::{
+use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
 use crate::real_tikv_ddl::DdlWarningLevel;
@@ -4682,7 +4682,7 @@ fn lower_create_table(
 /// Admits a `CREATE INDEX`, refusing every shape whose entries this node would
 /// not go on to maintain.
 ///
-/// The gate is not a taste judgement: [`tidb_cluster::cluster_catalog`]'s bounded
+/// The gate is not a taste judgement: [`tidb_infoschema::cluster_catalog`]'s bounded
 /// loader still refuses a prefix index, so publishing one here would write a
 /// `TableInfo` that path cannot serve. The refusal names the unsupported
 /// storage shape.
@@ -7480,7 +7480,7 @@ impl MdlInfoUpdate {
         ddl_job_id: i64,
         schema_version: i64,
         owner_id: &str,
-    ) -> Result<tidb_cluster::system_row_write::RowValues, DdlPlanError> {
+    ) -> Result<tidb_syssession::system_row_write::RowValues, DdlPlanError> {
         let column_id = |name: &str| {
             self.table
                 .cols()
@@ -7491,7 +7491,7 @@ impl MdlInfoUpdate {
                     DdlPlanError::Encode(format!("mysql.tidb_mdl_info has no column `{name}`"))
                 })
         };
-        let mut values = tidb_cluster::system_row_write::RowValues::new();
+        let mut values = tidb_syssession::system_row_write::RowValues::new();
         values.insert(column_id("job_id")?, Datum::Int(ddl_job_id));
         values.insert(column_id("version")?, Datum::Int(schema_version));
         values.insert(
@@ -7522,7 +7522,7 @@ impl MdlInfoUpdate {
     ) -> Result<(), DdlPlanError> {
         let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
         mutations.extend(
-            tidb_cluster::system_row_write::replace_unindexed_clustered_row(&self.table, &values)
+            tidb_syssession::system_row_write::replace_unindexed_clustered_row(&self.table, &values)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         );
         Ok(())
@@ -7537,7 +7537,7 @@ impl MdlInfoUpdate {
         owner_id: &str,
         mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlPlanError> {
-        use tidb_cluster::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
+        use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
         let columns: &[&str] = if self.omit_owner_id {
             &["job_id"]
         } else {
@@ -7557,7 +7557,7 @@ impl MdlInfoUpdate {
                     == Some(owner_id);
             if matches_owner {
                 mutations.extend(
-                    tidb_cluster::system_row_write::delete_unindexed_clustered_row(
+                    tidb_syssession::system_row_write::delete_unindexed_clustered_row(
                         &self.table,
                         &row.into_values(),
                     )
@@ -8412,13 +8412,13 @@ fn apply_create_table<S: MetaSnapshot>(
     // handed out). Which key it is, is Go's `SepAutoInc` choice.
     if info.auto_inc_id > 1 {
         writes.push(BufferMutation::set(
-            tidb_cluster::cluster_auto_id::auto_id_key_for(db_id, info),
+            tidb_autoid::cluster_auto_id::auto_id_key_for(db_id, info),
             value::encode_int_value(info.auto_inc_id - 1),
         )?);
     }
     if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
         writes.push(BufferMutation::set(
-            tidb_cluster::cluster_auto_id::auto_random_id_key_for(db_id, info),
+            tidb_autoid::cluster_auto_id::auto_random_id_key_for(db_id, info),
             value::encode_int_value(info.auto_rand_id - 1),
         )?);
     }
@@ -9037,7 +9037,7 @@ fn append_schema_change_mutations(
         None
     };
     for (sub_job_id, event) in events {
-        let mut values = tidb_cluster::system_row_write::RowValues::new();
+        let mut values = tidb_syssession::system_row_write::RowValues::new();
         values.insert(ddl_job_id_column, Datum::Int(ddl_job_id));
         values.insert(sub_job_id_column, Datum::Int(*sub_job_id));
         values.insert(
@@ -9059,9 +9059,9 @@ fn append_schema_change_mutations(
                 })?;
                 let row_id = i64::try_from(id)
                     .map_err(|_| DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-                tidb_cluster::system_row_write::insert_row(table, row_id, &values)
+                tidb_syssession::system_row_write::insert_row(table, row_id, &values)
             }
-            None => tidb_cluster::system_row_write::store_clustered_row(table, None, &values),
+            None => tidb_syssession::system_row_write::store_clustered_row(table, None, &values),
         };
         writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
     }
@@ -9089,7 +9089,7 @@ pub(crate) fn write_table_cache_meta_row(
             })
     };
     let lock_type = column("lock_type")?;
-    let mut values = tidb_cluster::system_row_write::RowValues::new();
+    let mut values = tidb_syssession::system_row_write::RowValues::new();
     values.insert(column("tid")?.id, Datum::Int(table_id));
     values.insert(
         lock_type.id,
@@ -9101,7 +9101,7 @@ pub(crate) fn write_table_cache_meta_row(
     values.insert(column("lease")?.id, Datum::Int(0));
     values.insert(column("oldreadlease")?.id, Datum::Int(0));
     writes.extend(
-        tidb_cluster::system_row_write::replace_unindexed_clustered_row(table, &values)
+        tidb_syssession::system_row_write::replace_unindexed_clustered_row(table, &values)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
     );
     Ok(())
@@ -9128,7 +9128,7 @@ fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo 
 fn find_database<'catalog>(
     catalog: &'catalog ClusterCatalog,
     name: &str,
-) -> Option<&'catalog tidb_cluster::cluster_catalog::LoadedDatabase> {
+) -> Option<&'catalog tidb_infoschema::cluster_catalog::LoadedDatabase> {
     let name = name.go_to_lower();
     catalog
         .databases
@@ -9137,7 +9137,7 @@ fn find_database<'catalog>(
 }
 
 fn find_table<'database>(
-    database: &'database tidb_cluster::cluster_catalog::LoadedDatabase,
+    database: &'database tidb_infoschema::cluster_catalog::LoadedDatabase,
     name: &str,
 ) -> Option<&'database TableInfo> {
     let name = name.go_to_lower();

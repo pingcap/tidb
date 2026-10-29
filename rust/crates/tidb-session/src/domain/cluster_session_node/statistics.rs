@@ -56,7 +56,7 @@ impl PersistedAnalyzeJobs {
         &self,
         build: impl FnOnce(
             &mut super::SnapshotMetaSnapshot,
-            &tidb_cluster::cluster_catalog::ClusterCatalog,
+            &tidb_infoschema::cluster_catalog::ClusterCatalog,
         ) -> Result<StatsWritePlan, String>,
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;

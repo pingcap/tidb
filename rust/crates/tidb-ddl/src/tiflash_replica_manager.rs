@@ -46,7 +46,7 @@ use tidb_log::{Field, Value};
 use tidb_pd_client::{PdStore, PdStoreState};
 use tikv_client::pd_http;
 
-use tidb_cluster::cluster_http::block_on_pd_http;
+use tidb_txnkv::cluster_http::block_on_pd_http;
 
 /// Go `NullspaceID` (`tikv/keyspace`): the keyspace id a classic API-V1
 /// cluster dispatches and reports under.
@@ -81,7 +81,7 @@ pub trait TiFlashReplicaControl: Send + Sync {
 
 /// One poller over the node's catalog and PD membership. It owns no transaction.
 pub struct TiFlashReplicaManager {
-    catalog: Arc<tidb_cluster::catalog_watch::SharedCatalog>,
+    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
     stores: Box<dyn Fn() -> Result<Vec<PdStore>, String> + Send + Sync>,
     ddl: Arc<dyn TiFlashReplicaControl>,
     /// Go `TiFlashReplicaManagerCtx.pdHTTPCli`.
@@ -139,7 +139,7 @@ struct ReplicaTable {
     logical_available: bool,
 }
 
-fn replica_tables(catalog: &tidb_cluster::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
+fn replica_tables(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
     let mut tables = Vec::new();
     for database in &catalog.databases {
         for stored in &database.tables {
@@ -229,7 +229,7 @@ impl TiFlashReplicaManager {
     /// InternalHTTPClient does. Retained five-tick discovery is shared with
     /// deterministic injected tests.
     pub fn with_pd_http_client(
-        catalog: Arc<tidb_cluster::catalog_watch::SharedCatalog>,
+        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
         ddl: Arc<dyn TiFlashReplicaControl>,
         pd_http_client: pd_http::Client,
         security: &tidb_pd_client::ClusterSecurity,
@@ -239,8 +239,8 @@ impl TiFlashReplicaManager {
         } else {
             "http"
         };
-        let client = tidb_cluster::cluster_http::internal_http_client(security)?;
-        let stores_client = tidb_cluster::cluster_http::info_syncer_pd_http_client(&pd_http_client);
+        let client = tidb_txnkv::cluster_http::internal_http_client(security)?;
+        let stores_client = tidb_txnkv::cluster_http::info_syncer_pd_http_client(&pd_http_client);
         let mut manager = Self::new(
             catalog,
             move || {
@@ -265,7 +265,7 @@ impl TiFlashReplicaManager {
     /// `pd_http_client`, as Go's `initTiFlashReplicaManager` uses
     /// `is.pdHTTPCli`.
     pub fn new(
-        catalog: Arc<tidb_cluster::catalog_watch::SharedCatalog>,
+        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
         stores: impl Fn() -> Result<Vec<PdStore>, String> + Send + Sync + 'static,
         ddl: Arc<dyn TiFlashReplicaControl>,
         pd_http_client: pd_http::Client,
@@ -279,7 +279,7 @@ impl TiFlashReplicaManager {
             catalog,
             stores: Box::new(stores),
             ddl,
-            pd_http_client: tidb_cluster::cluster_http::info_syncer_pd_http_client(&pd_http_client),
+            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(&pd_http_client),
             http,
             http_scheme: "http",
             state: Mutex::new(PollState::default()),
@@ -736,8 +736,8 @@ mod tests {
     }
 
     fn manager(ddl: Arc<Ddl>, calls: Arc<AtomicUsize>) -> TiFlashReplicaManager {
-        let catalog = Arc::new(tidb_cluster::catalog_watch::SharedCatalog::new(
-            tidb_cluster::cluster_catalog::ClusterCatalog {
+        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+            tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
@@ -1174,13 +1174,13 @@ mod tests {
         }
     }
 
-    fn replica_catalog(tables: &[(i64, bool)]) -> Arc<tidb_cluster::catalog_watch::SharedCatalog> {
-        Arc::new(tidb_cluster::catalog_watch::SharedCatalog::new(
-            tidb_cluster::cluster_catalog::ClusterCatalog {
+    fn replica_catalog(tables: &[(i64, bool)]) -> Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog> {
+        Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+            tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
-                databases: vec![tidb_cluster::cluster_catalog::LoadedDatabase {
+                databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
                     info: tidb_model::db::DBInfo::default(),
                     tables: tables
                         .iter()

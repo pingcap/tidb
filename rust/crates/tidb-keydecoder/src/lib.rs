@@ -20,6 +20,7 @@
 //! metadata view the decoder needs.
 
 mod infoschema;
+mod cluster_catalog;
 
 use std::fmt::Write as _;
 

@@ -320,7 +320,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
             detail: "staleCommand backoffer exhausted".to_owned(),
         },
     });
-    let lock_error = tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+    let lock_error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
     let query_error = crate::domain::session_api::cluster_analyze_error(
         tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),

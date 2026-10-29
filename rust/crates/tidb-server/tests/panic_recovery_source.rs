@@ -9,7 +9,7 @@
 //! panics ends ITS connection, and the server lives to serve the next one.
 //! Recovery writes through the retained PacketIO before transport/session cleanup.
 
-use tidb_exec::{ResultFieldMetadata, ResultFieldTypeMetadata};
+use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};

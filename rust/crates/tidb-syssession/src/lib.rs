@@ -1340,3 +1340,8 @@ mod tests {
         assert_eq!(context.closed.load(Ordering::SeqCst), 1);
     }
 }
+
+pub mod mysql_system_tables;
+pub mod system_row_write;
+pub mod cluster_sysvar_load;
+pub mod cluster_sysvar_write;

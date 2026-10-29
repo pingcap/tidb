@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_ddl::ddl_systable::MinJobIdRefresher;
-use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at;
+use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 
 use crate::domain::cluster_account_seam::RealClusterAccountWriter;
@@ -156,7 +156,7 @@ pub fn cluster_session_stack(
             // catalog from then on, so bootstrap it right here and let the
             // catalog load below read the schema just published. A cluster a
             // TiDB already bootstrapped skips the publish entirely.
-            let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
+            let accounts = tidb_domain_core::real_tikv_privileges::load_accounts_from_cluster(
                 opener,
                 COPROCESSOR_QUERY_TIMEOUT,
             )
@@ -218,8 +218,8 @@ pub fn cluster_session_stack(
         ))
     })?;
     let auto_id_service = Arc::new(
-        tidb_cluster::auto_id_client::AutoIdClient::new(
-            Arc::new(tidb_cluster::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
+        tidb_autoid::auto_id_client::AutoIdClient::new(
+            Arc::new(tidb_autoid::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
             config.cluster_security.clone(),
         )
         .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,

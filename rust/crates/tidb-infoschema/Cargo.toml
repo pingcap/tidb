@@ -9,6 +9,9 @@ description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewri
 
 
 [dependencies]
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }

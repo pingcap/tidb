@@ -14,6 +14,8 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-protocol = { path = "../tidb-protocol" }
+tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-murmur3 = { path = "../tidb-murmur3" }
 tidb-keyspace = { path = "../tidb-keyspace" }
@@ -31,7 +33,6 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl = { path = "../tidb-ddl" }
-tidb-cluster = { path = "../tidb-cluster" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }

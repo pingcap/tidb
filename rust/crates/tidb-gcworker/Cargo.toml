@@ -26,7 +26,6 @@ tokio.workspace = true
 async-trait.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
-tidb-cluster = { path = "../tidb-cluster" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-placement = { path = "../tidb-placement" }

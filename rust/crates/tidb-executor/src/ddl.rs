@@ -114,7 +114,7 @@
 //! * **`CHECK` constraints -- NOT affected.** They are DISCARDED at DDL time
 //!   under the stock `tidb_enable_check_constraint = OFF`; see
 //!   [`run_create_table_in`].
-//! * **`tidb_exec::table_info_build`, the OTHER builder -- NOT affected.** It
+//! * **`tidb_ddl_build::table_info_build`, the OTHER builder -- NOT affected.** It
 //!   refuses `PARTITION BY` outright and its `set_default_value` accepts only
 //!   a LITERAL or a temporal marker (`CURRENT_TIMESTAMP` / `CURRENT_DATE`),
 //!   never folding an expression, so it has no DDL-time evaluation to give a

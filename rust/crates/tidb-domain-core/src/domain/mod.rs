@@ -29,11 +29,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Timelike, Utc};
-use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_cluster::cluster_catalog::ClusterCatalog;
-use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
+use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_ddl_build::table_from_meta::TableAutoIds;
 use tidb_ddl::worker::ClusterDdl;
 use tidb_domain::global_sysvars::GlobalSysvars;
@@ -139,7 +139,7 @@ impl ClusterTableStorageStatsProvider {
     /// both-reads-or-nothing copy contract.
     fn size_reads(
         &self,
-        catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
+        catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
         resource_group: &str,
         ids: &[i64],
         need_column_lengths: bool,
@@ -187,7 +187,7 @@ pub(crate) type SizeReads = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);
 
 pub(crate) struct ProviderSizeReads<'a> {
     provider: &'a ClusterTableStorageStatsProvider,
-    catalog: &'a tidb_cluster::cluster_catalog::ClusterCatalog,
+    catalog: &'a tidb_infoschema::cluster_catalog::ClusterCatalog,
     resource_group: &'a str,
     need_column_lengths: bool,
     reads: RefCell<Option<Result<SizeReads, String>>>,
@@ -273,7 +273,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
 
 pub struct ClusterApproximateTableCountProvider {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub cache: Arc<Mutex<tidb_exec::pd_approximate_count::ApproximateTableCountCache>>,
+    pub cache: Arc<Mutex<tidb_executor::pd_helper::ApproximateTableCountCache>>,
     pub cleanup_tx: std::sync::mpsc::SyncSender<bool>,
     pub cleanup_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -281,7 +281,7 @@ pub struct ClusterApproximateTableCountProvider {
 impl ClusterApproximateTableCountProvider {
     pub(crate) fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
         let cache = Arc::new(Mutex::new(
-            tidb_exec::pd_approximate_count::ApproximateTableCountCache::new(
+            tidb_executor::pd_helper::ApproximateTableCountCache::new(
                 1_048_576,
                 Duration::from_secs(30),
             ),
@@ -351,7 +351,7 @@ impl tidb_exec::real_tikv_analyze::ApproximateTableCountProvider
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
-        let key = tidb_exec::pd_approximate_count::approximate_table_count_key(
+        let key = tidb_executor::pd_helper::approximate_table_count_key(
             physical_id,
             database,
             table,
@@ -1521,7 +1521,7 @@ impl Domain {
                 );
                 for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&updates) {
                     let ((), mutations) =
-                        tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
+                        tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
                             &staged,
                             |retry_ts| {
@@ -1529,7 +1529,7 @@ impl Domain {
                                     Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
                                     None => transaction.snapshot_for(true),
                                 }?;
-                                Ok(tidb_cluster::cluster_table_storage::overlay_staged_mutations(
+                                Ok(tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
                                     snapshot, &staged,
                                 ))
                             },
@@ -1559,7 +1559,7 @@ impl Domain {
                             },
                         )
                         .map_err(|error| error.to_string())?;
-                    tidb_cluster::cluster_table_storage::stage_mutations(&staged, mutations)
+                    tidb_store_driver::cluster_table_storage::stage_mutations(&staged, mutations)
                         .map_err(|error| error.to_string())?;
                 }
                 Ok::<_, String>(updates)
@@ -1601,7 +1601,7 @@ impl Domain {
                         let staged = MutationBuffer::new();
                         transaction.bind_mutation_buffer(&staged);
                         let ((modify_count, count), lock_mutations) =
-                            tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |read_ts| match read_ts {
@@ -1629,10 +1629,10 @@ impl Domain {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_cluster::cluster_table_storage::stage_mutations(&staged, lock_mutations)
+                        tidb_store_driver::cluster_table_storage::stage_mutations(&staged, lock_mutations)
                             .map_err(|error| error.to_string())?;
                         let ((), replace_mutations) =
-                            tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |retry_ts| match retry_ts {
@@ -1665,7 +1665,7 @@ impl Domain {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_cluster::cluster_table_storage::stage_mutations(
+                        tidb_store_driver::cluster_table_storage::stage_mutations(
                             &staged,
                             replace_mutations,
                         )
@@ -1938,7 +1938,7 @@ impl Domain {
     /// `/schema` routes. Go answers those from `GetLatest()` per request, so
     /// this reads the live pointer rather than a captured snapshot.
     #[must_use]
-    pub fn catalog_snapshot(&self) -> tidb_cluster::cluster_catalog::ClusterCatalog {
+    pub fn catalog_snapshot(&self) -> tidb_infoschema::cluster_catalog::ClusterCatalog {
         (*self.catalog.load()).clone()
     }
 
@@ -2879,7 +2879,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let create_time = tidb_exec::mysql_bootstrap::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
             let ((), mutations) =
-                tidb_cluster::cluster_table_storage::lock_pessimistic_statement_with(
+                tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                     transaction.start_ts(),
                     &staged,
                     |read_ts| match read_ts {
@@ -2914,7 +2914,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     },
                 )
                 .map_err(|error| error.to_string())?;
-            tidb_cluster::cluster_table_storage::stage_mutations(&staged, mutations)
+            tidb_store_driver::cluster_table_storage::stage_mutations(&staged, mutations)
                 .map_err(|error| error.to_string())?;
         }
         transaction.commit(&staged).map_err(|error| error.message)?;

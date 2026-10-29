@@ -77,7 +77,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 #[cfg(test)]
 mod transaction_buffer_tests {
     use super::*;
-    use tidb_cluster::cluster_table_storage::SessionTransaction;
+    use tidb_store_driver::cluster_table_storage::SessionTransaction;
     use tidb_executor::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
@@ -210,7 +210,7 @@ mod transaction_buffer_tests {
         let key = b"locked".to_vec();
         assert!(matches!(
             transaction.lock_keys(vec![key.clone()]).unwrap(),
-            tidb_cluster::cluster_table_storage::LockKeysOutcome::Locked { .. }
+            tidb_store_driver::cluster_table_storage::LockKeysOutcome::Locked { .. }
         ));
         transaction
             .commit_with(
@@ -243,7 +243,7 @@ pub struct UnistoreClusterStack {
         Option<tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
-    pub _reloader: tidb_cluster::catalog_watch::CatalogReloader,
+    pub _reloader: tidb_infoschema_issyncer::catalog_watch::CatalogReloader,
     pub _sysvar_reloader: crate::domain::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_exec::stats_watch::StatsReloader,
     pub _binding_reloader: crate::domain::cluster_binding_seam::BindingReloader,
@@ -588,7 +588,7 @@ pub fn unistore_cluster_session_stack_from(
     .map_err(engine)?;
 
     let (startup, startup_lease_grant_ts) =
-        tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+        tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     // The bootstrap persisted the system time zone and the global-variable
@@ -795,13 +795,13 @@ pub fn unistore_cluster_session_stack_from(
     })
 }
 
-/// [`tidb_exec::meta_txn`] against real (embedded) storage: Go's
+/// [`tidb_store_driver::meta_txn`] against real (embedded) storage: Go's
 /// `kv.Transaction` memory-buffer contract, `meta.NewMutator(txn)`, and
 /// `kv.RunInNewTxn`'s retry on a write conflict.
 #[cfg(test)]
 mod meta_txn_tests {
     use super::*;
-    use tidb_exec::meta_txn::MetaTxnStorage;
+    use tidb_store_driver::meta_txn::MetaTxnStorage;
     use tidb_meta::transaction::{Mutator, RawTransaction};
     use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
@@ -974,7 +974,7 @@ mod startup_schema_lease_tests {
         tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, lease_grant_ts) =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
         let version = startup.schema_version;
         assert!(lease_grant_ts > 0, "the load read at a real timestamp");
@@ -1006,7 +1006,7 @@ mod startup_schema_lease_tests {
         tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, _) =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
         let default = startup
             .resource_groups

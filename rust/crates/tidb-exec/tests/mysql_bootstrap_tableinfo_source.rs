@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The acceptance bar for [`tidb_exec::table_info_build`]: every `mysql.*`
+//! The acceptance bar for [`tidb_ddl_build::table_info_build`]: every `mysql.*`
 //! `CREATE TABLE` a fresh TiDB bootstrap runs must lower to the `TableInfo`
 //! that real TiDB builds for it.
 //!
@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_exec::table_info_build::build_table_info_with_context;
+use tidb_ddl_build::table_info_build::build_table_info_with_context;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_model::table_info::TableInfo;
 

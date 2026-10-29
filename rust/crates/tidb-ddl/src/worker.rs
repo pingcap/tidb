@@ -29,15 +29,15 @@ use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
-use tidb_cluster::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
+use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use crate::cluster_ddl::{
     CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
 };
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use crate::ddl_job_table::DdlJobTable;
 use crate::ddl_systable::MinJobIdRefresher;
-use tidb_cluster::pessimistic_lock_error::LockSqlError;
-use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
+use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use crate::real_tikv_ddl::{
     answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
     load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
@@ -52,7 +52,7 @@ use tidb_table::kv_table::RowDecodeContext;
 use tidb_pd_client::EtcdClient;
 
 use crate::real_tikv_ddl::cluster_ddl_error;
-use tidb_cluster::sql_query_error::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_ddl_build::table_from_meta::{cluster_table, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
@@ -604,7 +604,7 @@ where
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    auto_ids: Option<Arc<tidb_cluster::auto_id_client::AutoIdClient>>,
+    auto_ids: Option<Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
     /// The etcd client this node announces its catalog changes through, so
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
@@ -640,7 +640,7 @@ where
     }
 
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
-    pub fn with_auto_ids(mut self, client: Arc<tidb_cluster::auto_id_client::AutoIdClient>) -> Self {
+    pub fn with_auto_ids(mut self, client: Arc<tidb_autoid::auto_id_client::AutoIdClient>) -> Self {
         self.auto_ids = Some(client);
         self
     }
@@ -1035,7 +1035,7 @@ mod schema_sync_tests {
     }
 
     fn worker_without_mdl(recover: bool, remove_mdl_table: bool) {
-        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
         use crate::real_tikv_ddl::load_active_persisted_ddl_jobs;
         use tidb_meta::{key, value};
         use tidb_model::{
@@ -1068,7 +1068,7 @@ mod schema_sync_tests {
         tidb_vardef::set_enable_mdl(false);
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let before = catalog.schema_version;
         let mut job = Job::default();
         job.id = 600;
@@ -1203,7 +1203,7 @@ mod schema_sync_tests {
         );
         // Every committed DROP phase waits in non-MDL mode too, while
         // notification errors do not prevent the self-version acknowledgement.
-        let start = tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+        let start = tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
             .unwrap()
             .schema_version;
         job.id = 602;
@@ -1213,7 +1213,7 @@ mod schema_sync_tests {
         job.last_schema_version = 0;
         job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
         let mut tx = opener.begin().unwrap();
-        let current = tidb_cluster::cluster_catalog::load_cluster_catalog(
+        let current = tidb_infoschema::cluster_catalog::load_cluster_catalog(
             &mut TransactionMetaSnapshot::new(&mut tx, timeout),
         )
         .unwrap();
@@ -1270,7 +1270,7 @@ mod schema_sync_tests {
             return;
         }
         tidb_vardef::set_enable_mdl(true);
-        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
         use crate::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
@@ -1313,7 +1313,7 @@ mod schema_sync_tests {
         let seed = |job: &mut Job| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let table = DdlJobTable::locate(&catalog).unwrap();
             let mut mutations = Vec::new();
             table
@@ -1365,7 +1365,7 @@ mod schema_sync_tests {
                 &|_| panic!("this job must not wait after an action error"),
             )
         };
-        let before = tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+        let before = tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
             .unwrap()
             .schema_version;
         let checks = std::sync::atomic::AtomicUsize::new(0);
@@ -1378,7 +1378,7 @@ mod schema_sync_tests {
         };
         assert!(run(500, None, &lost_before_commit).is_err());
         assert_eq!(
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version,
             before
@@ -1498,7 +1498,7 @@ mod schema_sync_tests {
         );
         assert_eq!(barrier.waits.lock().unwrap().len(), wait_count);
         assert_eq!(
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version,
             before + 4
@@ -1560,7 +1560,7 @@ mod schema_sync_tests {
             .unwrap()
             .is_none());
         let catalog =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         assert_eq!(catalog.schema_version, before + 4);
         assert!(!catalog
             .databases
@@ -1594,7 +1594,7 @@ mod schema_sync_tests {
         // and follows the normal schema barrier.
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let table = DdlJobTable::locate(&catalog).unwrap();
         let mut active = table.load_by_id(&mut snapshot, 504).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -1648,7 +1648,7 @@ mod schema_sync_tests {
             tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
         );
         assert!(
-            !tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            !tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .databases
                 .iter()
@@ -1658,14 +1658,14 @@ mod schema_sync_tests {
         let set_limit = |limit: i64| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let mut vars =
-                tidb_cluster::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
+                tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
                     .unwrap()
                     .into_iter()
                     .collect::<std::collections::BTreeMap<_, _>>();
             vars.insert("tidb_ddl_error_count_limit".into(), limit.to_string());
-            let plan = tidb_cluster::cluster_sysvar_write::plan_sysvar_write(
+            let plan = tidb_syssession::cluster_sysvar_write::plan_sysvar_write(
                 &mut snapshot,
                 &catalog,
                 &vars,
@@ -1894,7 +1894,7 @@ mod schema_sync_tests {
         let validator = PauseDuringValidation(|_: &MutationBuffer| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
             active.job.state = JobState::PAUSING;
@@ -1935,7 +1935,7 @@ mod schema_sync_tests {
             .is_none());
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -2062,7 +2062,7 @@ mod schema_sync_tests {
         check_job.id = 702;
         seed(&mut check_job);
         let before_panic_version =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
                 .unwrap()
                 .schema_version;
         let marker = tidb_meta::key::table_kv_key(505, 999);
@@ -2128,7 +2128,7 @@ mod schema_sync_tests {
             .is_none());
         tx.finish_without_writes().unwrap();
         let after =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         assert_eq!(after.schema_version, before_panic_version);
         let stored_table = after
             .databases
@@ -2149,7 +2149,7 @@ mod schema_sync_tests {
         let set_job_state = |state| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 703).unwrap().unwrap();
             active.job.state = state;
@@ -2222,7 +2222,7 @@ mod schema_sync_tests {
             tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
         );
         let after =
-            tidb_cluster::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+            tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         let stored_table = after
             .databases
             .iter()
@@ -2255,7 +2255,7 @@ mod schema_sync_tests {
         }
         tidb_vardef::set_enable_mdl(true);
         use crate::ddl_reorg_table::DdlReorgTable;
-        use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
         use crate::real_tikv_ddl::{load_history_persisted_ddl_job, JobDoneCh};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
@@ -2304,7 +2304,7 @@ mod schema_sync_tests {
         {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             let mut mutations = Vec::new();
             DdlJobTable::locate(&catalog)
                 .unwrap()
@@ -2343,7 +2343,7 @@ mod schema_sync_tests {
         >| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_cluster::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
             DdlReorgTable::locate(&catalog)
                 .unwrap()
                 .load(&mut snapshot, 700)
@@ -2452,7 +2452,7 @@ where
         let at =
             reload_catalog_from_cluster(&self.opener, self.timeout, &current, &self.row_ids)
                 .map_err(|error| error.to_string())?;
-        match tidb_cluster::real_tikv_catalog::note_reload(
+        match tidb_infoschema_issyncer::real_tikv_catalog::note_reload(
             &self.schema_validator,
             current.schema_version,
             at,
@@ -2874,7 +2874,7 @@ use tidb_table::kv_table::TableAutoId;
 
 impl tidb_ddl_build::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
-        self.over(tidb_cluster::cluster_auto_id::auto_id_key_for(db_id, table))
+        self.over(tidb_autoid::cluster_auto_id::auto_id_key_for(db_id, table))
     }
 
     fn row_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
@@ -2887,7 +2887,7 @@ impl tidb_ddl_build::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     }
 
     fn random_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
-        self.over(tidb_cluster::cluster_auto_id::auto_random_id_key_for(
+        self.over(tidb_autoid::cluster_auto_id::auto_random_id_key_for(
             db_id, table,
         ))
     }
@@ -3458,7 +3458,7 @@ mod reorg_context_tests {
     /// job's SQL mode and time zone. Go's reorganization reads the current time
     /// in the job's zone, as a NULL bound for a `TIMESTAMP NOT NULL` column does.
     fn reorg_statement_context(vars: &crate::cluster_ddl::add_index::ReorgSessionVars) -> tidb_executor::StmtContext {
-        tidb_exec::table_info_build::default_ddl_statement_context()
+        tidb_ddl_build::table_info_build::default_ddl_statement_context()
             .with_ddl_sql_mode(vars.sql_mode)
             .with_lazy_clock(None, vars.time_zone.clone())
             .for_reorg()

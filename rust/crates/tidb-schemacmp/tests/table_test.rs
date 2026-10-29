@@ -22,7 +22,7 @@
 //! the way Go's DDL does: strip the AST option, then stamp
 //! `generated_expr_string`/`generated_stored` on the built column.
 
-use tidb_exec::table_info_build::build_table_info;
+use tidb_ddl_build::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 use tidb_schemacmp::{decode_column_field_types, encode, IncompatibleError, Table};
 

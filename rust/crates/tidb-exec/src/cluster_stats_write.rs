@@ -19,7 +19,7 @@
 //! `pkg/statistics/handle/storage/save.go::SaveAnalyzeResultToStorage`, whose
 //! four statements this follows column for column, minus the SQL: the
 //! mutations go straight to the record and index keys, the way every
-//! `mysql.*` write on this node does (see [`tidb_cluster::system_row_write`]).
+//! `mysql.*` write on this node does (see [`tidb_syssession::system_row_write`]).
 //!
 //! # The two encodings that make or break the round trip
 //!
@@ -65,14 +65,14 @@ use tidb_stats::{JsonPredicateColumn, JsonTable};
 use tidb_txnkv::transaction::BufferMutation;
 use tidb_util::sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
-use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::ColumnStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use tidb_cluster::mysql_system_tables::{
+use tidb_syssession::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, HandleLayout,
     SystemRow, SystemTableError, SystemTableView,
 };
-use tidb_cluster::system_row_write::{
+use tidb_syssession::system_row_write::{
     defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row,
     store_clustered_row, RowEncodeError, RowValues,
 };
@@ -3795,7 +3795,7 @@ fn decode_rows_with_keys(
     table: &TableInfo,
     table_id: Option<i64>,
     view: &SystemTableView,
-    pairs: tidb_cluster::cluster_catalog::MetaPairs,
+    pairs: tidb_infoschema::cluster_catalog::MetaPairs,
 ) -> Result<Vec<(Vec<u8>, RowValues)>, StatsWriteError> {
     let mut rows = Vec::new();
     for (key, value) in pairs {

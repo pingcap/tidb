@@ -20,7 +20,7 @@ use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString};
-use tidb_cluster::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};

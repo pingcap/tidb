@@ -459,7 +459,7 @@ pub struct Session {
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from, which `DDLExec` builds a LOCAL temporary table's
     /// `TableInfo` against. `None` for a session no node opened.
-    info_schema: Option<Arc<tidb_cluster::cluster_catalog::ClusterCatalog>>,
+    info_schema: Option<Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>>,
     /// Go `SessionVars.HypoIndexes`: session state, never schema.
     hypo_indexes: Arc<tidb_executor::ddl::HypoIndexes>,
     /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
@@ -921,7 +921,7 @@ impl Session {
             column_stats_usage: None,
             analyze_status: None,
             approximate_table_counts: std::sync::Arc::new(
-                tidb_exec::pd_approximate_count::NoPdApproximateTableCounts::default(),
+                tidb_executor::pd_helper::NoPdApproximateTableCounts::default(),
             ),
             table_storage_stats: None,
             bdr_role_store: None,
@@ -1819,7 +1819,7 @@ impl Session {
 
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from.
-    pub fn set_info_schema(&mut self, info_schema: Arc<tidb_cluster::cluster_catalog::ClusterCatalog>) {
+    pub fn set_info_schema(&mut self, info_schema: Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>) {
         self.info_schema = Some(info_schema);
     }
 
