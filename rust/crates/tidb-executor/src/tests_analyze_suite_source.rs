@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tidb_datatype::Datum;
 
 use crate::analyze::{kv::analyze_kv_table, AnalyzeOptions};
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::{run_create_table_on, run_insert_on, Catalog, StmtContext};
 
 fn ctx() -> StmtContext {

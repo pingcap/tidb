@@ -75,8 +75,6 @@ pub use planner_view::{PlannerCatalog, PlannerSchemaView};
 pub mod statistics_access;
 pub mod temporary;
 pub mod cluster_catalog;
-pub use tidb_stats_handle::{PseudoStatsTable, StatisticsLoadWorkers, StatisticsSchema, StatisticsSource, StatisticsView};
-pub use tidb_stats_handle::{enqueue_sync_load_failures, StatisticsItemLoader, StatsHandle};
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -235,7 +233,7 @@ pub struct Catalog {
     /// The schema facts the statistics view converts a table under, by
     /// table / partition id; the statistics themselves live in the domain's
     /// `StatsHandle`, not in this image.
-    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<StatisticsSchema>>>>,
+    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<tidb_stats::StatisticsSchema>>>>,
 }
 
 impl Catalog {

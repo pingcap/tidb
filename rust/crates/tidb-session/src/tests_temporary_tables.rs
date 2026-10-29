@@ -28,6 +28,7 @@
 //!   and are copied out of the transaction buffer at commit
 //!   (`session.commitTxnWithTemporaryData`).
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::tests_support::{row_text, show_create};
 use crate::*;
 

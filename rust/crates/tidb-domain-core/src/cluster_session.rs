@@ -77,7 +77,7 @@ pub struct ClusterSessionCatalog {
     pub skipped: Vec<SkippedTable>,
     /// The domain statistics the sessions over this catalog plan from (Go's
     /// `GetStatsHandle()`), when the caller supplied a view.
-    pub statistics: Option<Arc<tidb_executor::driver::StatisticsView>>,
+    pub statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
 }
 
 /// Builds a driver catalog whose every table reads and writes through
@@ -109,15 +109,15 @@ pub fn cluster_session_catalog(
 #[must_use]
 pub fn snapshot_statistics_view(
     stats: &StatsSnapshot,
-) -> Arc<tidb_executor::driver::StatisticsView> {
-    Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
+) -> Arc<tidb_stats_handle::StatisticsView> {
+    Arc::new(tidb_stats_handle::StatisticsView::new(Arc::new(
         SnapshotStatisticsSource(stats.clone()),
     )))
 }
 
 struct SnapshotStatisticsSource(StatsSnapshot);
 
-impl tidb_executor::driver::StatisticsSource for SnapshotStatisticsSource {
+impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
     fn table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .get(&physical_id)
@@ -176,7 +176,7 @@ pub fn cluster_session_catalog_with_templates(
     // Go's planner reads the domain's statistics handle
     // (`GetPhysicalTableStats`), never a copy in the schema: the catalog plans
     // through this view of it.
-    statistics: Option<Arc<tidb_executor::driver::StatisticsView>>,
+    statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
     auto_ids: &dyn TableAutoIds,
     // Neutral storage over which CACHED-MISS tables are built for the
     // template set; sessions rebind their own seam afterwards either way.

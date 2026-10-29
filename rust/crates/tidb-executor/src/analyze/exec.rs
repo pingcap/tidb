@@ -45,6 +45,7 @@
 //!   uses a stats-handle internal session, so a user `ROLLBACK` cannot discard
 //!   the published statistics.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 

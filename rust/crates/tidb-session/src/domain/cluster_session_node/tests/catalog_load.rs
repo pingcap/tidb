@@ -18,6 +18,7 @@
 //! stored DEFAULT, a hidden index column) -- and drives a session on that
 //! node.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use super::super::*;
 use super::node_fixture::*;
 use tidb_domain_core::cluster_session::{planner_statistics, SkippedTable};

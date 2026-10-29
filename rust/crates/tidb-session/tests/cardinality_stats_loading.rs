@@ -15,6 +15,7 @@
 //! Cardinality fixtures that drain the process-global async statistics queue.
 //! Isolate the domain lifecycle from other session tests' catalogs and queues.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use std::sync::Arc;
 use tidb_session::{Session, StmtResult};
 
@@ -166,7 +167,7 @@ impl StatsStorage {
 
 struct CanonicalStatistics(Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>);
 
-impl tidb_executor::driver::StatisticsSource for CanonicalStatistics {
+impl tidb_stats_handle::StatisticsSource for CanonicalStatistics {
     fn table(&self, id: i64) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .load()
@@ -267,7 +268,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     let loader = tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();
     let cache = Arc::new(tidb_stats_handle_syncload::stats_watch::SharedStats::new(Default::default()).unwrap());
     shared_catalog.stats_handle().set_statistics_view(Arc::new(
-        tidb_executor::driver::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
+        tidb_stats_handle::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
     ));
     // Update after the delta, clear/init-lite, clear/init-full, then Update
     // again: retain Go's lifecycle order and the same planner-facing view.

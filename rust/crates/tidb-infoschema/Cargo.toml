@@ -14,7 +14,6 @@ tidb-meta = { path = "../tidb-meta" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
-tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-table = { path = "../tidb-table" }
 tidb-driver-error = { path = "../tidb-driver-error" }

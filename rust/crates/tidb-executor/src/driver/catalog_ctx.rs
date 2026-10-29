@@ -16,6 +16,7 @@
 //! image together: `RequestLoadStats` / `SyncWaitStatsLoad`, and the
 //! statement state a [`PlannerCatalog`] is planned under.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::StatsStmtCtx as _;
 use crate::{Catalog, StmtContext};
 use tidb_infoschema::PlannerCatalog;
@@ -145,7 +146,7 @@ impl CatalogStatisticsLoad for Catalog {
             wait_error =
                 Some("sync load stats failed: some requested items are not loaded in time");
         }
-        tidb_infoschema::enqueue_sync_load_failures(&requested_items, &remaining_items);
+        tidb_stats_handle::enqueue_sync_load_failures(&requested_items, &remaining_items);
         context.report_sync_stats_failed();
         let message = wait_error.expect("an incomplete statistics wait has an error");
         if context.stats_load_pseudo_timeout() {

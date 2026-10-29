@@ -188,7 +188,7 @@ impl DomainSessions for Domain {
             }),
             workers: Arc::clone(
                 self.stats_load_workers
-                    .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
+                    .get_or_init(tidb_stats_handle::StatisticsLoadWorkers::new),
             ),
         };
         let stats_handle = statistics_loading.handle();

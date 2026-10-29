@@ -20,10 +20,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod catalog_statistics;
 pub mod source;
 pub mod sync_load;
 
-pub use source::{PseudoStatsTable, StatisticsSchema, StatisticsSource, StatisticsView};
+pub use source::{StatisticsSource, StatisticsView};
 pub use sync_load::StatisticsLoadWorkers;
 
 /// Storage half of Go's statistics sync/async load worker.
@@ -145,7 +146,7 @@ impl StatsHandle {
     pub fn table_statistics(
         &self,
         table_id: i64,
-        schema: impl FnOnce() -> Option<Arc<StatisticsSchema>>,
+        schema: impl FnOnce() -> Option<Arc<tidb_stats::StatisticsSchema>>,
     ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>> {
         let view = self
             .view

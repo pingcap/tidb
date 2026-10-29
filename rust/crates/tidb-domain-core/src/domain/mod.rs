@@ -78,8 +78,8 @@ pub struct ClusterStatisticsItemLoader {
 /// The domain loading resources outlive each connection's schema catalog.
 pub struct ClusterStatisticsLoading {
     pub loader: Arc<ClusterStatisticsItemLoader>,
-    pub workers: Arc<tidb_executor::driver::StatisticsLoadWorkers>,
-    pub view: Arc<tidb_executor::driver::StatisticsView>,
+    pub workers: Arc<tidb_stats_handle::StatisticsLoadWorkers>,
+    pub view: Arc<tidb_stats_handle::StatisticsView>,
 }
 
 impl ClusterStatisticsLoading {
@@ -95,7 +95,7 @@ impl ClusterStatisticsLoading {
 
 pub(crate) struct ClusterStatisticsSource(Arc<SharedStats>);
 
-impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
+impl tidb_stats_handle::StatisticsSource for ClusterStatisticsSource {
     fn table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .load()
@@ -107,7 +107,7 @@ impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
     fn get_physical_table_stats(
         &self,
         physical_id: i64,
-        table: &tidb_executor::driver::PseudoStatsTable,
+        table: &tidb_stats::PseudoStatsTable,
     ) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .get_physical_table_stats(physical_id, table.partitioned, table.cacheable, || {
@@ -478,7 +478,7 @@ impl tidb_executor::show::stats::ColumnStatsUsageProvider for ClusterColumnStats
     }
 }
 
-impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader {
+impl tidb_stats_handle::StatisticsItemLoader for ClusterStatisticsItemLoader {
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
@@ -703,9 +703,9 @@ pub struct Domain {
     /// is a tier with no cluster schema to follow, which commits unchecked.
     pub schema_validator: Option<Arc<SchemaValidator>>,
     /// One live planner view over the domain's canonical statistics.
-    pub statistics_view: Arc<tidb_executor::driver::StatisticsView>,
+    pub statistics_view: Arc<tidb_stats_handle::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
-    pub stats_load_workers: std::sync::OnceLock<Arc<tidb_executor::driver::StatisticsLoadWorkers>>,
+    pub stats_load_workers: std::sync::OnceLock<Arc<tidb_stats_handle::StatisticsLoadWorkers>>,
     /// Fully built tables of one schema version, shared by every session
     /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
     /// shared `infoschema`. A session clones its table and swaps in its own
@@ -940,7 +940,7 @@ impl Domain {
             cluster_peer: None,
             global_vars,
             boot_skipped,
-            statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
+            statistics_view: Arc::new(tidb_stats_handle::StatisticsView::new(Arc::new(
                 ClusterStatisticsSource(Arc::clone(&stats)),
             ))),
             stats,

@@ -19,6 +19,7 @@
     use tidb_infoschema::*;
     use tidb_stats_handle::{StatisticsLoadWorkers, StatsHandle};
     use crate::driver::CatalogStatisticsLoad;
+    use tidb_stats_handle::catalog_statistics::CatalogStatistics;
     use tidb_infoschema::statistics_access::*;
     use tidb_infoschema::planner_view::*;
 
@@ -31,7 +32,7 @@
         failure: Option<String>,
     }
 
-    impl StatisticsItemLoader for RecordingLoader {
+    impl tidb_stats_handle::StatisticsItemLoader for RecordingLoader {
         fn load_items(
             &self,
             items: &[tidb_model::StatsLoadItem],

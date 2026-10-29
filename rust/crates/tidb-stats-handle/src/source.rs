@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 
 use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::{PseudoStatsTable, StatisticsSchema};
 
 /// The domain's canonical Go-compatible statistics, independent of InfoSchema.
 /// Published tables are immutable: loading or evicting a payload publishes a
@@ -35,27 +36,6 @@ pub trait StatisticsSource: Send + Sync {
         let _ = table;
         self.table(physical_id)
     }
-}
-
-/// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a cache
-/// miss.
-#[derive(Debug, PartialEq, Eq)]
-pub struct PseudoStatsTable {
-    /// The schema `PseudoTable(tblInfo, false, true)` is built from.
-    pub info: tidb_stats::PseudoTableInfo,
-    /// `tblInfo.GetPartitionInfo() != nil`.
-    pub partitioned: bool,
-    /// Neither a temporary table nor a table of a system schema, the two
-    /// kinds Go never caches a `PseudoTable` for.
-    pub cacheable: bool,
-}
-
-/// Only the schema metadata used when converting canonical statistics.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StatisticsSchema {
-    pub columns: Vec<(i64, bool)>,
-    pub indexes: Vec<(i64, usize, bool)>,
-    pub pseudo: PseudoStatsTable,
 }
 
 struct ConvertedTable {

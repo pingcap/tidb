@@ -890,3 +890,24 @@ pub fn pseudo_table(
         is_pk_handle: false,
     }
 }
+
+/// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a cache
+/// miss.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PseudoStatsTable {
+    /// The schema `PseudoTable(tblInfo, false, true)` is built from.
+    pub info: PseudoTableInfo,
+    /// `tblInfo.GetPartitionInfo() != nil`.
+    pub partitioned: bool,
+    /// Neither a temporary table nor a table of a system schema, the two
+    /// kinds Go never caches a `PseudoTable` for.
+    pub cacheable: bool,
+}
+
+/// Only the schema metadata used when converting canonical statistics.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StatisticsSchema {
+    pub columns: Vec<(i64, bool)>,
+    pub indexes: Vec<(i64, usize, bool)>,
+    pub pseudo: PseudoStatsTable,
+}

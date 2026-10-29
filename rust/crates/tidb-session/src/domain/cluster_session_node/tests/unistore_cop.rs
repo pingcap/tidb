@@ -20,6 +20,7 @@
 //! client -- never fails in-tree. This module builds the same stack `--store unistore`
 //! boots and pins those plans.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::domain::cluster_session_node::DomainSessions as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -26,6 +26,7 @@ mod model;
 mod options;
 mod query;
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};

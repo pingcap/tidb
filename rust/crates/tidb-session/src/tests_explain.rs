@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::tests_support::*;
 use crate::*;
 

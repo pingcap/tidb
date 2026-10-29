@@ -17,6 +17,7 @@
 //! provided methods over the session primitives Go's executor reads through
 //! `sctx` and its domain.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_util::stringutil::go_to_lower;

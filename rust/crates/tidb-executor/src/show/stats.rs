@@ -14,6 +14,7 @@
 
 //! SHOW statistics and analyze-status result sets.
 
+use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
 
 use crate::simple::account_tables::sysvar_datum_text as datum_text;
