@@ -18,6 +18,7 @@ package mvservice
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -114,6 +115,8 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	started := make(chan string, 2)
 	block := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(block) })
+	defer unblock()
 	longStarted := make(chan struct{})
 
 	exec.Submit("long", func() error {
@@ -140,7 +143,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	waitForNamedStart(t, started, "short", time.Hour)
 
-	close(block)
+	unblock()
 
 	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
 	assertTaskExecutorMetrics(t, exec, 2, 2, 0, 1, 0, 0, 0, 0)
@@ -156,6 +159,8 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 
 	started := make(chan string, 2)
 	block := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(block) })
+	defer unblock()
 	longStarted := make(chan struct{})
 
 	exec.Submit("long", func() error {
@@ -178,7 +183,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 	waitForNamedStart(t, started, "short", 300*time.Millisecond)
 	waitForCount(t, exec.metrics.gauges.timedOutRunningCount.Load, 1)
 
-	close(block)
+	unblock()
 
 	waitForCount(t, exec.metrics.counters.timeoutCount.Load, 1)
 	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
@@ -514,12 +519,20 @@ func waitForNamedStart(t *testing.T, ch <-chan string, want string, timeout time
 	}
 }
 
+func TestWaitForCountDoesNotAdvanceMockTime(t *testing.T) {
+	module := installMockTimeForTest(t)
+	start := module.Now()
+	var polls int64
+	waitForCount(t, func() int64 {
+		polls++
+		return polls
+	}, 2)
+	require.Equal(t, start, module.Now())
+}
+
 func waitForCount(t *testing.T, get func() int64, want int64) {
 	t.Helper()
-	for {
-		if got := get(); got == want {
-			return
-		}
-		mvsSleep(time.Hour)
-	}
+	require.Eventually(t, func() bool {
+		return get() == want
+	}, testEventuallyWait, testEventuallyTick)
 }

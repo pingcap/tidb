@@ -384,13 +384,14 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		return
 	}
 
+	// Include the entire task execution in the timeout window.
+	timer := mvsNewTimer(timeout)
+	defer timer.Stop()
+
 	done := make(chan error, 1)
 	go func() {
 		done <- e.safeExecute(name, task)
 	}()
-
-	timer := mvsNewTimer(timeout)
-	defer timer.Stop()
 
 	select {
 	case err := <-done:

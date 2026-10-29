@@ -35,6 +35,6 @@ go_test(
     embed = [":mvservice"],
     flaky = True,
     gotags = ["intest"],
-    shard_count = 29,
+    shard_count = 30,
     deps = ["@com_github_stretchr_testify//require"],
 )

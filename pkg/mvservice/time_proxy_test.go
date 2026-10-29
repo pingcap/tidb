@@ -17,7 +17,6 @@
 package mvservice
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -32,30 +31,24 @@ func installMockTimeForTest(t *testing.T) *MockTimeModule {
 	return module
 }
 
-func waitValueNoTime(t *testing.T, ch <-chan time.Time, spins int) time.Time {
+func waitValueNoTime(t *testing.T, ch <-chan time.Time) time.Time {
 	t.Helper()
-	for range spins {
-		select {
-		case v := <-ch:
-			return v
-		default:
-			runtime.Gosched()
-		}
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(testEventuallyWait):
+		t.Fatal("value not received before timeout")
+		return time.Time{}
 	}
-	panic("unreachable")
 }
 
-func waitSignalNoTime(t *testing.T, ch <-chan struct{}, spins int) {
+func waitSignalNoTime(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
-	for range spins {
-		select {
-		case <-ch:
-			return
-		default:
-			runtime.Gosched()
-		}
+	select {
+	case <-ch:
+	case <-time.After(testEventuallyWait):
+		t.Fatal("signal not received before timeout")
 	}
-	t.Fatal("signal not received within spin budget")
 }
 
 func TestTimeProxyMockModuleClockOps(t *testing.T) {
@@ -98,7 +91,7 @@ func TestTimeProxyMockModuleAfterAndSleep(t *testing.T) {
 	}
 
 	module.Advance(time.Second)
-	got := waitValueNoTime(t, ch, 10000)
+	got := waitValueNoTime(t, ch)
 	require.Equal(t, start.Add(2*time.Second), got)
 
 	module.Set(start)
@@ -107,14 +100,17 @@ func TestTimeProxyMockModuleAfterAndSleep(t *testing.T) {
 
 	module.Set(start)
 	module.SetAutoAdvanceOnSleep(false)
-	ready := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		close(ready)
 		mvsSleep(4 * time.Second)
 		close(done)
 	}()
-	waitSignalNoTime(t, ready, 10000)
+	// Sleep must register its waiter before virtual time advances.
+	require.Eventually(t, func() bool {
+		module.mu.Lock()
+		defer module.mu.Unlock()
+		return len(module.afterWaiters) == 1
+	}, testEventuallyWait, testEventuallyTick)
 
 	module.Advance(3 * time.Second)
 	select {
@@ -124,7 +120,7 @@ func TestTimeProxyMockModuleAfterAndSleep(t *testing.T) {
 	}
 
 	module.Advance(time.Second)
-	waitSignalNoTime(t, done, 10000)
+	waitSignalNoTime(t, done)
 }
 
 func TestTimeProxyMockModuleTimer(t *testing.T) {
@@ -150,7 +146,7 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 	}
 
 	module.Advance(time.Second)
-	_ = waitValueNoTime(t, timer.C, 10000)
+	_ = waitValueNoTime(t, timer.C)
 
 	require.False(t, timer.Reset(3*time.Second))
 	module.Advance(2 * time.Second)
@@ -161,7 +157,7 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 	}
 
 	module.Advance(time.Second)
-	_ = waitValueNoTime(t, timer.C, 10000)
+	_ = waitValueNoTime(t, timer.C)
 
 	require.False(t, timer.Stop())
 	require.False(t, timer.Reset(5*time.Second))
