@@ -12,6 +12,28 @@ Blocked on a behavior-level change, not a move:
 - txnkv's `mpp_probe`, `key_ranges`, `range_diagnostics` (Go `store/copr`): tidb-copr depends on tidb-distsql, the reverse of Go's `distsql -> copr`.
 - tidb-session's `temptable` runs over the concrete `Session`.
 
+## Disposition of every remaining entry (2026-10-29)
+
+Moved since the status above: `util/rowcodec` (tidb-rowcodec), `store/driver/txn` (tidb-store-driver-txn), `store/driver/error` (tidb-store-driver-error), `domain/{serverinfo,infosync,affinity,globalconfigsync}`, `config/{kerneltype,configtypes,deploymode}`, `lightning/mydump` (csv_parser), `ddl/bdr`, `util/ranger/context`, `parser/types` errors, infoschema's `metric_table_def` / `virtual_tables`, `ruv2_metrics` (back into tidb-execdetails), the clustered-handle range builders (`tidb_executor::handle_range`).
+
+Checked, and they stay where they are (the citation is to a Go file the module ports, inside the crate's own Go package, or a helper Go keeps in both packages):
+- tidb-table: `kv_table`, `kv_table/index_entries`, `kv_table/table_meta` (Go `table/tables`), `partition_fold` (shared by Go's ddl and table partition code), `context/static_mutate` (Go's session-less `MutateContext`).
+- tidb-executor: `split_region` (Go `executor/split.go`), `stats_lock` and `table_size_stats` (the executor's adapters over the statistics handle), `ddl/indexes` (the executor's rendering of an index backfill failure).
+- tidb-session: `ddl_exec` (Go `executor/ddl.go`'s DDLExec over the session's `temptable`), `analyze_service`, `savepoints` (Go `TxnCtx.Savepoints`), `table_lock` (Go `session.go`'s lock set), `domain/*` (the node stacks: `cluster_session_node/statistics`, `real_tikv_node/schema_following`, `mock_store` = Go `testkit`, `wire_status`, `embedded_resource_groups`).
+- tidb-privilege: `privs` (wraps parser/mysql's privilege names with the privileges package's filters).
+- tidb-server: `server_metrics`, `auth_plugin_registry`, `cluster_boot`.
+- tidb-gcworker: `seams` (the GC worker's collaborator interfaces).
+- tidb-br: `rtree` (Go `br/pkg/rtree` under br).
+- tidb-vardef: `global_sysvar_initial`.
+- tidb-protocol: `textrow`, `result_encoder` (the server's text-protocol formatting).
+- tidb-expr: `binary_literal`, `time_fn/duration_parse` (expression evaluation over `types` rules), `aggregation/names`.
+- tidb-datatype: `session_time_zone` (the `*time.Location` shape the temporal code converts with).
+- tidb-domain-core: `domain/schema_lease`, `session_transaction`, `domain/stat`.
+- tidb-txnkv: `mvcc_metadata`, `mem_storage`, `prefix_ops`, `client_go_metrics`, `driver/cop_store` (client-go surfaces; see the txnkv entry below).
+- tidb-metadef: `bootstrap_tables` (the bootstrap table list metadef owns for the session).
+
+Re-layerings, recorded in the ExecPlan (behavior-level, not moves): planner `property` / `cardinality` / `access_path` / `domain_misc` / `stats_info`; tidb-table `hypo_index` (Go ddl + `SessionVars`), `sequence` (model + autoid parts), `column_default`'s DDL half, `handle_range`'s metadata half; tidb-executor `partition_pruning`, `compiler/non_prepared_plan_cache` (planner/core over executor tables), `store_helper` (Go `store/helper` over the executor's infoschema reader), `process`'s sessionctx types; tidb-session `temptable`, `util_config` (over the session's own `SessionVars`); tidb-expr `metabuild` (its `MetaOnlyInfoSchema` is Go `infoschema/context`'s), `user_vars`; tidb-unistore `cophandler` and the `tikv` / root cycles; tidb-txnkv's `driver` (Go `store/driver` woven into its transaction modules); tidb-codec `table_key` (tablecodec, called from kv/txnkv) and `column` (a second chunk codec); tidb-error's six packages and `catalog`; the `StmtContext` in tidb-sessionctx; the cluster-storage seam.
+
 Each Rust module whose `//!` docs cite a Go package (most-cited `pkg/...` path) unrelated to its crate's Go package, after dropping modules whose file name matches a Go file in the crate's package. A citation is a lead, not proof: each entry needs a check against the Go source before it moves.
 
 | Lines | Crate | Module | Cited Go package | Crate's Go package |
