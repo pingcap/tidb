@@ -64,7 +64,7 @@ pub trait ProcessKillTarget: Send + Sync {
 /// What `ProcessInfo.Plan` holds for a connection (`EXPLAIN FOR CONNECTION`).
 pub enum ProcessPlan {
     /// A statement plan.
-    Plan(tidb_sessionctx::StoredPlan),
+    Plan(tidb_stmtctx::StoredPlan),
     /// An `Explain` plan, which renders as no rows.
     Explain,
     /// No plan: the statement had none to publish.
@@ -188,7 +188,7 @@ struct ProcessEntry {
     transaction: Option<TransactionEntry>,
     external_transaction_owner: bool,
     transaction_history: Arc<tidb_txninfo::TransactionHistoryRecorder>,
-    process_plan_info: Option<Arc<Mutex<tidb_sessionctx::ProcessPlanInfo>>>,
+    process_plan_info: Option<Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>>,
     /// An internal session's entry: its statements are restricted SQL (Go
     /// `StmtCtx.InRestrictedSQL`).
     restricted: bool,
@@ -833,7 +833,7 @@ impl ProcessRegistry {
         .unwrap_or(ProcessPlan::None)
     }
 
-    fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_sessionctx::ProcessPlanInfo>>) {
+    fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>) {
         self.with_entry(id, |entry| {
             entry.process_plan_info = Some(plan);
         });
@@ -1045,7 +1045,7 @@ impl ProcessGuard {
     }
 
     /// Installs the session's live `BriefBinaryPlan` publication cell.
-    pub fn set_process_plan_info(&self, plan: Arc<Mutex<tidb_sessionctx::ProcessPlanInfo>>) {
+    pub fn set_process_plan_info(&self, plan: Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>) {
         self.registry.set_process_plan_info(self.id, plan);
     }
 

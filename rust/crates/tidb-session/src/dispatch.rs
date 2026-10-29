@@ -807,7 +807,7 @@ impl Session {
             let statement = statement.clone();
             let parameters = std::sync::Arc::clone(execution.parameters());
             let ctx = stmt_ctx.clone().without_process_plan_info();
-            tidb_sessionctx::PlanSource(std::sync::Arc::new(move || {
+            tidb_stmtctx::PlanSource(std::sync::Arc::new(move || {
                 let bound = tidb_executor::bind_statement(statement.clone(), &parameters).ok()?;
                 let catalog = catalog.lock().ok()?;
                 tidb_executor::fast_point_process_plan_info(

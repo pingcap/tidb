@@ -291,7 +291,8 @@ pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanCompari
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+use tidb_stmtctx::{PlanSource, ProcessPlanInfo, StoredPlan};
 use tidb_variable::session_vars::DdlReorgVars;
 use tidb_variable::MdlRelatedTableRecorder;
 use tidb_kv::keys_read::KeysReadBudget;

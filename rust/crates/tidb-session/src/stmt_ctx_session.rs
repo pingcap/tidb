@@ -137,11 +137,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.prepared_params
     }
 
-    fn process_plan_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
+    fn process_plan_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>> {
         &self.process_plan_info
     }
 
-    fn process_plan_info_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
+    fn process_plan_info_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>> {
         &mut self.process_plan_info
     }
 

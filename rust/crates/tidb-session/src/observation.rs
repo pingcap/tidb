@@ -427,7 +427,7 @@ impl Session {
         exec_details: &Arc<tikv_client::util::ExecDetails>,
         normalized: &str,
         digest: &tidb_parser::Digest,
-        plan: Option<Arc<Mutex<tidb_sessionctx::ProcessPlanInfo>>>,
+        plan: Option<Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>>,
     ) {
         // Go `StmtCtx.SQLDigest`: a statement with no normalized text tags
         // no SQL digest.
@@ -1229,7 +1229,7 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
             .to_owned()
     }
 
-    fn process_plan_info_cell(&self) -> Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
+    fn process_plan_info_cell(&self) -> Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>> {
         Arc::clone(&self.process_plan_info)
     }
 }

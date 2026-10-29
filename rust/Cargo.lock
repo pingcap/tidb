@@ -4500,6 +4500,7 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-usage-predicatecolumn",
+ "tidb-stmtctx",
  "tidb-stmtsummary",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
@@ -5975,6 +5976,7 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
+ "tidb-stmtctx",
  "tidb-stmtsummary",
  "tidb-store-driver",
  "tidb-store-driver-error",
@@ -6080,8 +6082,8 @@ dependencies = [
  "tidb-memory",
  "tidb-memoryusagealarm",
  "tidb-parser",
- "tidb-sessionctx",
  "tidb-sqlkiller",
+ "tidb-stmtctx",
  "tidb-txninfo",
 ]
 
@@ -6538,6 +6540,10 @@ dependencies = [
 [[package]]
 name = "tidb-stmtctx"
 version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-ast",
+]
 
 [[package]]
 name = "tidb-stmtsummary"

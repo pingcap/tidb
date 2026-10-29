@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-infoschema-perfschema = { path = "../tidb-infoschema-perfschema" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-errno = { path = "../tidb-errno" }

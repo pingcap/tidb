@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB statement context: Go pkg/sessionctx/stmtctx (Rust rewrite)."
 
 [dependencies]
+chrono.workspace = true
+tidb-ast = { path = "../tidb-ast" }
 
 [lints]
 workspace = true

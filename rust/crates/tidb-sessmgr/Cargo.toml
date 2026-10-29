@@ -14,8 +14,8 @@ workspace = true
 test-util = []
 
 [dependencies]
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-kv = { path = "../tidb-kv" }
-tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-txninfo = { path = "../tidb-txninfo" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }

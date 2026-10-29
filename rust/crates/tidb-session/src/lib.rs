@@ -796,7 +796,7 @@ pub struct Session {
     mpp_attempt_completed: bool,
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
-    process_plan_info: Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>>,
+    process_plan_info: Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>>,
     /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
     /// `DurationWaitTS`, set by the planner and the transaction tier.
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
@@ -1458,7 +1458,7 @@ impl Session {
             .process_plan_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        cell.plan.as_ref().and_then(tidb_sessionctx::StoredPlan::get)
+        cell.plan.as_ref().and_then(tidb_stmtctx::StoredPlan::get)
     }
 
     /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for
@@ -2531,7 +2531,7 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let previous_plan = cell.plan.take();
             let previous_explain = cell.explain_marker;
-            *cell = tidb_sessionctx::ProcessPlanInfo::default();
+            *cell = tidb_stmtctx::ProcessPlanInfo::default();
             cell.previous_plan = previous_plan;
             cell.previous_explain = previous_explain;
         }
