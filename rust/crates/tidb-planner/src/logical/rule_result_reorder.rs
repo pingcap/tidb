@@ -59,7 +59,7 @@ use crate::base_arms;
 use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::sort::LogicalSort;
 use super::{BaseLogicalPlan, LogicalPlan};
 

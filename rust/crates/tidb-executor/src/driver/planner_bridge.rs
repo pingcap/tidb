@@ -35,7 +35,8 @@ use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner::logical::cte::CteClass;
 use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner::logical::rule::{RuleContext, flags, logical_optimize};
+use tidb_planner::logical::rule::{flags, logical_optimize};
+use tidb_planner::logical::plan_context::{RuleContext};
 use tidb_planner::logical::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
@@ -1418,7 +1419,7 @@ struct DriverCteOptimizer<'a> {
     parallel_apply_allowed: std::cell::Cell<bool>,
 }
 
-impl tidb_planner::logical::rule::CteOptimizer for DriverCteOptimizer<'_> {
+impl tidb_planner::logical::plan_context::CteOptimizer for DriverCteOptimizer<'_> {
     fn optimize_cte(
         &self,
         class: &Rc<RefCell<CteClass>>,
@@ -2843,7 +2844,7 @@ fn optimize_built_logical(
         records_used_items: std::cell::Cell<bool>,
     }
 
-    impl tidb_planner::logical::rule::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
+    impl tidb_planner::logical::plan_context::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
         fn record_used_item(
             &self,
             physical_table_id: i64,

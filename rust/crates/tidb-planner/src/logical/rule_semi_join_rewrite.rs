@@ -24,7 +24,7 @@ use tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN as PREFER_REWRITE_SEMI_JOIN;
 use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::aggregation::AGG_FUNC_FIRST_ROW;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{
     BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection, LogicalSelection,
     PlanError,
@@ -229,7 +229,7 @@ mod tests {
     use tidb_expr::column::Column;
     use tidb_expr::scalar_function::ScalarFunction;
 
-    use crate::logical::rule::{HintWarningSink, LogicalOptRule};
+    use crate::logical::plan_context::{HintWarningSink, LogicalOptRule};
     use crate::logical::rule_tests::test_context;
     use crate::logical::{LogicalJoin, LogicalTableDual, PlanIdAllocator};
 

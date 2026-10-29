@@ -20,7 +20,7 @@ use crate::logical::{
 };
 use tidb_planner_core_base::PlanError;
 
-use super::rule::{conds_to_table_dual, LogicalOptRule, RuleContext};
+use super::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
 
 // Go `resolveOptimizeHint` keeps a hint for a partition when one of its
@@ -183,7 +183,7 @@ fn warn_for_unknown_storage_partitions(
 /// Go `appendWarnForUnknownPartitions`: `SetHintWarningFromError` of a
 /// `fmt.Errorf`, so the warning is ErrUnknown (1105).
 fn append_warn_for_unknown_partitions(
-    sink: &dyn super::rule::HintWarningSink,
+    sink: &dyn super::plan_context::HintWarningSink,
     hint_name: &str,
     unknown_partitions: &[String],
 ) {

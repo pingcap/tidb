@@ -153,7 +153,7 @@ impl PlannerStmtCtxData for StmtContextData {
 }
 
 
-impl crate::logical::rule::HintWarningSink for StmtContext {
+impl crate::logical::plan_context::HintWarningSink for StmtContext {
     fn set_hint_warning(&self, message: &str) {
         self.append_warning_parts(1815, message);
     }

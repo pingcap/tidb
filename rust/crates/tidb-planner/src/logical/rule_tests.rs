@@ -45,11 +45,8 @@ use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::join::LogicalJoin;
 use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
-use super::rule::{
-    self, add_selection, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver,
-    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PpdSolver,
-    PushDownTopNOptimizer, RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
-};
+use super::rule::{self, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
+use super::plan_context::{add_selection, DisabledLogicalRules, LogicalOptRule, RuleContext};
 use super::rule_partition_processor::{PartitionProcessor, PartitionPruning};
 use super::selection::LogicalSelection;
 use super::sort::LogicalSort;
@@ -374,13 +371,13 @@ fn set_predicate_push_down_flag_only_sets_its_bit() {
 #[test]
 fn a_disabled_rule_is_skipped_by_name() {
     let disabled = DisabledLogicalRules::from_names(["predicate_push_down"]);
-    assert!(disabled.is_logical_rule_disabled(RuleId::PpdSolver));
-    assert!(!disabled.is_logical_rule_disabled(RuleId::BuildKeySolver));
+    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::PpdSolver));
+    assert!(!super::rule::is_logical_rule_disabled(&disabled, RuleId::BuildKeySolver));
     // Go names both `ColumnPruner` entries identically, so disabling one
     // disables both.
     let disabled = DisabledLogicalRules::from_names(["column_prune"]);
-    assert!(disabled.is_logical_rule_disabled(RuleId::ColumnPruner));
-    assert!(disabled.is_logical_rule_disabled(RuleId::ColumnPrunerAgain));
+    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPruner));
+    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPrunerAgain));
 }
 
 #[test]
@@ -599,7 +596,7 @@ fn predicate_simplification_keeps_a_nonconstant_condition() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let kept =
-        rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false, None);
+        crate::logical::plan_context::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false, None);
     assert_eq!(kept.len(), 1, "only the constant TRUE is deleted");
 }
 
@@ -618,7 +615,7 @@ fn ordinary_predicate_simplification_forwards_the_validity_filter() {
 
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let conditions = rule::apply_predicate_simplification(
+    let conditions = crate::logical::plan_context::apply_predicate_simplification(
         &ctx,
         vec![eq_cols(1, 2), gt_const(1, 7)],
         true,
@@ -1265,7 +1262,7 @@ fn predicate_push_down_does_not_synthesize_a_transitive_join_key() {
 fn join_simplification_does_not_substitute_column_equalities() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let conditions = super::rule::apply_predicate_simplification_for_join(
+    let conditions = super::plan_context::apply_predicate_simplification_for_join(
         &ctx,
         vec![eq_cols(1, 2), eq_cols(1, 3)],
         &schema_of(&[1]),
@@ -1311,7 +1308,7 @@ fn join_key_retention_follows_the_session_variable() {
     let input = vec![eq_cols(1, 2), eq_const(1, 7)];
 
     let keep_context = test_context(&allocator);
-    let kept = super::rule::apply_predicate_simplification_for_join(
+    let kept = super::plan_context::apply_predicate_simplification_for_join(
         &keep_context,
         input.clone(),
         &left,
@@ -1323,7 +1320,7 @@ fn join_key_retention_follows_the_session_variable() {
 
     let mut drop_context = test_context(&allocator);
     drop_context.always_keep_join_key = false;
-    let dropped = super::rule::apply_predicate_simplification_for_join(
+    let dropped = super::plan_context::apply_predicate_simplification_for_join(
         &drop_context,
         input,
         &left,

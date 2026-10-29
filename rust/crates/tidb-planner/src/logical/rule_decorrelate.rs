@@ -47,7 +47,7 @@ use tidb_planner_core_base::LogicalJoinType;
 use super::aggregation::LogicalAggregation;
 use super::apply::LogicalApply;
 use super::projection::LogicalProjection;
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::BaseLogicalPlan;
 use super::{LogicalPlan, PlanError};
 
@@ -123,7 +123,7 @@ impl DecorrelateSolver {
         {
             return None;
         }
-        let simplified = super::rule::apply_predicate_simplification(
+        let simplified = super::plan_context::apply_predicate_simplification(
             ctx,
             selection.conditions.clone(),
             true,

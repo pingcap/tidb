@@ -44,7 +44,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use tidb_planner::logical::cte::{CteClass, LogicalCTE};
-use tidb_planner::logical::rule::RuleContext;
+use tidb_planner::logical::plan_context::RuleContext;
 use tidb_planner::logical::table_dual::LogicalTableDual;
 use tidb_planner::logical::topn::LogicalTopN;
 use tidb_planner_core_base::{PlanIdAllocator, PossiblePropertiesInfo};

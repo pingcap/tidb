@@ -43,7 +43,7 @@ use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{
     BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection,
     LogicalUnionAll,

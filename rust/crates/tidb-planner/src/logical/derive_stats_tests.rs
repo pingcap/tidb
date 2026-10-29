@@ -744,7 +744,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
     // condition on it.
     #[derive(Default)]
     struct Recorder(std::cell::RefCell<Vec<(i64, i64, bool, bool)>>);
-    impl super::rule::UsedStatsRecorder for Recorder {
+    impl super::plan_context::UsedStatsRecorder for Recorder {
         fn record_used_item(
             &self,
             physical_table_id: i64,

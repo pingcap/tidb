@@ -31,7 +31,7 @@ use crate::expression_rewriter::{
 };
 use tidb_planner_core_base::LogicalJoinType;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::window::{BoundType, FrameType};
 use super::{
     BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection, PlanError,

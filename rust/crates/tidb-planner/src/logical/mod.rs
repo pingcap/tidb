@@ -351,6 +351,7 @@ pub mod mem_table;
 pub mod possible_properties;
 pub mod projection;
 pub mod rewrite;
+pub mod plan_context;
 pub mod rule;
 pub mod rule_aggregation_elimination;
 pub mod rule_aggregation_push_down;
@@ -739,17 +740,17 @@ impl LogicalPlan {
     ///
     /// The whole dispatch — Go's base body plus every operator override —
     /// lives in [`rewrite::predicate_push_down`], because the recursion needs
-    /// [`rule::RuleContext`] (Go reads it off `p.SCtx()`, which this enum has
+    /// [`crate::logical::plan_context::RuleContext`] (Go reads it off `p.SCtx()`, which this enum has
     /// no back-pointer to). This method is the same call with that context
     /// supplied.
     ///
     /// # Errors
     ///
-    /// The plan is returned alongside the error; see [`rule::LogicalOptRule`].
+    /// The plan is returned alongside the error; see [`crate::logical::plan_context::LogicalOptRule`].
     #[allow(clippy::result_large_err)]
     pub fn predicate_push_down(
         self,
-        ctx: &rule::RuleContext<'_>,
+        ctx: &crate::logical::plan_context::RuleContext<'_>,
         predicates: Vec<Expression>,
     ) -> Result<(Vec<Expression>, Self), (Self, PlanError)> {
         let (plan, remaining, failure) = rewrite::predicate_push_down(ctx, self, predicates);
@@ -767,11 +768,11 @@ impl LogicalPlan {
     ///
     /// # Errors
     ///
-    /// The plan is returned alongside the error; see [`rule::LogicalOptRule`].
+    /// The plan is returned alongside the error; see [`crate::logical::plan_context::LogicalOptRule`].
     #[allow(clippy::result_large_err)]
     pub fn prune_columns(
         self,
-        ctx: &rule::RuleContext<'_>,
+        ctx: &crate::logical::plan_context::RuleContext<'_>,
         parent_used_cols: &[Column],
     ) -> Result<Self, (Self, PlanError)> {
         let (plan, failure) = rewrite::prune_columns(ctx, self, parent_used_cols.to_vec());
@@ -1005,7 +1006,7 @@ impl LogicalPlan {
     pub fn recursive_derive_stats_with_context(
         &mut self,
         col_groups: &[Vec<Column>],
-        context: &rule::RuleContext<'_>,
+        context: &crate::logical::plan_context::RuleContext<'_>,
     ) -> Result<(StatsInfo, bool), PlanError> {
         let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
         let (plan, result) =

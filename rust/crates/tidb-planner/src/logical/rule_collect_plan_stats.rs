@@ -31,7 +31,7 @@ use tidb_model::TableItemID;
 use super::LogicalPlan;
 use super::data_source::DataSource;
 use super::fold::{Descend, OwnedRewrite, fold_owned};
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
 use tidb_planner_core_base::PlanError;
 

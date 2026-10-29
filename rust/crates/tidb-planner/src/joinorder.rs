@@ -32,7 +32,7 @@ use tidb_expr::simple_expr::extract_columns;
 
 use crate::logical::join::LogicalJoin;
 use crate::logical::projection::LogicalProjection;
-use crate::logical::rule::RuleContext;
+use crate::logical::plan_context::RuleContext;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::PlanError;

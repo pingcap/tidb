@@ -60,7 +60,7 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
     /// Go `recordUsedItemStatsStatus`; `None` outside the statement's
     /// statistics derivation.
-    pub used_stats_recorder: Option<&'a dyn crate::logical::rule::UsedStatsRecorder>,
+    pub used_stats_recorder: Option<&'a dyn crate::logical::plan_context::UsedStatsRecorder>,
 }
 
 impl AccessPathDerivationContext<'_> {

@@ -90,7 +90,7 @@
 //! rule that hits Go's error path records it in its own `&mut self` state
 //! (see [`RewriteFailure`]) and returns a structurally valid node anyway; the
 //! fold always completes and always yields a whole tree, and the rule surfaces
-//! the failure afterwards. [`crate::logical::rule::LogicalOptRule::optimize`]
+//! the failure afterwards. [`crate::logical::plan_context::LogicalOptRule::optimize`]
 //! then returns `Err((plan, err))` — the plan is handed back even on the error
 //! path, which is the by-value equivalent of Go still holding its pointer.
 

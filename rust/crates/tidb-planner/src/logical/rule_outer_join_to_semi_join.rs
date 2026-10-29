@@ -26,7 +26,7 @@ use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::{BaseLogicalPlan, LogicalJoin, LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::PlanError;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 
 /// Go `OuterJoinToSemiJoin`.
 #[derive(Debug)]

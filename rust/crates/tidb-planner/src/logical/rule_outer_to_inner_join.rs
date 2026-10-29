@@ -20,7 +20,7 @@ use tidb_expr::expression::{is_null_rejected, Expression};
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{LogicalJoin, LogicalPlan, PlanError};
 
 /// Go `ConvertOuterToInnerJoin`.

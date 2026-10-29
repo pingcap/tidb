@@ -16,7 +16,7 @@
 
 use tidb_expr::expression::Expression;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;

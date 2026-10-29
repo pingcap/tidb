@@ -23,7 +23,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
 use super::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{
     BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection,
     LogicalSort,

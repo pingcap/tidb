@@ -31,10 +31,8 @@ use tidb_planner_core_base::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
 use tidb_fixcontrol::OptimizerFixControl;
-use crate::logical::rule::{
-    flags, logical_optimize, CteOptimizer, DisabledLogicalRules, HintWarningSink,
-    RuleContext, UsedStatsRecorder,
-};
+use crate::logical::rule::{flags, logical_optimize};
+use crate::logical::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use crate::logical::rule_collect_plan_stats::StatisticsLoadRequester;
 use crate::logical::rule_partition_processor::PartitionPruning;
 use crate::logical::{prepare_possible_properties, LogicalPlan};

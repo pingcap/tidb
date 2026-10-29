@@ -50,9 +50,7 @@ use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
 
 use super::fold::{Descend, OwnedRewrite, RewriteFailure, fold_owned};
-use super::rule::{
-    RuleContext, add_selection, apply_predicate_simplification, conds_to_table_dual,
-};
+use super::plan_context::{RuleContext, add_selection, apply_predicate_simplification, conds_to_table_dual};
 use super::schema_producer;
 use super::{
     BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalProjection,
@@ -601,7 +599,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     &all_join_leaf,
                     &opts,
                     |conds, propagate_constant, valid| {
-                        super::rule::apply_predicate_simplification_for_join(
+                        super::plan_context::apply_predicate_simplification_for_join(
                             self.ctx,
                             conds,
                             left_schema,
@@ -653,7 +651,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     &all_join_leaf,
                     &opts,
                     |conds, propagate_constant, valid| {
-                        super::rule::apply_predicate_simplification_for_join(
+                        super::plan_context::apply_predicate_simplification_for_join(
                             self.ctx,
                             conds,
                             left_schema,
@@ -2010,7 +2008,7 @@ pub struct DeriveStatsEnv<'a> {
     pub selectivity_factor: f64,
     /// The statement's ranger fallback handler.
     pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
-    /// The rule context whose [`CteOptimizer`](super::rule::CteOptimizer)
+    /// The rule context whose [`CteOptimizer`](super::plan_context::CteOptimizer)
     /// `LogicalCTE.DeriveStats` runs lazily; `None` for the context-free
     /// entry points, where an unoptimized CTE class refuses.
     pub rule_context: Option<&'a RuleContext<'a>>,

@@ -27,7 +27,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
 use super::projection::LogicalProjection;
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::selection::LogicalSelection;
 use super::{BaseLogicalPlan, LogicalPlan, PlanError};
 use tidb_planner_core_base::LogicalJoinType;

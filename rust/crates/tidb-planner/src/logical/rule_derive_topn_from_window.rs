@@ -72,7 +72,7 @@ use tidb_expr::expression::Expression;
 use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::topn::LogicalTopN;
 use super::window::{BoundType, FrameType, LogicalWindow};
 use super::{BaseLogicalPlan, LogicalPlan};

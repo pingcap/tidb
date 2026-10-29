@@ -28,7 +28,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition};
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
@@ -661,7 +661,7 @@ pub fn apply_predicate_simplification_for_join(
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RulePredicateSimplifier;
 
-impl super::rule::PredicateSimplifier for RulePredicateSimplifier {
+impl super::plan_context::PredicateSimplifier for RulePredicateSimplifier {
     fn apply_predicate_simplification(
         &self,
         ctx: &RuleContext<'_>,

@@ -23,7 +23,7 @@
 
 use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::projection::LogicalProjection;
-use crate::logical::rule::{LogicalOptRule, RuleContext};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
 use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
 use tidb_planner_core_base::PlanError;
 use tidb_datatype::{EvalType, FieldTypeCode, FieldTypeFlags};

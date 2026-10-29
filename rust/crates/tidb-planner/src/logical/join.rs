@@ -1420,7 +1420,7 @@ impl LogicalJoin {
 /// call, with its statement side effect.
 #[must_use]
 pub fn propagate_constant_for_outer_join(
-    ctx: &super::rule::RuleContext<'_>,
+    ctx: &super::plan_context::RuleContext<'_>,
     join_conditions: Vec<Expression>,
     filter_conditions: Vec<Expression>,
     outer_schema: &Schema,

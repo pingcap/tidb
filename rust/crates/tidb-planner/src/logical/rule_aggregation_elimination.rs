@@ -34,7 +34,7 @@ use tidb_expr::simple_expr::compose_dnf_condition;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
 use super::projection::LogicalProjection;
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{BaseLogicalPlan, LogicalAggregation, LogicalPlan};
 
 fn covers_key(columns: &[tidb_expr::column::Column], key: &[tidb_expr::column::Column]) -> bool {

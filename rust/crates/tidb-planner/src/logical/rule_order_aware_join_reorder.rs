@@ -21,7 +21,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expression::Expression;
 
-use super::rule::{LogicalOptRule, RuleContext};
+use super::plan_context::{LogicalOptRule, RuleContext};
 use super::{LogicalPlan, PlanError};
 
 /// Go `OrderAwareJoinReorder`.

@@ -491,7 +491,7 @@ impl DataSource {
     /// indexes.
     pub(crate) fn record_used_item(
         &self,
-        recorder: Option<&dyn crate::logical::rule::UsedStatsRecorder>,
+        recorder: Option<&dyn crate::logical::plan_context::UsedStatsRecorder>,
         item_id: i64,
         is_index: bool,
     ) {
