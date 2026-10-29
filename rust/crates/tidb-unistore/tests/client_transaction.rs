@@ -67,8 +67,8 @@ impl Store {
             .unwrap();
         TikvTransactionDriver::new(transaction, self.runtime.clone())
     }
-    fn facade(&self) -> tidb_store_driver_txn::transaction::client::ClientTransaction<StorePdClient> {
-        tidb_store_driver_txn::transaction::client::ClientTransaction::new_opened(
+    fn facade(&self) -> tidb_store_driver_txn::transaction::client::RealTransaction<StorePdClient> {
+        tidb_store_driver_txn::transaction::client::RealTransaction::new_opened(
             &self.tikv_store,
             self.timestamp(),
             false,
@@ -620,7 +620,7 @@ fn resource_group(context: Option<&kvrpcpb::Context>) -> Option<String> {
 }
 
 /// Go `onTxnActiveFunc`: the session's transaction in pessimistic mode.
-fn pessimistic(store: &Store) -> tidb_store_driver_txn::transaction::client::ClientTransaction<StorePdClient> {
+fn pessimistic(store: &Store) -> tidb_store_driver_txn::transaction::client::RealTransaction<StorePdClient> {
     let mut transaction = store.facade();
     transaction.set_pessimistic(true);
     transaction

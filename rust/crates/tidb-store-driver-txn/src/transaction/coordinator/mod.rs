@@ -15,7 +15,7 @@
 //! TiDB store driver over the single client-rust transaction engine.
 mod opener;
 pub use super::client::{
-    ClientTransaction as RealTransaction, SnapshotGetResult,
+    RealTransaction, SnapshotGetResult,
 };
 pub use opener::{RealOptimisticTransactionOpener, StoreClient};
 

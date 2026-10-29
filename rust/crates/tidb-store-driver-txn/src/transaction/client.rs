@@ -30,7 +30,7 @@ use tikv_client::{PdClient, Timestamp, TimestampExt, TransactionOptions};
 /// cache, sender, lock resolver, oracle and txn safe point. Pessimistic mode
 /// is an option on it, as Go's `SetOption(kv.Pessimistic)` is
 /// (`KVTxn.SetPessimistic`), not another type.
-pub struct ClientTransaction<S: PdClient> {
+pub struct RealTransaction<S: PdClient> {
     pub(super) engine: TikvTransactionDriver<S>,
     store: TikvStore<S>,
     /// Go's `ctx` for this transaction's RPCs.
@@ -80,13 +80,13 @@ pub struct SnapshotGetResult {
 }
 use tidb_txnkv::kv_storage::SnapshotScanRegion;
 
-impl<S: PdClient> tidb_txnkv::new_txn::TxnResourceGroup for ClientTransaction<S> {
+impl<S: PdClient> tidb_txnkv::new_txn::TxnResourceGroup for RealTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {
         self.engine.transaction_mut().set_resource_group_name(name);
         self.snapshot_read_options = None;
     }
 }
-impl<S: PdClient> ClientTransaction<S> {
+impl<S: PdClient> RealTransaction<S> {
     /// Go `tikvStore.Begin` at `start_ts`: the store's own transaction, with
     /// its lock resolver context, read validation and txn safe point.
     pub fn new_opened(
@@ -197,7 +197,7 @@ impl tikv_client::KvFilter for TidbKvFilter {
         Ok(untouched)
     }
 }
-impl<S: PdClient> ClientTransaction<S> {
+impl<S: PdClient> RealTransaction<S> {
     /// The immutable transaction start timestamp.
     pub const fn start_ts(&self) -> u64 {
         self.start_ts
@@ -788,7 +788,7 @@ impl<S: PdClient> ClientTransaction<S> {
         })
     }
 }
-impl<S: PdClient> ClientTransaction<S> {
+impl<S: PdClient> RealTransaction<S> {
     /// Groups rows by the regions that actually served the native scan.
     pub fn snapshot_scan_regions(
         &mut self,
@@ -858,7 +858,7 @@ impl tikv_client::transaction::SchemaLeaseChecker for DriverSchemaChecker {
     }
 }
 
-impl<S: PdClient> ClientTransaction<S> {
+impl<S: PdClient> RealTransaction<S> {
     /// Go `KVTxn.SetPessimistic` (`SetOption(kv.Pessimistic)`): locks taken
     /// from now on are pessimistic locks, and commit prewrites them as such.
     pub fn set_pessimistic(&mut self, pessimistic: bool) {
@@ -1160,7 +1160,7 @@ fn lock_error(error: crate::TikvTransactionError) -> tidb_txnkv::transaction::Pe
     }
 }
 
-impl<S: PdClient> Drop for ClientTransaction<S> {
+impl<S: PdClient> Drop for RealTransaction<S> {
     fn drop(&mut self) {
         if self.engine.transaction_mut().inner_mut().is_valid() {
             if self.engine.is_statement_locking() {
@@ -1183,7 +1183,7 @@ mod tests {
             (tikv_client::error::ERR_REGION_UNAVAILABLE, 9005),
         ] {
             let error =
-                ClientTransaction::<tikv_client::PdRpcClient>::client_read_error(error.into());
+                RealTransaction::<tikv_client::PdRpcClient>::client_read_error(error.into());
             let OptimisticCoordinatorError::SnapshotBackoff { kind, detail } = error else {
                 panic!("native backoff was flattened: {error:?}");
             };
@@ -1209,12 +1209,12 @@ mod tests {
             txn_safe_point: 450,
         });
         assert_eq!(
-            ClientTransaction::<tikv_client::PdRpcClient>::client_read_error(aborted),
+            RealTransaction::<tikv_client::PdRpcClient>::client_read_error(aborted),
             expected
         );
         let aborted = cache.check_visibility(449).unwrap_err();
         assert_eq!(
-            ClientTransaction::<tikv_client::PdRpcClient>::transaction_error(
+            RealTransaction::<tikv_client::PdRpcClient>::transaction_error(
                 crate::TikvTransactionError::Client(aborted)
             ),
             expected
