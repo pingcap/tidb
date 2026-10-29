@@ -76,7 +76,7 @@ struct RequestSettings {
     resource_group_name: String,
     explicit_request_source_type: String,
     statement: crate::StatementMemory,
-    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// The statement ctx's values the requests carry: its `RUDetails`, which
     /// the sends charge, and its `StmtCtx.GetResourceGroupTagger`.
     kv_context: tidb_txnkv::StatementKvContext,
@@ -228,7 +228,7 @@ fn finish_request(
             ))
         })?;
     Ok(request
-        .with_kv_exec_counter(settings.kv_exec_counter.clone())
+        .with_rpc_interceptor(settings.rpc_interceptor.clone())
         .with_kv_context(settings.kv_context.clone()))
 }
 
@@ -276,7 +276,7 @@ impl ChecksumTableExec {
                 resource_group_name: ctx.resource_group_name().to_owned(),
                 explicit_request_source_type,
                 statement: ctx.statement_memory(),
-                kv_exec_counter: ctx.kv_exec_counter(),
+                rpc_interceptor: ctx.rpc_interceptor(),
                 kv_context: ctx
                     .statement_kv_context()
                     .map(|context| context.get())
@@ -404,7 +404,7 @@ mod tests {
             resource_group_name: "default".to_owned(),
             explicit_request_source_type: "lightning".to_owned(),
             statement: crate::StatementMemory::default(),
-            kv_exec_counter: Default::default(),
+            rpc_interceptor: Default::default(),
             kv_context: Default::default(),
         }
     }

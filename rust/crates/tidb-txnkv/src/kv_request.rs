@@ -144,7 +144,7 @@ pub enum TransportRequestError {
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
-    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    rpc_interceptor: crate::option::RpcInterceptorOption,
     /// Go's statement ctx values (`util.RUDetailsCtxKey`,
     /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
     /// every send.
@@ -162,7 +162,7 @@ impl TransportRequest {
     pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
         Self {
             metadata,
-            kv_exec_counter: Default::default(),
+            rpc_interceptor: Default::default(),
             kv_context: StatementKvContext::default(),
             cop_lite_worker: None,
             execution_cancellation,
@@ -180,20 +180,18 @@ impl TransportRequest {
         self
     }
 
-    /// Retains the statement interceptor through paging and worker copies.
+    /// Go `WithSQLKvExecCounterInterceptor` on the request ctx: retains the
+    /// statement interceptor through paging and worker copies.
     #[must_use]
-    pub fn with_kv_exec_counter(
-        mut self,
-        counter: tidb_topsql_stmtstats::KvExecCounterHandle,
-    ) -> Self {
-        self.kv_exec_counter = counter;
+    pub fn with_rpc_interceptor(mut self, interceptor: crate::option::RpcInterceptorOption) -> Self {
+        self.rpc_interceptor = interceptor;
         self
     }
 
-    /// The statement interceptor every send of this request counts in.
+    /// The statement interceptor every send of this request runs under.
     #[must_use]
-    pub fn kv_exec_counter(&self) -> tidb_topsql_stmtstats::KvExecCounterHandle {
-        self.kv_exec_counter.clone()
+    pub fn rpc_interceptor(&self) -> crate::option::RpcInterceptorOption {
+        self.rpc_interceptor.clone()
     }
 
     /// Carries the statement's ctx values -- its `RUDetails` and
@@ -285,7 +283,7 @@ impl TransportRequest {
         }
         Ok(Self {
             metadata: self.metadata.clone(),
-            kv_exec_counter: self.kv_exec_counter.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
@@ -313,7 +311,7 @@ impl TransportRequest {
         metadata.request_source = request_source;
         Ok(Self {
             metadata,
-            kv_exec_counter: self.kv_exec_counter.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),

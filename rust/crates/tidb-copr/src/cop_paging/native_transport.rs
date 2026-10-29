@@ -333,7 +333,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             event_callback: self.event_callback.clone(),
             cancellation,
             call,
-            kv_exec_counter: request.kv_exec_counter(),
+            rpc_interceptor: request.rpc_interceptor(),
             kv_context,
             timeout,
             metadata: Arc::new(metadata),
@@ -395,7 +395,7 @@ pub struct NativeCopResponse<S: ?Sized> {
     event_callback: Option<tidb_trxevents::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
-    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// Go `bo.GetCtx()`'s statement values: the `RUDetails` and
     /// `ExecDetails` charged for every send and lock resolution of the read.
     kv_context: tidb_txnkv::StatementKvContext,
@@ -454,7 +454,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
     }
 
     fn backoffer(&mut self, logical_task_id: u64) -> CopBackoffer {
-        let counter = self.kv_exec_counter.clone();
+        let interceptor = self.rpc_interceptor.handle().cloned();
         let trace_parent = self.trace_parent.clone();
         let statement_ctx = self.kv_context.trace_context();
         Arc::clone(self.backoffers.entry(logical_task_id).or_insert_with(|| {
@@ -462,20 +462,9 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             // ctx: TopSQL's counter sees every RPC the task's sends issue,
             // the sender's retries and lock resolution included.
             let mut interceptors = tikv_client::RpcInterceptorChain::new();
-            interceptors.link(tikv_client::new_rpc_interceptor(
-                "kv-exec-counter",
-                move |target, _request, next| {
-                    counter.mark(target);
-                    Box::pin(next())
-                        as std::pin::Pin<
-                            Box<
-                                dyn std::future::Future<Output = tikv_client::RpcDispatchResult>
-                                    + Send
-                                    + '_,
-                            >,
-                        >
-                },
-            ));
+            if let Some(interceptor) = interceptor {
+                interceptors.link(interceptor);
+            }
             // Go `backoff.NewBackofferWithVars(ctx, ...)` on the worker's
             // ctx: the backoffer's `bo.ctx` is `distsql.Select`'s span and
             // the statement ctx, whose `ExecDetails` its sleeps charge and
@@ -1054,7 +1043,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 event_callback: self.event_callback.clone(),
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),
-                kv_exec_counter: self.kv_exec_counter.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
                 kv_context: self.kv_context.clone(),
                 timeout: self.timeout,
                 metadata: Arc::clone(&self.metadata),

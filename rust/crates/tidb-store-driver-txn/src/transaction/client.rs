@@ -467,10 +467,11 @@ impl<S: PdClient> RealTransaction<S> {
     }
 
     fn prepare_read(&mut self, read_ts: u64, call: &UnaryCallContext) {
-        let call = call.clone().with_kv_exec_counter(
+        let call = call.clone().with_rpc_interceptor(
             self.snapshot_read_options
                 .as_ref()
-                .map(|o| o.kv_exec_counter.clone()),
+                .map(|o| o.rpc_interceptor.clone())
+                .unwrap_or_default(),
         );
         self.calls.set(&call);
         self.apply_statement_kv_context();
@@ -599,10 +600,11 @@ impl<S: PdClient> RealTransaction<S> {
         call: &UnaryCallContext,
     ) -> Result<TikvTransactionDriver<S>, OptimisticCoordinatorError> {
         let scan_call = UnaryCallContext::with_optional_deadline(None, call.cancellation().clone())
-            .with_kv_exec_counter(
+            .with_rpc_interceptor(
                 self.snapshot_read_options
                     .as_ref()
-                    .map(|o| o.kv_exec_counter.clone()),
+                    .map(|o| o.rpc_interceptor.clone())
+                    .unwrap_or_default(),
             );
         self.calls.set(&scan_call);
         self.apply_statement_kv_context();

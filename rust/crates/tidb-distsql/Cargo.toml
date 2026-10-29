@@ -23,7 +23,6 @@ tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-context = { path = "../tidb-context" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-paging = { path = "../tidb-paging" }
-tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }

@@ -380,8 +380,9 @@ impl fmt::Debug for StatementEval {
 /// one and forget the other.
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
-    /// Statement KV execution counter shared with point readers.
-    pub kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    /// Go `WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)`: the
+    /// statement's interceptor, shared with point readers.
+    pub rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// Go's statement ctx values every DistSQL request carries: its
     /// `RUDetails` (`util.RUDetailsCtxKey`) and, through `SetFromSessionVars`,
     /// `StmtCtx.GetResourceGroupTagger`.
@@ -489,7 +490,7 @@ impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
             memory: tidb_kv::mem_quota::StatementMemory::default(),
-            kv_exec_counter: Default::default(),
+            rpc_interceptor: Default::default(),
             kv_context: None,
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,

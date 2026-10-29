@@ -123,6 +123,31 @@ where
     })
 }
 
+/// The context key client-go's `interceptor.WithRPCInterceptor` binds under.
+struct RpcInterceptorCtxKey;
+
+/// client-go `interceptor.WithRPCInterceptor`: a derived context whose RPCs
+/// run inside `interceptor`, chained after the interceptor the context
+/// already carries (`ChainRPCInterceptors(existing, interceptor)`).
+#[must_use]
+pub fn with_rpc_interceptor(
+    ctx: &crate::trace::TraceContext,
+    interceptor: RpcInterceptorHandle,
+) -> crate::trace::TraceContext {
+    let mut chain = get_rpc_interceptor_from_ctx(ctx).unwrap_or_default();
+    chain.link(interceptor);
+    ctx.with_value::<RpcInterceptorCtxKey, RpcInterceptorChain>(chain)
+}
+
+/// client-go `interceptor.GetRPCInterceptorFromCtx`: the interceptor bound by
+/// [`with_rpc_interceptor`], or `None`.
+#[must_use]
+pub fn get_rpc_interceptor_from_ctx(
+    ctx: &crate::trace::TraceContext,
+) -> Option<RpcInterceptorChain> {
+    ctx.value::<RpcInterceptorCtxKey, RpcInterceptorChain>().cloned()
+}
+
 /// A named, ordered collection of RPC interceptors.
 ///
 /// Link order is execution order on entry: `first` executes before `second`,
@@ -532,4 +557,31 @@ mod tests {
 
         assert_eq!(executed.load(Ordering::SeqCst), 1);
     }
+
+    /// client-go `WithRPCInterceptor` chains a second interceptor after the
+    /// context's first, and `GetRPCInterceptorFromCtx` sees both in order.
+    #[test]
+    fn ctx_interceptors_chain_in_binding_order() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = |name: &'static str| {
+            let order = Arc::clone(&order);
+            new_rpc_interceptor(name, move |_, _, next| {
+                order.lock().unwrap().push(name);
+                next()
+            })
+        };
+        let ctx = crate::trace::TraceContext::new();
+        assert!(get_rpc_interceptor_from_ctx(&ctx).is_none());
+        let ctx = with_rpc_interceptor(&ctx, record("first"));
+        let ctx = with_rpc_interceptor(&ctx, record("second"));
+        let chain = get_rpc_interceptor_from_ctx(&ctx).expect("bound");
+        let request = crate::proto::kvrpcpb::GetRequest::default();
+        let next: RpcNext<'_> = Arc::new(|| {
+            Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })
+                as futures::future::BoxFuture<'_, RpcDispatchResult>
+        });
+        futures::executor::block_on(chain.wrap("store", &request, next)).unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["first", "second"]);
+    }
+
 }

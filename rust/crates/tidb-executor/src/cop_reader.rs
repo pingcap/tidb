@@ -659,7 +659,7 @@ pub fn open_cop_scan(
     });
     let plan = RemoteScanPlan {
         cancellation: request.statement.memory.coprocessor_request_cancellation(),
-        kv_exec_counter: request.statement.kv_exec_counter.clone(),
+        rpc_interceptor: request.statement.rpc_interceptor.clone(),
         kv_context: request
             .statement
             .kv_context
@@ -714,7 +714,7 @@ pub fn open_cop_scan(
 /// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     cancellation: Arc<CancelHandle>,
-    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// The issuing statement's ctx values: its `RUDetails` and its
     /// `StmtCtx.GetResourceGroupTagger`.
     kv_context: tidb_txnkv::StatementKvContext,
@@ -902,7 +902,7 @@ fn open_scan(
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
         .with_cop_lite_worker(plan.cop_lite_worker)
-        .with_kv_exec_counter(plan.kv_exec_counter)
+        .with_rpc_interceptor(plan.rpc_interceptor)
         .with_kv_context(plan.kv_context);
     let result = tidb_distsql::select_with_runtime_stats_over_client(
         client,

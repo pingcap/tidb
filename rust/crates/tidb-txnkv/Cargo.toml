@@ -22,7 +22,6 @@ tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-paging = { path = "../tidb-paging" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
-tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-metrics = { path = "../tidb-metrics" }
 reqwest = { workspace = true, features = ["blocking"] }

@@ -880,6 +880,17 @@ fn ddl_visit_batch_summary_keeps_both_rename_tables_and_like_source() {
     }
 }
 
+/// One RPC to `target` through the statement's interceptor (a no-op send).
+fn send_to(interceptor: &tidb_txnkv::RpcInterceptorOption, target: &str) {
+    let interceptor = interceptor.handle().expect("the statement binds its interceptor");
+    let request = tikv_client::proto::kvrpcpb::GetRequest::default();
+    let next: tikv_client::RpcNext<'_> = std::sync::Arc::new(|| {
+        Box::pin(async { Ok(Box::new(()) as Box<dyn std::any::Any>) })
+            as futures::future::BoxFuture<'_, tikv_client::RpcDispatchResult>
+    });
+    futures::executor::block_on(interceptor.wrap(target, &request, next)).unwrap();
+}
+
 #[test]
 fn kv_exec_counter_batch_admission_and_request_enable_windows() {
     use tidb_topsql_state::{disable_top_sql, enable_top_sql};
@@ -890,9 +901,9 @@ fn kv_exec_counter_batch_admission_and_request_enable_windows() {
         session.begin_statement_observation("SELECT 1");
         // Executors capture their statement reference before admission.
         let ctx = session.statement_context(false);
-        let ordinary = ctx.snapshot_read_options(0.0).kv_exec_counter;
+        let ordinary = ctx.snapshot_read_options(0.0).rpc_interceptor;
         let cop =
-            tidb_executor::remote_scan::pushdown_statement_context(&ctx).kv_exec_counter;
+            tidb_executor::remote_scan::pushdown_statement_context(&ctx).rpc_interceptor;
         if admitted {
             enable_top_sql();
         }
@@ -902,9 +913,9 @@ fn kv_exec_counter_batch_admission_and_request_enable_windows() {
         } else {
             disable_top_sql();
         }
-        ordinary.mark("store-a");
-        cop.mark("store-a");
-        cop.mark("store-b");
+        send_to(&ordinary, "store-a");
+        send_to(&cop, "store-a");
+        send_to(&cop, "store-b");
         disable_top_sql();
         let data = session.statement_stats.take();
         let total: u64 = data

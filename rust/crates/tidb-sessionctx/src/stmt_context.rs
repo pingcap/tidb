@@ -1075,6 +1075,9 @@ pub struct StmtContextData {
     /// and a table the statement reads has an available TiFlash replica.
     is_tiflash: Arc<AtomicBool>,
     kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    /// Go `KvExecCounter.RPCInterceptor()`, built once per statement so every
+    /// request the statement configures runs the same interceptor.
+    rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// Go's statement ctx `RUDetails` and `StmtCtx.GetResourceGroupTagger`,
     /// as the session publishes them for the statement that runs.
     statement_kv_context: Option<tidb_txnkv::StatementKvContextCell>,
@@ -1972,6 +1975,7 @@ context_configuration! {
     /// Retains the statement counter through every execution context clone.
     #[must_use]
     pub fn with_kv_exec_counter(mut self, counter: tidb_topsql_stmtstats::KvExecCounterHandle) -> Self {
+        self.rpc_interceptor = tidb_txnkv::RpcInterceptorOption::new(counter.rpc_interceptor());
         self.kv_exec_counter = counter;
         self
     }
@@ -2688,6 +2692,7 @@ impl StmtContext {
             sql_cpu_usages: None,
             is_tiflash: Arc::default(),
             kv_exec_counter: Default::default(),
+            rpc_interceptor: Default::default(),
             statement_kv_context: None,
             keys_read: KeysReadBudget::default(),
             cop_response_sink: None,
@@ -4699,6 +4704,14 @@ impl StmtContext {
         self.kv_exec_counter.clone()
     }
 
+    /// Go `KvExecCounter.RPCInterceptor()` as `txn.SetOption(kv.RPCInterceptor,
+    /// ...)` and `WithSQLKvExecCounterInterceptor` bind it: the statement's one
+    /// interceptor.
+    #[must_use]
+    pub fn rpc_interceptor(&self) -> tidb_txnkv::RpcInterceptorOption {
+        self.rpc_interceptor.clone()
+    }
+
     /// The session's statement ctx values, when a session runs this
     /// execution.
     #[must_use]
@@ -4731,7 +4744,7 @@ impl StmtContext {
     pub fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions {
         let zone = tidb_config::config_tree::config::get_txn_scope_from_config();
         tidb_txnkv::SnapshotReadOptions {
-            kv_exec_counter: self.kv_exec_counter(),
+            rpc_interceptor: self.rpc_interceptor(),
             is_staleness: self.is_staleness,
             replica_read: self.replica_read,
             read_replica_scope: self.read_replica_scope(),

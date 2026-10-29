@@ -26,7 +26,6 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
-tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-config = { path = "../tidb-config" }
 tidb-kv = { path = "../tidb-kv" }
@@ -44,6 +43,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }

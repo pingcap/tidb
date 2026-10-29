@@ -1003,7 +1003,9 @@ pub(crate) fn with_active_trace_context<R>(read: impl FnOnce(&TraceContext) -> R
     ACTIVE_TRACE_CONTEXT.try_with(read).ok()
 }
 
-pub(crate) fn current_trace_context() -> TraceContext {
+/// The trace context the running task is scoped to (client-go's `ctx`), or an
+/// empty one.
+pub fn current_trace_context() -> TraceContext {
     ACTIVE_TRACE_CONTEXT
         .try_with(TraceContext::clone)
         .unwrap_or_default()

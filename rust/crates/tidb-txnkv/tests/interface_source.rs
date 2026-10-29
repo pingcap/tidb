@@ -477,7 +477,7 @@ impl MppClient for MockMppClient {
         _: tidb_proto::mpp::TaskMeta,
         _: Vec<u8>,
         _: &StatementKvContext,
-        _: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        _: &tidb_txnkv::RpcInterceptorOption,
     ) -> Result<(), MppError> {
         Ok(())
     }
@@ -488,7 +488,7 @@ impl MppClient for MockMppClient {
         _: tidb_proto::mpp::TaskMeta,
         _: tidb_proto::mpp::TaskMeta,
         _: &StatementKvContext,
-        _: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        _: &tidb_txnkv::RpcInterceptorOption,
     ) -> Result<Box<dyn MppStreamResponse>, MppError> {
         Err(MppError::Other("no store".to_owned()))
     }

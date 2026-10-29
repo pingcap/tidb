@@ -295,7 +295,7 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         meta: tidb_proto::mpp::TaskMeta,
         encoded_plan: Vec<u8>,
         kv_context: &crate::StatementKvContext,
-        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        rpc_interceptor: &crate::option::RpcInterceptorOption,
     ) -> Result<(), MppError>;
 
     /// Go `EstablishMPPConns`: the coordinator's (`receiver`) stream from the
@@ -308,7 +308,7 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         sender: tidb_proto::mpp::TaskMeta,
         receiver: tidb_proto::mpp::TaskMeta,
         kv_context: &crate::StatementKvContext,
-        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        rpc_interceptor: &crate::option::RpcInterceptorOption,
     ) -> Result<Box<dyn MppStreamResponse>, MppError>;
 }
 

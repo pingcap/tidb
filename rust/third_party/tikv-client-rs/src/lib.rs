@@ -209,7 +209,7 @@ pub use util::RuDetails;
 pub use crate::backoff::Backoff;
 #[doc(inline)]
 pub use crate::interceptor::{
-    chain_rpc_interceptors, new_rpc_interceptor, MockInterceptorManager, RpcDispatchResult,
+    chain_rpc_interceptors, get_rpc_interceptor_from_ctx, new_rpc_interceptor, with_rpc_interceptor, MockInterceptorManager, RpcDispatchResult,
     RpcInterceptor, RpcInterceptorChain, RpcInterceptorHandle, RpcNext,
 };
 #[doc(inline)]

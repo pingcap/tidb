@@ -195,7 +195,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
     fn target(
         &self,
         address: &str,
-        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> MppTarget<S> {
         let config = tidb_config::config_tree::config::get_global_config();
         MppTarget {
@@ -207,7 +207,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
                 tikv_client::tikv::EndpointType::TiFlash
             },
             compute_cache: config.disaggregated_tiflash && !config.use_auto_scaler,
-            kv_exec_counter: kv_exec_counter.clone(),
+            rpc_interceptor: rpc_interceptor.clone(),
         }
     }
 
@@ -362,9 +362,9 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         meta: TaskMeta,
         encoded_plan: Vec<u8>,
         kv_context: &tidb_txnkv::StatementKvContext,
-        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> Result<(), MppError> {
-        let target = self.target(&task.address, kv_exec_counter);
+        let target = self.target(&task.address, rpc_interceptor);
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(meta),
             encoded_plan,
@@ -377,8 +377,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         self.store
             .block_on(tidb_store_driver_txn::driver::cop_store::with_statement_kv_context(
                 kv_context,
-                async {
-                    target.kv_exec_counter.mark(&target.address);
+                under_rpc_interceptor(&target.rpc_interceptor, async {
                     let dispatch_response = mpp_setup(
                         Some(ctx.as_ref()),
                         Some(tikv_client::tikv::READ_TIMEOUT_MEDIUM),
@@ -409,7 +408,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
                     invalidate_mpp_retry_regions(&target.store, &dispatch_response.retry_regions)
                         .await;
                     Ok(())
-                },
+                }),
             ))
             .map_err(|message| MppError::after_stop(ctx.as_ref(), message))
     }
@@ -421,9 +420,9 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         sender: TaskMeta,
         receiver: TaskMeta,
         kv_context: &tidb_txnkv::StatementKvContext,
-        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+        rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> Result<Box<dyn MppStreamResponse>, MppError> {
-        let target = self.target(address, kv_exec_counter);
+        let target = self.target(address, rpc_interceptor);
         self.store
             .block_on(tidb_store_driver_txn::driver::cop_store::with_statement_kv_context(
                 kv_context,
@@ -740,7 +739,7 @@ struct MppTarget<S: tikv_client::PdClient> {
     /// Whether the task runs on a TiFlash compute node from the region
     /// cache's compute-store list, which a send failure invalidates.
     compute_cache: bool,
-    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
 }
 
 impl<S: tikv_client::PdClient> Clone for MppTarget<S> {
@@ -750,7 +749,7 @@ impl<S: tikv_client::PdClient> Clone for MppTarget<S> {
             address: self.address.clone(),
             store_type: self.store_type,
             compute_cache: self.compute_cache,
-            kv_exec_counter: self.kv_exec_counter.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
         }
     }
 }
@@ -762,6 +761,25 @@ impl<S: tikv_client::PdClient> MppTarget<S> {
                 .store()
                 .pd_client()
                 .invalidate_tiflash_compute_stores();
+        }
+    }
+}
+
+/// Go `distsql.WithSQLKvExecCounterInterceptor(ctx, ...)` on the MPP
+/// coordinator's ctx: the MPP RPCs `future` sends run the statement's
+/// interceptor (client-go's `interceptedClient` reads it from the ctx).
+async fn under_rpc_interceptor<F: std::future::Future>(
+    interceptor: &tidb_txnkv::RpcInterceptorOption,
+    future: F,
+) -> F::Output {
+    match interceptor.handle() {
+        None => future.await,
+        Some(interceptor) => {
+            let ctx = tikv_client::with_rpc_interceptor(
+                &tikv_client::trace::current_trace_context(),
+                interceptor.clone(),
+            );
+            tikv_client::trace::with_trace_context(ctx, future).await
         }
     }
 }
@@ -778,10 +796,11 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
     // This is the coordinator's effective CopNextMaxBackoff budget.
     let mut backoff = RegionBackoffBudget::campaign_default();
     let result = loop {
-        target.kv_exec_counter.mark(&target.address);
         // client-go getMPPStreamResponse receives once inside SendRequest;
         // only errors before the first packet belong to setup retry.
-        let attempt = mpp_setup(
+        let attempt = under_rpc_interceptor(
+            &target.rpc_interceptor,
+            mpp_setup(
             Some(memory.as_ref()),
             Some(MPP_RECEIVE_TIMEOUT),
             "connect stream",
@@ -795,6 +814,7 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
                 }),
                 MPP_RECEIVE_TIMEOUT,
             ),
+        ),
         )
         .await;
         match attempt {
@@ -1409,7 +1429,7 @@ mod mpp_read_batch_tests {
                 address: self.address.clone(),
                 store_type: tikv_client::tikv::EndpointType::TiFlash,
                 compute_cache,
-                kv_exec_counter: Default::default(),
+                rpc_interceptor: Default::default(),
             }
         }
         fn open(&self) -> Result<MppQueryResponse<TestPd>, String> {
@@ -1508,7 +1528,7 @@ mod mpp_read_batch_tests {
         let counter = KvExecCounterHandle::default();
         counter.initialize(&stats, b"sql", b"plan");
         let mut target = fixture.target(false);
-        target.kv_exec_counter = counter;
+        target.rpc_interceptor = tidb_txnkv::RpcInterceptorOption::new(counter.rpc_interceptor());
         let mut response = fixture
             .open_target(&target, tidb_kv::mem_quota::StatementMemory::default())
             .unwrap();

@@ -168,15 +168,30 @@ impl RpcInterceptor for CallInterceptor {
                     if remaining.is_zero() {
                         return Err(deadline_exceeded());
                     }
-                    if let Some(counter) = call.kv_exec_counter() {
-                        counter.mark(target);
-                    }
-                    if remaining == Duration::MAX {
-                        next().await
-                    } else {
-                        tokio::time::timeout(remaining, next())
-                            .await
-                            .unwrap_or_else(|_| Err(deadline_exceeded()))
+                    let timed = move |next: RpcNext<'a>| -> BoxFuture<'a, RpcDispatchResult> {
+                        Box::pin(async move {
+                            if remaining == Duration::MAX {
+                                next().await
+                            } else {
+                                tokio::time::timeout(remaining, next())
+                                    .await
+                                    .unwrap_or_else(|_| Err(deadline_exceeded()))
+                            }
+                        })
+                    };
+                    // Go `txn.SetOption(kv.RPCInterceptor, ...)`: the
+                    // statement's interceptor (TopSQL's KV execution
+                    // counter) runs around the send.
+                    match call.rpc_interceptor().cloned() {
+                        None => timed(next).await,
+                        Some(interceptor) => {
+                            let send: RpcNext<'_> = Arc::new(move || {
+                                let future: BoxFuture<'_, RpcDispatchResult> =
+                                    timed(next.clone());
+                                future
+                            });
+                            interceptor.wrap(target, request, send).await
+                        }
                     }
                 }
             };

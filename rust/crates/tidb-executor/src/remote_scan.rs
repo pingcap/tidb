@@ -28,7 +28,7 @@ use tidb_distsql::remote_scan::*;
 pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatementContext {
     PushdownStatementContext {
         memory: ctx.statement_memory(),
-        kv_exec_counter: ctx.kv_exec_counter(),
+        rpc_interceptor: ctx.rpc_interceptor(),
         kv_context: ctx.statement_kv_context(),
         mpp_query_info: ctx.mpp_query_info(),
         mpp_server_id: ctx.mpp_server_id(),

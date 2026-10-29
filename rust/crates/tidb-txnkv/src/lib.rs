@@ -151,7 +151,7 @@ pub use new_txn::{
 };
 pub use option::{
     get_internal_source_type, OptionKey, PessimisticLockResourceGroupTagger, ReplicaReadType,
-    RequestSource, SnapshotReadOptions, SnapshotRuntimeStatsHandle, StatementKvContext,
+    RequestSource, RpcInterceptorOption, SnapshotReadOptions, SnapshotRuntimeStatsHandle, StatementKvContext,
     StatementKvContextCell, StatementResourceGroupTagger, TxnSizeLimits, INTERNAL_DDL_NOTIFIER,
     INTERNAL_DIST_TASK, INTERNAL_IMPORT_INTO, INTERNAL_LOAD_DATA, INTERNAL_TIMER,
     INTERNAL_TXN_ADMIN, INTERNAL_TXN_BACKFILL_DDL_PREFIX, INTERNAL_TXN_BIND_INFO,

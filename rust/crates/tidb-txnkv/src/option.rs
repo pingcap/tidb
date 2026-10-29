@@ -174,12 +174,58 @@ impl ReplicaReadType {
     }
 }
 
+/// Go `kv.RPCInterceptor`'s value: the client-go interceptor a statement's
+/// KV requests run under (TopSQL's `KvExecCounter.RPCInterceptor()`, bound
+/// with `txn.SetOption(kv.RPCInterceptor, ...)` or the request ctx), carried
+/// through this tier's request and option copies. Two are equal when they
+/// are the same interceptor.
+#[derive(Clone, Default)]
+pub struct RpcInterceptorOption(pub(crate) Option<tikv_client::RpcInterceptorHandle>);
+
+impl RpcInterceptorOption {
+    /// Binds `interceptor`.
+    #[must_use]
+    pub fn new(interceptor: tikv_client::RpcInterceptorHandle) -> Self {
+        Self(Some(interceptor))
+    }
+
+    /// The bound interceptor, if any.
+    #[must_use]
+    pub fn handle(&self) -> Option<&tikv_client::RpcInterceptorHandle> {
+        self.0.as_ref()
+    }
+}
+
+impl PartialEq for RpcInterceptorOption {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => {
+                std::ptr::addr_eq(std::sync::Arc::as_ptr(left), std::sync::Arc::as_ptr(right))
+            }
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RpcInterceptorOption {}
+
+impl std::fmt::Debug for RpcInterceptorOption {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("RpcInterceptorOption")
+            .field(&self.0.as_ref().map(|interceptor| interceptor.name().to_owned()))
+            .finish()
+    }
+}
+
 /// Statement-owned options for the native KV snapshot. Coprocessor request
 /// options have a different owner; ordinary Get/BatchGet must configure this one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotReadOptions {
-    /// Statement KV execution counter; clones retain the same admission reference.
-    pub kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
+    /// Go `kv.RPCInterceptor`: the statement's interceptor (TopSQL's KV
+    /// execution counter); clones retain the same interceptor.
+    pub rpc_interceptor: RpcInterceptorOption,
     /// Go IsStalenessReadOnly; independent of replica read preference.
     pub is_staleness: bool,
     /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.

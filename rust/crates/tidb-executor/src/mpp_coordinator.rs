@@ -370,7 +370,7 @@ fn open_gather(
             meta.clone(),
             dag.encode_to_vec(),
             &kv_context,
-            &request.statement.kv_exec_counter,
+            &request.statement.rpc_interceptor,
         )?;
         streams.streams.push_back(client.establish_mpp_conns(
             Arc::clone(&ctx),
@@ -378,7 +378,7 @@ fn open_gather(
             meta.clone(),
             receiver_meta.clone(),
             &kv_context,
-            &request.statement.kv_exec_counter,
+            &request.statement.rpc_interceptor,
         )?);
     }
     Ok(streams)

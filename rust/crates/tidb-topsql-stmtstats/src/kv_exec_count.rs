@@ -44,6 +44,18 @@ impl KvExecCounterHandle {
             .get_or_init(|| stats.create_kv_exec_counter(sql, plan));
     }
 
+    /// Go `KvExecCounter.RPCInterceptor`: the client-go interceptor, bound to
+    /// a transaction, snapshot or request ctx, that marks each RPC's target
+    /// before the RPC is sent.
+    #[must_use]
+    pub fn rpc_interceptor(&self) -> tikv_client::RpcInterceptorHandle {
+        let counter = self.clone();
+        tikv_client::new_rpc_interceptor("kv-exec-counter", move |target, _request, next| {
+            counter.mark(target);
+            next()
+        })
+    }
+
     /// Runs the source interceptor's current-enable check before marking a target.
     pub fn mark(&self, target: &str) {
         if top_sql_enabled() {

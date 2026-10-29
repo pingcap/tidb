@@ -158,7 +158,7 @@ impl UnaryCancellation {
 pub struct UnaryCallContext {
     deadline: Option<Instant>,
     cancellation: UnaryCancellation,
-    kv_exec_counter: Option<tidb_topsql_stmtstats::KvExecCounterHandle>,
+    rpc_interceptor: crate::option::RpcInterceptorOption,
 }
 
 impl UnaryCallContext {
@@ -174,7 +174,7 @@ impl UnaryCallContext {
         Self {
             deadline: Some(deadline),
             cancellation,
-            kv_exec_counter: None,
+            rpc_interceptor: crate::option::RpcInterceptorOption(None),
         }
     }
 
@@ -188,7 +188,7 @@ impl UnaryCallContext {
         Self {
             deadline,
             cancellation,
-            kv_exec_counter: None,
+            rpc_interceptor: crate::option::RpcInterceptorOption(None),
         }
     }
 
@@ -198,19 +198,18 @@ impl UnaryCallContext {
         Self::new(timeout, UnaryCancellation::new())
     }
 
-    /// Binds the statement observer without changing deadline or cancellation.
+    /// Go `kv.RPCInterceptor` on this call: binds the statement interceptor
+    /// without changing deadline or cancellation.
     #[must_use]
-    pub fn with_kv_exec_counter(
-        mut self,
-        counter: Option<tidb_topsql_stmtstats::KvExecCounterHandle>,
-    ) -> Self {
-        self.kv_exec_counter = counter;
+    pub fn with_rpc_interceptor(mut self, interceptor: crate::option::RpcInterceptorOption) -> Self {
+        self.rpc_interceptor = interceptor;
         self
     }
 
-    /// The observer belongs to this call, never the shared connection fleet.
-    pub fn kv_exec_counter(&self) -> Option<&tidb_topsql_stmtstats::KvExecCounterHandle> {
-        self.kv_exec_counter.as_ref()
+    /// The interceptor belongs to this call, never the shared connection
+    /// fleet.
+    pub fn rpc_interceptor(&self) -> Option<&tikv_client::RpcInterceptorHandle> {
+        self.rpc_interceptor.handle()
     }
 
     /// Remaining budget, or `Duration::MAX` for a cancellation-only scope.

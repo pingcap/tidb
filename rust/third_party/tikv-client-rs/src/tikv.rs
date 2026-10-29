@@ -1471,9 +1471,20 @@ impl<PdC: PdClient> KvStore<PdC> {
                 ru_details.update(&admitted.consumption, admitted.wait_duration);
             }
         }
-        let response = client
-            .dispatch_with_timeout(&*request, Some(timeout))
-            .await?;
+        // client-go `interceptedClient.SendRequest`: the ctx's interceptor
+        // (`interceptor.GetRPCInterceptorFromCtx`) runs around the send.
+        let response = match crate::interceptor::get_rpc_interceptor_from_ctx(&trace_context) {
+            None => client.dispatch_with_timeout(&*request, Some(timeout)).await?,
+            Some(interceptor) => {
+                let request: &dyn Request = &*request;
+                let client = &client;
+                let next: crate::interceptor::RpcNext<'_> = Arc::new(move || {
+                    Box::pin(client.dispatch_with_timeout(request, Some(timeout)))
+                        as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
+                });
+                interceptor.wrap(address, request, next).await?
+            }
+        };
         if let Some(selected) = selected {
             let settled = selected.controller.on_response_wait(
                 &selected.resource_group_name,
