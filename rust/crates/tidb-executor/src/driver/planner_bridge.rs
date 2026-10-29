@@ -32,7 +32,7 @@ use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_planner::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner::logical::cte::CteClass;
 use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
 use tidb_planner::logical::rule::{RuleContext, flags, logical_optimize};

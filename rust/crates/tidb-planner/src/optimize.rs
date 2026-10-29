@@ -27,7 +27,7 @@ use tidb_planner_core_base::PlanCacheMarker;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
 use tidb_fixcontrol::OptimizerFixControl;

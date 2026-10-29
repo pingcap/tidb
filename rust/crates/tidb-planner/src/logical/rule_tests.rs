@@ -61,8 +61,8 @@ pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBui
 /// A [`RuleContext`] over a caller-owned allocator, for tests elsewhere in the
 /// crate as well as this file.
 pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
-    static COLUMN_ALLOCATOR: crate::expression_rewriter::ColumnIdAllocator =
-        crate::expression_rewriter::ColumnIdAllocator::new();
+    static COLUMN_ALLOCATOR: tidb_planner_core_base::ColumnIdAllocator =
+        tidb_planner_core_base::ColumnIdAllocator::new();
     RuleContext {
         estimator_options: Default::default(),
         allocator,

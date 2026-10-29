@@ -37,7 +37,7 @@ use tidb_infoschema::table_source::SourceTable;
 use tidb_infoschema::table_source::SourceColumn;
 use super::set_opr::union_join_field_type;
 use super::PlanBuilder;
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::logical::LogicalPlan;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 

@@ -51,6 +51,7 @@
 //! `pkg/sessionctx/vardef/tidb_vars.go`. Callers that later gain real session
 //! variables set the struct instead of changing a formula.
 
+use crate::logical::data_source::TableScanPenaltyInput;
 use tidb_planner_cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
 use tidb_planner_costusage::{
     CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2, add_cost_without_trace,
@@ -678,29 +679,6 @@ pub fn index_scan_cost(
         Some(id) => add_cost_without_trace(cost, (id % 100) as f64 / 1_000_000.0),
         None => cost,
     }
-}
-
-/// The inputs `getTableScanPenalty` reads off the scan and the session.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct TableScanPenaltyInput {
-    /// Whether the scan carries `RangeInfo` (an index-join probe range).
-    pub has_range_info: bool,
-    /// `tidb_opt_prefer_range_scan`.
-    pub allow_prefer_range_scan: bool,
-    /// Whether the table's histogram collection is pseudo.
-    pub pseudo_stats: bool,
-    /// `GetAnalyzeRowCount()` truncated to an integer, as Go does.
-    pub analyze_row_count: i64,
-    /// The table's modify count.
-    pub modify_count: i64,
-    /// Whether partition pruning conditions exist (a partition-level scan).
-    pub has_partition_scan: bool,
-    /// Whether the statement used `USE`/`FORCE INDEX`.
-    pub has_index_force: bool,
-    /// Go `getPlanCostVer24PhysicalTableScan`'s `unsignedIntHandle` (an
-    /// unsigned integer primary key is the handle), which
-    /// `ranger.HasFullRange` reads: such a table's full range starts at 0.
-    pub unsigned_int_handle: bool,
 }
 
 /// `getTableScanPenalty`: the extra row count charged to a risky full scan.

@@ -30,7 +30,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::ZonedNoColumns;
 use tidb_datatype::SessionTimeZone;
 
-use tidb_planner::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 
 /// Go's expression context is consulted only for argument types during the

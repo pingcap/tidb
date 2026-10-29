@@ -123,6 +123,7 @@
 //! plan node — the apply/join constructors, the quantifier aggregation plans,
 //! and `popExistsSubPlan`.
 
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_datatype::{FieldName, FieldType, FieldTypeCode, FieldTypeFlags, QualifiedColumnName};
 use tidb_expression_aggregation::AggFuncDesc;
 use tidb_expr::column::{Column, CorrelatedColumn};
@@ -224,48 +225,6 @@ pub enum SubQueryCtx {
 use tidb_hint::{HINT_FLAG_NO_DECORRELATE, HINT_FLAG_SEMI_JOIN_REWRITE};
 
 // ***** allocators and the ambient context *****
-
-/// Go `SessionVars.AllocPlanColumnID()`: the source of a plan column's
-/// `UniqueID`.
-///
-/// The plan-id counter already lives on [`PlanIdAllocator`]; column ids are a
-/// separate Go counter with a wider type, so they get their own here.
-#[derive(Debug, Default)]
-pub struct ColumnIdAllocator {
-    next: std::sync::atomic::AtomicI64,
-}
-
-impl ColumnIdAllocator {
-    /// A fresh allocator whose first [`Self::alloc`] returns `1`.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            next: std::sync::atomic::AtomicI64::new(0),
-        }
-    }
-
-    /// Go `PlanColumnID.Add(1)`.
-    pub fn alloc(&self) -> i64 {
-        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if std::env::var_os("TIDB_RS_COL_TRACE").is_some() {
-            let bt = std::backtrace::Backtrace::force_capture().to_string();
-            let interesting: Vec<&str> = bt
-                .lines()
-                .filter(|line| {
-                    (line.contains("tidb_planner") || line.contains("tidb_executor"))
-                        && !line.contains("ColumnIdAllocator")
-                })
-                .take(3)
-                .collect();
-            eprintln!(
-                "COLALLOC inst={:p} id={id}: {}",
-                self as *const Self,
-                interesting.join(" | ")
-            );
-        }
-        id
-    }
-}
 
 /// The session switches the ported bodies branch on, each named for its Go
 /// `SessionVars` field.

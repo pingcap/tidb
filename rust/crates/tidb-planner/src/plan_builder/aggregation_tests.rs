@@ -33,7 +33,7 @@ use tidb_infoschema::table_source::SourceIndex;
 use tidb_infoschema::table_source::SourceColumn;
 use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::logical::{prepare_possible_properties, LogicalPlan};
 use tidb_planner_core_base::PlanIdAllocator;
 

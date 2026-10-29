@@ -1286,7 +1286,7 @@ pub struct PhysicalTableScan {
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
     /// Go `getTableScanPenalty`'s table/session inputs.
-    pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
+    pub table_scan_penalty: crate::logical::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
     /// Go reads these values from this operator's `Table` and `Columns`.
     pub tikv_pushdown: Option<crate::tikv_scan_spec::TiKvTableScanSpec>,

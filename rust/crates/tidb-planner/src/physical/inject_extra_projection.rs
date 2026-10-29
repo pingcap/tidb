@@ -52,7 +52,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::NoColumns;
 
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;

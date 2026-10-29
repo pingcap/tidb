@@ -20,7 +20,7 @@ use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::FieldTypeCode;
 use tidb_exprctx::ZonedNoColumns;
 use tidb_datatype::SessionTimeZone;
-use tidb_planner::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner::logical::LogicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;

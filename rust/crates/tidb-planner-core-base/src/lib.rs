@@ -102,6 +102,48 @@ impl PlanIdAllocator {
     }
 }
 
+/// Go `SessionVars.AllocPlanColumnID()`: the source of a plan column's
+/// `UniqueID`.
+///
+/// The plan-id counter already lives on [`PlanIdAllocator`]; column ids are a
+/// separate Go counter with a wider type, so they get their own here.
+#[derive(Debug, Default)]
+pub struct ColumnIdAllocator {
+    next: std::sync::atomic::AtomicI64,
+}
+
+impl ColumnIdAllocator {
+    /// A fresh allocator whose first [`Self::alloc`] returns `1`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            next: std::sync::atomic::AtomicI64::new(0),
+        }
+    }
+
+    /// Go `PlanColumnID.Add(1)`.
+    pub fn alloc(&self) -> i64 {
+        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if std::env::var_os("TIDB_RS_COL_TRACE").is_some() {
+            let bt = std::backtrace::Backtrace::force_capture().to_string();
+            let interesting: Vec<&str> = bt
+                .lines()
+                .filter(|line| {
+                    (line.contains("tidb_planner") || line.contains("tidb_executor"))
+                        && !line.contains("ColumnIdAllocator")
+                })
+                .take(3)
+                .collect();
+            eprintln!(
+                "COLALLOC inst={:p} id={id}: {}",
+                self as *const Self,
+                interesting.join(" | ")
+            );
+        }
+        id
+    }
+}
+
 /// Go `baseimpl.Plan`: the state every plan operator embeds.
 ///
 /// Field-for-field with the source struct except for `ctx`, which is narrowed

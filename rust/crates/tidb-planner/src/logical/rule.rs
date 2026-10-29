@@ -593,7 +593,7 @@ pub struct RuleContext<'a> {
     pub allocator: &'a PlanIdAllocator,
     /// Go `SessionVars.AllocPlanColumnID()`, used by rules that append a
     /// computed expression to an existing projection.
-    pub column_allocator: &'a crate::expression_rewriter::ColumnIdAllocator,
+    pub column_allocator: &'a tidb_planner_core_base::ColumnIdAllocator,
     /// Go `SCtx().GetExprCtx()`'s construction half; see
     /// [`FunctionBuilder`].
     pub builder: &'a dyn FunctionBuilder,

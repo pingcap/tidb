@@ -1379,7 +1379,7 @@ mod tests {
             rewritten_source.derived_access_paths.is_none(),
             "a new predicate set invalidates retained candidates"
         );
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let mut unhinted = ds.clone();

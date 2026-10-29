@@ -70,8 +70,8 @@ fn schema_of(ids: &[i64]) -> Schema {
 }
 
 fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
-    static COLUMN_ALLOCATOR: tidb_planner::expression_rewriter::ColumnIdAllocator =
-        tidb_planner::expression_rewriter::ColumnIdAllocator::new();
+    static COLUMN_ALLOCATOR: tidb_planner_core_base::ColumnIdAllocator =
+        tidb_planner_core_base::ColumnIdAllocator::new();
     RuleContext {
         estimator_options: Default::default(),
         allocator,

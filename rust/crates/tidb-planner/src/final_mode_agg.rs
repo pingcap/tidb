@@ -42,7 +42,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
 use tidb_planner_property::stats_info::GroupNdv;
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_property::stats_info::StatsInfo;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 

@@ -44,7 +44,7 @@ use crate::base_arms;
 use tidb_planner_cardinality::join::{
     FullJoinRowCountInput, JoinKeyEstimate, estimate_full_join_row_count,
 };
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;

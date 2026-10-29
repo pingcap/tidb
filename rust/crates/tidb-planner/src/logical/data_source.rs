@@ -264,11 +264,35 @@ pub struct DataSource {
     pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
     /// `getTableScanPenalty`.
-    pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
+    pub table_scan_penalty: TableScanPenaltyInput,
     /// Whether the table has an available TiFlash replica; Go computes this
     /// through `TableInfo.TiFlashReplica` plus the hypothetical-replica
     /// session state, both of which are outside this crate.
     pub has_tiflash_replica: bool,
+}
+
+
+/// The inputs `getTableScanPenalty` reads off the scan and the session.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TableScanPenaltyInput {
+    /// Whether the scan carries `RangeInfo` (an index-join probe range).
+    pub has_range_info: bool,
+    /// `tidb_opt_prefer_range_scan`.
+    pub allow_prefer_range_scan: bool,
+    /// Whether the table's histogram collection is pseudo.
+    pub pseudo_stats: bool,
+    /// `GetAnalyzeRowCount()` truncated to an integer, as Go does.
+    pub analyze_row_count: i64,
+    /// The table's modify count.
+    pub modify_count: i64,
+    /// Whether partition pruning conditions exist (a partition-level scan).
+    pub has_partition_scan: bool,
+    /// Whether the statement used `USE`/`FORCE INDEX`.
+    pub has_index_force: bool,
+    /// Go `getPlanCostVer24PhysicalTableScan`'s `unsignedIntHandle` (an
+    /// unsigned integer primary key is the handle), which
+    /// `ranger.HasFullRange` reads: such a table's full range starts at 0.
+    pub unsigned_int_handle: bool,
 }
 
 impl DataSource {

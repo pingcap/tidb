@@ -18,9 +18,9 @@
 
 use tidb_planner_costusage::CostVer2;
 use tidb_planner::plan_cost_ver2::{
-    index_scan_cost, reader_cost, table_scan_cost, CostFactorVars, TableScanInput,
-    TableScanPenaltyInput, Ver2Factors,
+    index_scan_cost, reader_cost, table_scan_cost, CostFactorVars, TableScanInput, Ver2Factors,
 };
+use tidb_planner::logical::data_source::TableScanPenaltyInput;
 
 /// Rows of the analyzed fixture table (`insert into t values` ×5,
 /// hint_test.go:368-369).

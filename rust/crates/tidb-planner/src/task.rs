@@ -2658,7 +2658,7 @@ fn inherit_index_join_stats(
 fn attach_hash_agg_to_mpp(
     mut plan: PhysicalPlan,
     mpp: MppTask,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     group_ndv_skew_ratio: f64,
@@ -3505,7 +3505,7 @@ fn push_limit_down_to_tidb_cop(
 fn attach_agg_over_cop(
     plan: PhysicalPlan,
     mut cop: CopTask,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -3729,7 +3729,7 @@ fn heavy_topn_split(
     topn: &crate::physical::PhysicalTopN,
     child_plan: &PhysicalPlan,
     store_type: StoreType,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Option<(
     crate::physical::PhysicalProjection,
@@ -3811,7 +3811,7 @@ fn heavy_topn_split(
 pub fn attach2_task(
     plan: PhysicalPlan,
     tasks: Vec<Task>,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
     attach2_task_with_group_ndv_skew_ratio(
@@ -3827,7 +3827,7 @@ pub fn attach2_task(
 pub fn attach2_task_with_group_ndv_skew_ratio(
     plan: PhysicalPlan,
     tasks: Vec<Task>,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
 ) -> Result<Task, PlanError> {
@@ -3846,7 +3846,7 @@ pub fn attach2_task_with_group_ndv_skew_ratio(
 pub(crate) fn attach2_task_in(
     plan: PhysicalPlan,
     mut tasks: Vec<Task>,
-    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
@@ -4912,7 +4912,7 @@ mod attach_tests {
                 .collect::<Vec<_>>()
         ));
         assert!(contains_heavy_topn_function(&topn_ref.by_items[1].expr));
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let attached = attach2_task(
             topn,
             vec![child_task],
@@ -5003,7 +5003,7 @@ mod attach_tests {
 
     #[test]
     fn mpp_two_phase_hash_agg_attaches_partial_exchange_and_final() {
-        use crate::expression_rewriter::ColumnIdAllocator;
+        use tidb_planner_core_base::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use tidb_planner_property::MppPartitionColumn;
         use tidb_expression_aggregation::{names, AggFuncDesc};
@@ -5087,7 +5087,7 @@ mod attach_tests {
 
     #[test]
     fn mpp_scalar_single_distinct_builds_three_aggregation_stages() {
-        use crate::expression_rewriter::ColumnIdAllocator;
+        use tidb_planner_core_base::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
@@ -5197,7 +5197,7 @@ mod attach_tests {
 
     #[test]
     fn mpp_scalar_multi_distinct_builds_expand_and_three_aggregation_stages() {
-        use crate::expression_rewriter::ColumnIdAllocator;
+        use tidb_planner_core_base::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;

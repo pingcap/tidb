@@ -220,8 +220,9 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 use tidb_exprctx::EvalError;
 
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::expression_rewriter::{
-    ClauseCode, ColumnIdAllocator, CompareOp, ExprRewriterPlanCtx, ExpressionRewriter,
+    ClauseCode, CompareOp, ExprRewriterPlanCtx, ExpressionRewriter,
     RewriteError, RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome,
     SubQueryCtx,
 };

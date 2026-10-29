@@ -36,7 +36,7 @@ use super::{
     constant_is_always_false, snapshot_schema_and_names, PlanBuilder, PlanScopeResolver,
     EXTRA_COMMIT_TS_ID, EXTRA_COMMIT_TS_NAME,
 };
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::logical::rule::flags;
 use crate::logical::rule::logical_optimize;
 use crate::logical::rule_tests::test_context;

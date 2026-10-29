@@ -46,7 +46,7 @@ use super::window::{
     is_unbounded, merge_window_spec, spec_equal, window_name, NamedWindowSpec,
 };
 use super::PlanBuilder;
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::logical::window::{BoundType, FrameType, LogicalWindow};
 use crate::logical::LogicalPlan;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};

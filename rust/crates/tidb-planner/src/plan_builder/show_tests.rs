@@ -21,7 +21,7 @@ use tidb_exprctx::ZonedNoColumns;
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceTable;
 use super::PlanBuilder;
-use crate::expression_rewriter::ColumnIdAllocator;
+use tidb_planner_core_base::ColumnIdAllocator;
 use crate::common_plans::Plan;
 use crate::logical::LogicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;

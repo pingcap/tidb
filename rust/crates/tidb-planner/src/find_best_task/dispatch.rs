@@ -225,7 +225,7 @@ pub struct DispatchContext<'a> {
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
     /// through [`DispatchContext::with_column_ids`].
-    pub column_ids: Option<&'a crate::expression_rewriter::ColumnIdAllocator>,
+    pub column_ids: Option<&'a tidb_planner_core_base::ColumnIdAllocator>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -618,7 +618,7 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_column_ids(
         mut self,
-        column_ids: &'a crate::expression_rewriter::ColumnIdAllocator,
+        column_ids: &'a tidb_planner_core_base::ColumnIdAllocator,
     ) -> Self {
         self.column_ids = Some(column_ids);
         self
@@ -3700,7 +3700,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // partition-level scan": a filtered scan is charged
                     // `max(MaxPenaltyRowCount, rows)` rather than the table's
                     // modify count.
-                    table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput {
+                    table_scan_penalty: crate::logical::data_source::TableScanPenaltyInput {
                         has_range_info: prop.index_join_prop.is_some(),
                         has_partition_scan: !ds.all_conds.is_empty(),
                         ..ds.table_scan_penalty
@@ -6493,7 +6493,7 @@ mod tests {
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let build = |index_columns: Vec<SourceIndexColumn>| {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
@@ -6670,7 +6670,7 @@ mod tests {
             }),
             ..PhysicalProperty::default()
         };
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
             .with_column_ids(&column_ids)
             .with_partial_ordered_index_for_topn(true);
@@ -7168,7 +7168,7 @@ mod tests {
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let source = {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
@@ -7247,7 +7247,7 @@ mod tests {
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let source = {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);

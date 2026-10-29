@@ -526,7 +526,7 @@ impl DataSource {
                     }
                 })),
         );
-        source.table_scan_penalty = crate::plan_cost_ver2::TableScanPenaltyInput {
+        source.table_scan_penalty = crate::logical::data_source::TableScanPenaltyInput {
             has_range_info: false,
             // Go's `tidb_opt_prefer_range_scan` default is ON. This executor
             // does not expose a session override yet.
