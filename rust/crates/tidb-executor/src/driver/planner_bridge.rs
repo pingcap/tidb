@@ -1050,7 +1050,7 @@ pub(crate) fn record_used_item_stats_status(
             physical_table_id,
             table_name,
             tidb_stats::PSEUDO_VERSION,
-            crate::plan_trace::PSEUDO_ROW_COUNT as i64,
+            tidb_stats::PSEUDO_ROW_COUNT,
             0,
             item_id,
             is_index,

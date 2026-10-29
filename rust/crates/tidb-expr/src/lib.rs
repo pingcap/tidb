@@ -321,6 +321,7 @@
 
 pub mod param_errors;
 pub mod expression_errors;
+pub mod explain;
 pub mod aggregation;
 mod arg_eval_type;
 mod binary_literal;

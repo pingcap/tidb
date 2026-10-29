@@ -205,7 +205,6 @@ pub mod slow_query;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod expand;
 pub mod fts_like_rewrite;
-pub(crate) use tidb_sessionctx::plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
 mod pushdown_blacklist;

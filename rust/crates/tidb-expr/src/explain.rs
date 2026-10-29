@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Formatting helpers shared by physical-plan EXPLAIN and range diagnostics.
-//!
-//! Go renders EXPLAIN from the physical plan itself. This module deliberately
-//! contains no independent plan tree or planner decisions.
+//! Go `pkg/expression/explain.go`: an expression's `ExplainInfo` /
+//! `StringWithCtx` text, which physical-plan EXPLAIN and the plan cache's
+//! skip reasons print.
 
 use tidb_datatype::Datum;
-use tidb_expr::expression::Expression;
-
-/// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`).
-pub const PSEUDO_ROW_COUNT: f64 = 10_000.0;
+use crate::expression::Expression;
 
 /// Which of Go's two expression renderers a caller needs.
 ///
@@ -43,7 +39,7 @@ pub enum ExpressionTextStyle {
 
 /// Renders the physical-expression subset used by physical-plan EXPLAIN.
 pub fn physical_expression_text_with_columns(
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn crate::Columns,
     expression: &Expression,
     column_names: &[Option<String>],
     style: ExpressionTextStyle,
@@ -127,7 +123,7 @@ pub fn physical_expression_text_with_columns(
 
 /// Go `Column.string`: `OrigName`, else `Column#<UniqueID>`, or bare
 /// `Column` when the statement removes column numbers (plan_tree).
-fn column_text(ctx: &dyn tidb_expr::Columns, column: &tidb_expr::column::Column) -> String {
+fn column_text(ctx: &dyn crate::Columns, column: &crate::column::Column) -> String {
     if !column.orig_name.is_empty() {
         column.orig_name.clone()
     } else if ctx.remove_column_numbers() {
@@ -140,8 +136,8 @@ fn column_text(ctx: &dyn tidb_expr::Columns, column: &tidb_expr::column::Column)
 /// Go `Constant.StringWithCtx` (`constant.go:181`): the Projection
 /// renderer, which prints a string constant WITHOUT quotes.
 fn string_with_ctx_constant(
-    constant: &tidb_expr::constant::Constant,
-    ctx: &dyn tidb_expr::Columns,
+    constant: &crate::constant::Constant,
+    ctx: &dyn crate::Columns,
     column_names: &[Option<String>],
 ) -> Option<String> {
     let parameter;
@@ -198,8 +194,8 @@ fn constant_value_text(value: &Datum) -> Option<String> {
 }
 
 fn explain_constant(
-    constant: &tidb_expr::constant::Constant,
-    ctx: &dyn tidb_expr::Columns,
+    constant: &crate::constant::Constant,
+    ctx: &dyn crate::Columns,
 ) -> Option<String> {
     // Literal datums are immutable; borrowing keeps large strings/JSON from
     // being cloned merely to render a plan. Only lazy constants need evaluation.
@@ -242,8 +238,8 @@ fn explain_constant(
 mod tests {
     use super::{physical_expression_text_with_columns, ExpressionTextStyle};
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::column::Column;
-    use tidb_expr::expression::Expression;
+    use crate::column::Column;
+    use crate::expression::Expression;
 
     /// Go's `-col.UniqueID` wraps at run time rather than panicking. A
     /// placeholder column whose `unique_id` is `i64::MIN` used to abort
@@ -252,7 +248,7 @@ mod tests {
     fn a_min_unique_id_column_renders_without_overflow() {
         let column = Column::new(i64::MIN, FieldType::new(FieldTypeCode::LongLong));
         let rendered = physical_expression_text_with_columns(
-            &tidb_expr::NoColumns,
+            &crate::NoColumns,
             &Expression::Column(column),
             &[],
             ExpressionTextStyle::Explain,
@@ -261,80 +257,5 @@ mod tests {
             rendered.as_deref(),
             Some("ScalarQueryCol#-9223372036854775808")
         );
-    }
-    #[test]
-    fn dynamic_constants_use_go_explain_and_string_semantics() {
-        use tidb_datatype::Datum;
-        use tidb_expr::constant::{Constant, ParamMarker};
-        use tidb_expr::scalar_function::ScalarFunction;
-        let ctx = crate::StmtContext::default()
-            .with_prepared_params(vec![Datum::new_string("current")].into());
-        let mut parameter = Constant::new(
-            Datum::new_string("stale"),
-            FieldType::new(FieldTypeCode::VarString),
-        );
-        parameter.param_marker = Some(ParamMarker { order: 0 });
-        parameter.subquery_ref_id = 9;
-        let integer = |value| {
-            Expression::Constant(Constant::new(
-                Datum::Int(value),
-                FieldType::new(FieldTypeCode::LongLong),
-            ))
-        };
-        let mut deferred = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
-        deferred.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
-            FieldType::new(FieldTypeCode::LongLong),
-            vec![integer(40), integer(2)],
-        ))));
-        deferred.subquery_ref_id = 7;
-        let mut missing = parameter.clone();
-        missing.param_marker = Some(ParamMarker { order: 1 });
-        let mut overflow = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
-        overflow.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
-            FieldType::new(FieldTypeCode::LongLong),
-            vec![integer(i64::MAX), integer(1)],
-        ))));
-        overflow.subquery_ref_id = 8;
-        let mut converted = Constant::new(
-            Datum::new_string("stale"),
-            FieldType::new(FieldTypeCode::VarString),
-        );
-        converted.deferred_expr = Some(Box::new(integer(42)));
-        let mut both = parameter.clone();
-        both.deferred_expr = overflow.deferred_expr.clone();
-        let cases = [
-            (
-                overflow,
-                "not recognized const value",
-                "plus(9223372036854775807, 1)",
-            ),
-            (converted, "\"42\"", "42"),
-            (
-                both,
-                "ScalarQueryCol#9(\"current\")",
-                "ScalarQueryCol#9(current)",
-            ),
-            (
-                parameter,
-                "ScalarQueryCol#9(\"current\")",
-                "ScalarQueryCol#9(current)",
-            ),
-            (deferred, "ScalarQueryCol#7(42)", "plus(40, 2)"),
-            (missing, "not recognized const value", "?"),
-        ];
-        for (constant, explain, display) in cases {
-            let expression = Expression::Constant(constant);
-            for (style, expected) in [
-                (ExpressionTextStyle::Explain, explain),
-                (ExpressionTextStyle::StringWithCtx, display),
-            ] {
-                assert_eq!(
-                    physical_expression_text_with_columns(&ctx, &expression, &[], style).as_deref(),
-                    Some(expected)
-                );
-            }
-        }
     }
 }

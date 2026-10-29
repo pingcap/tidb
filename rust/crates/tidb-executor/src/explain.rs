@@ -62,11 +62,11 @@ fn expression_text(
     eval_ctx: &dyn tidb_expr::Columns,
     expression: &tidb_expr::expression::Expression,
 ) -> String {
-    crate::plan_trace::physical_expression_text_with_columns(
+    tidb_expr::explain::physical_expression_text_with_columns(
         eval_ctx,
         expression,
         &[],
-        crate::plan_trace::ExpressionTextStyle::Explain,
+        tidb_expr::explain::ExpressionTextStyle::Explain,
     )
     .unwrap_or_default()
 }
@@ -78,11 +78,11 @@ fn expression_string_text(
     eval_ctx: &dyn tidb_expr::Columns,
     expression: &tidb_expr::expression::Expression,
 ) -> String {
-    crate::plan_trace::physical_expression_text_with_columns(
+    tidb_expr::explain::physical_expression_text_with_columns(
         eval_ctx,
         expression,
         &[],
-        crate::plan_trace::ExpressionTextStyle::StringWithCtx,
+        tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
     )
     .unwrap_or_default()
 }

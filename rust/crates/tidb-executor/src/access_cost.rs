@@ -22,7 +22,6 @@
 
 use crate::StatsStmtCtx as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
-use crate::plan_trace::PSEUDO_ROW_COUNT;
 use tidb_stats::table_statistics::TableStatistics;
 
 /// One table's loaded statistics as the statement's statistics handle holds
@@ -174,9 +173,9 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
         // zero count is one of Go's own routes to `PseudoTable` -- see
         // [`TableStatistics::new`], where that rule lives, and the capture
         // that pins it.
-        Some(stats) if stats.pseudo => PSEUDO_ROW_COUNT,
+        Some(stats) if stats.pseudo => tidb_stats::PSEUDO_ROW_COUNT as f64,
         Some(stats) => stats.row_count.max(0) as f64,
-        None => PSEUDO_ROW_COUNT,
+        None => tidb_stats::PSEUDO_ROW_COUNT as f64,
     }
 }
 

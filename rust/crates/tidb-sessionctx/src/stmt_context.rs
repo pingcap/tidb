@@ -5776,11 +5776,11 @@ impl Columns for StmtContext {
         target: &str,
     ) {
         let expression = tidb_expr::expression::Expression::Constant(constant.clone());
-        let text = crate::plan_trace::physical_expression_text_with_columns(
+        let text = tidb_expr::explain::physical_expression_text_with_columns(
             self,
             &expression,
             &[],
-            crate::plan_trace::ExpressionTextStyle::StringWithCtx,
+            tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
         )
         .unwrap_or_default();
         self.statement_range_fallback()

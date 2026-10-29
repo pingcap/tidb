@@ -19,7 +19,8 @@
 pub mod statement_pushdown;
 pub mod advisory_lock_state;
 pub mod explain_format;
-pub mod plan_trace;
+#[cfg(test)]
+mod explain_tests;
 pub mod show_retrieval;
 pub mod select_lock;
 mod stmt_context;
