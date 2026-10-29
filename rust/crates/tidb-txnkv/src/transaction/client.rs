@@ -1157,14 +1157,7 @@ fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailu
             }
         }
         if let tikv_client::Error::Deadlock(deadlock) = unwrapped(error) {
-            use prost::Message;
-            if let Ok(proto) =
-                tidb_proto::KvrpcDeadlock::decode(deadlock.deadlock.encode_to_vec().as_slice())
-            {
-                let mut detail = tidb_client_go_error::DeadlockDetail::from(&proto);
-                detail.is_retryable = deadlock.is_retryable;
-                return super::PessimisticLockFailure::Deadlock(detail);
-            }
+            return super::PessimisticLockFailure::Deadlock(deadlock.clone());
         }
     }
     match crate::driver::tikv_transaction::classify_cause(&error) {

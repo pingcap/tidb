@@ -54,9 +54,9 @@ use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use crate::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
-    save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
-    ClusterAnalyzeReport,
+    save_cluster_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
 };
+use tidb_pdhelper::ApproximateTableCountProvider;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_stats_handle_storage::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,

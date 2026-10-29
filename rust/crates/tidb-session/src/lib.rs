@@ -635,7 +635,7 @@ pub struct Session {
     /// Go `pdhelper.GlobalPDHelper`: the node's, installed when the session
     /// opens; a session with no node behind it has a store without PD.
     approximate_table_counts:
-        std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider>,
+        std::sync::Arc<dyn tidb_pdhelper::ApproximateTableCountProvider>,
     /// Pinned Go's fresh information-schema table-size reader.
     table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
     /// Where the BDR role lives when it is not this catalog's (a cluster
@@ -923,7 +923,7 @@ impl Session {
             column_stats_usage: None,
             analyze_status: None,
             approximate_table_counts: std::sync::Arc::new(
-                tidb_executor::pd_helper::NoPdApproximateTableCounts::default(),
+                tidb_pdhelper::NoPdApproximateTableCounts::default(),
             ),
             table_storage_stats: None,
             bdr_role_store: None,
@@ -1582,7 +1582,7 @@ impl Session {
     /// Installs the node's `GlobalPDHelper`.
     pub fn set_approximate_table_count_provider(
         &mut self,
-        provider: std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider>,
+        provider: std::sync::Arc<dyn tidb_pdhelper::ApproximateTableCountProvider>,
     ) {
         self.approximate_table_counts = provider;
     }

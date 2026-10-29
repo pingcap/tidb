@@ -83,7 +83,6 @@ pub mod set;
 pub mod simple;
 pub mod join_stats;
 pub mod index_lookup_stats;
-pub mod pd_helper;
 pub mod hash_join_v2;
 pub mod hash_join_version;
 pub mod hash_table_v2;

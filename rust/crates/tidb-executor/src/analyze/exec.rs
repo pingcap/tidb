@@ -772,7 +772,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// Go `pdhelper.GlobalPDHelper`.
     fn approximate_table_counts(
         &self,
-    ) -> std::sync::Arc<dyn crate::analyze::ApproximateTableCountProvider>;
+    ) -> std::sync::Arc<dyn tidb_pdhelper::ApproximateTableCountProvider>;
     /// Moves the statement context's warnings onto the session.
     fn drain_context_warnings(&mut self, ctx: &crate::StmtContext);
 

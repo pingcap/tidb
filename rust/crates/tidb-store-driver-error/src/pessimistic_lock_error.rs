@@ -432,7 +432,8 @@ mod tests {
     };
     use tidb_terror::ERR_RESULT_UNDETERMINED;
     use tidb_kv::cluster_storage::DuplicateKeyHint;
-    use tidb_client_go_error::{DeadlockDetail, DeadlockWaitChainItem};
+    use tikv_client::proto::{deadlock::WaitForEntry, kvrpcpb};
+    use tikv_client::DeadlockError;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         CommittedTransaction, OptimisticCommitOutcome,
@@ -759,18 +760,19 @@ mod tests {
 
     #[test]
     fn a_proven_deadlock_reports_1213_with_its_own_sqlstate() {
-        let error = lock_failure_to_sql_error(&PessimisticLockFailure::Deadlock(DeadlockDetail {
-            lock_ts: 7,
-            lock_key: b"k".to_vec(),
-            deadlock_key_hash: 1,
-            deadlock_key: b"j".to_vec(),
+        let error = lock_failure_to_sql_error(&PessimisticLockFailure::Deadlock(DeadlockError {
+            deadlock: kvrpcpb::Deadlock {
+                lock_ts: 7,
+                lock_key: b"k".to_vec(),
+                deadlock_key_hash: 1,
+                deadlock_key: b"j".to_vec(),
+                wait_chain: vec![WaitForEntry {
+                    txn: 7,
+                    wait_for_txn: 8,
+                    ..Default::default()
+                }],
+            },
             is_retryable: false,
-            wait_chain: vec![DeadlockWaitChainItem {
-                txn: 7,
-                wait_for_txn: 8,
-                key: Vec::new(),
-                resource_group_tag: Vec::new(),
-            }],
         }));
         assert_eq!(error.code, ERR_LOCK_DEADLOCK);
         assert_eq!(&error.state, b"40001");
@@ -831,23 +833,21 @@ mod tests {
             &PessimisticLockFailure::LockWaitTimeout { key: b"k".to_vec() }
         ));
         assert!(!is_retryable_statement_failure(
-            &PessimisticLockFailure::Deadlock(DeadlockDetail {
-                lock_ts: 1,
-                lock_key: Vec::new(),
-                deadlock_key_hash: 0,
-                deadlock_key: Vec::new(),
+            &PessimisticLockFailure::Deadlock(DeadlockError {
+                deadlock: kvrpcpb::Deadlock {
+                    lock_ts: 1,
+                    ..Default::default()
+                },
                 is_retryable: false,
-                wait_chain: Vec::new(),
             })
         ));
         assert!(is_retryable_statement_failure(
-            &PessimisticLockFailure::Deadlock(DeadlockDetail {
-                lock_ts: 1,
-                lock_key: Vec::new(),
-                deadlock_key_hash: 0,
-                deadlock_key: Vec::new(),
+            &PessimisticLockFailure::Deadlock(DeadlockError {
+                deadlock: kvrpcpb::Deadlock {
+                    lock_ts: 1,
+                    ..Default::default()
+                },
                 is_retryable: true,
-                wait_chain: Vec::new(),
             })
         ));
     }

@@ -119,7 +119,9 @@ impl fmt::Display for QueryInterruptedWithSignalError {
 
 impl StdError for QueryInterruptedWithSignalError {}
 
-#[derive(Debug)]
+/// client-go `tikverr.ErrDeadlock`: the deadlock payload plus whether the
+/// detector classified it as retryable.
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeadlockError {
     pub deadlock: kvrpcpb::Deadlock,
     pub is_retryable: bool,

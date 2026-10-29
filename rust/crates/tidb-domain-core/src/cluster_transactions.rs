@@ -207,7 +207,7 @@ pub trait ClusterTransactions: Send + Sync {
     fn record_region_stats(
         &self,
         _table_id: i64,
-    ) -> Result<Option<tidb_executor::pd_helper::RegionCountStats>, String> {
+    ) -> Result<Option<tidb_pdhelper::RegionCountStats>, String> {
         Ok(None)
     }
 
@@ -1502,13 +1502,13 @@ where
     fn record_region_stats(
         &self,
         table_id: i64,
-    ) -> Result<Option<tidb_executor::pd_helper::RegionCountStats>, String> {
+    ) -> Result<Option<tidb_pdhelper::RegionCountStats>, String> {
         let store = self.opener.store();
         let Some(pd_http_client) = store.pd_http_client() else {
             return Ok(None);
         };
         store
-            .block_on(tidb_executor::pd_helper::load_record_region_stats(
+            .block_on(tidb_pdhelper::load_record_region_stats(
                 &pd_http_client,
                 table_id,
                 self.timeout,

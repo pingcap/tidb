@@ -3611,13 +3611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidb-client-go-error"
-version = "0.0.0"
-dependencies = [
- "tidb-proto",
-]
-
-[[package]]
 name = "tidb-codec"
 version = "0.0.0"
 dependencies = [
@@ -4029,10 +4022,10 @@ version = "0.0.0"
 name = "tidb-deadlockhistory"
 version = "0.0.0"
 dependencies = [
- "tidb-client-go-error",
  "tidb-datatype",
  "tidb-resourcegrouptag",
  "tidb-txnkv",
+ "tikv-client",
  "tracing",
 ]
 
@@ -4183,6 +4176,7 @@ dependencies = [
  "tidb-owner",
  "tidb-parser",
  "tidb-pd-client",
+ "tidb-pdhelper",
  "tidb-privilege",
  "tidb-proto",
  "tidb-sessionctx",
@@ -4472,6 +4466,7 @@ dependencies = [
  "tidb-parser-types",
  "tidb-password-validation",
  "tidb-pd-client",
+ "tidb-pdhelper",
  "tidb-plancodec",
  "tidb-planner",
  "tidb-planner-costusage",
@@ -5264,6 +5259,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-pdhelper"
+version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-txnkv",
+ "tikv-client",
+ "tokio",
+]
+
+[[package]]
 name = "tidb-placement"
 version = "0.0.0"
 dependencies = [
@@ -5952,6 +5957,7 @@ dependencies = [
  "tidb-parser-format",
  "tidb-parser-types",
  "tidb-pd-client",
+ "tidb-pdhelper",
  "tidb-plancodec",
  "tidb-planner",
  "tidb-plannererrors",
@@ -6603,7 +6609,6 @@ dependencies = [
 name = "tidb-store-driver-error"
 version = "0.0.0"
 dependencies = [
- "tidb-client-go-error",
  "tidb-codec",
  "tidb-config",
  "tidb-dbterror",
@@ -6613,6 +6618,7 @@ dependencies = [
  "tidb-proto",
  "tidb-terror",
  "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]
@@ -7040,7 +7046,6 @@ dependencies = [
  "prost 0.14.4",
  "reqwest 0.13.4",
  "serde_json",
- "tidb-client-go-error",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",

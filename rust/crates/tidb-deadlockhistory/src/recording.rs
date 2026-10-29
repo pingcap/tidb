@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{err_deadlock_to_deadlock_record, GLOBAL_DEADLOCK_HISTORY};
-use tidb_client_go_error::DeadlockDetail;
+use tikv_client::DeadlockError;
 
 static COLLECT_RETRYABLE: AtomicBool = AtomicBool::new(false);
 
@@ -29,7 +29,7 @@ pub fn configure_deadlock_history(capacity: usize, collect_retryable: bool) {
     GLOBAL_DEADLOCK_HISTORY.resize(capacity);
 }
 
-pub fn record_deadlock(detail: &DeadlockDetail) {
+pub fn record_deadlock(detail: &DeadlockError) {
     if detail.is_retryable && !COLLECT_RETRYABLE.load(Ordering::Acquire) {
         return;
     }

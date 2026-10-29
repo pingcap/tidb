@@ -70,7 +70,8 @@ use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use tidb_model::table_info::TableInfo;
 use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::defaults_row;
-pub use crate::analyze::{sample_rate_reason, ApproximateTableCountProvider};
+pub use crate::analyze::sample_rate_reason;
+use tidb_pdhelper::ApproximateTableCountProvider;
 
 const ANALYZE_JOB_MAX_DELTA: i64 = 10_000_000;
 const ANALYZE_JOB_DUMP_INTERVAL: Duration = Duration::from_secs(5);

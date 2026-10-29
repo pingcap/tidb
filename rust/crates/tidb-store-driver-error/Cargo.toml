@@ -22,4 +22,4 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [dev-dependencies]
-tidb-client-go-error = { path = "../tidb-client-go-error" }
+tikv-client.workspace = true

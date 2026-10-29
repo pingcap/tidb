@@ -272,7 +272,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
 
 pub struct ClusterApproximateTableCountProvider {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub cache: Arc<Mutex<tidb_executor::pd_helper::ApproximateTableCountCache>>,
+    pub cache: Arc<Mutex<tidb_pdhelper::ApproximateTableCountCache>>,
     pub cleanup_tx: std::sync::mpsc::SyncSender<bool>,
     pub cleanup_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -280,7 +280,7 @@ pub struct ClusterApproximateTableCountProvider {
 impl ClusterApproximateTableCountProvider {
     pub(crate) fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
         let cache = Arc::new(Mutex::new(
-            tidb_executor::pd_helper::ApproximateTableCountCache::new(
+            tidb_pdhelper::ApproximateTableCountCache::new(
                 1_048_576,
                 Duration::from_secs(30),
             ),
@@ -336,7 +336,7 @@ impl Drop for ClusterApproximateTableCountProvider {
     }
 }
 
-impl tidb_executor::real_tikv_analyze::ApproximateTableCountProvider
+impl tidb_pdhelper::ApproximateTableCountProvider
     for ClusterApproximateTableCountProvider
 {
     fn approximate_table_count(
@@ -350,7 +350,7 @@ impl tidb_executor::real_tikv_analyze::ApproximateTableCountProvider
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
-        let key = tidb_executor::pd_helper::approximate_table_count_key(
+        let key = tidb_pdhelper::approximate_table_count_key(
             physical_id,
             database,
             table,
@@ -410,7 +410,7 @@ impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusP
         table: &str,
         partition: &str,
     ) -> i64 {
-        tidb_executor::real_tikv_analyze::ApproximateTableCountProvider::approximate_table_count(
+        tidb_pdhelper::ApproximateTableCountProvider::approximate_table_count(
             self.approximate_counts.as_ref(),
             resource_group,
             physical_id,

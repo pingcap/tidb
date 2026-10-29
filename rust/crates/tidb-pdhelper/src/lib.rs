@@ -26,6 +26,20 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
+/// Go `pdhelper.PDHelper`'s approximate-count query as consumed by ANALYZE.
+pub trait ApproximateTableCountProvider: Send + Sync {
+    /// Returns the count and whether PD/storage supplied it. Cached values
+    /// return `true`, matching Go's cache-hit contract.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> (f64, bool);
+}
+
 /// Builds the source approximate-count cache key.
 ///
 /// This intentionally uses the source's direct underscore join. Escaping or
@@ -186,7 +200,7 @@ impl Default for NoPdApproximateTableCounts {
     }
 }
 
-impl crate::analyze::ApproximateTableCountProvider for NoPdApproximateTableCounts {
+impl ApproximateTableCountProvider for NoPdApproximateTableCounts {
     fn approximate_table_count(
         &self,
         _resource_group: &str,

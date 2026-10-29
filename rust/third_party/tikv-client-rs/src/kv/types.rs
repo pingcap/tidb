@@ -34,12 +34,9 @@ impl<T: Any + Send + Sync> LockStatistics for T {
     }
 }
 
-/// Deadlock payload plus source retry classification.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DeadlockError {
-    pub deadlock: kvrpcpb::Deadlock,
-    pub is_retryable: bool,
-}
+/// client-go's `LockCtx.OnDeadlock` receives the same `tikverr.ErrDeadlock`
+/// the lock request fails with.
+pub use crate::error::DeadlockError;
 
 pub type ResourceGroupTagger =
     Arc<dyn Fn(&kvrpcpb::PessimisticLockRequest) -> Vec<u8> + Send + Sync>;

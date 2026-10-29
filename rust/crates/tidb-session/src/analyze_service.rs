@@ -19,7 +19,7 @@
 impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
     fn approximate_table_counts(
         &self,
-    ) -> std::sync::Arc<dyn tidb_executor::analyze::ApproximateTableCountProvider> {
+    ) -> std::sync::Arc<dyn tidb_pdhelper::ApproximateTableCountProvider> {
         std::sync::Arc::clone(&self.approximate_table_counts)
     }
 

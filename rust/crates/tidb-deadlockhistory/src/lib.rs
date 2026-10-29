@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use tidb_datatype::{Collation, Datum, StringDatum, Time, TimeType, MAX_FSP};
 use tidb_resourcegrouptag::decode_resource_group_tag;
-use tidb_client_go_error::DeadlockDetail;
+use tikv_client::DeadlockError;
 
 /// `INFORMATION_SCHEMA.DEADLOCKS.DEADLOCK_ID`.
 pub const COL_DEADLOCK_ID: &str = "DEADLOCK_ID";
@@ -70,8 +70,9 @@ pub struct DeadlockRecord {
 }
 
 /// Builds a record from TiKV's complete deadlock error payload.
-pub fn err_deadlock_to_deadlock_record(detail: &DeadlockDetail) -> DeadlockRecord {
+pub fn err_deadlock_to_deadlock_record(detail: &DeadlockError) -> DeadlockRecord {
     let wait_chain = detail
+        .deadlock
         .wait_chain
         .iter()
         .map(|raw| {
@@ -229,7 +230,8 @@ mod tests {
     use std::sync::Arc;
 
     use tidb_datatype::{Collation, CoreTime, Datum, StringDatum, Time, TimeType};
-    use tidb_client_go_error::{DeadlockDetail, DeadlockWaitChainItem};
+    use tikv_client::proto::{deadlock::WaitForEntry, kvrpcpb};
+    use tikv_client::DeadlockError;
     use tidb_txnkv::ResourceGroupTagBuilder;
 
     use super::{err_deadlock_to_deadlock_record, DeadlockHistory, DeadlockRecord, WaitChainItem};
@@ -411,26 +413,30 @@ mod tests {
         tag1.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd]);
         let mut tag2 = ResourceGroupTagBuilder::new(None);
         tag2.set_sql_digest(&[0xdd, 0xcc, 0xbb, 0xaa]);
-        let detail = DeadlockDetail {
-            lock_ts: 101,
-            lock_key: b"k1".to_vec(),
-            deadlock_key_hash: 1_234_567,
-            deadlock_key: b"k1".to_vec(),
+        let detail = DeadlockError {
+            deadlock: kvrpcpb::Deadlock {
+                lock_ts: 101,
+                lock_key: b"k1".to_vec(),
+                deadlock_key_hash: 1_234_567,
+                deadlock_key: b"k1".to_vec(),
+                wait_chain: vec![
+                    WaitForEntry {
+                        txn: 100,
+                        wait_for_txn: 101,
+                        key: b"k2".to_vec(),
+                        resource_group_tag: tag1.encode_tag_with_key(&[]),
+                        ..Default::default()
+                    },
+                    WaitForEntry {
+                        txn: 101,
+                        wait_for_txn: 100,
+                        key: b"k1".to_vec(),
+                        resource_group_tag: tag2.encode_tag_with_key(&[]),
+                        ..Default::default()
+                    },
+                ],
+            },
             is_retryable: true,
-            wait_chain: vec![
-                DeadlockWaitChainItem {
-                    txn: 100,
-                    wait_for_txn: 101,
-                    key: b"k2".to_vec(),
-                    resource_group_tag: tag1.encode_tag_with_key(&[]),
-                },
-                DeadlockWaitChainItem {
-                    txn: 101,
-                    wait_for_txn: 100,
-                    key: b"k1".to_vec(),
-                    resource_group_tag: tag2.encode_tag_with_key(&[]),
-                },
-            ],
         };
 
         let record = err_deadlock_to_deadlock_record(&detail);

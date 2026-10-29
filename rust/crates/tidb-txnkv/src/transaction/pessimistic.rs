@@ -43,11 +43,11 @@ impl Default for LockWaitTime {
 /// usable and the SQL layer decides whether to retry the statement under a
 /// newer `for_update_ts`. [`Self::Transaction`] is not — it ends the
 /// transaction, exactly like the optimistic path's causes.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PessimisticLockFailure {
     /// TiKV's deadlock detector proved a cycle. The statement must be aborted;
     /// retrying it would recreate the same cycle.
-    Deadlock(tidb_client_go_error::DeadlockDetail),
+    Deadlock(tikv_client::DeadlockError),
     /// A newer version of a key was committed after this statement's
     /// `for_update_ts`. Retry the statement under a fresh one.
     WriteConflict {
@@ -74,7 +74,7 @@ impl fmt::Display for PessimisticLockFailure {
             Self::Deadlock(detail) => write!(
                 formatter,
                 "deadlock detected on txn {} over key {:?}",
-                detail.lock_ts, detail.lock_key
+                detail.deadlock.lock_ts, detail.deadlock.lock_key
             ),
             Self::WriteConflict { detail } => {
                 write!(formatter, "pessimistic write conflict: {detail}")

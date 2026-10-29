@@ -1540,20 +1540,6 @@ mod tests {
     }
 }
 
-/// Go `pdhelper.PDHelper`'s approximate-count query as consumed by ANALYZE.
-pub trait ApproximateTableCountProvider: Send + Sync {
-    /// Returns the count and whether PD/storage supplied it. Cached values
-    /// return `true`, matching Go's cache-hit contract.
-    fn approximate_table_count(
-        &self,
-        resource_group: &str,
-        physical_id: i64,
-        database: &str,
-        table: &str,
-        partition: &str,
-    ) -> (f64, bool);
-}
-
 /// go `getAdjustedSampleRate`'s reason strings, branch for branch
 /// (`pkg/executor/builder.go:3270`).
 pub fn sample_rate_reason(

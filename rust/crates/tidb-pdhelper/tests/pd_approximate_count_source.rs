@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use tidb_executor::pd_helper::{approximate_table_count_key, ApproximateTableCountCache};
+use tidb_pdhelper::{approximate_table_count_key, ApproximateTableCountCache};
 
 fn load_count(
     cache: &mut ApproximateTableCountCache,
