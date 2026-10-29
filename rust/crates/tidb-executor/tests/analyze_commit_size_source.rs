@@ -61,10 +61,8 @@ use tidb_session::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, 
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, SystemRow, SystemTableError, SystemTableView,
 };
-use tidb_stats_handle_syncload::real_tikv_stats::{
-    load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad,
-    StatsTarget,
-};
+use tidb_stats_handle_syncload::real_tikv_stats::{StatsTarget};
+use tidb_stats_handle::bootstrap::{load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad};
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;

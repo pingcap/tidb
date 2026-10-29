@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod bootstrap;
 pub mod catalog_statistics;
 pub mod source;
 pub mod sync_load;

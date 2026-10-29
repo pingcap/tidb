@@ -25,9 +25,8 @@ use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_store_driver::real_tikv_read::{
     ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
 };
-use tidb_stats_handle_syncload::real_tikv_stats::{
-    load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
-};
+use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster};
+use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
 use tidb_stats_handle_syncload::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
 };

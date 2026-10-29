@@ -21,7 +21,6 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
-tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-syssession = { path = "../tidb-syssession" }

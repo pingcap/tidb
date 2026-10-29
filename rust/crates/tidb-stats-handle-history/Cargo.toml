@@ -13,7 +13,6 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-stats = { path = "../tidb-stats" }
-tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-syssession = { path = "../tidb-syssession" }
