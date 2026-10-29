@@ -106,6 +106,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         used_stats_recorder: None,
         cte_optimizer: None,
         data_source_stats: &crate::stats::CoreDataSourceStats,
+        predicate_simplifier: &crate::logical::rule_predicate_simplification::RulePredicateSimplifier,
     }
 }
 

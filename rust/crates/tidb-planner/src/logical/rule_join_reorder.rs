@@ -227,6 +227,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         used_stats_recorder: context.used_stats_recorder,
         cte_optimizer: context.cte_optimizer,
         data_source_stats: &crate::stats::CoreDataSourceStats,
+        predicate_simplifier: &crate::logical::rule_predicate_simplification::RulePredicateSimplifier,
     }
 }
 

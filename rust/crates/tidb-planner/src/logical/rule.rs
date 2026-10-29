@@ -682,6 +682,35 @@ pub struct RuleContext<'a> {
     pub cte_optimizer: Option<&'a dyn CteOptimizer>,
     /// Go `utilfuncp.DeriveStats4DataSource`: core's `deriveStats4DataSource`.
     pub data_source_stats: &'a dyn super::rewrite::DataSourceStatsDeriver,
+    /// Go `ruleutil.ApplyPredicateSimplification` /
+    /// `ApplyPredicateSimplificationForJoin`, which the rule package fills.
+    pub predicate_simplifier: &'a dyn PredicateSimplifier,
+}
+
+/// Go `ruleutil.ApplyPredicateSimplification` and
+/// `ApplyPredicateSimplificationForJoin` (`rule/util/misc.go`): function
+/// variables the rule package fills (`rule/rule_init.go`), so an operator's
+/// predicate pushdown reaches the rule's body without importing it.
+pub trait PredicateSimplifier {
+    /// Go `applyPredicateSimplification`.
+    fn apply_predicate_simplification(
+        &self,
+        ctx: &RuleContext<'_>,
+        predicates: Vec<Expression>,
+        propagate_constant: bool,
+        valid: Option<&dyn Fn(&Expression) -> bool>,
+    ) -> Vec<Expression>;
+
+    /// Go `applyPredicateSimplificationForJoin`.
+    fn apply_predicate_simplification_for_join(
+        &self,
+        ctx: &RuleContext<'_>,
+        predicates: Vec<Expression>,
+        left_schema: &Schema,
+        right_schema: &Schema,
+        propagate_constant: bool,
+        valid: Option<&dyn Fn(&Expression) -> bool>,
+    ) -> Vec<Expression>;
 }
 
 /// Go `LogicalCTE.DeriveStats`' lazy `DoOptimize` of a CTE class: the seed
@@ -861,12 +890,8 @@ pub fn apply_predicate_simplification(
     propagate_constant: bool,
     valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
-    super::rule_predicate_simplification::apply_predicate_simplification(
-        ctx,
-        predicates,
-        propagate_constant,
-        valid,
-    )
+    ctx.predicate_simplifier
+        .apply_predicate_simplification(ctx, predicates, propagate_constant, valid)
 }
 
 /// Go `ruleutil.ApplyPredicateSimplificationForJoin(...,
@@ -895,7 +920,7 @@ pub fn apply_predicate_simplification_for_join(
     propagate_constant: bool,
     valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
-    super::rule_predicate_simplification::apply_predicate_simplification_for_join(
+    ctx.predicate_simplifier.apply_predicate_simplification_for_join(
         ctx,
         predicates,
         left_schema,

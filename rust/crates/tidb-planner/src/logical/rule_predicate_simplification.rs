@@ -657,32 +657,39 @@ pub fn apply_predicate_simplification_for_join(
         .collect()
 }
 
-/// Go `expression.PropConstForOuterJoin`, with its statement side effect.
-#[must_use]
-pub fn propagate_constant_for_outer_join(
-    ctx: &RuleContext<'_>,
-    join_conditions: Vec<Expression>,
-    filter_conditions: Vec<Expression>,
-    outer_schema: &Schema,
-    inner_schema: &Schema,
-    null_sensitive: bool,
-    valid: Option<&dyn Fn(&Expression) -> bool>,
-) -> (Vec<Expression>, Vec<Expression>) {
-    let outcome = tidb_expr::constant_propagation::propagate_constant_for_outer_join(
-        ctx.builder,
-        ctx.use_plan_cache,
-        join_conditions,
-        filter_conditions,
-        outer_schema,
-        inner_schema,
-        ctx.always_keep_join_key,
-        null_sensitive,
-        valid,
-    );
-    if let (Some(marker), Some(reason)) = (ctx.plan_cache_marker, outcome.skip_plan_cache_reason) {
-        marker.set_skip_plan_cache(reason);
+/// The rule package's bodies behind `ruleutil`'s variables (Go `rule_init.go`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RulePredicateSimplifier;
+
+impl super::rule::PredicateSimplifier for RulePredicateSimplifier {
+    fn apply_predicate_simplification(
+        &self,
+        ctx: &RuleContext<'_>,
+        predicates: Vec<Expression>,
+        propagate_constant: bool,
+        valid: Option<&dyn Fn(&Expression) -> bool>,
+    ) -> Vec<Expression> {
+        apply_predicate_simplification(ctx, predicates, propagate_constant, valid)
     }
-    (outcome.join_conditions, outcome.filter_conditions)
+
+    fn apply_predicate_simplification_for_join(
+        &self,
+        ctx: &RuleContext<'_>,
+        predicates: Vec<Expression>,
+        left_schema: &Schema,
+        right_schema: &Schema,
+        propagate_constant: bool,
+        valid: Option<&dyn Fn(&Expression) -> bool>,
+    ) -> Vec<Expression> {
+        apply_predicate_simplification_for_join(
+            ctx,
+            predicates,
+            left_schema,
+            right_schema,
+            propagate_constant,
+            valid,
+        )
+    }
 }
 
 /// Go `PredicateSimplification` rule. Only DataSource overrides the recursive

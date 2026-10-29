@@ -616,7 +616,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                      inner_schema,
                      null_sensitive,
                      valid| {
-                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                        super::join::propagate_constant_for_outer_join(
                             self.ctx,
                             join_conditions,
                             filter_conditions,
@@ -668,7 +668,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                      inner_schema,
                      null_sensitive,
                      valid| {
-                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                        super::join::propagate_constant_for_outer_join(
                             self.ctx,
                             join_conditions,
                             filter_conditions,
