@@ -25,7 +25,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use tidb_memory::{Tracker, LABEL_FOR_GLOBAL_STORAGE};
-use tidb_sys::storage::get_target_directory_capacity;
+use tidb_sys_storage::get_target_directory_capacity;
 
 /// The accepted MySQL-visible error text for local temporary-space exhaustion.
 pub const LOCAL_TEMPORARY_SPACE_QUOTA_ERROR: &str = "Out Of Quota For Local Temporary Space!";

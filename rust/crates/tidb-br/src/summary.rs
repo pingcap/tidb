@@ -30,7 +30,7 @@
 //! # Narrowings and boundaries
 //!
 //! - **`go.uber.org/zap.Field`** → [`tidb_log::Field`] / [`tidb_log::Value`],
-//!   the same mapping `tidb_lightning::verification` uses. `zap.Duration`
+//!   the same mapping `tidb_lightning_verification` uses. `zap.Duration`
 //!   becomes `Value::Duration` (nanoseconds), `zap.Int` `Value::I64`,
 //!   `zap.Uint64` `Value::U64`, `zap.String` `Value::Str`, and `zap.Error`
 //!   `Value::Error`.

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-sys-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sys/linux: Go pkg/util/sys/linux (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+nix.workspace = true
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }

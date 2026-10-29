@@ -17,8 +17,8 @@ intest = ["tidb-disk/intest"]
 jemalloc = ["tidb-disk/jemalloc"]
 
 [dependencies]
+tidb-sys-storage = { path = "../tidb-sys-storage" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-sys = { path = "../tidb-sys" }
 tidb-disk = { path = "../tidb-disk" }
 tempfile.workspace = true
 

@@ -86,7 +86,10 @@ impl Block {
         self.capacity
     }
 
-    pub(crate) fn manually_managed(bytes: Vec<u8>) -> Self {
+    /// A block whose memory `manual` owns: dropping it does not return it
+    /// to the pool until [`Block::release`] (Go `manual.New`'s buffer).
+    #[must_use]
+    pub fn manually_managed(bytes: Vec<u8>) -> Self {
         let capacity = bytes.len();
         Self {
             bytes: Some(bytes),
@@ -95,7 +98,8 @@ impl Block {
         }
     }
 
-    pub(crate) fn release(mut self) {
+    /// Hands a manually managed block back (Go `manual.Free`).
+    pub fn release(mut self) {
         self.release_on_drop = true;
     }
 }

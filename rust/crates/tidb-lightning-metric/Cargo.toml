@@ -1,0 +1,16 @@
+[package]
+name = "tidb-lightning-metric"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/metric: Go pkg/lightning/metric (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-promutil = { path = "../tidb-promutil" }
+prometheus = { version = "0.14", default-features = false }
+tikv-client.workspace = true

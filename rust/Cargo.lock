@@ -4956,30 +4956,61 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidb-lightning"
+name = "tidb-lightning-duplicate"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tempfile",
+ "tidb-codec",
+ "tidb-extsort",
+ "tidb-lightning-log",
+ "tidb-log",
+]
+
+[[package]]
+name = "tidb-lightning-importdef"
+version = "0.0.0"
+dependencies = [
+ "tidb-goruntime",
+ "tidb-model",
+]
+
+[[package]]
+name = "tidb-lightning-log"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "crossbeam-channel",
- "fastrand",
- "getrandom 0.3.4",
- "prometheus 0.14.0",
  "regex",
  "rustix 1.1.4",
  "serde",
- "serde_json",
- "tempfile",
- "tidb-codec",
- "tidb-datatype",
- "tidb-extsort",
- "tidb-goruntime",
  "tidb-log",
  "tidb-logutil",
- "tidb-model",
+ "tonic",
+]
+
+[[package]]
+name = "tidb-lightning-manual"
+version = "0.0.0"
+dependencies = [
+ "tidb-lightning-membuf",
+]
+
+[[package]]
+name = "tidb-lightning-membuf"
+version = "0.0.0"
+dependencies = [
+ "fastrand",
+ "getrandom 0.3.4",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-lightning-metric"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
  "tidb-promutil",
  "tikv-client",
- "tonic",
- "tracing",
 ]
 
 [[package]]
@@ -4989,6 +5020,24 @@ dependencies = [
  "encoding_rs",
  "tidb-charset",
  "tidb-datatype",
+]
+
+[[package]]
+name = "tidb-lightning-verification"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-log",
+]
+
+[[package]]
+name = "tidb-lightning-worker"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-lightning-metric",
+ "tikv-client",
 ]
 
 [[package]]
@@ -5890,7 +5939,7 @@ dependencies = [
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-stringutil",
- "tidb-sys",
+ "tidb-sys-linux",
  "tidb-systimemon",
  "tidb-sysutil",
  "tidb-table",
@@ -6226,7 +6275,7 @@ dependencies = [
  "tidb-disk",
  "tidb-intest",
  "tidb-memory",
- "tidb-sys",
+ "tidb-sys-storage",
 ]
 
 [[package]]
@@ -6759,14 +6808,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidb-sys"
+name = "tidb-sys-linux"
+version = "0.0.0"
+dependencies = [
+ "nix",
+ "rustix 1.1.4",
+]
+
+[[package]]
+name = "tidb-sys-storage"
 version = "0.0.0"
 dependencies = [
  "fs4",
- "nix",
  "rustix 1.1.4",
  "tempfile",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

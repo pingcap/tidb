@@ -18,7 +18,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_set::{
     Float64SetWithMemoryUsage, Int64SetWithMemoryUsage, StringSetWithMemoryUsage,
 };

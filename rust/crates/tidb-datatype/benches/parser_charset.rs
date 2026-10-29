@@ -24,6 +24,6 @@ fn main() {
     let charsets = ["utf8", "utf8mb4", "ascii", "latin1", "binary"];
     let charset = charsets[black_box(0)];
     for _ in 0..1_000_000 {
-        let _ = black_box(tidb_datatype::get_charset_info(black_box(charset)));
+        let _ = black_box(tidb_charset::get_charset_info(black_box(charset)));
     }
 }

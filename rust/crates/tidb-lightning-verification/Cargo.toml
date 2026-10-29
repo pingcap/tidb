@@ -1,0 +1,16 @@
+[package]
+name = "tidb-lightning-verification"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/verification: Go pkg/lightning/verification (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-log = { path = "../tidb-log" }

@@ -19,7 +19,7 @@ use tidb_datatype::CollationCollator;
 use std::hint::black_box;
 use std::time::Instant;
 
-use tidb_datatype::Collation;
+use tidb_charset::Collation;
 
 const SHORT: usize = 2 << 4;
 const MIDDLE: usize = 2 << 10;

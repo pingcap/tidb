@@ -20,7 +20,8 @@ use std::time::Instant;
 
 use tidb_codec::{decode, decode_decimal, decode_one, decode_one_typed, encode_bytes, encode_decimal_fixed, encode_int, encode_value, BYTES_FLAG};
 use tidb_rowcodec::{decode_row_to_datums, encode_row, ColumnInfo, DatumColumn, DecodeRowOptions, RowData};
-use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, Decimal, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 const ITERATIONS: usize = 10_000;
 const VALUE_COUNT: usize = 100;

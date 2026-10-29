@@ -70,7 +70,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Rows the aggregate folds per run.
 ///
@@ -491,7 +491,8 @@ fn bench_aggregate() {
 /// Arithmetic projection through the production evaluator, including nested
 /// operand batches. Keep decimal kernels in the comparison to catch regressions.
 fn bench_numeric_projection() {
-    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite};
+use tidb_exprctx::NoColumns;
     for (label, code, nested, op) in [
         ("numeric_int", FieldTypeCode::LongLong, false, "plus"),
         ("numeric_int_nested", FieldTypeCode::LongLong, true, "plus"),
@@ -616,8 +617,8 @@ fn bench_unsigned_comparison_projection() {
         constant::Constant,
         evaluator::EvaluatorSuite,
         expr_util::{FunctionBuilder, RealFunctionBuilder},
-        NoColumns,
     };
+    use tidb_exprctx::NoColumns;
     for (label, not_null) in [
         ("unsigned_comparison_not_null", true),
         ("unsigned_comparison_nullable", false),
@@ -673,7 +674,8 @@ fn bench_unsigned_comparison_projection() {
 /// Go's typed CEIL refinement keeps a decimal boundary outside TINYINT's
 /// range as a BIGINT constant. The nearby in-range boundary is a control.
 fn bench_integer_refinement_projection() {
-    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite};
+use tidb_exprctx::NoColumns;
     for (label, text, boundary) in [
         ("integer_refinement_outside_tiny", "127.1", 128),
         ("integer_refinement_inside_tiny", "126.1", 127),
@@ -733,7 +735,8 @@ fn bench_integer_refinement_projection() {
 /// EvaluatorSuite used by projection. Inputs are valid, so timing excludes
 /// warning collection while retaining JSON parsing and numeric conversion.
 fn bench_json_numeric_projection() {
-    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite};
+use tidb_exprctx::NoColumns;
     for (label, op, output_code) in [
         ("numeric_json_real", "plus", FieldTypeCode::Double),
         ("numeric_json_intdiv", "intdiv", FieldTypeCode::LongLong),
@@ -783,7 +786,7 @@ fn bench_json_numeric_projection() {
 /// Sorted string groups through the production checker and stream aggregate.
 /// One chunk per pass keeps the replay globally sorted, including CI ties.
 fn bench_stream_grouping() {
-    use tidb_datatype::Collation;
+    use tidb_charset::Collation;
     use tidb_executor::hash_agg::GroupedStreamAggExec;
     use tidb_expr::constant::Constant;
     for (label, collation, constant_key) in [

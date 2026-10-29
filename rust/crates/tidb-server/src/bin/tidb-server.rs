@@ -65,7 +65,7 @@ fn main() -> ExitCode {
     match tidb_server::parse_node_config(arguments) {
         Ok(config) => {
             if !config.affinity_cpus.is_empty() {
-                if let Err(error) = tidb_sys::linux::set_affinity(&config.affinity_cpus) {
+                if let Err(error) = tidb_sys_linux::set_affinity(&config.affinity_cpus) {
                     eprintln!("set cpu affinity failure: {error}");
                     return ExitCode::FAILURE;
                 }

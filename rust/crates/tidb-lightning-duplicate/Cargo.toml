@@ -1,0 +1,22 @@
+[package]
+name = "tidb-lightning-duplicate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/duplicate: Go pkg/lightning/duplicate (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-lightning-log = { path = "../tidb-lightning-log" }
+tidb-extsort = { path = "../tidb-extsort" }
+crossbeam-channel = "0.5"
+tidb-codec = { path = "../tidb-codec" }
+tidb-log = { path = "../tidb-log" }
+
+[dev-dependencies]
+tempfile.workspace = true
+

@@ -1,0 +1,14 @@
+[package]
+name = "tidb-lightning-manual"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/manual: Go pkg/lightning/manual (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-lightning-membuf = { path = "../tidb-lightning-membuf" }

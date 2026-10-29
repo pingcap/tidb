@@ -18,12 +18,14 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_charset::Collation;
 use tidb_planner_rule::pruned_ids_from_ranger;
 use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeColumnBound,
 };
-use tidb_expr::{column::Column, expression::Expression, NoColumns};
+use tidb_expr::{column::Column, expression::Expression};
+use tidb_exprctx::NoColumns;
 use tidb_ranger::types::Range;
 
 const PARTITION_COUNTS: [usize; 5] = [2, 10, 100, 1_000, 8_000];

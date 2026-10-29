@@ -18,10 +18,8 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use tidb_datatype::{
-    datums_to_string, default_field_type_for_value, is_printable, parse_datetime, Collation, Datum,
-    Decimal, FieldTypeValue,
-};
+use tidb_datatype::{datums_to_string, default_field_type_for_value, is_printable, parse_datetime, Datum, Decimal, FieldTypeValue};
+use tidb_charset::Collation;
 
 const ITERATIONS: usize = 10_000;
 

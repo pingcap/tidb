@@ -1,0 +1,22 @@
+[package]
+name = "tidb-lightning-membuf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/membuf: Go pkg/lightning/membuf (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+getrandom.workspace = true
+tracing = "0.1"
+
+[dev-dependencies]
+standard-fastrand = { package = "fastrand", version = "2" }
+
+[[bench]]
+name = "membuf"
+harness = false

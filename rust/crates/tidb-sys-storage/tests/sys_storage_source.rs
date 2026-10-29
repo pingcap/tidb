@@ -14,7 +14,7 @@
 
 //! Source-shaped tests for Go `pkg/util/sys/storage`.
 
-use tidb_sys::storage::get_target_directory_capacity;
+use tidb_sys_storage::get_target_directory_capacity;
 
 /// Go `pkg/util/sys/storage/sys_test.go::TestGetTargetDirectoryCapacity`.
 #[test]

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-lightning-importdef"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/importdef: Go pkg/lightning/importdef (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-model = { path = "../tidb-model" }

@@ -25,7 +25,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use tidb_log::{Field, Level, Value};
 
 use tidb_extsort::{ExternalSorter, Writer as ExternalWriter};
-use crate::log::Logger;
+use tidb_lightning_log::Logger;
 
 /// Error returned by duplicate detection.
 #[derive(Debug)]
@@ -760,7 +760,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let detector = Detector::new(sorter.clone(), crate::log::l());
+        let detector = Detector::new(sorter.clone(), tidb_lightning_log::l());
         let canceled = Arc::new(AtomicBool::new(false));
         let mut state = 0x9e37_79b9_7f4a_7c15_u64;
         let keys: Arc<Vec<Vec<u8>>> = Arc::new(
@@ -853,7 +853,7 @@ mod tests {
     fn detector_fail() {
         let directory = tempfile::tempdir().unwrap();
         let sorter = Arc::new(open_disk_sorter(directory.path(), None).unwrap());
-        let detector = Detector::new(sorter, crate::log::l());
+        let detector = Detector::new(sorter, tidb_lightning_log::l());
         let canceled = Arc::new(AtomicBool::new(false));
         let mut adder = detector.key_adder(&canceled).unwrap();
         adder.add(b"key", b"keyID").unwrap();

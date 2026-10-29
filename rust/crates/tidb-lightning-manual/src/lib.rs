@@ -17,7 +17,7 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use crate::membuf::Block;
+use tidb_lightning_membuf::Block;
 
 /// A safe maximum slice length for the cgo-backed implementation.
 pub const MAX_ARRAY_LEN: usize = (1 << 31) - 1;
@@ -79,7 +79,7 @@ impl Allocator {
     }
 }
 
-impl crate::membuf::Allocator for Allocator {
+impl tidb_lightning_membuf::Allocator for Allocator {
     fn alloc(&self, n: isize) -> Block {
         Self::alloc(self, n)
     }

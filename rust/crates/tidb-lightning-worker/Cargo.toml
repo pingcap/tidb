@@ -1,0 +1,16 @@
+[package]
+name = "tidb-lightning-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB lightning/worker: Go pkg/lightning/worker (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-lightning-metric = { path = "../tidb-lightning-metric" }
+crossbeam-channel = "0.5"
+tikv-client.workspace = true
