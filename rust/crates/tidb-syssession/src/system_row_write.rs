@@ -1341,7 +1341,7 @@ mod tests {
                 create,
                 "utf8mb4",
                 "utf8mb4_bin",
-                &tidb_expr::metabuild::Context::new_non_strict(),
+                &tidb_metabuild::Context::new_non_strict(),
                 false,
             )
             .unwrap_or_else(|error| panic!("mysql.{}: {error:?}", bootstrap.name));

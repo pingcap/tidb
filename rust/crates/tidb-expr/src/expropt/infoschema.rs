@@ -20,7 +20,7 @@ use super::{get_prop_provider, EvalPropContext, ExprOptError, RequireOptionalEva
 use crate::exprctx::{
     OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropKeySet, OptionalEvalPropProvider,
 };
-use crate::metabuild::MetaOnlyInfoSchema;
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 
 /// Go `InfoSchemaPropProvider`: `func(isDomain bool) infoschema.MetaOnlyInfoSchema`.
 ///

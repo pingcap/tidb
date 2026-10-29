@@ -66,7 +66,7 @@ pub type RangeColumnsMetadata = (Vec<String>, Vec<FieldType>, Vec<Vec<RangeColum
 pub fn build_range_bounds(
     built: &tidb_expr::expression::Expression,
     definitions: &[tidb_ast::PartitionDefinition],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(Vec<RangeBound>, bool), MysqlError> {
     // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
@@ -83,7 +83,7 @@ pub fn build_range_bounds(
 pub fn build_range_bounds_with_unsigned(
     definitions: &[PartitionDefinition],
     unsigned: bool,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     // Go's definition loop checks THIS definition's comment and name before
     // it reads the NEXT one's values (`ddl/partition.go:1650-1670`), so the
     // two cannot be run as separate passes without changing which error a
@@ -153,7 +153,7 @@ pub fn build_range_columns_bounds(
     definitions: &[PartitionDefinition],
     names: &[String],
     types: &[FieldType],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<RangeColumnsMetadata, MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
@@ -299,7 +299,7 @@ pub fn fold_range_bound(
     expr: &Expr,
     partition: &str,
     unsigned: bool,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<i64, MysqlError> {
     match tidb_table::partition_fold::fold_range_bound(expr, partition, ctx)? {
         tidb_table::partition_fold::FoldedRangeBound::Signed(value) if unsigned && value < 0 => {

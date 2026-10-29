@@ -39,7 +39,7 @@ fn restore(expr: &Expr) -> String {
     expr.restore_with_flags(tidb_parser_format::RestoreFlags::DEFAULT)
 }
 
-fn eval(expr: &Expr, ctx: &tidb_expr::metabuild::Context) -> Result<Datum, MysqlError> {
+fn eval(expr: &Expr, ctx: &tidb_metabuild::Context) -> Result<Datum, MysqlError> {
     tidb_table::partition_fold::eval_column_value(expr, ctx)
 }
 
@@ -47,7 +47,7 @@ fn eval(expr: &Expr, ctx: &tidb_expr::metabuild::Context) -> Result<Datum, Mysql
 fn convert(
     value: Datum,
     column: Option<&FieldType>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
     let Some(column) = column else {
         return Ok(value);
@@ -133,7 +133,7 @@ pub fn generate_from_interval(
     statement: IntervalStatement<'_>,
     column: Option<&FieldType>,
     existing: usize,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<PartitionDefinition>, MysqlError> {
     let step_text = restore(interval.step);
     let step_value = String::from_utf8_lossy(&tidb_datatype::unwrap_from_single_quotes(
@@ -246,7 +246,7 @@ pub fn expand_interval(
     partitioning: &TablePartitioning,
     column: Option<&FieldType>,
     unsigned: bool,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<PartitionDefinition>, MysqlError> {
     let method = &partitioning.method;
     let interval = method
@@ -355,7 +355,7 @@ pub fn expand_interval(
 fn compare_partition_definitions(
     generated: &[PartitionDefinition],
     defined: &[PartitionDefinition],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     if generated.len() != defined.len() {
         // Go passes the counts as extra arguments to a one-verb format.
@@ -478,7 +478,7 @@ impl TableInterval {
 /// anything else, as Go answers nil.
 pub fn interval_from_table(
     partition: &tidb_table::partition_routing::PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Option<TableInterval> {
     use tidb_table::partition_routing::PartitionKind;
     let (column, unsigned) = match &partition.kind {

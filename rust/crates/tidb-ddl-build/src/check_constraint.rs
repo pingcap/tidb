@@ -141,7 +141,7 @@ pub fn build_constraint_infos(
     max_constraint_id: &mut i64,
     state: SchemaState,
     mode: CheckConstraintBuildMode,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Result<Vec<ConstraintInfo>, CheckConstraintError> {
     if checks.is_empty() {
         return Ok(Vec::new());

@@ -59,7 +59,7 @@ pub fn check_column_default_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(bool, Datum), MysqlError> {
     use tidb_datatype::FieldTypeCode;
@@ -139,7 +139,7 @@ pub fn settle_column_default(
     value: Datum,
     field_type: &FieldType,
     column: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<SettledColumnDefault, MysqlError> {
     let flags = ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags();
@@ -211,7 +211,7 @@ pub fn column_default_storage_value(
     column: &str,
     flags: tidb_datatype::ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
-    ctx: Option<&tidb_expr::metabuild::Context>,
+    ctx: Option<&tidb_metabuild::Context>,
 ) -> Result<Datum, MysqlError> {
     if value.is_null() {
         return Ok(Datum::Null);

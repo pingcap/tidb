@@ -72,7 +72,7 @@ pub fn validate_comment_length(
     comment: &str,
     name: &str,
     owner: CommentOwner,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<String, MysqlError> {
     // Go `MaxCommentLength`, doubled for a table as MySQL 5.7 has it.
     const MAX_COMMENT_LENGTH: usize = 1024;

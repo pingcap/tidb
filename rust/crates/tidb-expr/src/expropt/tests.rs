@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tidb_parser::auth::{RoleIdentity, UserIdentity};
 
 use super::*;
-use crate::metabuild::MetaOnlyInfoSchema;
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 
 /// Go's `mockEvalCtx`, which embeds an `EvalContext` and answers only
 /// `GetOptionalPropProvider` from its own provider array. Go also overrides

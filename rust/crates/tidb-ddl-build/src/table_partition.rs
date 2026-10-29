@@ -115,7 +115,7 @@ pub fn build_table_partitioning(
     indexes: &[IndexInfo],
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<PartitionSpec>, MysqlError> {
     create
         .partitioning
@@ -144,7 +144,7 @@ pub fn build_partitioning(
     indexes: &[IndexInfo],
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<PartitionSpec, MysqlError> {
     let mut spec = build_table_partitioning_inner(
         partitioning,
@@ -173,7 +173,7 @@ fn build_table_partitioning_inner(
     // The SESSION's context: a RANGE bound is FOLDED here, and its value can
     // depend on the session `time_zone`. Go threads its `BuildContext` down
     // the same path (`buildTablePartitionInfo` -> `checkPartitionValuesIsInt`).
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<PartitionSpec, MysqlError> {
     let method = &partitioning.method;
     if !matches!(
@@ -1037,7 +1037,7 @@ fn build_hash_partition_definitions(
     partitioning: &tidb_ast::TablePartitioning,
     count: u64,
     allocate_id: &mut dyn FnMut() -> i64,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<PartitionDef>, MysqlError> {
     // Go `buildHashPartitionDefinitions` checks the cap FIRST
     // (`partition.go:1514`), before a single definition is materialised. The
@@ -1125,7 +1125,7 @@ pub fn partition_definition_placement(
 
 pub fn partition_definition_comment(
     definition: &PartitionDefinition,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     validate_length: bool,
 ) -> Result<String, MysqlError> {
     let Some(comment) = definition.options.iter().find_map(|option| match option {
@@ -1628,7 +1628,7 @@ fn definition_tail<'a>(
     partitioning: &'a tidb_ast::TablePartitioning,
     built: &'a mut Vec<PartitionDef>,
     allocate_id: &'a mut dyn FnMut() -> i64,
-    ctx: &'a tidb_expr::metabuild::Context,
+    ctx: &'a tidb_metabuild::Context,
     validate_comment_length: bool,
 ) -> impl FnMut(usize) -> Result<(), MysqlError> + 'a {
     move |ordinal: usize| {
@@ -1866,7 +1866,7 @@ pub fn build_partition_metadata(
     indexes: &[IndexInfo],
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<(StoredPartitionMetadata, PartitionSpec)>, MysqlError> {
     let Some(spec) = build_table_partitioning(
         create,
@@ -1981,7 +1981,7 @@ pub fn reload_partition_spec_from_meta_json(
 pub fn stored_partition_metadata(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<StoredPartitionMetadata, MysqlError> {
     let method = &partitioning.method;
     // Go dispatches the stored shape on whether an EXPRESSION was written:
@@ -2029,7 +2029,7 @@ pub fn stored_partition_metadata(
 fn stored_definitions_for(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<StoredPartitionDefinition>, MysqlError> {
     let mut stored = Vec::with_capacity(spec.definitions.len());
     for (ordinal, definition) in spec.definitions.iter().enumerate() {
@@ -2171,7 +2171,7 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
 pub fn stored_in_values(
     written: Option<&PartitionDefinition>,
     field_types: &[FieldType],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<Vec<String>>, MysqlError> {
     let Some(written) = written else {
         return Ok(Vec::new());
@@ -2231,7 +2231,7 @@ pub fn stored_in_values(
 fn stored_list_component(
     expr: &Expr,
     field_type: Option<&FieldType>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<String, MysqlError> {
     match field_type {
         Some(field_type) => {

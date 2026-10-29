@@ -18,12 +18,13 @@
 
 use tidb_sessionctx::StmtContext;
 
-pub fn new_metabuild_context_with_sctx(ctx: &StmtContext) -> tidb_expr::metabuild::Context {
-    use tidb_expr::metabuild::{
+pub fn new_metabuild_context_with_sctx(ctx: &StmtContext) -> tidb_metabuild::Context {
+    use tidb_metabuild::{
         with_clustered_index_def_mode, with_enable_auto_increment_in_generated, with_expr_ctx,
         with_info_schema, with_pre_split_regions, with_primary_key_required,
-        with_shard_row_id_bits, Context, MetaOnlyInfoSchema,
+        with_shard_row_id_bits, Context,
     };
+    use tidb_infoschema_context::MetaOnlyInfoSchema;
     Context::new([
         with_expr_ctx(std::sync::Arc::new(ctx.clone())),
         with_enable_auto_increment_in_generated(ctx.auto_increment_in_generated()),
@@ -40,7 +41,7 @@ pub fn new_metabuild_context_with_sctx(ctx: &StmtContext) -> tidb_expr::metabuil
 
 /// Go's `sessionctx.Context` as `pkg/ddl` reads it: a statement's context.
 impl crate::session_context::DdlSessionContext for StmtContext {
-    fn metabuild_context(&self) -> tidb_expr::metabuild::Context {
+    fn metabuild_context(&self) -> tidb_metabuild::Context {
         new_metabuild_context_with_sctx(self)
     }
 

@@ -1053,7 +1053,7 @@ mod tests {
         CurrentUserPropProvider, CurrentUserPropReader, DdlOwnerInfoProvider, DdlOwnerPropReader,
         InfoSchemaPropProvider,
     };
-    use crate::metabuild::MetaOnlyInfoSchema;
+    use tidb_infoschema_context::MetaOnlyInfoSchema;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tidb_errctx::{ErrGroup, Level};
     use tidb_terror::TerrorCode;
@@ -1884,7 +1884,7 @@ fn eval_error_level(level: tidb_errctx::Level) -> crate::ErrorLevel {
 /// only its code and text: the `pingcap/errors` compatibility form keeps both
 /// without claiming an error class the evaluator never named. A warning with
 /// its own identity reaches this context through `AppendWarning` directly
-/// (`crate::metabuild::EvalContext`).
+/// (`tidb_metabuild::EvalContext`).
 fn columns_warning(code: u16, message: &str) -> WarnErr {
     SqlWarn::with_code(tidb_context::WarningLevel::Warning, code, message).err
 }

@@ -1265,7 +1265,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                             &settings,
                             &spec.kind,
                             &definitions,
-                            &tidb_expr::metabuild::Context::new_non_strict(),
+                            &tidb_metabuild::Context::new_non_strict(),
                         )
                         .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
                     let partition = info.partition.as_ref().expect("checked above").read();

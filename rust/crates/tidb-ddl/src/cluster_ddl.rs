@@ -173,7 +173,7 @@ impl CreateTableBuild {
     /// `rewritePartitionQueryString`: `checkTableInfoValidWithStmt`, then the
     /// region split policies.
     fn check_and_split(
-        mb_ctx: &tidb_expr::metabuild::Context,
+        mb_ctx: &tidb_metabuild::Context,
         create: &CreateTableStmt,
         info: &mut TableInfo,
     ) -> Result<(), DdlAdmissionError> {
@@ -8916,7 +8916,7 @@ fn build_index_info(
         info,
         &mut added,
         condition,
-        &tidb_expr::metabuild::Context::new([]),
+        &tidb_metabuild::Context::new([]),
     )
     .map_err(DdlPlanError::Admission)?;
     Ok(added)

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-metabuild"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/meta/metabuild: the context DDL builds table and index meta in (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-infoschema-context = { path = "../tidb-infoschema-context" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-context = { path = "../tidb-context" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-vardef = { path = "../tidb-vardef" }

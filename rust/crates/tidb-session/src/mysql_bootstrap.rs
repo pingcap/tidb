@@ -460,7 +460,7 @@ fn build_bootstrap_table(
     // `metabuild.NewContext(WithExprCtx(<ModeNone static context>))`, which
     // is `NewNonStrictContext` spelled inline: every other option at its
     // `NewContext` default (clustered index ON).
-    let mb_ctx = tidb_expr::metabuild::Context::new_non_strict();
+    let mb_ctx = tidb_metabuild::Context::new_non_strict();
     let mut info = build_table_info_with_context(
         create,
         SYSTEM_DB_CHARSET,

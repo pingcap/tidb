@@ -35,7 +35,7 @@ pub fn build_list_columns_values(
     definitions: &[PartitionDefinition],
     names: &[String],
     types: &[FieldType],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {

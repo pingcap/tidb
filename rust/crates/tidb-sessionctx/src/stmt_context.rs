@@ -26,7 +26,9 @@ use tidb_context::WarningLevel;
 use tidb_context::WarningCollector;
 use tidb_txnkv::ReplicaReadType;
 use tidb_context::SqlWarn;
-use tidb_expr::{Columns, CurrentTso, ErrorLevel};
+use tidb_expr::Columns;
+use tidb_expr::CurrentTso;
+use tidb_expr::ErrorLevel;
 use tidb_mathutil::MysqlRng;
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
@@ -545,14 +547,14 @@ pub type SqlDigestTextRetrieval = Arc<
 /// `GetLatestInfoSchema().(infoschema.InfoSchema)` does.
 #[derive(Clone)]
 pub struct LatestInfoSchema {
-    meta_only: Arc<dyn tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync>,
+    meta_only: Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync>,
     schema: Arc<dyn std::any::Any + Send + Sync>,
 }
 
 impl LatestInfoSchema {
     pub fn new<T>(schema: Arc<T>) -> Self
     where
-        T: tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync + 'static,
+        T: tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync + 'static,
     {
         Self {
             meta_only: Arc::clone(&schema) as _,
@@ -561,7 +563,7 @@ impl LatestInfoSchema {
     }
 
     /// The schema as `infoschema/context.MetaOnlyInfoSchema`.
-    pub fn meta_only(&self) -> Arc<dyn tidb_expr::metabuild::MetaOnlyInfoSchema + Send + Sync> {
+    pub fn meta_only(&self) -> Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync> {
         Arc::clone(&self.meta_only)
     }
 
@@ -5693,8 +5695,8 @@ impl tidb_expr::pushdown_catalog::PbConverterContext for StmtContext {
 
 /// Go `sctx.GetExprCtx()` as `metabuild.WithExprCtx` receives it
 /// (`pkg/ddl/metabuild.go`): the session's expression context.
-impl tidb_expr::metabuild::ExprContext for StmtContext {
-    fn get_eval_ctx(&self) -> &dyn tidb_expr::metabuild::EvalContext {
+impl tidb_metabuild::ExprContext for StmtContext {
+    fn get_eval_ctx(&self) -> &dyn tidb_metabuild::EvalContext {
         self
     }
 
@@ -5708,7 +5710,7 @@ impl tidb_expr::metabuild::ExprContext for StmtContext {
 }
 
 /// Go `sctx.GetExprCtx().GetEvalCtx()`: the session's evaluation context.
-impl tidb_expr::metabuild::EvalContext for StmtContext {
+impl tidb_metabuild::EvalContext for StmtContext {
     /// Go `SessionVars.SQLMode`, which this context carries whole as the
     /// mode a DDL job persists.
     fn sql_mode(&self) -> tidb_mysql::SqlMode {

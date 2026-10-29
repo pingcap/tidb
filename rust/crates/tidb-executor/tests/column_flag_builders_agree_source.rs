@@ -131,12 +131,12 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
 
 /// Go `metabuild.NewContext(WithExprCtx(<ModeNone static context>),
 /// WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeIntOnly))`.
-fn int_only_context() -> tidb_expr::metabuild::Context {
-    tidb_expr::metabuild::Context::new([
-        tidb_expr::metabuild::with_expr_ctx(std::sync::Arc::clone(
-            tidb_expr::metabuild::Context::new_non_strict().get_expr_ctx(),
+fn int_only_context() -> tidb_metabuild::Context {
+    tidb_metabuild::Context::new([
+        tidb_metabuild::with_expr_ctx(std::sync::Arc::clone(
+            tidb_metabuild::Context::new_non_strict().get_expr_ctx(),
         )),
-        tidb_expr::metabuild::with_clustered_index_def_mode(
+        tidb_metabuild::with_clustered_index_def_mode(
             tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,
         ),
     ])

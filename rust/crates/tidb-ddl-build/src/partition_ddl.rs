@@ -34,7 +34,7 @@ use tidb_table::partition_metadata::StoredPartitionDefinition;
 
 /// Go `StmtCtx.AppendNote(err)` for a refusal `IF [NOT] EXISTS` turns into a
 /// note.
-fn note(ctx: &tidb_expr::metabuild::Context, proto: &tidb_terror::TerrorError, message: impl Into<String>) {
+fn note(ctx: &tidb_metabuild::Context, proto: &tidb_terror::TerrorError, message: impl Into<String>) {
     ctx.append_note(tidb_context::WarnErr::Terror(proto.generate(message)));
 }
 
@@ -123,7 +123,7 @@ pub enum HashManagement<'a> {
 pub fn plan_hash_partition_management(
     table: &PartitionedTable<'_>,
     change: HashManagement<'_>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
     let Some(partition) = table.partition() else {
@@ -321,7 +321,7 @@ pub struct PartitionChange {
 pub fn plan_partition_change(
     table: &PartitionedTable<'_>,
     action: &tidb_ast::AlterPartitionAction,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<PartitionChange, MysqlError> {
     let mut partition = table.partition().cloned().ok_or_else(|| {
         MysqlError::from_terror(
@@ -548,7 +548,7 @@ pub fn plan_drop_partitions(
     table: &PartitionedTable<'_>,
     if_exists: bool,
     names: &[String],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<usize>>, MysqlError> {
     let Some(partition) = table.partition() else {
         return Err(tidb_terror::MysqlError::from_terror(
@@ -631,7 +631,7 @@ pub fn plan_add_partitions(
     table: &PartitionedTable<'_>,
     if_not_exists: bool,
     spec: &tidb_ast::AddPartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<(Vec<PartitionDef>, PartitionKind)>, MysqlError> {
     if table.partition().is_some() {
         refuse_affinity(table, "ADD PARTITION")?;
@@ -1063,7 +1063,7 @@ pub fn plan_add_partitions(
 pub fn plan_first_partition_less_than(
     table: &PartitionedTable<'_>,
     bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(Vec<usize>, (String, String)), MysqlError> {
     let Some(partition) = table.partition() else {
         return Err(tidb_terror::MysqlError::from_terror(
@@ -1134,7 +1134,7 @@ pub fn plan_first_partition_less_than(
 pub fn plan_last_partition_less_than(
     table: &PartitionedTable<'_>,
     bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(Vec<PartitionDef>, PartitionKind, (String, String)), MysqlError> {
     let Some(partition) = table.partition() else {
         return Err(tidb_terror::MysqlError::from_terror(
@@ -1204,7 +1204,7 @@ fn assign_partition_storage_classes(
     kind: &PartitionKind,
     preceding: &[&PartitionDef],
     definitions: &mut [PartitionDef],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     let Some(settings) = crate::storage_class::storage_class_settings_of(&table.meta.engine_attribute)?
     else {
@@ -1349,7 +1349,7 @@ fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, MysqlEr
 fn stored_with_ids(
     clause: &TablePartitioning,
     spec: &PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<table_partition::StoredPartitionMetadata, MysqlError> {
     let mut stored = table_partition::stored_partition_metadata(clause, spec, ctx)?;
     for (definition, built) in stored.definitions.iter_mut().zip(&spec.definitions) {
@@ -1418,7 +1418,7 @@ pub fn plan_reorganize_partition(
     table: &PartitionedTable<'_>,
     names: &[String],
     definitions: &[PartitionDefinition],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
     let (mut spec, source_ids, new_offset, clause) = {
@@ -1624,7 +1624,7 @@ fn range_columns_bounds_equal(
 pub fn plan_alter_table_partitioning(
     table: &PartitionedTable<'_>,
     partitioning: &TablePartitioning,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
     let (mut spec, source_ids) = {

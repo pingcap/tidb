@@ -28,10 +28,10 @@
 //!   `TypeCtx().Flags()`, `AppendWarning`, `AppendNote`). The crate-local
 //!   `exprctx` module is still a seed without these interfaces. Go's
 //!   `EvalContext` is also what an expression evaluates in; this crate's
-//!   evaluator reads that through [`crate::Columns`], so [`EvalContext`]
+//!   evaluator reads that through [`tidb_expr::Columns`], so [`EvalContext`]
 //!   extends it rather than repeating `Location`, `CurrentDB`,
 //!   `CurrentTime` and the error-level reads here.
-//!   Both are implemented for the real [`crate::exprstatic`] contexts, which
+//!   Both are implemented for the real [`tidb_expr::exprstatic`] contexts, which
 //!   is what Go's `NewContext`/`NewNonStrictContext` default to.
 //! - `// boundary:` Go `pkg/infoschema/context.MetaOnlyInfoSchema` — modeled
 //!   as the local [`MetaOnlyInfoSchema`] trait; metabuild only stores and
@@ -46,6 +46,7 @@
 //! and the expression-context default is applied only after all options ran
 //! — is identical.
 
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 use std::sync::Arc;
 
 use tidb_datatype::ConversionFlags;
@@ -61,8 +62,8 @@ use tidb_vardef::modes::ClusteredIndexDefMode;
 ///
 /// boundary: Go `pkg/expression/exprctx.EvalContext` (`SQLMode`,
 /// `TypeCtx`, `AppendWarning`, `AppendNote`); the evaluation half
-/// (`Location`, `CurrentDB`, `CurrentTime`, ...) is [`crate::Columns`].
-pub trait EvalContext: crate::Columns {
+/// (`Location`, `CurrentDB`, `CurrentTime`, ...) is [`tidb_expr::Columns`].
+pub trait EvalContext: tidb_expr::Columns {
     /// Go `EvalContext.SQLMode`: the SQL mode the context evaluates under.
     fn sql_mode(&self) -> SqlMode;
     /// Go `EvalContext.TypeCtx().Flags()`: the flags a value converts under.
@@ -88,45 +89,35 @@ pub trait ExprContext {
     fn get_charset_info(&self) -> (&str, &str);
 }
 
-/// The slice of Go `infoschemactx.MetaOnlyInfoSchema` that metabuild stores.
-///
-/// boundary: Go `pkg/infoschema/context.MetaOnlyInfoSchema` — metabuild only
-/// keeps the value for later constraint checks, so one identifying method
-/// stands in for the full meta-only interface.
-pub trait MetaOnlyInfoSchema {
-    /// Go `MetaOnlyInfoSchema.SchemaMetaVersion`.
-    fn schema_meta_version(&self) -> i64;
-}
-
-impl EvalContext for crate::exprstatic::EvalContext {
+impl EvalContext for tidb_expr::exprstatic::EvalContext {
     fn sql_mode(&self) -> SqlMode {
-        crate::exprstatic::EvalContext::sql_mode(self)
+        tidb_expr::exprstatic::EvalContext::sql_mode(self)
     }
 
     fn type_ctx_flags(&self) -> ConversionFlags {
-        crate::exprstatic::EvalContext::type_flags(self)
+        tidb_expr::exprstatic::EvalContext::type_flags(self)
     }
 
     fn append_warning(&self, err: WarnErr) {
-        crate::exprstatic::EvalContext::append_warning(self, err);
+        tidb_expr::exprstatic::EvalContext::append_warning(self, err);
     }
 
     fn append_note(&self, note: WarnErr) {
-        crate::exprstatic::EvalContext::append_note(self, note);
+        tidb_expr::exprstatic::EvalContext::append_note(self, note);
     }
 }
 
-impl ExprContext for crate::exprstatic::ExprContext {
+impl ExprContext for tidb_expr::exprstatic::ExprContext {
     fn get_eval_ctx(&self) -> &dyn EvalContext {
-        crate::exprstatic::ExprContext::get_eval_ctx(self).as_ref()
+        tidb_expr::exprstatic::ExprContext::get_eval_ctx(self).as_ref()
     }
 
     fn get_default_collation_for_utf8mb4(&self) -> &str {
-        crate::exprstatic::ExprContext::get_default_collation_for_utf8mb4(self)
+        tidb_expr::exprstatic::ExprContext::get_default_collation_for_utf8mb4(self)
     }
 
     fn get_charset_info(&self) -> (&str, &str) {
-        crate::exprstatic::ExprContext::get_charset_info(self)
+        tidb_expr::exprstatic::ExprContext::get_charset_info(self)
     }
 }
 
@@ -233,7 +224,7 @@ impl Context {
         }
 
         if ctx.expr_ctx.is_none() {
-            ctx.expr_ctx = Some(Arc::new(crate::exprstatic::ExprContext::new([])));
+            ctx.expr_ctx = Some(Arc::new(tidb_expr::exprstatic::ExprContext::new([])));
         }
 
         ctx
@@ -246,11 +237,11 @@ impl Context {
     pub fn new_non_strict() -> Context {
         // Go `exprstatic.NewExprContext(WithEvalCtx(
         // exprstatic.NewEvalContext(WithSQLMode(mysql.ModeNone))))`.
-        let eval_ctx = crate::exprstatic::EvalContext::new([crate::exprstatic::with_sql_mode(
+        let eval_ctx = tidb_expr::exprstatic::EvalContext::new([tidb_expr::exprstatic::with_sql_mode(
             tidb_mysql::consts::ModeNone,
         )]);
         Context::new([with_expr_ctx(Arc::new(
-            crate::exprstatic::ExprContext::new([crate::exprstatic::with_eval_ctx(Arc::new(
+            tidb_expr::exprstatic::ExprContext::new([tidb_expr::exprstatic::with_eval_ctx(Arc::new(
                 eval_ctx,
             ))]),
         ))])
@@ -410,7 +401,7 @@ mod tests {
 
     #[test]
     fn option_of_expr_ctx() {
-        let expr_ctx: Arc<dyn ExprContext> = Arc::new(crate::exprstatic::ExprContext::new([]));
+        let expr_ctx: Arc<dyn ExprContext> = Arc::new(tidb_expr::exprstatic::ExprContext::new([]));
         let ctx = Context::new([with_expr_ctx(Arc::clone(&expr_ctx))]);
         assert!(Arc::ptr_eq(ctx.get_expr_ctx(), &expr_ctx));
     }

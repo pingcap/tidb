@@ -585,7 +585,7 @@ pub struct LatestIndexSchema {
 
 /// Go `sctx.GetLatestInfoSchema()` as `metabuild.WithInfoSchema` keeps it
 /// (`pkg/ddl/metabuild.go`): the same latest domain infoschema.
-impl tidb_expr::metabuild::MetaOnlyInfoSchema for LatestIndexSchema {
+impl tidb_infoschema_context::MetaOnlyInfoSchema for LatestIndexSchema {
     fn schema_meta_version(&self) -> i64 {
         // Go's `SchemaMetaVersion` is an `int64`; this field holds the same
         // non-negative version.

@@ -81,7 +81,7 @@
 //! [`crate::expropt`]'s ten providers and its `KvStorage` / `SqlExecutor` /
 //! `SessionVars` / `AdvisoryLockContext` / `PrivilegeChecker` boundary traits,
 //! [`crate::exprctx`]'s optional-property keys,
-//! [`crate::metabuild::MetaOnlyInfoSchema`], [`crate::user_vars::UserVarsReader`],
+//! [`tidb_infoschema_context::MetaOnlyInfoSchema`], [`crate::user_vars::UserVarsReader`],
 //! and [`crate::exprstatic`]'s `EvalCtxError` as this file's error type —
 //! `IntoStatic` requires the two to agree anyway.
 //!
@@ -144,7 +144,7 @@ use crate::exprstatic::evalctx::{
 };
 use crate::exprstatic::exprctx::{make_expr_context_static, StaticConvertibleExprContext};
 use crate::exprstatic::{EvalCtxError, SessionVarsSnapshot};
-use crate::metabuild::MetaOnlyInfoSchema;
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 use crate::user_vars::UserVarsReader;
 
 /// boundary: Go `sessionctx/variable.SessionVars` together with the

@@ -79,7 +79,7 @@ pub fn check_expression_index_auto_increment(
     index_name: &str,
     hidden: &[(usize, crate::expression_index::HiddenIndexColumn)],
     auto_increment_column: Option<&str>,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     let Some(auto) = auto_increment_column.filter(|_| !ctx.enable_auto_increment_in_generated()) else {
         return Ok(());
@@ -465,7 +465,7 @@ fn find_column_info<'a>(columns: &'a [ColumnInfo], name: &str) -> Option<&'a Col
 /// Go's key-part errors (1072, 1089, 1167, 1170, 1391, 3152, 3753, 3757,
 /// 3761, 1071, 1235, 8200).
 pub fn build_index_columns(
-    ctx: Option<&tidb_expr::metabuild::Context>,
+    ctx: Option<&tidb_metabuild::Context>,
     columns: &[ColumnInfo],
     index_part_specifications: &[IndexPartSpecification<'_>],
     columnar_index_type: ColumnarIndexType,
@@ -545,7 +545,7 @@ pub fn build_index_columns(
         }
         sum_length += get_index_column_length(col, index_col_len, columnar_index_type)?;
 
-        if !ctx.is_some_and(tidb_expr::metabuild::Context::suppress_too_long_index_err)
+        if !ctx.is_some_and(tidb_metabuild::Context::suppress_too_long_index_err)
             && sum_length > max_index_length
         {
             // The sum of all lengths must be shorter than the max length for
@@ -1020,7 +1020,7 @@ pub fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
 pub fn validate_partial_index_condition(
     columns: &[KvColumn],
     expression: &tidb_ast::Expr,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     let column = |name: &str| {
         columns
@@ -1085,7 +1085,7 @@ pub fn check_create_global_index(
     offsets: &[usize],
     prefix_lengths: &[i64],
     expression_parts: &[bool],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     if global && partition_offsets.is_none() {
         return Err(MysqlError::from_terror(
@@ -1133,7 +1133,7 @@ pub fn check_create_global_index(
 /// sample a global index with a prefix or virtual generated part, so Go
 /// warns once (`ErrWarnGlobalIndexNeedManuallyAnalyze`).
 pub fn warn_global_index_needs_manual_analyze(
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     index_name: &str,
     mut part_is_prefix_or_virtual: impl Iterator<Item = bool>,
 ) {

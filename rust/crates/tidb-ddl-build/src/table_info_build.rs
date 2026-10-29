@@ -218,7 +218,7 @@ pub fn build_table_info(
         create,
         db_charset,
         db_collate,
-        &tidb_expr::metabuild::Context::new_non_strict(),
+        &tidb_metabuild::Context::new_non_strict(),
         tidb_vardef::ENABLE_CHECK_CONSTRAINT.load(Ordering::SeqCst),
     )
 }
@@ -234,7 +234,7 @@ pub fn build_table_info_with_context(
     create: &CreateTableStmt,
     db_charset: &str,
     db_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     enable_check_constraint: bool,
 ) -> Refusal<TableInfo> {
     let schema = match create.name.as_slice() {
@@ -278,7 +278,7 @@ pub fn build_table_info_in_schema(
     schema: &str,
     db_charset: &str,
     db_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     enable_check_constraint: bool,
 ) -> Refusal<TableInfo> {
     let refuse = |what: &str| {
@@ -879,7 +879,7 @@ pub fn set_create_table_split_policies(
 /// `ErrTableWithoutPrimaryKey` (3750) under `sql_require_primary_key`, or
 /// `checkTTLInfoValid`'s.
 pub fn check_table_info_valid_with_stmt(
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     tb_info: &TableInfo,
 ) -> Refusal<()> {
     // Check if table has a primary key if required.
@@ -1177,7 +1177,7 @@ pub fn check_ttl_info_valid(
 fn check_generated_columns(
     create: &CreateTableStmt,
     table: &mut TableInfo,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     if !create.columns.iter().any(|column| {
         column
@@ -1236,7 +1236,7 @@ pub fn build_index_condition(
     table: &TableInfo,
     index: &mut IndexInfo,
     condition: Option<&Expr>,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     let column = |name: &str| {
         tidb_model::column::find_column_info(&table.columns, name).map(|column| {
@@ -1272,7 +1272,7 @@ pub fn append_check_constraints(
     table: &mut TableInfo,
     checks: &[crate::check_constraint::CheckConstraintInput],
     mode: crate::check_constraint::CheckConstraintBuildMode,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     let names = table
         .indices
@@ -1572,7 +1572,7 @@ fn synthesize_expression_index_columns(
     columns: &mut Vec<ColumnInfo>,
     constraints: &mut [Constraint],
     constraint_exprs: &[Vec<Option<Expr>>],
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     let names: Vec<String> = columns
         .iter()
@@ -1733,7 +1733,7 @@ pub fn build_added_column(
     column: &ColumnDef,
     table_charset: &str,
     table_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     enable_check_constraint: bool,
     generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<ColumnInfo> {
@@ -1854,7 +1854,7 @@ pub fn new_modified_column(
     column: &ColumnDef,
     table_charset: &str,
     table_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<ColumnInfo> {
     let field_type = build_column_field_type(column, table_charset, table_collate, context)?;
     Ok(ColumnInfo {
@@ -1893,7 +1893,7 @@ pub fn new_modified_column(
 pub fn process_modify_column_options(
     info: &mut ColumnInfo,
     column: &ColumnDef,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     let name = info.name.original().to_owned();
     let lower = tidb_hack::go_to_lower(&name);
@@ -2061,7 +2061,7 @@ fn modify_generated_restore_flags() -> tidb_parser_format::RestoreFlags {
 /// no unsafe-function check); otherwise the old origin stands.
 pub fn stamp_modified_origin_default(
     info: &mut ColumnInfo,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     stamp_origin_default(info, context, false)
 }
@@ -2088,12 +2088,12 @@ pub fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refusal<()>
             .set_default_value(tidb_model::GoAny::nil())
             .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         probe.default_is_expr = false;
-        stamp_origin_default(&mut probe, &tidb_expr::metabuild::Context::new_non_strict(), true)?;
+        stamp_origin_default(&mut probe, &tidb_metabuild::Context::new_non_strict(), true)?;
         info.origin_default_value = probe.origin_default_value.clone();
         info.origin_default_value_bit = probe.origin_default_value_bit.clone();
         return Ok(());
     }
-    stamp_origin_default(info, &tidb_expr::metabuild::Context::new_non_strict(), true)
+    stamp_origin_default(info, &tidb_metabuild::Context::new_non_strict(), true)
 }
 
 /// Go `generateOriginDefaultValue`'s `DefaultIsExpr` arm: with
@@ -2104,7 +2104,7 @@ pub fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refusal<()>
 fn expression_default_origin(
     info: &ColumnInfo,
     text: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     check_unsafe_func: bool,
 ) -> Refusal<String> {
     let lower = text.to_lowercase();
@@ -2168,7 +2168,7 @@ fn expression_default_origin(
 /// session zone's wall clock for DATETIME. A context without a statement
 /// clock reads the wall clock, as Go's `ctx == nil` arm does.
 fn statement_instant_text(
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     time_type: tidb_datatype::TimeType,
     decimal: i64,
 ) -> String {
@@ -2212,7 +2212,7 @@ fn statement_instant_text(
 /// expression default whose value would differ on a replica.
 fn stamp_origin_default(
     info: &mut ColumnInfo,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     check_unsafe_func: bool,
 ) -> Refusal<()> {
     // Go `generateOriginDefaultValue`: the value a row written BEFORE this
@@ -2373,7 +2373,7 @@ fn build_column_field_type(
     column: &ColumnDef,
     table_charset: &str,
     table_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<FieldType> {
     let name = &column.name;
     // Go `buildColumnAndConstraint`: `getCharsetAndCollateInColumnDef`, then
@@ -2444,7 +2444,7 @@ fn build_column(
     out_primary_key: Option<&Constraint>,
     table_charset: &str,
     table_collate: &str,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     enable_check_constraint: bool,
     generated_columns: GeneratedColumns<'_>,
 ) -> Refusal<(ColumnInfo, Vec<(usize, Constraint)>)> {
@@ -2839,7 +2839,7 @@ pub fn set_column_default(
     name: &str,
     info: &mut ColumnInfo,
     default_value: Option<&Expr>,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     // Go clears both marks first, then either re-sets them for the DROP form
     // or lets the staging path decide.
@@ -2904,7 +2904,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
         value.clone(),
         &info.field_type,
         name,
-        &tidb_expr::metabuild::Context::new_non_strict(),
+        &tidb_metabuild::Context::new_non_strict(),
         &zone,
     )
     .map_err(default_admission_error)?;
@@ -3037,7 +3037,7 @@ fn build_table(
     constraints: Vec<Constraint>,
     charset: String,
     collate: String,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<TableInfo> {
     let table_name = create
         .name
@@ -3277,7 +3277,7 @@ fn stage_column_default(
     name: &str,
     field_type: &FieldType,
     expr: &Expr,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
     preceding_names: &[String],
     preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
@@ -3362,7 +3362,7 @@ fn persist_column_default(
     name: &str,
     info: &mut ColumnInfo,
     staged: StagedColumnDefault,
-    context: &tidb_expr::metabuild::Context,
+    context: &tidb_metabuild::Context,
 ) -> Refusal<()> {
     match staged {
         StagedColumnDefault::TemporalMarker(text) => {

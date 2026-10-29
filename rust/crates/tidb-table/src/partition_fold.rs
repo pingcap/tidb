@@ -31,7 +31,7 @@ use crate::partition_routing::PartitionKind;
 pub fn fold_column_value(
     expr: &Expr,
     field_type: &FieldType,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
     let value = eval_column_value(expr, ctx)?;
     convert_column_value(value, field_type, ctx)
@@ -48,7 +48,7 @@ pub fn fold_column_value(
 pub fn fold_range_column_value(
     expr: &Expr,
     field_type: &FieldType,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
     if contains_collate(expr) {
         // Go's `buildRangePartitionDefinitions` runs the partition-expression
@@ -73,7 +73,7 @@ pub fn fold_range_column_value(
 /// (`EvalSimpleAst`, `ParseSimpleExpr`): its zone, `LIKE` escape and
 /// connection charset, so a string literal takes `collation_connection`.
 pub fn partition_value_resolver(
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> tidb_expr::rewriter::ZonedNoResolver {
     let (charset, collation) = ctx.get_expr_ctx().get_charset_info();
     tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
@@ -104,7 +104,7 @@ pub fn partition_value_failure(error: tidb_expr::EvalError, otherwise: MysqlErro
 /// `EvalSimpleAst`).
 pub fn eval_column_value(
     expr: &Expr,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
@@ -129,7 +129,7 @@ pub fn eval_column_value(
 fn convert_column_value(
     value: Datum,
     field_type: &FieldType,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
     let converted = value
         .convert_to_in(
@@ -188,7 +188,7 @@ fn contains_collate(expr: &Expr) -> bool {
 pub fn build_list_values(
     built: &tidb_expr::expression::Expression,
     definitions: &[PartitionDefinition],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
@@ -206,7 +206,7 @@ pub fn build_list_values(
 pub fn build_list_values_with_unsigned(
     definitions: &[PartitionDefinition],
     unsigned: bool,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
     // Go's definition loop checks THIS definition's name before it reads the
     // NEXT one's values (`ddl/partition.go:1565-1574`).
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
@@ -316,7 +316,7 @@ fn fold_list_value(
     expr: &Expr,
     partition: &str,
     unsigned: bool,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<i64>, MysqlError> {
     let rewritten =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
@@ -412,7 +412,7 @@ impl FoldedRangeBound {
 pub fn fold_range_bound(
     expr: &Expr,
     partition: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<FoldedRangeBound, MysqlError> {
     let rewritten =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(

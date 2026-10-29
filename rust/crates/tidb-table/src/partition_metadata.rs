@@ -81,12 +81,12 @@ pub struct StoredPartitionDefinition {
 /// dates are accepted. A stored bound was already validated when it was
 /// written, so a load that re-imposed CREATE-time strictness could refuse a
 /// table the cluster is serving.
-fn partition_metadata_context() -> tidb_expr::metabuild::Context {
+fn partition_metadata_context() -> tidb_metabuild::Context {
     // Go `tables.NewPartitionExprBuildCtx()` is an `exprstatic.ExprContext`
     // over that evaluation context; every other metabuild option keeps its
     // `NewContext` default.
     let eval = crate::partition_routing::partition_expr_build_ctx();
-    tidb_expr::metabuild::Context::new([tidb_expr::metabuild::with_expr_ctx(
+    tidb_metabuild::Context::new([tidb_metabuild::with_expr_ctx(
         std::sync::Arc::new(tidb_expr::exprstatic::ExprContext::new([
             tidb_expr::exprstatic::with_eval_ctx(std::sync::Arc::new(eval)),
         ])),
@@ -481,7 +481,7 @@ fn build_stored_expression(
 /// them.
 fn load_range_bounds(
     definitions: &[PartitionDefinition],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<RangeBound>, MysqlError> {
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
@@ -569,7 +569,7 @@ fn load_range_columns_bounds(
     definitions: &[PartitionDefinition],
     names: &[String],
     types: &[FieldType],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(Vec<String>, Vec<FieldType>, Vec<Vec<RangeColumnBound>>), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
@@ -631,7 +631,7 @@ fn load_list_columns_values(
     definitions: &[PartitionDefinition],
     names: &[String],
     types: &[FieldType],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(

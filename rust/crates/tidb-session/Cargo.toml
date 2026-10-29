@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-temptable = { path = "../tidb-temptable" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }

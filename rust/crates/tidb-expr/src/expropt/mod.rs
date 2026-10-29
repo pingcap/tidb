@@ -34,7 +34,7 @@
 //! narrowed to local boundary shapes. Reused where the dependency direction
 //! allows: `pkg/parser/auth` (`tidb_parser::auth`), `pkg/parser/mysql`
 //! (`tidb_mysql::privilege`), and `pkg/infoschema/context.MetaOnlyInfoSchema`
-//! (the existing [`crate::metabuild::MetaOnlyInfoSchema`] boundary trait).
+//! (the existing [`tidb_infoschema_context::MetaOnlyInfoSchema`] boundary trait).
 //! Narrowed:
 //!
 //! - `// boundary:` Go `pkg/expression/exprctx.EvalContext` — modeled as

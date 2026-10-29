@@ -22,7 +22,7 @@ use tidb_variable::session_vars::DdlReorgVars;
 /// (`NewMetaBuildContextWithSctx`).
 pub trait DdlSessionContext: Send + Sync {
     /// Go `NewMetaBuildContextWithSctx(sctx)`.
-    fn metabuild_context(&self) -> tidb_expr::metabuild::Context;
+    fn metabuild_context(&self) -> tidb_metabuild::Context;
     /// `tidb_enable_check_constraint`.
     fn enable_check_constraint(&self) -> bool;
     /// `foreign_key_checks`.
@@ -101,7 +101,7 @@ pub trait DdlSessionContext: Send + Sync {
 
 /// A shared session is the session.
 impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
-    fn metabuild_context(&self) -> tidb_expr::metabuild::Context {
+    fn metabuild_context(&self) -> tidb_metabuild::Context {
         (**self).metabuild_context()
     }
 

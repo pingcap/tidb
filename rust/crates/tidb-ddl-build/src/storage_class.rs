@@ -444,7 +444,7 @@ pub fn build_storage_class_for_table(defs: &[StorageClassDef]) -> StorageClass {
 pub fn rebuild_storage_class_for_partitions(
     engine_attribute: &str,
     partition: &mut tidb_table::partition_routing::PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     if let Some(classes) = partition_storage_classes(engine_attribute, partition, ctx)? {
         for (definition, class) in partition.definitions.iter_mut().zip(classes) {
@@ -459,7 +459,7 @@ pub fn rebuild_storage_class_for_partitions(
 pub fn partition_storage_classes(
     engine_attribute: &str,
     partition: &tidb_table::partition_routing::PartitionSpec,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<StorageClass>>, MysqlError> {
     let Some(settings) = storage_class_settings_of(engine_attribute)? else {
         return Ok(None);
@@ -494,7 +494,7 @@ pub fn build_storage_class_for_partitions(
     defs: &[StorageClassDef],
     kind: &PartitionKind,
     partitions: &[&PartitionDef],
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<StorageClass>, MysqlError> {
     for def in defs {
         check_storage_class_partition_scope(kind, partitions, def)?;
@@ -589,7 +589,7 @@ fn is_partition_match_less_than(
     kind: &PartitionKind,
     partition: &PartitionDef,
     less_than: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<bool, MysqlError> {
     let [bound] = partition.less_than.as_slice() else {
         return Ok(false);
@@ -643,7 +643,7 @@ fn compare_range_partition_values(
     kind: &PartitionKind,
     left: &str,
     right: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<i32, MysqlError> {
     let max_value = tidb_table::partition_metadata::PARTITION_MAX_VALUE;
     match (
@@ -681,7 +681,7 @@ fn compare_range_columns_partition_values(
     column: &FieldType,
     left: &str,
     right: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<i32, MysqlError> {
     let right = if right.len() >= 2 && right.starts_with('\'') && right.ends_with('\'') {
         right.to_owned()
@@ -729,7 +729,7 @@ fn compare_numeric_range_partition_values(
     unsigned: bool,
     left: &str,
     right: &str,
-    ctx: &tidb_expr::metabuild::Context,
+    ctx: &tidb_metabuild::Context,
 ) -> Result<i32, MysqlError> {
     let left_value = get_range_value(left, unsigned, ctx).ok_or_else(|| {
         MysqlError::from_terror(
@@ -759,7 +759,7 @@ fn compare_numeric_range_partition_values(
 
 /// Go `getRangeValue`, as the 64-bit pattern its caller compares signed or
 /// unsigned.
-fn get_range_value(text: &str, unsigned: bool, ctx: &tidb_expr::metabuild::Context) -> Option<i64> {
+fn get_range_value(text: &str, unsigned: bool, ctx: &tidb_metabuild::Context) -> Option<i64> {
     if unsigned {
         if let Ok(value) = text.parse::<u64>() {
             return Some(value as i64);

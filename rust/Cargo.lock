@@ -3836,6 +3836,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-meta",
+ "tidb-metabuild",
  "tidb-metadef",
  "tidb-metrics",
  "tidb-model",
@@ -3897,8 +3898,10 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
+ "tidb-infoschema-context",
  "tidb-kv",
  "tidb-lexer",
+ "tidb-metabuild",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -4459,6 +4462,7 @@ dependencies = [
  "tidb-mathutil",
  "tidb-memory",
  "tidb-meta",
+ "tidb-metabuild",
  "tidb-metadef",
  "tidb-model",
  "tidb-murmur3",
@@ -4587,6 +4591,7 @@ dependencies = [
  "tidb-go-regexp",
  "tidb-goruntime",
  "tidb-hack",
+ "tidb-infoschema-context",
  "tidb-mathutil",
  "tidb-model",
  "tidb-mysql",
@@ -4790,6 +4795,7 @@ dependencies = [
  "tidb-filter",
  "tidb-goruntime",
  "tidb-hack",
+ "tidb-infoschema-context",
  "tidb-kv",
  "tidb-meta",
  "tidb-model",
@@ -4805,6 +4811,10 @@ dependencies = [
  "tidb-util",
  "tidb-variable",
 ]
+
+[[package]]
+name = "tidb-infoschema-context"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-infoschema-issyncer"
@@ -5092,6 +5102,18 @@ dependencies = [
  "tidb-mysql",
  "tidb-partialjson",
  "tidb-terror",
+]
+
+[[package]]
+name = "tidb-metabuild"
+version = "0.0.0"
+dependencies = [
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-infoschema-context",
+ "tidb-mysql",
+ "tidb-vardef",
 ]
 
 [[package]]
@@ -5957,6 +5979,7 @@ dependencies = [
  "tidb-memory",
  "tidb-memoryusagealarm",
  "tidb-meta",
+ "tidb-metabuild",
  "tidb-metadef",
  "tidb-metrics",
  "tidb-model",
@@ -6058,9 +6081,11 @@ dependencies = [
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-hack",
+ "tidb-infoschema-context",
  "tidb-kv",
  "tidb-lexer",
  "tidb-mathutil",
+ "tidb-metabuild",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -6685,6 +6710,7 @@ dependencies = [
  "tidb-intest",
  "tidb-kv",
  "tidb-meta",
+ "tidb-metabuild",
  "tidb-metadef",
  "tidb-model",
  "tidb-parser",
@@ -6751,6 +6777,7 @@ dependencies = [
  "tidb-hack",
  "tidb-kv",
  "tidb-meta",
+ "tidb-metabuild",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",

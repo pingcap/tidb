@@ -1,0 +1,13 @@
+[package]
+name = "tidb-infoschema-context"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/infoschema/context: the meta-only infoschema interface (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
