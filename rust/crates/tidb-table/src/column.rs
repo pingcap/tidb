@@ -489,7 +489,7 @@ fn invalid_string_conversion(
 ) -> Option<(Vec<u8>, Vec<u8>)> {
     // Binary destinations cannot fail charset conversion. Avoid copying their
     // bytes in this error-only preflight; normal conversion produces them once.
-    if field_type.charset() == tidb_datatype::Charset::Binary {
+    if field_type.charset() == tidb_charset::Charset::Binary {
         return None;
     }
     let (bytes, error) = value

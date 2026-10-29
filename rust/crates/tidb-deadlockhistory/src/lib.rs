@@ -18,7 +18,8 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
-use tidb_datatype::{Collation, Datum, StringDatum, Time, TimeType, MAX_FSP};
+use tidb_datatype::{Datum, StringDatum, Time, TimeType, MAX_FSP};
+use tidb_charset::Collation;
 use tidb_resourcegrouptag::decode_resource_group_tag;
 use tikv_client::DeadlockError;
 
@@ -229,7 +230,8 @@ fn hex(bytes: &[u8], upper: bool) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use tidb_datatype::{Collation, CoreTime, Datum, StringDatum, Time, TimeType};
+    use tidb_datatype::{CoreTime, Datum, StringDatum, Time, TimeType};
+use tidb_charset::Collation;
     use tikv_client::proto::{deadlock::WaitForEntry, kvrpcpb};
     use tikv_client::DeadlockError;
     use tidb_txnkv::ResourceGroupTagBuilder;

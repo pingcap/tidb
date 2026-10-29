@@ -803,12 +803,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             tidb_hack::raw_bytes::str_to_bytes(s).into_owned(),
         )),
         Expr::CharsetString { charset, value } => {
-            let collation_name = tidb_datatype::get_default_collation_legacy(charset)
+            let collation_name = tidb_charset::get_default_collation_legacy(charset)
                 .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
-            let collation = tidb_datatype::Collation::from_name(&collation_name)
+            let collation = tidb_charset::Collation::from_name(&collation_name)
                 .ok_or(EvalError::Unsupported("unknown character introducer"))?;
             let bytes = tidb_hack::raw_bytes::str_to_bytes(value).into_owned();
-            Ok(if collation == tidb_datatype::Collation::Binary {
+            Ok(if collation == tidb_charset::Collation::Binary {
                 Datum::Bytes(bytes)
             } else {
                 Datum::new_collation_string(bytes, collation)
@@ -1021,7 +1021,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             Datum::Null => Ok(Datum::Null),
             value => {
                 let (string_value, source) = if let Some(source_charset) = literal_charset(expr) {
-                    let source_charset = tidb_datatype::Charset::from_name(source_charset)
+                    let source_charset = tidb_charset::Charset::from_name(source_charset)
                         .ok_or(EvalError::Unsupported("unknown character introducer"))?;
                     let collation = source_charset.default_collation();
                     let mut source =
@@ -1038,7 +1038,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                         .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))?;
                     let collation = value
                         .collation()
-                        .unwrap_or(tidb_datatype::Collation::DEFAULT);
+                        .unwrap_or(tidb_charset::Collation::DEFAULT);
                     (
                         Datum::new_collation_string(text.into_bytes(), collation),
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
@@ -1170,7 +1170,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             }
             let collation = match &value {
                 Datum::String(text) => text.collation(),
-                Datum::Bytes(_) => tidb_datatype::Collation::Binary,
+                Datum::Bytes(_) => tidb_charset::Collation::Binary,
                 _ => crate::ops::DERIVATION_FREE_COLLATION,
             };
             string_packet::weight_string(

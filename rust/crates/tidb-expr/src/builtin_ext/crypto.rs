@@ -495,7 +495,7 @@ fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum,
     let Some(password) = sql_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    let password = tidb_datatype::GoString::from_bytes(password);
+    let password = tidb_goruntime::GoString::from_bytes(password);
     if password.to_utf8_lossy_go().chars().count() < 4 {
         return Ok(Datum::Int(0));
     }

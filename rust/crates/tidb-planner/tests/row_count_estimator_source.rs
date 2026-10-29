@@ -44,7 +44,8 @@
 //! which stays inside 1e-12 relative.
 
 use tidb_codec::encode_key;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions, IndexRowCounts};
 use tidb_ranger::Range;
 use tidb_stats::table_statistics::ColumnStats;
@@ -589,7 +590,7 @@ fn index_range(
     high_exclude: bool,
 ) -> Range {
     Range {
-        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        collators: vec![tidb_charset::Collation::Binary; low.len()],
         low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
         high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
         low_exclude,

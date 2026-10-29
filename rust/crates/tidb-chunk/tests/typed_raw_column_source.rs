@@ -16,7 +16,8 @@
 //! `pkg/util/chunk/codec.go`.
 
 use tidb_chunk::raw_column::{decode_column_datums, decode_columns, ColumnLayout, TypedColumnError};
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 fn fixed_column(values: &[u64], null_bitmap: Option<u8>) -> Vec<u8> {
     let mut encoded = Vec::new();

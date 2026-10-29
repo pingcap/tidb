@@ -683,7 +683,7 @@ impl Expression {
                     return false;
                 };
                 c.value
-                    .compare(&y.value, tidb_datatype::Collation::Binary)
+                    .compare(&y.value, tidb_charset::Collation::Binary)
                     .map(|order| order == std::cmp::Ordering::Equal)
                     .unwrap_or(false)
             }

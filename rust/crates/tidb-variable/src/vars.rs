@@ -1090,8 +1090,8 @@ impl SessionVars {
                     tidb_vardef::defaults::DEF_ENABLE_STRICT_DOUBLE_TYPE_CHECK,
                     |value| value.eq_ignore_ascii_case("ON") || value == "1",
                 ),
-            charset_client: tidb_datatype::find_encoding(&charset_client),
-            charset_connection: tidb_datatype::find_encoding(&charset_connection),
+            charset_client: tidb_charset::find_encoding(&charset_client),
+            charset_connection: tidb_charset::find_encoding(&charset_connection),
         }
     }
 
@@ -1794,25 +1794,25 @@ impl SessionVars {
         // variable. Keep the derived names in the session image so all later
         // reads observe the same side effects as Go's `SessionVars.systems`.
         let charset_default_collation = match key.as_str() {
-            "character_set_connection" => tidb_datatype::get_charset_info(&value)
+            "character_set_connection" => tidb_charset::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_connection", charset.default_collation)),
-            "character_set_database" => tidb_datatype::get_charset_info(&value)
+            "character_set_database" => tidb_charset::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_database", charset.default_collation)),
-            "character_set_server" => tidb_datatype::get_charset_info(&value)
+            "character_set_server" => tidb_charset::get_charset_info(&value)
                 .ok()
                 .map(|charset| ("collation_server", charset.default_collation)),
             _ => None,
         };
         let collation_charset = match key.as_str() {
-            "collation_connection" => tidb_datatype::get_collation_by_name(&value)
+            "collation_connection" => tidb_charset::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_connection", collation.charset_name)),
-            "collation_database" => tidb_datatype::get_collation_by_name(&value)
+            "collation_database" => tidb_charset::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_database", collation.charset_name)),
-            "collation_server" => tidb_datatype::get_collation_by_name(&value)
+            "collation_server" => tidb_charset::get_collation_by_name(&value)
                 .ok()
                 .map(|collation| ("character_set_server", collation.charset_name)),
             _ => None,
@@ -2062,7 +2062,7 @@ impl SessionVars {
         // and answers 1115 `Unknown character set: '...'`; this parser
         // defers that check here, which is what makes `SET NAMES anyword` a
         // runtime error.
-        let Ok(charset_info) = tidb_datatype::get_charset_info(charset) else {
+        let Ok(charset_info) = tidb_charset::get_charset_info(charset) else {
             return Err(tidb_terror::MysqlError::from_sql_error(
                 tidb_mysql::errors::SqlError::new(
                     tidb_mysql::errors::errcode::ErrUnknownCharacterSet,

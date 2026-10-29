@@ -203,8 +203,8 @@ pub(crate) fn eval_binary_in(
 /// consult) and the answer for a hand-assembled function node. Every path that
 /// goes through the rewriter -- which is every table-backed query -- carries a
 /// real derived collation instead; see [`crate::collation_derive`].
-pub(crate) const DERIVATION_FREE_COLLATION: tidb_datatype::Collation =
-    tidb_datatype::Collation::Utf8Mb4Bin;
+pub(crate) const DERIVATION_FREE_COLLATION: tidb_charset::Collation =
+    tidb_charset::Collation::Utf8Mb4Bin;
 
 /// [`eval_binary_with_div_precision`] under an explicitly derived collation.
 ///
@@ -232,7 +232,7 @@ pub(crate) fn eval_binary_full(
     l: Datum,
     r: Datum,
     div_precision_increment: u32,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
     operands: Operands<'_>,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
@@ -1360,7 +1360,7 @@ fn string_compare(
     op: BinaryOp,
     a: &[u8],
     b: &[u8],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     let ord = collation.compare(a, b);
@@ -1954,7 +1954,8 @@ mod tests {
     /// their VALUES.
     #[test]
     fn function_callers_reject_the_unclaimed_kinds_too() {
-        use tidb_datatype::{Collation, MysqlEnum, VectorFloat32};
+        use tidb_datatype::{MysqlEnum, VectorFloat32};
+use tidb_charset::Collation;
         let vector = || Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
         assert!(to_f64_with_mysql_string(&vector(), &crate::NoColumns).is_err());
         assert!(to_f64_with_mysql_string(&Datum::Raw(vec![0x08]), &crate::NoColumns).is_err());
@@ -2048,7 +2049,8 @@ mod tests {
     /// holding `'b'`, and `set('x','y') s` holding `'x'`.
     #[test]
     fn enum_and_set_compare_by_name_against_text_and_by_ordinal_against_numbers() {
-        use tidb_datatype::{Collation, MysqlEnum, MysqlSet};
+        use tidb_datatype::{MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
         // 'b' is ordinal 2 in enum('a','b','c') but ordinal 1 in enum('b','z').
         let e = || Datum::Enum(MysqlEnum::new("b", 2), Collation::Utf8Mb4Bin);
         let e2 = || Datum::Enum(MysqlEnum::new("b", 1), Collation::Utf8Mb4Bin);

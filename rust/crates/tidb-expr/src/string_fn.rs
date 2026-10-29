@@ -22,9 +22,12 @@ use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
 use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
-use tidb_datatype::{
-    find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
-};
+use tidb_datatype::FieldType;
+use tidb_charset::find_encoding;
+use tidb_charset::get_default_collation;
+use tidb_charset::Collation;
+use tidb_goruntime::GoString;
+use tidb_charset::TransformOp;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -98,7 +101,8 @@ pub(crate) fn case_convert_with_type(
 mod case_convert_tests {
     use super::case_convert;
     use crate::Datum;
-    use tidb_datatype::{Collation, MysqlEnum};
+    use tidb_datatype::MysqlEnum;
+use tidb_charset::Collation;
 
     #[test]
     fn enum_names_follow_the_selected_binary_or_unicode_signature() {
@@ -253,7 +257,7 @@ pub(crate) fn reverse(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `substr` always matches at position `1` (confirmed via `gorun`).
 /// `NULL` if either operand is `NULL`.
 pub(crate) fn position(substr: Option<String>, str: Option<String>) -> Datum {
-    position_with_collation(substr, str, tidb_datatype::Collation::Utf8Mb4Bin)
+    position_with_collation(substr, str, tidb_charset::Collation::Utf8Mb4Bin)
 }
 
 /// `LOCATE(substr, str)` / `INSTR(str, substr)` / `POSITION(substr IN str)`
@@ -273,9 +277,9 @@ pub(crate) fn position(substr: Option<String>, str: Option<String>) -> Datum {
 pub(crate) fn locate(
     substr: &Datum,
     str: &Datum,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
-    if collation != tidb_datatype::Collation::Binary {
+    if collation != tidb_charset::Collation::Binary {
         return Ok(position_with_collation(
             coerce_str(substr)?,
             coerce_str(str)?,
@@ -309,14 +313,14 @@ pub(crate) fn locate(
 /// occurrence exactly as it does without a start position.
 pub(crate) fn locate_with_position(
     vals: &[Datum],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     let [substr, str, pos] = vals else {
         return Err(EvalError::Unsupported("bad LOCATE arity"));
     };
     // Go evaluates substr, str, then pos, and isNull on ANY of them is the
     // NULL result (the Int signatures return `0, true, nil`).
-    let binary = collation == tidb_datatype::Collation::Binary;
+    let binary = collation == tidb_charset::Collation::Binary;
     let needle_opt = if binary {
         coerce_str_bytes(substr)?.map(|bytes| bytes.to_vec())
     } else {
@@ -387,12 +391,12 @@ pub(crate) fn locate_with_position(
 
 /// The collation `LOCATE`/`INSTR` derive when no derivation pass ran: Go's
 /// aggregate is `binary` as soon as one string argument is binary.
-pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Collation {
+pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_charset::Collation {
     if crate::string_signature::is_binary_str(substr) || crate::string_signature::is_binary_str(str)
     {
-        tidb_datatype::Collation::Binary
+        tidb_charset::Collation::Binary
     } else {
-        tidb_datatype::Collation::Utf8Mb4Bin
+        tidb_charset::Collation::Utf8Mb4Bin
     }
 }
 
@@ -414,7 +418,7 @@ pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Co
 pub(crate) fn position_with_collation(
     substr: Option<String>,
     str: Option<String>,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Datum {
     let (Some(substr), Some(str)) = (substr, str) else {
         return Datum::Null;
@@ -432,7 +436,7 @@ pub(crate) fn position_with_collation(
 fn locate_string_with_collation(
     str: &str,
     substr: &str,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> i64 {
     let collator = tidb_datatype::get_collator(collation.name());
     let str_key = collator.key_without_trim_right_space(str.as_bytes());
@@ -472,9 +476,9 @@ fn locate_string_with_collation(
 pub(crate) fn instr(
     str: &Datum,
     substr: &Datum,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
-    if collation == tidb_datatype::Collation::Binary {
+    if collation == tidb_charset::Collation::Binary {
         return locate(substr, str, collation);
     }
     let (Some(mut str), Some(mut substr)) = (coerce_str(str)?, coerce_str(substr)?) else {
@@ -553,11 +557,11 @@ pub(crate) fn strcmp(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     let collation = if matches!(left, Datum::Bytes(_)) || matches!(right, Datum::Bytes(_)) {
-        tidb_datatype::Collation::Binary
+        tidb_charset::Collation::Binary
     } else {
         left.collation()
             .or_else(|| right.collation())
-            .unwrap_or(tidb_datatype::Collation::DEFAULT)
+            .unwrap_or(tidb_charset::Collation::DEFAULT)
     };
     strcmp_under(&a, &b, collation)
 }
@@ -568,7 +572,7 @@ pub(crate) fn strcmp(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// utf8mb4_general_ci)` is 0 where the `utf8mb4_bin` form is 1.
 pub(crate) fn strcmp_with_collation(
     vals: &[Datum],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     let [left, right] = vals else {
         return Err(EvalError::Unsupported("bad STRCMP arity"));
@@ -582,7 +586,7 @@ pub(crate) fn strcmp_with_collation(
 fn strcmp_under(
     a: &[u8],
     b: &[u8],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     Ok(Datum::Int(match collation.compare(a, b) {
         std::cmp::Ordering::Less => -1,
@@ -995,7 +999,7 @@ pub(crate) fn field(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, E
 /// `utf8mb4_bin` form is 0.
 pub(crate) fn field_with_collation(
     vals: &[Datum],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if vals[0] == Datum::Null {

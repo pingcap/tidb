@@ -21,7 +21,8 @@ use std::sync::mpsc::channel;
 use std::sync::Mutex;
 
 use chrono::TimeZone;
-use tidb_datatype::{Collation, DatumValueError, FieldType};
+use tidb_datatype::{DatumValueError, FieldType};
+use tidb_charset::Collation;
 use tidb_mysql::errors::SqlError;
 use tidb_sqlkiller::SqlKiller;
 

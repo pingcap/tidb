@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB util/chunk: the columnar row container for execution (Rust rewrite)."
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-checksum = { path = "../tidb-checksum" }
 tidb-disjointset = { path = "../tidb-disjointset" }
 tidb-disk = { path = "../tidb-disk" }

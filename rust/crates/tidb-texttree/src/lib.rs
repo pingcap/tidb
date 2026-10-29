@@ -14,7 +14,9 @@
 
 //! Native Rust mapping of the Go `pkg/util/texttree` package.
 
-use tidb_datatype::{go_chars, GoString, GoStringSource};
+use tidb_goruntime::go_chars;
+use tidb_goruntime::GoString;
+use tidb_goruntime::GoStringSource;
 
 /// Indicates the current operator sub-tree is not finished, still has child
 /// operators to be attached on.

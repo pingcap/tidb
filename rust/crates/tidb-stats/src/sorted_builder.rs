@@ -14,7 +14,8 @@
 
 //! Incremental sorted histogram construction from `builder.go`.
 
-use tidb_datatype::{Collation, Datum, DatumValueError, FieldType};
+use tidb_datatype::{Datum, DatumValueError, FieldType};
+use tidb_charset::Collation;
 
 use crate::Histogram;
 

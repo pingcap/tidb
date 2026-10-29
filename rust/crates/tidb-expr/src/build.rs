@@ -20,7 +20,8 @@
 //! construction records one immutable signature, then evaluation follows it.
 
 use tidb_ast::{CastType, Expr};
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 use crate::coerce::coerce_str;
 use crate::EvalError;
@@ -309,7 +310,8 @@ fn go_utf8_rune_count(mut bytes: &[u8]) -> usize {
 mod tests {
     use super::{BuildContext, StringLengthFunction, StringLengthSignature};
     use crate::Datum;
-    use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+    use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
     fn binary_type() -> FieldType {
         FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Binary)

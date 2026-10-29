@@ -24,7 +24,7 @@ pub(crate) struct MergeJoinKey {
     /// Go `GetCmpFunction(lhs, rhs)`'s string collation: the one
     /// `CheckAndDeriveCollationFromExprs` derives from BOTH keys, which is
     /// what decides whether two keys of different collations are equal.
-    pub(crate) collation: tidb_datatype::Collation,
+    pub(crate) collation: tidb_charset::Collation,
 }
 
 /// The key order retained by Go's `PhysicalMergeJoin`.

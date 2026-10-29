@@ -152,7 +152,7 @@ fn unary_op_kind_rows_match_source() {
     assert_eq!(
         apply_unary_of(
             UnaryOp::Not,
-            Datum::new_enum(MysqlEnum::new("a", 1), tidb_datatype::Collation::Binary)
+            Datum::new_enum(MysqlEnum::new("a", 1), tidb_charset::Collation::Binary)
         ),
         Datum::Int(0),
         "NOT(enum value 1)"
@@ -160,7 +160,7 @@ fn unary_op_kind_rows_match_source() {
     assert_eq!(
         apply_unary_of(
             UnaryOp::Not,
-            Datum::new_set(MysqlSet::new("a", 1), tidb_datatype::Collation::Binary)
+            Datum::new_set(MysqlSet::new("a", 1), tidb_charset::Collation::Binary)
         ),
         Datum::Int(0),
         "NOT(set value 1)"
@@ -268,8 +268,8 @@ fn unary_minus_hybrid_and_binary_literal_kinds_match_source() {
     use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
 
     let cases = [
-        Datum::new_enum(MysqlEnum::new("a", 1), tidb_datatype::Collation::Binary),
-        Datum::new_set(MysqlSet::new("a", 1), tidb_datatype::Collation::Binary),
+        Datum::new_enum(MysqlEnum::new("a", 1), tidb_charset::Collation::Binary),
+        Datum::new_set(MysqlSet::new("a", 1), tidb_charset::Collation::Binary),
         Datum::BinaryLiteral(BinaryLiteral::from_uint(1, None)),
     ];
     for operand in cases {

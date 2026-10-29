@@ -19,7 +19,8 @@
 //! row, results presented as the function's declared type.
 
 use super::*;
-use tidb_datatype::{Collation, FieldType, FieldTypeCode as C, FieldTypeFlags, StringDatum};
+use tidb_datatype::{FieldType, FieldTypeCode as C, FieldTypeFlags, StringDatum};
+use tidb_charset::Collation;
 
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;

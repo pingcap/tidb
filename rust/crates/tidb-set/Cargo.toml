@@ -17,6 +17,7 @@ intest = ["tidb-memory/intest"]
 jemalloc = ["tidb-memory/jemalloc"]
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-datatype = { path = "../tidb-datatype" }

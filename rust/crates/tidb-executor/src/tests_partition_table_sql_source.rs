@@ -22,7 +22,8 @@ use crate::{
     run_update_on, Catalog, StmtContext,
 };
 use tidb_datatype::StringDatum;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()

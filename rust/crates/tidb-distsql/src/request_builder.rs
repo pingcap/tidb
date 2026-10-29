@@ -789,7 +789,7 @@ mod tests {
         let invalid = Range {
             low_val: vec![Datum::new_string("not an integer")],
             high_val: vec![Datum::new_string("not an integer")],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             ..Range::default()
         };
         let mut builder = RequestBuilder::new();
@@ -825,7 +825,7 @@ mod int64_boundary_split_tests {
         Range {
             low_val: vec![Datum::UInt(low)],
             high_val: vec![Datum::UInt(high)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         }
@@ -848,7 +848,7 @@ mod int64_boundary_split_tests {
         let input = vec![Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::Int(9)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         }];

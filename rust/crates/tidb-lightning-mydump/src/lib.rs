@@ -186,12 +186,12 @@ impl CharsetConvertor {
             }
             SourceCharset::Gbk | SourceCharset::Gb18030 => {
                 let encoding = if self.source == SourceCharset::Gbk {
-                    tidb_datatype::Encoding::Gbk
+                    tidb_charset::Encoding::Gbk
                 } else {
-                    tidb_datatype::Encoding::Gb18030
+                    tidb_charset::Encoding::Gb18030
                 };
                 let mut out = Vec::with_capacity(src.len() * 3 / 2);
-                encoding.foreach(src, tidb_datatype::TransformOp::default(), |_, to, _| {
+                encoding.foreach(src, tidb_charset::TransformOp::default(), |_, to, _| {
                     out.extend_from_slice(to);
                     true
                 });
@@ -218,12 +218,12 @@ impl CharsetConvertor {
             }
             SourceCharset::Gbk | SourceCharset::Gb18030 => {
                 let encoding = if self.source == SourceCharset::Gbk {
-                    tidb_datatype::Encoding::Gbk
+                    tidb_charset::Encoding::Gbk
                 } else {
-                    tidb_datatype::Encoding::Gb18030
+                    tidb_charset::Encoding::Gb18030
                 };
                 encoding
-                    .transform(src, tidb_datatype::TransformOp::ENCODE_REPLACE)
+                    .transform(src, tidb_charset::TransformOp::ENCODE_REPLACE)
                     .into_parts()
                     .0
             }

@@ -295,7 +295,7 @@ fn raw_binary_const(bytes: &[u8]) -> Expression {
     field_type.set_flen(255);
     field_type.set_charset_name("binary");
     field_type.set_collation_name("binary");
-    let value = Datum::new_collation_string(bytes.to_vec(), tidb_datatype::Collation::Binary);
+    let value = Datum::new_collation_string(bytes.to_vec(), tidb_charset::Collation::Binary);
     Expression::Constant(Constant::new(value, field_type))
 }
 

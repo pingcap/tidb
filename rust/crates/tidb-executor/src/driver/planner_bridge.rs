@@ -3679,7 +3679,7 @@ mod statistics_initialization_tests {
                     hist.histogram_for_estimation(column.unique_id)
                         .map(|column| column.as_ref()),
                     &[tidb_planner::cardinality::row_count_estimator::ColumnRange::point(Datum::Null)],
-                    tidb_datatype::Collation::Binary,
+                    tidb_charset::Collation::Binary,
                     hist.realtime_count(),
                     hist.modify_count(),
                     false,

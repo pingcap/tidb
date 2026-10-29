@@ -67,7 +67,7 @@ fn convert(
 }
 
 fn compare(left: &Datum, right: &Datum) -> Result<std::cmp::Ordering, MysqlError> {
-    tidb_expr::compare_datums_with_collation(left, right, tidb_datatype::Collation::Binary).map_err(
+    tidb_expr::compare_datums_with_collation(left, right, tidb_charset::Collation::Binary).map_err(
         |error| {
             tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(format!(
                 "{error:?}"

@@ -2858,7 +2858,7 @@ fn join_equality_with_collation(
     right: &Column,
     schema: &Schema,
     null_safe: bool,
-    collation: Option<tidb_datatype::Collation>,
+    collation: Option<tidb_charset::Collation>,
 ) -> Result<Expression, DriverError> {
     let mut ret_type = FieldType::new(FieldTypeCode::Tiny);
     if let Some(collation) = collation {
@@ -4532,7 +4532,7 @@ fn join_key_offsets(
             let fallback = left_key
                 .ret_type
                 .as_ref()
-                .map_or(tidb_datatype::Collation::Binary, |ty| ty.collation());
+                .map_or(tidb_charset::Collation::Binary, |ty| ty.collation());
             let collation = tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
                 "",
                 tidb_datatype::EvalType::Int,
@@ -4542,7 +4542,7 @@ fn join_key_offsets(
                 ],
             )
             .ok()
-            .and_then(|derived| tidb_datatype::Collation::from_name(&derived.collation))
+            .and_then(|derived| tidb_charset::Collation::from_name(&derived.collation))
             .unwrap_or(fallback);
             Ok(crate::merge_join_plan::MergeJoinKey {
                 left,
@@ -6614,7 +6614,7 @@ fn build_cluster_table_scan(
         if let Some(position) = handle_position {
             rows.sort_by(|left, right| {
                 let order = left[position]
-                    .compare(&right[position], tidb_datatype::Collation::Binary)
+                    .compare(&right[position], tidb_charset::Collation::Binary)
                     .unwrap_or(std::cmp::Ordering::Equal);
                 if desc {
                     order.reverse()
@@ -7298,17 +7298,17 @@ impl crate::union_scan::HandleColumns for UnionScanHandleCols {
         &self,
         left: &[tidb_datatype::Datum],
         right: &[tidb_datatype::Datum],
-        collators: &[tidb_datatype::Collation],
+        collators: &[tidb_charset::Collation],
     ) -> Result<std::cmp::Ordering, crate::ExecError> {
         for &offset in &self.offsets {
             // Go `IntHandleCols.Compare` compares with the binary collator,
             // `CommonHandleCols.Compare` with each column's own.
             let collation = match self.common {
-                None => tidb_datatype::Collation::Binary,
+                None => tidb_charset::Collation::Binary,
                 Some(_) => collators
                     .get(offset)
                     .copied()
-                    .unwrap_or(tidb_datatype::Collation::Binary),
+                    .unwrap_or(tidb_charset::Collation::Binary),
             };
             let ordering = left[offset]
                 .compare(&right[offset], collation)
@@ -8619,7 +8619,7 @@ use super::*;
             ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![tidb_datatype::Datum::Int(low)],
                 high_val: vec![tidb_datatype::Datum::Int(high)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             }],
@@ -8810,7 +8810,7 @@ use super::*;
             ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(2)],
                 high_val: vec![Datum::Int(2)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             }],
@@ -8878,7 +8878,7 @@ use super::*;
             ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(20)],
                 high_val: vec![Datum::Int(20)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             }],
@@ -8919,7 +8919,7 @@ use super::*;
         let point_range = |value| tidb_ranger::types::Range {
             low_val: vec![Datum::Int(value)],
             high_val: vec![Datum::Int(value)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         };
@@ -8990,7 +8990,7 @@ use super::*;
         let point_range = |value| tidb_ranger::types::Range {
             low_val: vec![Datum::Int(value)],
             high_val: vec![Datum::Int(value)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         };
@@ -9035,7 +9035,7 @@ use super::*;
             ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![tidb_datatype::Datum::Int(low)],
                 high_val: vec![tidb_datatype::Datum::Int(high)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             }],

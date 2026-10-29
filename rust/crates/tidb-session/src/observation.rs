@@ -40,7 +40,7 @@ pub(crate) struct PendingStatementExecDetails {
 
 
 /// [`Session::statement_text`] of `sql` in the client encoding `client`.
-fn statement_text_in(sql: &str, client: tidb_datatype::Encoding) -> std::borrow::Cow<'_, str> {
+fn statement_text_in(sql: &str, client: tidb_charset::Encoding) -> std::borrow::Cow<'_, str> {
     // Valid UTF-8 without control characters decodes to itself under a utf8,
     // latin1 or binary client and holds no non-printable literal.
     let printable =
@@ -49,9 +49,9 @@ fn statement_text_in(sql: &str, client: tidb_datatype::Encoding) -> std::borrow:
         && (sql.is_ascii()
             || matches!(
                 client,
-                tidb_datatype::Encoding::Utf8
-                    | tidb_datatype::Encoding::Latin1
-                    | tidb_datatype::Encoding::Binary
+                tidb_charset::Encoding::Utf8
+                    | tidb_charset::Encoding::Latin1
+                    | tidb_charset::Encoding::Binary
             ))
     {
         return std::borrow::Cow::Borrowed(sql);

@@ -402,7 +402,7 @@ impl PointConstantsRebuild {
         Ok(keys
             .into_iter()
             .map(|values| tidb_ranger::types::Range {
-                collators: vec![tidb_datatype::Collation::Binary; values.len()],
+                collators: vec![tidb_charset::Collation::Binary; values.len()],
                 low_val: values.clone(),
                 high_val: values,
                 low_exclude: false,

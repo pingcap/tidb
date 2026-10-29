@@ -11,5 +11,6 @@ description = "TiDB pkg/lightning/mydump: the CSV parser LOAD DATA reads with (R
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-datatype = { path = "../tidb-datatype" }
 encoding_rs.workspace = true

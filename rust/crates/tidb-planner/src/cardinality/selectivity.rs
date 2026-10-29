@@ -804,7 +804,8 @@ fn substitute_column(
 mod index_range_estimate_tests {
     use std::sync::Arc;
 
-    use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
     use tidb_expr::column::Column;
     use tidb_stats::{Bucket, Histogram, TopN};
 

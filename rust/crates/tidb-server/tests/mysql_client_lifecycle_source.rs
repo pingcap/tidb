@@ -72,7 +72,7 @@ impl ResultSetSource for Rows {
                     flags: 0x0001,
                     flen: Some(20),
                     decimal: Some(0),
-                    collation: tidb_datatype::Collation::Binary,
+                    collation: tidb_charset::Collation::Binary,
                 },
             },
             ResultFieldMetadata {
@@ -88,7 +88,7 @@ impl ResultSetSource for Rows {
                     flags: 0x0003,
                     flen: Some(20),
                     decimal: Some(0),
-                    collation: tidb_datatype::Collation::Binary,
+                    collation: tidb_charset::Collation::Binary,
                 },
             },
         ])
@@ -452,7 +452,7 @@ fn prepared_balance_column() -> ResultFieldMetadata {
             flags: 0x0001,
             flen: Some(20),
             decimal: Some(0),
-            collation: tidb_datatype::Collation::Binary,
+            collation: tidb_charset::Collation::Binary,
         },
     }
 }
@@ -806,7 +806,7 @@ impl ResultSetSource for CursorReaderFailureRows {
                 flags: 0,
                 flen: Some(4096),
                 decimal: Some(0),
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             },
         }])
     }
@@ -883,7 +883,7 @@ impl QuerySession for CursorReaderFailureSession {
                     flags: 0,
                     flen: Some(4096),
                     decimal: Some(0),
-                    collation: tidb_datatype::Collation::Binary,
+                    collation: tidb_charset::Collation::Binary,
                 },
             }],
         ))

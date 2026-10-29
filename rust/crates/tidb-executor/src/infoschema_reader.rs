@@ -2157,7 +2157,7 @@ impl SupportedCollation {
     /// switch, and it was wrong the first time it was read — probe 23
     /// caught `SHOW CHARACTER SET` and this memtable disagreeing.
     fn is_default(&self) -> bool {
-        tidb_datatype::Collation::from_name(self.name)
+        tidb_charset::Collation::from_name(self.name)
             .is_some_and(|collation| collation.charset().default_collation() == collation)
     }
 }
@@ -2288,7 +2288,7 @@ fn character_sets_rows() -> Vec<Vec<Datum>> {
             // The default collation comes from the registry, which carries
             // Go's `switchDefaultCollation` state — the same source `SHOW
             // CHARACTER SET` reads, so the two can never disagree again.
-            let collation = tidb_datatype::Charset::from_name(name)
+            let collation = tidb_charset::Charset::from_name(name)
                 .map(|charset| charset.default_collation().name())
                 .unwrap_or_default();
             vec![text(name), text(collation), text(desc), Datum::Int(maxlen)]

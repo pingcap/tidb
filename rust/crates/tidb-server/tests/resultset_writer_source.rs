@@ -17,10 +17,8 @@
 use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata};
 use std::collections::VecDeque;
 
-use tidb_datatype::{
-    BinaryJSON, BinaryLiteral, Collation, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum,
-    MysqlSet, Time, TimeType, VectorFloat32,
-};
+use tidb_datatype::{BinaryJSON, BinaryLiteral, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32};
+use tidb_charset::Collation;
 use tidb_protocol::{
     append_length_encoded_bytes, ResultSetOptions, TYPE_BIT, TYPE_DATETIME,
     TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON, TYPE_LONG,
@@ -183,7 +181,7 @@ fn column() -> ResultFieldMetadata {
             flags: 0,
             flen: Some(11),
             decimal: Some(0),
-            collation: tidb_datatype::Collation::Binary,
+            collation: tidb_charset::Collation::Binary,
         },
     }
 }

@@ -609,7 +609,7 @@ fn append_tail_template_range(mut ranges: Ranges, range_max_size: i64) -> (Range
     for range in &mut ranges {
         range.low_val.push(tidb_datatype::Datum::Null);
         range.high_val.push(tidb_datatype::Datum::Null);
-        range.collators.push(tidb_datatype::Collation::Binary);
+        range.collators.push(tidb_charset::Collation::Binary);
     }
     (ranges, false)
 }

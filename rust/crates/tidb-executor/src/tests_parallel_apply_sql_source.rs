@@ -22,7 +22,8 @@
 //! recorded in the batch receipt; data assertions alone do not claim them.
 
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
-use tidb_datatype::{Collation, Datum, StringDatum};
+use tidb_datatype::{Datum, StringDatum};
+use tidb_charset::Collation;
 
 fn ctx() -> StmtContext {
     StmtContext::for_query().with_parallel_apply(true)

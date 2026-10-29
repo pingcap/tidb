@@ -107,7 +107,7 @@ fn tidb_decode_sql_digests(
     // Go `json.Unmarshal(digestsStr, &digests)` into `[]any`: invalid UTF-8
     // decodes to U+FFFD byte by byte, and a JSON `null` is the empty list.
     let decoded = serde_json::from_str::<Option<Vec<serde_json::Value>>>(
-        &tidb_datatype::decode_go_utf8_lossy(digests_str.as_slice()),
+        &tidb_goruntime::decode_go_utf8_lossy(digests_str.as_slice()),
     );
     let Ok(items) = decoded.map(Option::unwrap_or_default) else {
         const ERR_MSG_MAX_LENGTH: usize = 32;
@@ -165,7 +165,7 @@ fn tidb_decode_sql_digests(
                     stmt.truncate(stmt_truncate_length as usize);
                     stmt.extend_from_slice(b"...");
                 }
-                result.push_str(&tidb_datatype::GoString::from_bytes(stmt).to_go_json_literal());
+                result.push_str(&tidb_goruntime::GoString::from_bytes(stmt).to_go_json_literal());
             }
             None => result.push_str("null"),
         }
@@ -655,7 +655,8 @@ mod tests {
 
     use super::{dispatch, dispatch_in, hash_uint64};
     use crate::Datum;
-    use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
+    use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
     #[derive(Default)]
     struct WarningContext(RefCell<Vec<(u16, String)>>);

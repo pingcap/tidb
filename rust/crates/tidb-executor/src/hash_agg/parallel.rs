@@ -239,7 +239,7 @@ struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
     /// Each aggregate's argument collation, derived once for the plan as Go
     /// builds each `AggFunc`'s collator once (`aggfuncs/builder.go`), not
     /// once per group.
-    collations: Vec<tidb_datatype::Collation>,
+    collations: Vec<tidb_charset::Collation>,
 }
 
 /// A pipeline group-map key. A single integer group item keys by its chunk
@@ -345,7 +345,7 @@ impl PipelineMap {
         &mut self,
         key: PipelineMapKeyRef<'_>,
         funcs: &[AggFunc],
-        collations: &[tidb_datatype::Collation],
+        collations: &[tidb_charset::Collation],
     ) -> (usize, i64) {
         match self.index.entry_ref(&key) {
             EntryRef::Occupied(slot) => (*slot.get(), 0),
@@ -426,7 +426,7 @@ impl PipelineGroup {
     /// lock in profiles).
     fn new(
         funcs: &[AggFunc],
-        collations: &[tidb_datatype::Collation],
+        collations: &[tidb_charset::Collation],
         key_len: usize,
     ) -> (Self, i64) {
         let bytes = parallel_new_group_bytes(key_len, funcs);
@@ -2473,7 +2473,7 @@ struct FoldInputs<'a, C> {
     integer_columns: Option<&'a [usize]>,
     agg_funcs: &'a [AggFunc],
     input_modes: &'a [AggInputMode],
-    collations: &'a [tidb_datatype::Collation],
+    collations: &'a [tidb_charset::Collation],
 }
 
 /// Go partial worker's groupKeyBuf: retain row buffers across input chunks.
@@ -3082,7 +3082,7 @@ mod tests {
     /// binary-charset type (every numeric type's charset) an opaque value, so
     /// a string row needs a character type.
     fn varchar() -> FieldType {
-        FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_datatype::Collation::Utf8Mb4Bin)
+        FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_charset::Collation::Utf8Mb4Bin)
     }
 
     #[test]
@@ -3228,7 +3228,7 @@ mod tests {
                 integer_columns: None,
                 agg_funcs: &funcs,
                 input_modes: &funcs.iter().map(AggInputMode::new).collect::<Vec<_>>(),
-                collations: &[tidb_datatype::Collation::DEFAULT],
+                collations: &[tidb_charset::Collation::DEFAULT],
             },
             &mut maps,
             1,
@@ -3263,7 +3263,7 @@ mod tests {
         // with Column.VecEval* applying the chunk's logical row selection.
         for collation in ["binary", "utf8_general_ci", "utf8_unicode_ci"] {
             let string = FieldType::new(FieldTypeCode::VarString)
-                .with_collation(tidb_datatype::Collation::from_name(collation).unwrap());
+                .with_collation(tidb_charset::Collation::from_name(collation).unwrap());
             let fields = [
                 long(),
                 long().with_unsigned(true),
@@ -3732,7 +3732,7 @@ mod tests {
     #[test]
     fn typed_count_distinct_sets_union_and_spill_without_replay() {
         let string_type = FieldType::new(FieldTypeCode::VarString)
-            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
         let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
         let duration_type = FieldType::new(FieldTypeCode::Duration);
         let make_func = |field_type: FieldType| {
@@ -3749,15 +3749,15 @@ mod tests {
                 vec![
                     Datum::String(tidb_datatype::StringDatum::new(
                         b"a".to_vec(),
-                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                        tidb_charset::Collation::Utf8Mb4GeneralCi,
                     )),
                     Datum::String(tidb_datatype::StringDatum::new(
                         b"A".to_vec(),
-                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                        tidb_charset::Collation::Utf8Mb4GeneralCi,
                     )),
                     Datum::String(tidb_datatype::StringDatum::new(
                         b"b".to_vec(),
-                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                        tidb_charset::Collation::Utf8Mb4GeneralCi,
                     )),
                     Datum::Null,
                 ],

@@ -25,10 +25,8 @@
 use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use tidb_chunk::column::VAR_ELEM_LEN;
-use tidb_datatype::{
-    datums_to_string, Collation, Datum, DatumStringError, DatumValueError, FieldType,
-    FieldTypeCode, SessionTimeZone,
-};
+use tidb_datatype::{datums_to_string, Datum, DatumStringError, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_charset::Collation;
 
 pub use crate::histogram_allocation::HistogramAllocation;
 pub use crate::scalar_geometry::{

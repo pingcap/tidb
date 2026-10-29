@@ -1495,7 +1495,7 @@ pub fn temp_index_value_is_untouched(value: &[u8]) -> bool {
 mod source_tests {
     use super::*;
     use crate::table_key::is_untouched_index_kv;
-    use tidb_datatype::Collation;
+    use tidb_charset::Collation;
 
     fn long_column(id: i64, offset: usize) -> TableColumn {
         TableColumn {

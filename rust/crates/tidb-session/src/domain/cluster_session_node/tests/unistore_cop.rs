@@ -5289,7 +5289,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         source.scalar("SELECT @@time_zone").unwrap(),
         Some(Datum::String(tidb_datatype::StringDatum::new(
             b"America/New_York".to_vec(),
-            tidb_datatype::Collation::Utf8Mb4Bin,
+            tidb_charset::Collation::Utf8Mb4Bin,
         )))
     );
     rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
@@ -5354,7 +5354,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         source.scalar("SELECT @@time_zone").unwrap(),
         Some(Datum::String(tidb_datatype::StringDatum::new(
             b"Europe/Berlin".to_vec(),
-            tidb_datatype::Collation::Utf8Mb4Bin,
+            tidb_charset::Collation::Utf8Mb4Bin,
         )))
     );
     let duration =

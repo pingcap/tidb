@@ -1484,7 +1484,7 @@ fn eval_datum(
 /// Go `topNCtx` (`closure_exec.go:545`): the pushed-down bounded sort --
 /// order-by keys with their directions and the heap size.
 struct TopNSpec {
-    keys: Vec<(SimpleExpr, bool, tidb_datatype::Collation)>,
+    keys: Vec<(SimpleExpr, bool, tidb_charset::Collation)>,
     limit: usize,
 }
 
@@ -1501,8 +1501,8 @@ impl TopNSpec {
             // (`topn.go:60`).
             let restored = tidb_datatype::restore_collation_id_if_needed(collation_of(pb_expr));
             let collation =
-                tidb_datatype::Collation::from_name(&tidb_datatype::proto_to_collation(restored))
-                    .unwrap_or(tidb_datatype::Collation::Binary);
+                tidb_charset::Collation::from_name(&tidb_datatype::proto_to_collation(restored))
+                    .unwrap_or(tidb_charset::Collation::Binary);
             keys.push((expr, item.desc(), collation));
         }
         Ok(Self {
@@ -1554,7 +1554,7 @@ impl TopNSpec {
 /// effect). Buffer-then-truncate reshuffles ties and can drop the wrong tied
 /// rows (oracle g-group: `ORDER BY g LIMIT 100`).
 fn go_topn_heap_finish(
-    by_items: &[(SimpleExpr, bool, tidb_datatype::Collation)],
+    by_items: &[(SimpleExpr, bool, tidb_charset::Collation)],
     topn_rows: Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)>,
     limit: usize,
 ) -> Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)> {
@@ -1662,7 +1662,7 @@ fn go_topn_heap_finish(
 fn compare_sort_keys(
     left: &tidb_datatype::Datum,
     right: &tidb_datatype::Datum,
-    collation: &tidb_datatype::Collation,
+    collation: &tidb_charset::Collation,
 ) -> Result<std::cmp::Ordering, String> {
     use std::cmp::Ordering;
     use tidb_datatype::Datum;

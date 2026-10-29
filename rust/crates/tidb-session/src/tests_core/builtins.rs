@@ -23,7 +23,7 @@ fn everyday_string_and_date_builtins() {
         session.run("SELECT CHAR(77, 121, 83, 81, 76)").unwrap(),
         StmtResult::Rows(vec![vec![Datum::new_collation_string(
             b"MySQL".to_vec(),
-            tidb_datatype::Collation::Binary,
+            tidb_charset::Collation::Binary,
         )]])
     );
     assert_eq!(

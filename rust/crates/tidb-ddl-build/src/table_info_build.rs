@@ -1031,7 +1031,7 @@ fn validate_global_index_with_generated_columns(
 
 /// Go `checkCharsetAndCollation` (`executor.go:1546`).
 fn check_charset_and_collation(cs: &str, co: &str) -> Refusal<()> {
-    if !tidb_datatype::valid_charset_and_collation(cs, co) {
+    if !tidb_charset::valid_charset_and_collation(cs, co) {
         return Err(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                 .generate_with_stack_by_args(&[cs.into()]),
@@ -2893,8 +2893,8 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
         return Ok(());
     }
     let name = info.name.original();
-    let collation = tidb_datatype::Collation::from_name(info.field_type.collation_name())
-        .unwrap_or(tidb_datatype::Collation::Binary);
+    let collation = tidb_charset::Collation::from_name(info.field_type.collation_name())
+        .unwrap_or(tidb_charset::Collation::Binary);
     let value = tidb_datatype::Datum::String(tidb_datatype::StringDatum::new(
         text.as_bytes().to_vec(),
         collation,
@@ -3349,7 +3349,7 @@ fn stage_column_default(
 /// as a `tidb_hack::raw_bytes` escape) becomes U+FFFD.
 fn go_json_text(text: &str) -> String {
     if tidb_hack::raw_bytes::contains_escapes(text) {
-        tidb_datatype::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref())
+        tidb_goruntime::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref())
     } else {
         text.to_owned()
     }

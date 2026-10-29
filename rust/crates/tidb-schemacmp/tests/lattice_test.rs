@@ -18,7 +18,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_mysql::types::{
     TypeBlob, TypeInt24, TypeLong, TypeLongBlob, TypeLonglong, TypeMediumBlob, TypeSet, TypeShort,
     TypeTiny, TypeTinyBlob,

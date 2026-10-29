@@ -14,7 +14,7 @@
 //! `string2` family builtins. Every builtin here is transcreated from its
 //! implementation in `pkg/expression/builtin_*.go`, cited per function.
 
-use tidb_datatype::Collation;
+use tidb_charset::Collation;
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::string_fn::{format_num_locale, substring};
@@ -259,7 +259,7 @@ fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     let collation = vals
         .iter()
         .filter_map(Datum::collation)
-        .find(|collation| *collation != tidb_datatype::Collation::DEFAULT)
+        .find(|collation| *collation != tidb_charset::Collation::DEFAULT)
         .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
     find_in_set_with_collation(vals, collation)
 }
@@ -284,7 +284,7 @@ pub(crate) struct FindInSetLookup {
 /// Builds Go `getConstStrlistLookup`'s first-position map.
 pub(crate) fn build_find_in_set_lookup(
     list: &Datum,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<FindInSetLookup, EvalError> {
     let Some(list) = crate::coerce::coerce_str_bytes(list)? else {
         return Ok(FindInSetLookup {
@@ -317,7 +317,7 @@ pub(crate) fn build_find_in_set_lookup(
 pub(crate) fn find_in_set_lookup(
     needle: &Datum,
     lookup: &FindInSetLookup,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     if lookup.is_null {
         return Ok(Datum::Null);
@@ -337,7 +337,7 @@ pub(crate) fn find_in_set_lookup(
 
 pub(crate) fn find_in_set_with_collation(
     vals: &[Datum],
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Datum, EvalError> {
     let (Some(needle), Some(list)) = (
         crate::coerce::coerce_str_bytes(&vals[0])?,
@@ -414,7 +414,8 @@ mod tests {
     use crate::string_fn::{char_func, format_num, format_num_locale, position, substring};
     use crate::string_packet::to_base64;
     use crate::Datum;
-    use tidb_datatype::{Collation, MysqlEnum, MysqlSet};
+    use tidb_datatype::{MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
     fn string(value: &str) -> Datum {
         Datum::new_string(value.to_string())
@@ -577,15 +578,15 @@ mod tests {
     #[test]
     fn find_in_set_lookup_preserves_first_position_and_spaces() {
         let lookup =
-            build_find_in_set_lookup(&string("  , , ,"), tidb_datatype::Collation::Binary).unwrap();
+            build_find_in_set_lookup(&string("  , , ,"), tidb_charset::Collation::Binary).unwrap();
         assert_eq!(
-            find_in_set_lookup(&string(" "), &lookup, tidb_datatype::Collation::Binary,).unwrap(),
+            find_in_set_lookup(&string(" "), &lookup, tidb_charset::Collation::Binary,).unwrap(),
             Datum::Int(2)
         );
         let empty =
-            build_find_in_set_lookup(&string(""), tidb_datatype::Collation::Binary).unwrap();
+            build_find_in_set_lookup(&string(""), tidb_charset::Collation::Binary).unwrap();
         assert_eq!(
-            find_in_set_lookup(&string(""), &empty, tidb_datatype::Collation::Binary,).unwrap(),
+            find_in_set_lookup(&string(""), &empty, tidb_charset::Collation::Binary,).unwrap(),
             Datum::Int(0)
         );
     }

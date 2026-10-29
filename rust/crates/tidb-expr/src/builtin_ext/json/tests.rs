@@ -1896,7 +1896,8 @@ fn string_and_bytes_arguments_agree() {
 #[test]
 fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     use super::dispatch_typed;
-    use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+    use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
     let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
     let mut binary = FieldType::new(FieldTypeCode::String).with_collation(Collation::Binary);
@@ -1970,7 +1971,8 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
 #[test]
 fn cast_as_json_typed_renders_binary_charset_argument_as_opaque() {
     use super::cast_as_json_typed;
-    use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+    use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
     let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
     let got =

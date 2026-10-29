@@ -534,10 +534,8 @@ mod tests {
     //! darwin/arm64; `EmptyHistogramSize 112 EmptyBucketSize 24
     //! EmptyScalarSize 24`).
 
-    use tidb_datatype::{
-        BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal,
-        FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, Time, TimeType,
-    };
+    use tidb_datatype::{BinaryJSON, BinaryLiteral, BinaryLiteralWidth, CoreTime, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, Time, TimeType};
+use tidb_charset::Collation;
 
     use crate::histogram::merge_histograms;
     use crate::{Bucket, CmsSketch, FmSketch, Histogram, TopN};

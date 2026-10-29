@@ -28,9 +28,8 @@ use crate::math_fn::{conv_valid_prefix, dispatch_values as math_dispatch_values}
 use crate::rewriter::result_type::builtin_return_type;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
-use tidb_datatype::{
-    Collation, FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time,
-};
+use tidb_datatype::{FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time};
+use tidb_charset::Collation;
 
 // ---------------------------------------------------------------------------
 // Shared helpers

@@ -4231,7 +4231,7 @@ impl RemoteIndexHandleCursor {
                 if let Datum::String(string) = value {
                     *value = Datum::new_collation_string(
                         string.bytes().to_vec(),
-                        tidb_datatype::Collation::Binary,
+                        tidb_charset::Collation::Binary,
                     );
                 }
             }
@@ -5155,13 +5155,13 @@ impl TableScanExec {
                     Extreme {
                         value: Option<Datum>,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                     ExtremeCount {
                         value: Option<Datum>,
                         count: i64,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                 }
 
@@ -5358,13 +5358,13 @@ impl TableScanExec {
                     Extreme {
                         value: Option<Datum>,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                     ExtremeCount {
                         value: Option<Datum>,
                         count: i64,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                 }
 
@@ -6659,7 +6659,7 @@ mod remote_cursor_tests {
     }
 
     fn index_selection_predicate(offset: u32, field_type: FieldType) -> Expression {
-        let collation = tidb_datatype::Collation::Utf8Mb4Bin;
+        let collation = tidb_charset::Collation::Utf8Mb4Bin;
         let literal = if field_type.eval_type() == tidb_datatype::EvalType::String {
             Datum::new_collation_string(b"abc".to_vec(), collation)
         } else {
@@ -7450,7 +7450,7 @@ mod remote_cursor_tests {
         let ranges = [Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::Int(9)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         }];
@@ -7577,7 +7577,7 @@ mod remote_cursor_tests {
         let ranges = [Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::Int(9)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         }];
@@ -7608,7 +7608,7 @@ mod remote_cursor_tests {
 
     #[test]
     fn common_record_identity_preserves_prefix_and_short_key_rules() {
-        let collation = tidb_datatype::Collation::Utf8Mb4GeneralCi;
+        let collation = tidb_charset::Collation::Utf8Mb4GeneralCi;
         let field_type =
             FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_collation(collation);
         let identity = RemoteCommonHandle {
@@ -8127,7 +8127,7 @@ mod remote_cursor_tests {
             .record_handle(&[
                 Datum::new_collation_string(
                     b"abc".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                    tidb_charset::Collation::Utf8Mb4GeneralCi,
                 ),
                 Datum::Int(1),
             ])
@@ -8175,7 +8175,7 @@ mod remote_cursor_tests {
                     &[
                         Datum::String(tidb_datatype::StringDatum::new(
                             text.as_bytes().to_vec(),
-                            tidb_datatype::Collation::Binary,
+                            tidb_charset::Collation::Binary,
                         )),
                         Datum::Int(value),
                     ],

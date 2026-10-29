@@ -21,7 +21,8 @@
 //! indexes: rebuilding their values from sampled table rows is not equivalent
 //! to scanning the logical global-index keyspace.
 
-use tidb_datatype::{Collation, Datum, DatumValueError, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, DatumValueError, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 use crate::histogram::{merge_histograms, TopNMergeEntry};
 use crate::{

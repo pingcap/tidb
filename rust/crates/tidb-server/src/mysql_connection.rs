@@ -74,7 +74,7 @@ use tidb_session::domain::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS,
 /// non-ASCII byte is an escape, so the scanner's `skipRune` can step over
 /// its multibyte characters by their source bytes.
 fn decode_client_sql(bytes: &[u8], charset: &str) -> String {
-    tidb_parser::carry_client_sql(bytes, tidb_datatype::find_encoding(charset)).into_owned()
+    tidb_parser::carry_client_sql(bytes, tidb_charset::find_encoding(charset)).into_owned()
 }
 
 enum PreparedCursorOpenError {

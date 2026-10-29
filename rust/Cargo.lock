@@ -3598,12 +3598,14 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "tidb-build-tags",
+ "tidb-charset",
  "tidb-checksum",
  "tidb-codec",
  "tidb-datatype",
  "tidb-disjointset",
  "tidb-disk",
  "tidb-encrypt",
+ "tidb-goruntime",
  "tidb-layered-io",
  "tidb-memory",
  "tidb-spill-storage",
@@ -3619,8 +3621,10 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-datatype",
+ "tidb-goruntime",
  "tidb-rowcodec",
  "tidb-tablecodec",
 ]
@@ -3703,6 +3707,7 @@ dependencies = [
  "chrono-tz",
  "prost 0.14.4",
  "tidb-ast",
+ "tidb-charset",
  "tidb-codec",
  "tidb-config",
  "tidb-config-kerneltype",
@@ -3820,6 +3825,7 @@ dependencies = [
  "tidb-ast",
  "tidb-autoid",
  "tidb-build-tags",
+ "tidb-charset",
  "tidb-codec",
  "tidb-config",
  "tidb-config-kerneltype",
@@ -3899,6 +3905,7 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -4040,6 +4047,7 @@ version = "0.0.0"
 name = "tidb-deadlockhistory"
 version = "0.0.0"
 dependencies = [
+ "tidb-charset",
  "tidb-datatype",
  "tidb-resourcegrouptag",
  "tidb-txnkv",
@@ -4071,6 +4079,7 @@ name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
  "prost 0.14.4",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -4163,6 +4172,7 @@ dependencies = [
  "tidb-ast",
  "tidb-autoid",
  "tidb-bindinfo",
+ "tidb-charset",
  "tidb-config",
  "tidb-config-configtypes",
  "tidb-datatype",
@@ -4393,6 +4403,7 @@ dependencies = [
  "tidb-autoid",
  "tidb-bindinfo",
  "tidb-breakpoint",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -4636,6 +4647,7 @@ name = "tidb-format"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-goruntime",
 ]
 
 [[package]]
@@ -4767,6 +4779,7 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-charset",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -4942,6 +4955,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-extsort",
+ "tidb-goruntime",
  "tidb-log",
  "tidb-logutil",
  "tidb-model",
@@ -4956,6 +4970,7 @@ name = "tidb-lightning-mydump"
 version = "0.0.0"
 dependencies = [
  "encoding_rs",
+ "tidb-charset",
  "tidb-datatype",
 ]
 
@@ -5091,6 +5106,7 @@ dependencies = [
 name = "tidb-metabuild"
 version = "0.0.0"
 dependencies = [
+ "tidb-charset",
  "tidb-context",
  "tidb-datatype",
  "tidb-expr",
@@ -5245,6 +5261,7 @@ name = "tidb-password-validation"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-goruntime",
  "tidb-mysql",
  "tidb-vardef",
 ]
@@ -5315,6 +5332,7 @@ dependencies = [
  "regex",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config-kerneltype",
@@ -5425,6 +5443,7 @@ name = "tidb-planner-rule"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-datatype",
  "tidb-expr",
@@ -5538,6 +5557,7 @@ name = "tidb-protocol"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-datatype",
  "tidb-errno",
@@ -5556,6 +5576,7 @@ name = "tidb-ranger"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-context",
@@ -5664,6 +5685,7 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-ddl-build",
+ "tidb-goruntime",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -5734,6 +5756,7 @@ name = "tidb-serialization"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-goruntime",
 ]
 
 [[package]]
@@ -5771,6 +5794,7 @@ dependencies = [
  "tidb-bindinfo",
  "tidb-build-tags",
  "tidb-cgmon",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -5928,6 +5952,7 @@ dependencies = [
  "tidb-bindinfo",
  "tidb-breakpoint",
  "tidb-build-tags",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
@@ -6145,6 +6170,7 @@ name = "tidb-set"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-intest",
  "tidb-memory",
@@ -6233,6 +6259,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
@@ -6295,6 +6322,7 @@ dependencies = [
  "chrono",
  "prometheus 0.14.0",
  "tidb-ast",
+ "tidb-charset",
  "tidb-datatype",
  "tidb-log",
  "tidb-logutil",
@@ -6722,9 +6750,11 @@ version = "0.0.0"
 dependencies = [
  "serde_json",
  "tidb-ast",
+ "tidb-charset",
  "tidb-codec",
  "tidb-datatype",
  "tidb-ddl-build",
+ "tidb-goruntime",
  "tidb-infoschema",
  "tidb-intest",
  "tidb-kv",
@@ -6784,6 +6814,7 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-context",
@@ -6848,6 +6879,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "prost 0.14.4",
+ "tidb-charset",
  "tidb-codec",
  "tidb-datatype",
  "tidb-errno",
@@ -6912,6 +6944,7 @@ name = "tidb-texttree"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-goruntime",
 ]
 
 [[package]]
@@ -7084,6 +7117,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-charset",
  "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
@@ -7180,6 +7214,7 @@ dependencies = [
  "chrono-tz",
  "flate2",
  "prost 0.14.4",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
@@ -7277,6 +7312,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "serde_json",
+ "tidb-charset",
  "tidb-config",
  "tidb-config-configtypes",
  "tidb-config-kerneltype",

@@ -35,7 +35,9 @@
 //! selected charset decides what a "unit" is (one byte, or one character's
 //! bytes), and each builtin indexes units without knowing which it got.
 
-use tidb_datatype::{Collation, Datum, GoString};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
+use tidb_goruntime::GoString;
 
 use crate::coerce::coerce_str_bytes;
 use crate::EvalError;
@@ -170,7 +172,8 @@ impl StrUnits {
 #[cfg(test)]
 mod tests {
     use super::{is_binary_str, StrUnits};
-    use tidb_datatype::{Collation, Datum, StringDatum};
+    use tidb_datatype::{Datum, StringDatum};
+use tidb_charset::Collation;
 
     #[test]
     fn binary_charset_selects_the_byte_signature() {

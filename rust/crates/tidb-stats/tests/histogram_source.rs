@@ -23,7 +23,8 @@
 //! is the literal Go-printed float64 value (or its exact bit-identical
 //! decimal literal), so equality assertions require zero drift.
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_stats::histogram::{
     deep_slice, merge_histograms, merge_partition_histograms, value_to_string, Bucket, Histogram,
     HistogramMergeError, OutOfRangeContext, PartitionMergeOptions, TopNMergeEntry,

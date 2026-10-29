@@ -24,7 +24,8 @@
 //! `find_best_task::index_join::path`. Quota accounting uses Go's 64-bit sizes
 //! because the fallback threshold affects access selection and cache admission.
 
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 
 /// Go `Range`.
 #[derive(Clone, Debug, Default, PartialEq)]

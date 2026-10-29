@@ -11,6 +11,7 @@ description = "TiDB pkg/meta/metabuild: the context DDL builds table and index m
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-context = { path = "../tidb-context" }

@@ -467,7 +467,8 @@ mod tests {
     use super::*;
     use crate::driver::{run_insert_on, run_select_on};
     use tidb_datatype::Datum;
-    use tidb_datatype::{Charset, Collation};
+    use tidb_charset::Charset;
+use tidb_charset::Collation;
     use tidb_table::kv_table::TableCharset;
 
     /// CREATE TABLE -> INSERT -> SELECT, all from SQL strings, with rows as

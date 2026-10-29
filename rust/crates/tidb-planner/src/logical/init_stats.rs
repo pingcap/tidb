@@ -551,7 +551,8 @@ impl DataSource {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
     use tidb_expr::column::Column;
     use tidb_expr::schema::Schema;
     use tidb_stats::{Bucket, Histogram, StatsLoadedStatus};

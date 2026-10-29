@@ -1819,7 +1819,7 @@ impl SysVarDef {
                     &[FormatArg::from(self.name), FormatArg::from("NULL")],
                 )));
             }
-            let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
+            let charset = tidb_charset::get_charset_info(&validated.value).map_err(|_| {
                 ValidationError::Refused(format!("Unknown charset {}", validated.value))
             })?;
             return Ok(Validated {
@@ -2524,7 +2524,7 @@ pub fn order_by_dependency<S: AsRef<str>>(names: &[S]) -> Vec<String> {
 pub fn supported_collation(
     value: &str,
     original: &str,
-) -> Result<tidb_datatype::CollationInfo, SqlError> {
+) -> Result<tidb_charset::CollationInfo, SqlError> {
     tidb_datatype::get_supported_collation_by_name(value).map_err(|error| match error {
         tidb_datatype::CollationError::UnsupportedCollation(_) => SqlError::new_f(
             tidb_mysql::errors::errcode::ErrUnknownCollation,

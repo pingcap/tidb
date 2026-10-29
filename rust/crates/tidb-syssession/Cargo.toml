@@ -11,6 +11,8 @@ description = "TiDB system-internal session ownership and pooling."
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-intest = { path = "../tidb-intest" }

@@ -99,7 +99,7 @@ fn point_range(value: i64) -> tidb_ranger::types::Range {
     tidb_ranger::types::Range {
         low_val: vec![Datum::Int(value)],
         high_val: vec![Datum::Int(value)],
-        collators: vec![tidb_datatype::Collation::DEFAULT],
+        collators: vec![tidb_charset::Collation::DEFAULT],
         low_exclude: false,
         high_exclude: false,
     }
@@ -451,7 +451,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Int(0), Datum::Int(0)],
         high_val: vec![Datum::Int(0), Datum::Int(0)],
-        collators: vec![tidb_datatype::Collation::DEFAULT; 2],
+        collators: vec![tidb_charset::Collation::DEFAULT; 2],
         low_exclude: false,
         high_exclude: false,
     };
@@ -530,7 +530,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     string_type.set_charset_name("utf8mb4");
     string_type.set_collation_name("utf8mb4_general_ci");
     let general_ci =
-        tidb_datatype::Collation::from_name("utf8mb4_general_ci").expect("a registered collation");
+        tidb_charset::Collation::from_name("utf8mb4_general_ci").expect("a registered collation");
     let column = Column::new(3, string_type.clone());
     let mut parameter = Constant::new(
         Datum::String(tidb_datatype::StringDatum::new(Vec::new(), general_ci)),
@@ -550,7 +550,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Bytes(Vec::new())],
         high_val: vec![Datum::Bytes(Vec::new())],
-        collators: vec![tidb_datatype::Collation::Binary],
+        collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,
     };
@@ -590,7 +590,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     assert_eq!(point.ranges[0].high_val, vec![Datum::Bytes(sort_key)]);
     assert_eq!(
         point.ranges[0].collators,
-        vec![tidb_datatype::Collation::Binary],
+        vec![tidb_charset::Collation::Binary],
         "a sort-key point compares under the binary-collated key type"
     );
 }
@@ -625,7 +625,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
     let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Int(0), Datum::Int(0)],
         high_val: vec![Datum::Int(0), Datum::Int(0)],
-        collators: vec![tidb_datatype::Collation::DEFAULT; 2],
+        collators: vec![tidb_charset::Collation::DEFAULT; 2],
         low_exclude: false,
         high_exclude: false,
     };

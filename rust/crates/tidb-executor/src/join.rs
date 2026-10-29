@@ -881,7 +881,7 @@ impl IndexProbePlan {
                 ));
             };
             let Some(class) =
-                KeyClass::of(field_type, field_type, tidb_datatype::Collation::Binary)
+                KeyClass::of(field_type, field_type, tidb_charset::Collation::Binary)
             else {
                 return Err(ExecError::unsupported(
                     "a lookup probe bound has no comparable encoding",
@@ -3250,7 +3250,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let desc = plan.desc;
         let left_keys: Vec<usize> = plan.keys.iter().map(|key| key.left).collect();
         let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
-        let key_collations: Vec<tidb_datatype::Collation> =
+        let key_collations: Vec<tidb_charset::Collation> =
             plan.keys.iter().map(|key| key.collation).collect();
         let left_types = self.left_types.clone();
         let right_types = self.right_types.clone();
@@ -5930,7 +5930,7 @@ fn merge_join_rows_cmp(
     right_keys: &[usize],
     left_types: &[FieldType],
     right_types: &[FieldType],
-    collations: &[tidb_datatype::Collation],
+    collations: &[tidb_charset::Collation],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
     // Go MergeJoinExec.compare reads both current rows. Select the integer

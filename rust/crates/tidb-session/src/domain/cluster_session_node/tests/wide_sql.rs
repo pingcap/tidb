@@ -168,11 +168,11 @@ fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
         &[
             Datum::new_enum(
                 tidb_datatype::MysqlEnum::new("Y", 2),
-                tidb_datatype::Collation::Binary,
+                tidb_charset::Collation::Binary,
             ),
             Datum::new_set(
                 tidb_datatype::MysqlSet::new("Select,Grant", 1 | 8),
-                tidb_datatype::Collation::Binary,
+                tidb_charset::Collation::Binary,
             ),
         ],
         &[2, 3],

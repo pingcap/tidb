@@ -46,7 +46,7 @@ fn range(
     high_exclude: bool,
 ) -> Range {
     Range {
-        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        collators: vec![tidb_charset::Collation::Binary; low.len()],
         low_val: low,
         high_val: high,
         low_exclude,

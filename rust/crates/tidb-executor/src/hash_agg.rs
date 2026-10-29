@@ -98,11 +98,9 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{encode_bytes, encode_compact_bytes, encode_varint, NIL_FLAG, VARINT_FLAG};
-use tidb_datatype::GoString;
-use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode,
-    TimeType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
-};
+use tidb_goruntime::GoString;
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, Datum, Decimal, EvalType, FieldType, FieldTypeCode, TimeType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH};
+use tidb_charset::Collation;
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -641,7 +639,7 @@ struct AggState {
     /// worker-local sets before producing COUNT/SUM/AVG/GROUP_CONCAT. The
     /// serial path needs only `seen` and leaves this allocation absent.
     distinct_inputs: Option<Vec<DistinctInput>>,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 }
 
 struct DistinctInput {
@@ -670,10 +668,10 @@ fn sum_seed_coefficient(input: &Datum) -> Option<(i128, u32)> {
 /// The collation an aggregate's state works under: its argument's derived
 /// collation (Go `aggfuncs/builder.go` reads it off `AggFuncDesc.RetTp`
 /// once when the function is built).
-fn state_collation(func: &AggFunc) -> tidb_datatype::Collation {
+fn state_collation(func: &AggFunc) -> tidb_charset::Collation {
     func.arg
         .as_ref()
-        .map_or(tidb_datatype::Collation::DEFAULT, expr_collation)
+        .map_or(tidb_charset::Collation::DEFAULT, expr_collation)
 }
 
 /// Go `buildCount`: a single-argument `COUNT(DISTINCT)` over an integer
@@ -769,7 +767,7 @@ impl AggState {
 
     /// `new` with the collation already derived, for the executors that
     /// open a state per group and derive each function's collation once.
-    fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
+    fn with_collation(func: &AggFunc, collation: tidb_charset::Collation) -> AggState {
         AggState {
             partial: Partial::for_func(func),
             seen: (func.distinct && !count_distinct_typed(func))
@@ -797,7 +795,7 @@ impl AggState {
         Self::new_parallel_with(func, state_collation(func))
     }
 
-    fn new_parallel_with(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
+    fn new_parallel_with(func: &AggFunc, collation: tidb_charset::Collation) -> AggState {
         let mut state = Self::with_collation(func, collation);
         state.distinct_inputs = (func.distinct && !count_distinct_typed(func)).then(Vec::new);
         state
@@ -1417,7 +1415,7 @@ impl AggState {
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
 /// casting the argument to a string.
 /// The derived collation of a group-by expression.
-fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
+fn expr_collation(expr: &Expression) -> tidb_charset::Collation {
     tidb_expr::collation_derive::collation_of_node(expr)
 }
 
@@ -1430,7 +1428,7 @@ fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
 /// (and `utf8mb4_bin`'s PAD SPACE key group `'a'` with `'a  '`). Every
 /// non-string datum keeps its ordinary hash code.
 pub(crate) fn append_group_key_part(
-    collation: &tidb_datatype::Collation,
+    collation: &tidb_charset::Collation,
     datum: &Datum,
     output: &mut Vec<u8>,
 ) {
@@ -1442,7 +1440,7 @@ pub(crate) fn append_group_key_part(
     }
 }
 
-pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
+pub(crate) fn group_key_part(collation: &tidb_charset::Collation, datum: &Datum) -> Vec<u8> {
     let mut output = Vec::new();
     append_group_key_part(collation, datum, &mut output);
     output
@@ -1783,7 +1781,7 @@ impl Partial {
         value: Option<Datum>,
         extra: &[Datum],
         sort_key: Vec<Datum>,
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
     ) -> Result<(), ExecError> {
         if matches!(
             self,
@@ -2412,7 +2410,7 @@ impl Partial {
                     // ORDER BY s)` over a `_ci` column holding 'b','A','a','B'
                     // yields `a,A,b,B` rather than the byte order `A,B,a,b`
                     // (captured from TiDB).
-                    let collations: Vec<tidb_datatype::Collation> = order_by
+                    let collations: Vec<tidb_charset::Collation> = order_by
                         .iter()
                         .map(|(expr, _)| expr_collation(expr))
                         .collect();
@@ -2427,7 +2425,7 @@ impl Partial {
                             let collation = collations
                                 .get(position)
                                 .copied()
-                                .unwrap_or(tidb_datatype::Collation::DEFAULT);
+                                .unwrap_or(tidb_charset::Collation::DEFAULT);
                             let Ok(ordering) =
                                 tidb_expr::compare_datums_with_collation(a, b, collation)
                             else {
@@ -3225,7 +3223,7 @@ pub struct HashAggExec<C: HashAggContext> {
     ordered: Vec<AggState>,
     /// Each aggregate's argument collation, derived once here rather than
     /// for every new group's states.
-    state_collations: Vec<tidb_datatype::Collation>,
+    state_collations: Vec<tidb_charset::Collation>,
     group_count: usize,
     /// Go `cursor4GroupKey`: how many of `ordered` this round has emitted.
     cursor: usize,
@@ -5240,7 +5238,7 @@ mod tests {
         for byte in 0..128_u8 {
             let value = Datum::Bytes(vec![byte; 32]);
             retained_key_bytes +=
-                i64::try_from(group_key_part(&tidb_datatype::Collation::DEFAULT, &value).len())
+                i64::try_from(group_key_part(&tidb_charset::Collation::DEFAULT, &value).len())
                     .unwrap();
             total_delta += state.update(Some(value), &[], Vec::new(), None).unwrap();
         }
@@ -5461,7 +5459,7 @@ mod tests {
         use tidb_datatype::FieldTypeCode;
 
         fn varbinary() -> FieldType {
-            FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_datatype::Collation::Binary)
+            FieldType::new(FieldTypeCode::Varchar).with_collation(tidb_charset::Collation::Binary)
         }
 
         /// `SELECT JSON_ARRAYAGG(c_varbin) FROM t` over one row holding
@@ -5474,7 +5472,7 @@ mod tests {
                     Some(Datum::new_bytes(*b"ab")),
                     &[],
                     Vec::new(),
-                    tidb_datatype::Collation::DEFAULT,
+                    tidb_charset::Collation::DEFAULT,
                 )
                 .unwrap();
             let result = partial.finish(&[], 4).unwrap();
@@ -5494,7 +5492,7 @@ mod tests {
                     Some(Datum::new_string("k")),
                     &[Datum::new_bytes(*b"ab")],
                     Vec::new(),
-                    tidb_datatype::Collation::DEFAULT,
+                    tidb_charset::Collation::DEFAULT,
                 )
                 .unwrap();
             let result = partial.finish(&[], 4).unwrap();
@@ -5515,7 +5513,7 @@ mod tests {
                     Some(Datum::new_bytes(*b"ab")),
                     &[Datum::Int(1)],
                     Vec::new(),
-                    tidb_datatype::Collation::DEFAULT,
+                    tidb_charset::Collation::DEFAULT,
                 )
                 .unwrap_err();
             assert!(matches!(

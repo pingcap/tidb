@@ -57,7 +57,7 @@ pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(
         // Failing here at plan time lost that ordering (and answered the
         // wrong message). An unknown name just keeps the default charset;
         // the error belongs to the eval below.
-        if let Ok(collation) = tidb_datatype::get_default_collation(&charset) {
+        if let Ok(collation) = tidb_charset::get_default_collation(&charset) {
             ft.set_charset_name(charset);
             ft.set_collation_name(collation);
         } else {
@@ -205,7 +205,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             match charset.as_deref() {
                 Some("BINARY") => set_binary_charset(&mut ft),
                 Some(name) => {
-                    let collation = tidb_datatype::get_default_collation(name).ok()?;
+                    let collation = tidb_charset::get_default_collation(name).ok()?;
                     ft.set_charset_name(name.to_owned());
                     ft.set_collation_name(collation);
                 }
@@ -1405,7 +1405,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
                     // coercion's warnings). Leave the default charset here;
                     // the eval below produces the error.
                     if let Ok(charset) = constant.value.sql_string() {
-                        if let Ok(collation) = tidb_datatype::get_default_collation(&charset) {
+                        if let Ok(collation) = tidb_charset::get_default_collation(&charset) {
                             ft.set_charset_name(charset);
                             ft.set_collation_name(collation);
                         }

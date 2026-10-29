@@ -547,8 +547,8 @@ pub fn string_in_to_pb(
     // read back off the tested operand's own type: an explicit `COLLATE` on a
     // list item outranks the tested expression's, and reading the operand
     // could not see that. See [`check_string_collation_is_sendable`].
-    let collation = tidb_datatype::Collation::from_name(collation_name)
-        .filter(|collation| *collation != tidb_datatype::Collation::Utf8Mb4ZhPinyinTiDbAsCs)
+    let collation = tidb_charset::Collation::from_name(collation_name)
+        .filter(|collation| *collation != tidb_charset::Collation::Utf8Mb4ZhPinyinTiDbAsCs)
         .ok_or(PbPredicateError::UnderivableStringCollation)?;
 
     let mut children = vec![tested];

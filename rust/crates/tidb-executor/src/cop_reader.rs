@@ -1185,7 +1185,7 @@ fn scan_column_descriptor(
 ) -> Option<tidb_expr::pushdown_catalog::ColumnDescriptor> {
     let column = columns.get(offset as usize)?;
     let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
+    let charset = tidb_charset::get_collation_by_name(&collation)
         .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
     Some(tidb_expr::pushdown_catalog::ColumnDescriptor {
         tp: column.tp,

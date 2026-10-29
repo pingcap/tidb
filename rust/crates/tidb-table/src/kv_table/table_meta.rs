@@ -27,7 +27,9 @@
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_tablecodec::table_key::RecordHandle;
-use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{ConversionFlags, Datum, FieldType, SessionTimeZone};
+use tidb_charset::Charset;
+use tidb_charset::Collation;
 
 /// The statement-owned facts needed while stored row bytes become Datums.
 ///
@@ -611,7 +613,7 @@ impl KvColumn {
 pub fn go_json_text_round_trip(text: &mut String) {
     if tidb_hack::raw_bytes::contains_escapes(text) {
         *text =
-            tidb_datatype::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref());
+            tidb_goruntime::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref());
     }
 }
 
@@ -619,7 +621,7 @@ pub fn go_json_text_round_trip(text: &mut String) {
 /// Go string, so its bytes come back with each byte that is not UTF-8 read
 /// as U+FFFD; a value of any other kind has no string to replace.
 fn go_json_string_round_trip(value: Datum) -> Datum {
-    let replaced = |bytes: &[u8]| tidb_datatype::decode_go_utf8_lossy(bytes).into_bytes();
+    let replaced = |bytes: &[u8]| tidb_goruntime::decode_go_utf8_lossy(bytes).into_bytes();
     match value {
         Datum::String(string) => {
             Datum::new_collation_string(replaced(string.bytes()), string.collation())

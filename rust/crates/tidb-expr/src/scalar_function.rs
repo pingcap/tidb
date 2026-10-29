@@ -57,7 +57,7 @@ fn advisory_lock_name(value: Datum) -> Result<String, EvalError> {
             message: "Incorrect user-level lock name 'NULL'.".to_owned(),
         });
     };
-    let text = tidb_datatype::GoString::from_bytes(bytes).to_utf8_lossy_go();
+    let text = tidb_goruntime::GoString::from_bytes(bytes).to_utf8_lossy_go();
     if text.is_empty() || text.chars().count() > 64 {
         return Err(EvalError::AdvisoryLock {
             code: 3057,
@@ -1210,13 +1210,13 @@ impl ScalarFunction {
     /// reads its result type, and otherwise falls back to the connection
     /// collation the rest of the tier uses.
     #[must_use]
-    pub fn derived_collation(&self) -> tidb_datatype::Collation {
+    pub fn derived_collation(&self) -> tidb_charset::Collation {
         let (_, derived) = self.collation.charset_and_collation();
-        tidb_datatype::Collation::from_name(derived)
+        tidb_charset::Collation::from_name(derived)
             .or_else(|| {
                 self.ret_type
                     .as_ref()
-                    .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
+                    .and_then(|ft| tidb_charset::Collation::from_name(ft.collation_name()))
             })
             .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION)
     }
@@ -1909,7 +1909,7 @@ impl ScalarFunction {
                 .map_err(|_| EvalError::Unsupported("invalid REGEXP_LIKE argument"))?;
             if index == 0 {
                 Ok(Some(
-                    tidb_datatype::GoString::from(bytes).to_utf8_lossy_go(),
+                    tidb_goruntime::GoString::from(bytes).to_utf8_lossy_go(),
                 ))
             } else {
                 // Go hands the raw bytes to `regexp.Compile`, which refuses
@@ -2413,7 +2413,7 @@ impl ScalarFunction {
             if pattern.is_null() {
                 return Ok(Datum::Null);
             }
-            let text = tidb_datatype::GoString::from(
+            let text = tidb_goruntime::GoString::from(
                 value
                     .sql_bytes()
                     .map_err(|_| EvalError::Unsupported("invalid REGEXP operand"))?,
@@ -3119,7 +3119,7 @@ impl ScalarFunction {
                         ctx.connection_charset_info(),
                     );
                     let arg_collation =
-                        tidb_datatype::Collation::from_name(string_type.collation_name())
+                        tidb_charset::Collation::from_name(string_type.collation_name())
                             .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
                     return crate::string_packet::weight_string(
                         &value,
@@ -5739,7 +5739,8 @@ mod tests {
     fn eval_renders_binary_charset_column_as_json_opaque() {
         use crate::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
-        use tidb_datatype::{Collation, FieldTypeCode};
+        use tidb_datatype::FieldTypeCode;
+use tidb_charset::Collation;
 
         let varbinary_type =
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
@@ -5891,7 +5892,7 @@ mod tests {
     #[test]
     fn string_in_raw_key_probe_preserves_go_collation_semantics() {
         use tidb_chunk::chunk::Chunk;
-        use tidb_datatype::Collation;
+        use tidb_charset::Collation;
 
         let string =
             |value: &str| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));

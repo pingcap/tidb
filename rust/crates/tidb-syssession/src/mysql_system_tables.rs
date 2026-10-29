@@ -861,7 +861,8 @@ impl<'view> SystemRow<'view> {
 #[cfg(test)]
 mod tests {
     use tidb_ast::CiString;
-    use tidb_datatype::{FieldTypeCode, GoString};
+    use tidb_datatype::FieldTypeCode;
+use tidb_goruntime::GoString;
     use tidb_model::column::ColumnInfo;
 
     use super::*;

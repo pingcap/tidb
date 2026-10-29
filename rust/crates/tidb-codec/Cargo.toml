@@ -17,6 +17,8 @@ bytes.workspace = true
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-chunk = { path = "../tidb-chunk" }
 chrono.workspace = true
 chrono-tz.workspace = true

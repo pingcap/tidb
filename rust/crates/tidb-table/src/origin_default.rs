@@ -16,10 +16,8 @@
 //! column: the value a stored `ColumnInfo`'s default materialises to.
 
 #[allow(unused_imports)]
-use tidb_datatype::{
-    new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType, FieldTypeCode, GoString,
-    SessionTimeZone, Time,
-};
+use tidb_datatype::{new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType, FieldTypeCode, SessionTimeZone, Time};
+use tidb_goruntime::GoString;
 use tidb_datatype::RuntimeCollator;
 use tidb_model::{GoAny, GoAnyView};
 use tidb_model::column::ColumnInfo;
@@ -205,7 +203,7 @@ pub fn materialise(
             // into a GBK column validates it rather than decoding it as GBK.
             let text = Datum::new_collation_string(
                 bytes.as_bytes().to_vec(),
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             );
             // A numeric column's default is stored as its printed form, so it
             // has to be read back as a number before it is encoded as one.

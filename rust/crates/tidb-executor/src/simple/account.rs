@@ -475,7 +475,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 .unwrap_or_else(|| identity_username(current))
                 .into(),
         });
-        let password = tidb_datatype::GoString::from(password);
+        let password = tidb_goruntime::GoString::from(password);
         password_validation::validate_password(&password, user.as_ref(), &globals)
             .map_err(password_validation_error)
     }

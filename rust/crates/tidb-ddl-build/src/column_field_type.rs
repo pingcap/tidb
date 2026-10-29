@@ -62,10 +62,9 @@
 use tidb_datatype::RuntimeCollator;
 use tidb_ast::{ColumnType, ColumnTypeArg};
 use tidb_goruntime::go_runtime::GoSharedSlice;
-use tidb_datatype::{
-    enum_set_display_length_from_lengths, get_charset_info, FieldType, FieldTypeCode,
-    FieldTypeFlags, GoString, UNSPECIFIED_LENGTH,
-};
+use tidb_datatype::{enum_set_display_length_from_lengths, FieldType, FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
+use tidb_charset::get_charset_info;
+use tidb_goruntime::GoString;
 
 /// Go `charset.CharsetBin`.
 pub const BINARY_CHARSET: &str = "binary";
@@ -301,14 +300,14 @@ fn decode_enum_set_binary_literal_to_utf8(field_type: &mut FieldType) {
     if !matches!(field_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set) {
         return;
     }
-    let encoding = tidb_datatype::find_encoding(field_type.charset_name());
+    let encoding = tidb_charset::find_encoding(field_type.charset_name());
     for index in 0..field_type.elems().len() {
         if !field_type.elem_is_binary_literal(index) {
             continue;
         }
         let decoded = encoding.transform(
             field_type.elem(index).as_bytes(),
-            tidb_datatype::TransformOp::DECODE_REPLACE,
+            tidb_charset::TransformOp::DECODE_REPLACE,
         );
         field_type.set_elem(index, decoded.bytes().to_vec());
     }

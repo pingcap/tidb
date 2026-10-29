@@ -41,7 +41,8 @@ use crate::expr_collation::{
 };
 use crate::expression::Expression;
 use crate::EvalError;
-use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 const CHARSET_UTF8: &str = "utf8";
 const CHARSET_UTF8MB4: &str = "utf8mb4";
@@ -434,7 +435,7 @@ fn check_and_derive_collation_from_exprs_with_connection(
 /// other non-ASCII, non-binary argument only converts into a Unicode or
 /// binary charset.
 fn safe_convert(ec: &ExprCollation, args: &[Expression]) -> bool {
-    let encoding = tidb_datatype::find_encoding_take_utf8_as_noop(&ec.charset);
+    let encoding = tidb_charset::find_encoding_take_utf8_as_noop(&ec.charset);
     for arg in args {
         let field_type = ret_type_of(arg);
         if field_type.charset_name() == ec.charset {

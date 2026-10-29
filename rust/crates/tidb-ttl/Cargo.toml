@@ -11,6 +11,7 @@ description = "Go pkg/ttl/sqlbuilder: SQL construction for TTL scan and delete t
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }

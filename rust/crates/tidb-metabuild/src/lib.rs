@@ -353,7 +353,7 @@ mod tests {
     fn default_of_expr_ctx() {
         let ctx = Context::new([]);
         let (cs, col) = ctx.get_expr_ctx().get_charset_info();
-        let (def_cs, def_col) = tidb_datatype::get_default_charset_and_collate();
+        let (def_cs, def_col) = tidb_charset::get_default_charset_and_collate();
         assert_eq!(def_cs, cs);
         assert_eq!(def_col, col);
         let def_sql_mode = tidb_mysql::consts::get_sql_mode(tidb_mysql::consts::DefaultSQLMode)

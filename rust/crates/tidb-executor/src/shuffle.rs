@@ -1132,7 +1132,8 @@ mod tests {
 
     #[test]
     fn hash_splitter_uses_go_group_keys_for_unsigned_enum_and_decimal() {
-        use tidb_datatype::{Collation, Datum, Decimal, FieldTypeFlags, MysqlEnum};
+        use tidb_datatype::{Datum, Decimal, FieldTypeFlags, MysqlEnum};
+use tidb_charset::Collation;
         let mut unsigned = long();
         unsigned.add_flags(FieldTypeFlags::UNSIGNED);
         let mut enumeration = FieldType::new(FieldTypeCode::Enum);

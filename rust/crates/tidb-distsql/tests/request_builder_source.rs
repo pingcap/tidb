@@ -39,7 +39,7 @@ const DAG_BYTES: &[u8] = &[0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0];
 /// Collators: collate.GetBinaryCollatorSlice(1)}`.
 fn range(low: Vec<Datum>, high: Vec<Datum>, low_exclude: bool, high_exclude: bool) -> Range {
     Range {
-        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        collators: vec![tidb_charset::Collation::Binary; low.len()],
         low_val: low,
         high_val: high,
         low_exclude,

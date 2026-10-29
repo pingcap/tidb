@@ -63,7 +63,7 @@ fn large_duplicate_group_merge(memory: StatementMemory) -> super::JoinExec<tidb_
         keys: vec![MergeJoinKey {
             left: 0,
             right: 0,
-            collation: tidb_datatype::Collation::Binary,
+            collation: tidb_charset::Collation::Binary,
         }],
         desc: false,
     });
@@ -94,7 +94,7 @@ fn merge_path_matches_the_hash_path_row_for_row() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });
@@ -128,7 +128,7 @@ fn residual_conditions_still_filter_merged_groups() {
         keys: vec![MergeJoinKey {
             left: 0,
             right: 0,
-            collation: tidb_datatype::Collation::Binary,
+            collation: tidb_charset::Collation::Binary,
         }],
         desc: false,
     });
@@ -155,14 +155,14 @@ fn a_descending_merge_finds_the_same_matches() {
             let mut keys = vec![MergeJoinKey {
                 left: 0,
                 right: 1,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }];
             if composite {
                 conditions.push(eq_on(1, 0, 2));
                 keys.push(MergeJoinKey {
                     left: 1,
                     right: 0,
-                    collation: tidb_datatype::Collation::Binary,
+                    collation: tidb_charset::Collation::Binary,
                 });
             }
             let mut merged = join_of(kind, conditions.clone(), left.clone(), right.clone(), 2);
@@ -193,7 +193,7 @@ fn an_empty_side_still_emits_the_preserved_rows() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });
@@ -218,7 +218,7 @@ fn a_group_spanning_chunks_is_still_one_group() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });
@@ -243,7 +243,7 @@ fn a_single_row_inner_group_uses_child_until_chunk_boundary() {
         keys: vec![MergeJoinKey {
             left: 0,
             right: 0,
-            collation: tidb_datatype::Collation::Binary,
+            collation: tidb_charset::Collation::Binary,
         }],
         desc: false,
     });
@@ -296,7 +296,7 @@ fn a_large_outer_duplicate_run_remains_streaming() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });
@@ -375,7 +375,7 @@ fn right_merge_spills_its_left_inner_group() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });
@@ -483,7 +483,7 @@ fn merge_join_executes_the_marker_kinds() {
             keys: vec![MergeJoinKey {
                 left: 0,
                 right: 0,
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             }],
             desc: false,
         });

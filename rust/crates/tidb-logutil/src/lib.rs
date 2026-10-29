@@ -681,7 +681,7 @@ pub fn with_category(base: &Logger, category: &str) -> Logger {
 
 /// Trace info attached to logs. Go's `logutil` imports this straight from
 /// `pkg/util/tracing`, so the type has one owner here too.
-pub use tidb_tracing::TraceInfo;
+use tidb_tracing::TraceInfo;
 
 /// Go `fieldsFromTraceInfo`.
 pub fn fields_from_trace_info(info: Option<&TraceInfo>) -> Vec<Field> {

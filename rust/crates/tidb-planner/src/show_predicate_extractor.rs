@@ -96,7 +96,7 @@ impl ShowBaseExtractor {
     #[must_use]
     pub fn field_pattern_like(&self) -> Option<tidb_datatype::WildcardPattern> {
         (!self.field_pattern.is_empty())
-            .then(|| tidb_datatype::Collation::Utf8Mb4Bin.pattern(&self.field_pattern, b'\\'))
+            .then(|| tidb_charset::Collation::Utf8Mb4Bin.pattern(&self.field_pattern, b'\\'))
     }
 
     /// Go `ExplainInfo`.

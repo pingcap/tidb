@@ -294,7 +294,7 @@ fn test_expression_memory_usage() {
     let mut c4 = Constant::default();
     c4.value = Datum::String(tidb_datatype::StringDatum::new(
         "11",
-        tidb_datatype::Collation::Utf8Mb4Bin,
+        tidb_charset::Collation::Utf8Mb4Bin,
     ));
     assert!(c4.memory_usage() > c3.memory_usage());
 }

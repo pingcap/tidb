@@ -1810,9 +1810,9 @@ impl KvTable {
     pub fn charset(&self) -> TableCharset {
         let meta = self.meta.read();
         TableCharset {
-            charset: tidb_datatype::Charset::from_name(&meta.charset)
+            charset: tidb_charset::Charset::from_name(&meta.charset)
                 .unwrap_or(TableCharset::default().charset),
-            collation: tidb_datatype::Collation::from_name(&meta.collate)
+            collation: tidb_charset::Collation::from_name(&meta.collate)
                 .unwrap_or(TableCharset::default().collation),
         }
     }
@@ -4375,7 +4375,7 @@ fn batch_check_key_text<'a>(values: impl Iterator<Item = &'a Datum>) -> String {
         .map(|value| {
             let bytes: Option<(&[u8], bool)> = match value {
                 Datum::Bytes(bytes) => Some((bytes, true)),
-                Datum::String(text) if text.collation() == tidb_datatype::Collation::Binary => {
+                Datum::String(text) if text.collation() == tidb_charset::Collation::Binary => {
                     Some((text.bytes(), true))
                 }
                 Datum::Bit(literal) | Datum::BinaryLiteral(literal) => {

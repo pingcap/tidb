@@ -39,7 +39,8 @@
 use tidb_datatype::CollationCollator;
 #[cfg(test)]
 use tidb_codec::encode_key;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 #[cfg(test)]
 use tidb_stats::cmsketch::CmsSketch;
 use tidb_stats::cmsketch::TopN;
@@ -804,7 +805,8 @@ pub fn get_row_count_by_column_ranges(
 #[cfg(test)]
 mod tests {
     use super::{get_row_count_by_column_ranges, pseudo_equal_count, ColumnRange};
-    use tidb_datatype::{Collation, Datum, StringDatum};
+    use tidb_datatype::{Datum, StringDatum};
+use tidb_charset::Collation;
 
     #[test]
     fn loaded_column_estimation_preserves_invalid_bound_errors() {
@@ -2038,7 +2040,7 @@ mod recursive_index_estimation_tests {
             Vec::new(),
         ];
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
             low_exclude: false,
@@ -2084,7 +2086,7 @@ mod recursive_index_estimation_tests {
         };
         let columns = vec![Some(&column), None];
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
             low_exclude: false,
@@ -2155,7 +2157,7 @@ mod recursive_index_estimation_tests {
             vec![RecursiveIndexStats::new(Some(&candidate), vec![None], IndexRowCounts::unscaled(100, 0))],
         ];
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
             high_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
             low_exclude: false,
@@ -2220,7 +2222,7 @@ mod recursive_index_estimation_tests {
             Vec::new(),
         ];
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
             low_exclude: false,
@@ -2252,7 +2254,7 @@ mod recursive_index_estimation_tests {
             (Datum::Raw(vec![1]), Datum::Raw(vec![1])),
         ] {
             let range = Range {
-                collators: vec![tidb_datatype::Collation::Binary; 1],
+                collators: vec![tidb_charset::Collation::Binary; 1],
                 low_val: vec![low],
                 high_val: vec![high],
                 low_exclude: false,
@@ -2290,7 +2292,7 @@ mod recursive_index_estimation_tests {
             unsigned: false,
         };
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 1],
+            collators: vec![tidb_charset::Collation::Binary; 1],
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::VectorFloat32(
                 tidb_datatype::VectorFloat32::must_create(vec![1.0]),
@@ -2325,7 +2327,7 @@ mod recursive_index_estimation_tests {
             })
             .collect::<Vec<_>>();
         let range = Range {
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
             high_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
             low_exclude: false,

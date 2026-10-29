@@ -241,7 +241,7 @@ pub(crate) fn extremum_with_signature(
     signature: Option<GlSignature>,
     arg_decimals: &[i64],
     all_constant: bool,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if vals.is_empty() {

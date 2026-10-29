@@ -23,7 +23,10 @@
 
 use std::fmt;
 
-use tidb_datatype::{find_encoding, get_charset_info_by_id, Charset, TransformOp};
+use tidb_charset::find_encoding;
+use tidb_charset::get_charset_info_by_id;
+use tidb_charset::Charset;
+use tidb_charset::TransformOp;
 
 use crate::result::is_string_column_type as source_is_string_column_type;
 

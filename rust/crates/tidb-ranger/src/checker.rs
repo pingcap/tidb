@@ -301,7 +301,8 @@ impl ConditionChecker<'_> {
 mod tests {
     use super::*;
     use tidb_ast::CiString;
-    use tidb_datatype::{Collation, Datum, FieldType};
+    use tidb_datatype::{Datum, FieldType};
+use tidb_charset::Collation;
     use tidb_expr::constant::Constant;
 
     fn int_column(unique_id: i64) -> Column {

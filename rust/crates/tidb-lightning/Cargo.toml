@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB lightning packages: Go pkg/lightning (Rust rewrite)."
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-extsort = { path = "../tidb-extsort" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-promutil = { path = "../tidb-promutil" }

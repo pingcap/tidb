@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-pdhelper = { path = "../tidb-pdhelper" }
 tidb-driver-error = { path = "../tidb-driver-error" }

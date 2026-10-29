@@ -65,7 +65,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tidb_tablecodec::table_key::encode_row_key_with_handle;
 #[cfg(test)]
-use tidb_datatype::{FieldTypeCode, GoString};
+use tidb_datatype::FieldTypeCode;
+use tidb_goruntime::GoString;
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone, Time};
 use tidb_table::kv_table::{KvTable, TableHandle};
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
@@ -1156,7 +1157,7 @@ mod tests {
             literal_default(&column, "t").expect("the raw string default materialises"),
             Datum::new_collation_string(
                 vec![0xff, 0x80, b'x'],
-                tidb_datatype::Collation::Utf8Mb4Bin
+                tidb_charset::Collation::Utf8Mb4Bin
             )
         );
 

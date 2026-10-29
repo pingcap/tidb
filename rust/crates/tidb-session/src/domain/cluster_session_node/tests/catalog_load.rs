@@ -114,7 +114,7 @@ fn ci_catalog() -> ClusterCatalog {
             "ElemsIsBinaryLit":null,"Array":false}"#,
     )
     .unwrap();
-    assert_eq!(text.collation(), tidb_datatype::Collation::Utf8Mb4GeneralCi);
+    assert_eq!(text.collation(), tidb_charset::Collation::Utf8Mb4GeneralCi);
     let mut c = ColumnInfo::new(2, "c", text);
     c.offset = 1;
     one_table_catalog(TableInfo {

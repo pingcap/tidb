@@ -209,7 +209,7 @@ mod tests {
         let text = |value: &str| {
             Datum::String(tidb_datatype::StringDatum::new(
                 value.as_bytes().to_vec(),
-                tidb_datatype::Collation::Binary,
+                tidb_charset::Collation::Binary,
             ))
         };
         for (low, high, expected) in [
@@ -220,7 +220,7 @@ mod tests {
             let ranges = vec![tidb_ranger::types::Range {
                 low_val: vec![low],
                 high_val: vec![high],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             }];

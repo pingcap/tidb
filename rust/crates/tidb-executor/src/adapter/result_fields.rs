@@ -16,7 +16,8 @@
 //! `colNames2ResultFields`. Their wire form, Go `ConvertColumnInfo`, is the
 //! server's (`tidb-server::column_convert`).
 
-use tidb_datatype::{Collation, FieldTypeCode};
+use tidb_datatype::FieldTypeCode;
+use tidb_charset::Collation;
 use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
 use tidb_protocol::ColumnDefault;
 

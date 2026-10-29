@@ -96,7 +96,7 @@ pub fn is_table_tiflash_supported(
     for column in table.cols().iter_deref() {
         let column = column.read();
         let charset = column.field_type.charset_name();
-        if !tidb_datatype::TIFLASH_SUPPORTED_CHARSETS.contains(&charset) {
+        if !tidb_charset::TIFLASH_SUPPORTED_CHARSETS.contains(&charset) {
             return Err(MysqlError::from_terror(&tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_UNSUPPORTED_CHARSET_TABLE.generate_with_stack_by_args(&[charset.into()])));
         }
     }

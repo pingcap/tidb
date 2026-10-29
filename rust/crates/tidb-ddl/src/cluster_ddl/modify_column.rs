@@ -3280,7 +3280,7 @@ fn merge_reorg_warnings(job: &Job, warnings: &[(u16, String, i64)]) {
         .clone();
     let (mut warnings_map, mut counts) = (warnings_map.write(), counts.write());
     for (code, message, count) in warnings {
-        let key: tidb_datatype::GoString = format!("types:{code}").into();
+        let key: tidb_goruntime::GoString = format!("types:{code}").into();
         *counts.entry(key.clone()).or_insert(0) += count;
         warnings_map.entry(key).or_insert_with(|| {
             Some(GoShared::new(

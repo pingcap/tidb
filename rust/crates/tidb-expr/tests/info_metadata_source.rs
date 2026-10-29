@@ -15,7 +15,8 @@
 //! Source-contract cases from `pkg/expression/builtin_info.go` and
 //! `tests/integrationtest/r/expression/charset_and_collation.result`.
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_expr::{
     rewriter::{rewrite_expr, rewrite_expr_resolved, ColumnResolver},
     NoColumns,

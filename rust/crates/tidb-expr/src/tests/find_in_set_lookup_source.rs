@@ -133,7 +133,7 @@ fn find_in_set_strlist_cache_lifecycle() {
     use std::sync::Arc;
 
     let cache = BuiltinFuncCache::default();
-    let collation = tidb_datatype::Collation::Utf8Mb4GeneralCi;
+    let collation = tidb_charset::Collation::Utf8Mb4GeneralCi;
     let list = Datum::new_collation_string("a,b,a", collation);
     let first = cache
         .get_or_init_cache(11, || build_find_in_set_lookup(&list, collation))

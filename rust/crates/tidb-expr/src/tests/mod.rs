@@ -257,7 +257,7 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
     assert_eq!(
         string_fn::ord(&[Datum::new_collation_string(
             vec![0xe4, 0xbd, 0xa0],
-            tidb_datatype::Collation::Binary,
+            tidb_charset::Collation::Binary,
         )])
         .unwrap(),
         Datum::Int(0xe4)
@@ -822,7 +822,7 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
             &[
                 Datum::new_collation_string(
                     vec![0x61, 0x62, 0xff],
-                    tidb_datatype::Collation::Binary,
+                    tidb_charset::Collation::Binary,
                 ),
                 Datum::Int(1),
             ],

@@ -1685,7 +1685,7 @@ fn resolved_cast_target(
         match charset.as_deref() {
             Some("BINARY" | "binary") => set_binary_charset(&mut ret_type),
             Some(charset) => {
-                let charset = tidb_datatype::Charset::from_name(charset)
+                let charset = tidb_charset::Charset::from_name(charset)
                     .ok_or(EvalError::Unsupported("unknown CAST character set"))?;
                 ret_type.set_charset_name(charset.name());
                 ret_type.set_collation_name(charset.default_collation().name());
@@ -2150,7 +2150,7 @@ fn rewrite_leaf_literal(
         Expr::CharsetBinary { charset, value } => {
             let mut rewritten = rewrite_leaf(value, resolver)?;
             let lower = charset.to_ascii_lowercase();
-            let collation = tidb_datatype::get_default_collation(&lower)
+            let collation = tidb_charset::get_default_collation(&lower)
                 .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
             let Expression::Constant(constant) = &mut rewritten else {
                 return Err(EvalError::Unsupported(
@@ -2226,7 +2226,7 @@ fn rewrite_leaf_literal(
         Expr::Collate { expr, collation } => {
             let mut arg = rewrite_expr_resolved(expr, resolver)?;
             let name = collation.to_ascii_lowercase();
-            let Some(collation) = tidb_datatype::Collation::from_name(&name) else {
+            let Some(collation) = tidb_charset::Collation::from_name(&name) else {
                 return Err(EvalError::UnknownCollation(name));
             };
             let is_json = arg
@@ -2292,14 +2292,14 @@ fn rewrite_leaf_literal(
         // the result as explicitly introduced.
         Expr::CharsetString { charset, value } => {
             let charset = charset.to_ascii_lowercase();
-            let mut collation_name = tidb_datatype::get_default_collation_legacy(&charset)
+            let mut collation_name = tidb_charset::get_default_collation_legacy(&charset)
                 .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
             // Go `adjustUTF8MB4Collation`: a `_utf8mb4` introducer takes the
             // session's `default_collation_for_utf8mb4`.
             if charset == "utf8mb4" {
                 collation_name = resolver.default_collation_for_utf8mb4();
             }
-            let collation = tidb_datatype::Collation::from_name(&collation_name)
+            let collation = tidb_charset::Collation::from_name(&collation_name)
                 .ok_or(EvalError::Unsupported("unknown character introducer"))?;
             let bytes = tidb_hack::raw_bytes::str_to_bytes(value).into_owned();
             let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -2313,7 +2313,7 @@ fn rewrite_leaf_literal(
                 tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET
                     | tidb_datatype::FieldTypeFlags::NOT_NULL,
             );
-            let datum = if collation == tidb_datatype::Collation::Binary {
+            let datum = if collation == tidb_charset::Collation::Binary {
                 ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
                 Datum::Bytes(bytes)
             } else {
@@ -2488,7 +2488,7 @@ fn rewrite_leaf_compound(
                         &args,
                     )
                     .ok()
-                    .and_then(|derived| tidb_datatype::Collation::from_name(&derived.collation))
+                    .and_then(|derived| tidb_charset::Collation::from_name(&derived.collation))
                 })
                 .flatten();
             let key_of = |value: &tidb_datatype::Datum| -> InKey {
@@ -3412,7 +3412,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     if !constant.value.is_null() {
                         if let Ok(charset) = constant.value.sql_string() {
                             let lowered_charset = charset.to_ascii_lowercase();
-                            if tidb_datatype::get_default_collation(&lowered_charset).is_err() {
+                            if tidb_charset::get_default_collation(&lowered_charset).is_err() {
                                 // go's build-time arg casts warn BEFORE the
                                 // charset check fails the plan (oracle:
                                 // CHAR('中文测试', 'ünïcödé') keeps the 1292
@@ -3603,7 +3603,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // RESULT type carries the charset the value is retagged with.
         Expr::ConvertUsing { expr, charset } => {
             let charset = charset.to_ascii_lowercase();
-            if !tidb_datatype::is_supported_encoding(&charset) {
+            if !tidb_charset::is_supported_encoding(&charset) {
                 return Err(EvalError::Unsupported("unknown character set"));
             }
             let mut ret_type = FieldType::new(FieldTypeCode::VarString);
@@ -3614,7 +3614,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if charset == "binary" {
                 set_binary_charset(&mut ret_type);
             } else {
-                let target = tidb_datatype::Charset::from_name(&charset)
+                let target = tidb_charset::Charset::from_name(&charset)
                     .expect("a supported encoding is a registered charset");
                 ret_type.set_charset_name(target.name());
                 ret_type.set_collation_name(target.default_collation().name());

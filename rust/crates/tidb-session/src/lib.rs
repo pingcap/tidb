@@ -1963,7 +1963,7 @@ impl Session {
     /// An id outside Go's collation table is Go's `GetCharsetInfoByID` error,
     /// which fails the connection; its text is the error's whole diagnostic.
     pub fn set_collation(&mut self, collation_id: i32) -> Result<(), String> {
-        let (charset, collation, error) = tidb_datatype::get_charset_info_by_id(collation_id);
+        let (charset, collation, error) = tidb_charset::get_charset_info_by_id(collation_id);
         if let Some(error) = error {
             // Go logs this inside `GetCharsetInfoByID`; tidb-datatype has no
             // logger, so the warning is raised by its caller here.

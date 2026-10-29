@@ -228,7 +228,7 @@ impl Constant {
                 field
                     .runtime_collator_with_mode(true)
                     .new_collation()
-                    .unwrap_or(tidb_datatype::Collation::Binary),
+                    .unwrap_or(tidb_charset::Collation::Binary),
             ))),
             EvalType::Decimal => {
                 let (value, error) = value.to_decimal_with_context(&context).map_err(|_| {

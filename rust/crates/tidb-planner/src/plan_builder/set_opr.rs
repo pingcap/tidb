@@ -80,10 +80,8 @@
 //!   half names its own uses.
 
 use tidb_ast::{SetOp, SetOprStmt, SetOprTerm, SetOprTermBody};
-use tidb_datatype::{
-    agg_field_type, Charset, FieldName, FieldType, FieldTypeCode, FieldTypeFlags,
-    UNSPECIFIED_LENGTH,
-};
+use tidb_datatype::{agg_field_type, FieldName, FieldType, FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
+use tidb_charset::Charset;
 use tidb_expr::collation_derive::check_and_derive_collation_from_exprs;
 use tidb_expr::column::Column;
 use tidb_expr::expr_collation::Coercibility;

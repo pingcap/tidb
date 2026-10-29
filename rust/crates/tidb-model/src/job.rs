@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::value::RawValue;
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_terror::TerrorError;
 
 use crate::action_type::ActionType;

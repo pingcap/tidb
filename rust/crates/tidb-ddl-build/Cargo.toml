@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-infoschema = { path = "../tidb-infoschema" }

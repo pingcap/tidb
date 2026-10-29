@@ -112,7 +112,7 @@ pub enum ScanPredicate {
         negated: bool,
         /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
         /// note on it.
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
     },
     /// A pushable string scalar tested against non-NULL string constants.
     ///
@@ -128,7 +128,7 @@ pub enum ScanPredicate {
         negated: bool,
         /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
         /// note on it.
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
     },
     /// `string_column LIKE constant_pattern` with a constant escape byte.
     /// `NOT LIKE` is represented by the existing [`Self::Not`] wrapper, as
@@ -144,7 +144,7 @@ pub enum ScanPredicate {
         escape: u8,
         /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
         /// note on it.
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
     },
     /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
     /// catalog resolved and whose signature TiKV evaluates.
@@ -197,7 +197,7 @@ pub struct ScanComparison {
     pub column_on_left: bool,
     /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s note
     /// on it. Meaningful only for a string comparison.
-    pub collation: tidb_datatype::Collation,
+    pub collation: tidb_charset::Collation,
 }
 
 /// A source-ordered column-to-column comparison.
@@ -246,7 +246,7 @@ enum FastScanFilter {
         column_offset: usize,
         pattern: Vec<u8>,
         escape: u8,
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
         negated: bool,
     },
 }

@@ -2134,7 +2134,7 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
         Some(EvalType::Int) => rendered(),
         Some(EvalType::String) => {
             let binary =
-                field_type.is_some_and(|ft| ft.charset() == tidb_datatype::Charset::Binary);
+                field_type.is_some_and(|ft| ft.charset() == tidb_charset::Charset::Binary);
             let bytes = match datum {
                 Datum::Bytes(value) => Some(value.as_slice()),
                 Datum::String(value) => Some(value.bytes()),

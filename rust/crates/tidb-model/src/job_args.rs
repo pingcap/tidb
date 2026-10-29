@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use tidb_ast::CiString;
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 
 use crate::table::ConstraintInfo;
 use crate::{

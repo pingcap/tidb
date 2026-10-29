@@ -11,4 +11,5 @@ description = "TiDB util/texttree: Go pkg/util/texttree (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-datatype = { path = "../tidb-datatype" }

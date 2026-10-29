@@ -16,7 +16,8 @@
 
 use std::any::Any;
 
-use tidb_datatype::{FieldType, FieldTypeBuilder, FieldTypeCode, GoString};
+use tidb_datatype::{FieldType, FieldTypeBuilder, FieldTypeCode};
+use tidb_goruntime::GoString;
 use tidb_mysql::types::{
     AutoIncrementFlag, MultipleKeyFlag, NoDefaultValueFlag, NotNullFlag, PriKeyFlag, TypeDate,
     TypeDatetime, TypeDouble, TypeDuration, TypeEnum, TypeFloat, TypeInt24, TypeJSON, TypeLong,

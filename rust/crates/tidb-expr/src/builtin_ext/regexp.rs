@@ -55,7 +55,7 @@ pub(crate) fn dispatch_with_cache(
     context_id: u64,
     cache_pattern: bool,
     cache_replacement: bool,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
     regexp_cache: &BuiltinFuncCache<CachedRegexp>,
     replacement_cache: &BuiltinFuncCache<Vec<ReplacementPart>>,
 ) -> Option<Result<Datum, EvalError>> {

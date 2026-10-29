@@ -21,7 +21,8 @@ use crate::cardinality::row_count_estimator::{
 };
 use tidb_ranger::types::Range;
 use crate::stats_info::HistColl;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
@@ -316,7 +317,8 @@ mod tests {
     use tidb_ranger::types::Range;
     use crate::stats_info::HistColl;
     use std::sync::Arc;
-    use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
     use tidb_expr::column::Column;
     use tidb_expr::constant::Constant;
     use tidb_expr::expression::Expression;

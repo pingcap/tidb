@@ -203,7 +203,8 @@ fn utf8_and_case_insensitive_signatures_are_untouched() {
 #[test]
 fn only_a_binary_derivation_switches_locate_to_bytes() {
     use crate::string_fn::locate;
-    use tidb_datatype::{Collation, Datum};
+    use tidb_datatype::Datum;
+use tidb_charset::Collation;
 
     let ci = Collation::Utf8Mb4GeneralCi;
     let bin = Collation::Utf8Mb4Bin;

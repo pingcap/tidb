@@ -14,7 +14,7 @@
 
 //! Go `pkg/util/password-validation`: password-policy validation.
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_vardef::option_values::tidb_opt_on;
 
 const VALIDATE_PASSWORD_POLICY: &str = "validate_password.policy";

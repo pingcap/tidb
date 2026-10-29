@@ -311,7 +311,7 @@ pub fn convert_string_ft_to_binary_collate(ft: &FieldType) -> FieldType {
     let mut new_tp = ft.clone();
     new_tp.set_charset_name("binary");
     new_tp.set_collation_name("binary");
-    new_tp.set_collation(tidb_datatype::Collation::Binary);
+    new_tp.set_collation(tidb_charset::Collation::Binary);
     new_tp
 }
 
@@ -526,7 +526,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
     for cond in access_conditions {
         let built = builder.build(cond.borrow(), &new_tp, col_len, true);
         range_points =
-            super::points::intersection(&range_points, &built, tidb_datatype::Collation::Binary)?;
+            super::points::intersection(&range_points, &built, tidb_charset::Collation::Binary)?;
         if let Some(error) = builder.err.take() {
             return Err(error);
         }
@@ -709,7 +709,7 @@ pub fn range_single_col_to_string(
     low_exclude: bool,
     high_exclude: bool,
     col_name: &str,
-    collator: tidb_datatype::Collation,
+    collator: tidb_charset::Collation,
 ) -> Result<String, String> {
     let low_special = matches!(low, Datum::Null | Datum::MinNotNull | Datum::MaxValue);
     let high_special = matches!(high, Datum::Null | Datum::MinNotNull | Datum::MaxValue);
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn range_single_column_sql_rendering_matches_go() {
-        let binary = tidb_datatype::Collation::Binary;
+        let binary = tidb_charset::Collation::Binary;
         assert_eq!(
             range_single_col_to_string(&Datum::Int(7), &Datum::Int(7), false, false, "a", binary,)
                 .unwrap(),
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn ranges_to_string_renders_composite_and_full_ranges() {
-        let binary = tidb_datatype::Collation::Binary;
+        let binary = tidb_charset::Collation::Binary;
         let composite = Range {
             low_val: vec![Datum::Int(1), Datum::Int(2)],
             high_val: vec![Datum::Int(1), Datum::Int(5)],
@@ -907,7 +907,7 @@ mod tests {
 
     #[test]
     fn ranges_to_string_rejects_malformed_composite_ranges() {
-        let binary = tidb_datatype::Collation::Binary;
+        let binary = tidb_charset::Collation::Binary;
         let mismatched = Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![],
@@ -977,7 +977,7 @@ mod tests {
         let int_range = |low: i64, high: i64, high_exclude: bool| Range {
             low_val: vec![Datum::Int(low)],
             high_val: vec![Datum::Int(high)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude,
         };
@@ -1008,7 +1008,7 @@ mod tests {
                     vec![Range {
                         low_val: vec![low.clone()],
                         high_val: vec![high.clone()],
-                        collators: vec![tidb_datatype::Collation::Binary],
+                        collators: vec![tidb_charset::Collation::Binary],
                         low_exclude: false,
                         high_exclude: false,
                     }],

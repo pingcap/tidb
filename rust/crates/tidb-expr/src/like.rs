@@ -16,7 +16,7 @@
 //! Called directly from `crate::eval_in`'s `Expr::Like` arm.
 
 use tidb_datatype::CollationCollator;
-use tidb_datatype::Collation;
+use tidb_charset::Collation;
 use tidb_stringutil::{lower_one_string, lower_one_string_excluding_escape_char};
 
 /// Go `collate.WildcardPattern`, retained by `builtinLikeSig.patternCache`.
@@ -153,7 +153,7 @@ fn lower_ascii_excluding_escape(value: &[u8], escape: u8) -> (Vec<u8>, u8) {
 
 #[cfg(test)]
 mod tests {
-    use tidb_datatype::Collation;
+    use tidb_charset::Collation;
 
     use super::{ilike_match, like_match, like_match_with_collation};
 

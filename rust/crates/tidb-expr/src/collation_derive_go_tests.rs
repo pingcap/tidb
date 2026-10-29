@@ -85,12 +85,12 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
         }
         assert_eq!(
             super::collation_of_node(&expression),
-            tidb_datatype::Collation::Utf8Mb4UnicodeCi
+            tidb_charset::Collation::Utf8Mb4UnicodeCi
         );
-        super::set_explicit_collation(&mut expression, tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        super::set_explicit_collation(&mut expression, tidb_charset::Collation::Utf8Mb4GeneralCi);
         assert_eq!(
             super::collation_of_node(&expression),
-            tidb_datatype::Collation::Utf8Mb4GeneralCi
+            tidb_charset::Collation::Utf8Mb4GeneralCi
         );
     }
 
@@ -108,7 +108,7 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
         assert_eq!(read.collation_name(), null_type.collation_name());
         assert_eq!(
             super::collation_of_node(&expression),
-            tidb_datatype::Collation::Binary
+            tidb_charset::Collation::Binary
         );
     }
 }

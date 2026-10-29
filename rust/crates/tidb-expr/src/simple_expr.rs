@@ -1593,7 +1593,7 @@ mod tests {
             0,
             &crate::Datum::Enum(
                 tidb_datatype::MysqlEnum::new("y", 2),
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             ),
         );
         let row = chunk.get_row(0);

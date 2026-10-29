@@ -17,7 +17,8 @@
 //! its staged rows.
 
 use tidb_datatype::CollationCollator;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 use tidb_expr::expression::Expression;
 
 /// The collation a MIN/MAX partial orders under: its ARGUMENT expression's

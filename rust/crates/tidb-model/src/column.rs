@@ -42,7 +42,7 @@ use tidb_datatype::type_to_str;
 use tidb_datatype::FieldType;
 use tidb_datatype::FieldTypeCode;
 use tidb_datatype::FieldTypeFlags;
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_parser_types::parser_types_errors::ERR_INVALID_DEFAULT;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
 use tidb_mysql::errors::{errname, FormatArg};

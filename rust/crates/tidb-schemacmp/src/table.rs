@@ -21,7 +21,8 @@ use std::rc::Rc;
 
 use tidb_ast::IndexType;
 use tidb_parser_format::{RestoreCtx, RestoreFlags, RestoreWriter};
-use tidb_datatype::{FieldType, GoString, UNSPECIFIED_LENGTH};
+use tidb_datatype::{FieldType, UNSPECIFIED_LENGTH};
+use tidb_goruntime::GoString;
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;

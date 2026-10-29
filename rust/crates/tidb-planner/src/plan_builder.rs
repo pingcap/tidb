@@ -4936,7 +4936,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             if let Expr::Collate { collation, .. } = unwrapped {
                 if let Some(collation) =
-                    tidb_datatype::Collation::from_name(&collation.to_ascii_lowercase())
+                    tidb_charset::Collation::from_name(&collation.to_ascii_lowercase())
                 {
                     // go's `SetCollationExpr` (`expression_rewriter.go:1311`):
                     // a COLUMN (or JSON) arg wraps a CAST so the original

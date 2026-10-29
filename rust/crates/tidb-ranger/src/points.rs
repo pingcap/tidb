@@ -22,7 +22,8 @@
 //! The `builder` (Go's `build` dispatch over comparison/IN/LIKE/NOT
 //! expressions) continues in this file next; nothing lands as a stub.
 
-use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
 use super::types::Ranges;
 

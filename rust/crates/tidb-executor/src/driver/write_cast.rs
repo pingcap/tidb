@@ -551,7 +551,8 @@ pub fn cast_value_for_assignment(
 #[cfg(test)]
 mod source_tests {
     use super::*;
-    use tidb_datatype::{BinaryLiteral, Collation, FieldTypeCode, FieldTypeFlags};
+    use tidb_datatype::{BinaryLiteral, FieldTypeCode, FieldTypeFlags};
+use tidb_charset::Collation;
 
     #[test]
     fn ordinal_owner_batch_table_callers_keep_json_warning_and_ordinal_value() {

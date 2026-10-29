@@ -471,7 +471,8 @@ impl ViewerState {
         needs_text: bool,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use chrono::{DateTime, Local};
-        use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
+        use tidb_datatype::{core_time_from_datetime, Datum, MysqlEnum, Time, TimeType};
+use tidb_charset::Collation;
 
         let Some(registry) =
             registry.or_else(|| self.registry.as_ref())
@@ -789,7 +790,8 @@ impl ViewerState {
         needs_text: bool,
         needs_key_info: bool,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        use tidb_datatype::{Collation, StringDatum};
+        use tidb_datatype::StringDatum;
+use tidb_charset::Collation;
         use tidb_deadlockhistory::{
             COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
             COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,

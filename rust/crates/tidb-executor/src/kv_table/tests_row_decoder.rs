@@ -98,11 +98,11 @@ fn check_generated_matching(code: tidb_datatype::FieldTypeCode, mode: bool, expe
         match &row.values[0] {
             Datum::Enum(value, collation) => {
                 assert_eq!(value.value(), expected);
-                assert_eq!(*collation, tidb_datatype::Collation::Utf8Mb4GeneralCi);
+                assert_eq!(*collation, tidb_charset::Collation::Utf8Mb4GeneralCi);
             }
             Datum::Set(value, collation) => {
                 assert_eq!(value.value(), expected);
-                assert_eq!(*collation, tidb_datatype::Collation::Utf8Mb4GeneralCi);
+                assert_eq!(*collation, tidb_charset::Collation::Utf8Mb4GeneralCi);
             }
             other => panic!("unexpected converted datum: {other:?}"),
         }

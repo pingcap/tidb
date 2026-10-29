@@ -34,7 +34,8 @@
 use super::e;
 use crate::{apply_binary, Datum, Decimal, EvalError};
 use tidb_ast::BinaryOp;
-use tidb_datatype::{BinaryLiteral, Collation, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType};
+use tidb_datatype::{BinaryLiteral, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType};
+use tidb_charset::Collation;
 
 fn apply(op: BinaryOp, l: Datum, r: Datum) -> Datum {
     apply_binary(op, l.clone(), r.clone())

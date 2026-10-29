@@ -245,7 +245,7 @@ fn go_test_ceil_and_floor() {
         let value = eval_as(name, vec![arg.clone()], ret.clone())
             .unwrap_or_else(|error| panic!("{name}({arg:?}): {error:?}"));
         assert!(
-            value.compare(expected, tidb_datatype::Collation::Binary)
+            value.compare(expected, tidb_charset::Collation::Binary)
                 == Ok(std::cmp::Ordering::Equal),
             "{name}({arg:?}) = {value:?}, want {expected:?}"
         );

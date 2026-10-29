@@ -304,7 +304,7 @@ pub trait PreparedExec: super::CompilerSession {
         if !string_read || field_type.charset_name().is_empty() {
             return value;
         }
-        match tidb_datatype::Collation::from_name(field_type.collation_name()) {
+        match tidb_charset::Collation::from_name(field_type.collation_name()) {
             Some(collation) if collation != string.collation() => {
                 Datum::new_collation_string(string.bytes(), collation)
             }

@@ -26,10 +26,8 @@
 
 use crate::chunk::Chunk;
 use crate::CellBytes;
-use tidb_datatype::{
-    deserialize_vector_float32, Datum, Decimal, EvalType, FieldType, FieldTypeCode, GoString,
-    MyDecimal, MySqlDuration, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE, UNSPECIFIED_LENGTH,
-};
+use tidb_datatype::{deserialize_vector_float32, Datum, Decimal, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE, UNSPECIFIED_LENGTH};
+use tidb_goruntime::GoString;
 
 /// Shared typed-cell conversion for row cursors and column-wide consumers.
 /// The caller holds the column owner; conversion never reacquires that owner.

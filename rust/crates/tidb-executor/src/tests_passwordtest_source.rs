@@ -28,7 +28,7 @@
 //! `tidb-session::tests_grants::password_policy` already pin the same Go
 //! corpus. Those Go tests therefore carry per-test gap rows below.
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_password_validation::{
     validate_password, GlobalVarAccessor, PasswordUser, PwdError,
 };

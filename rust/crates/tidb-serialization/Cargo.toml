@@ -11,4 +11,5 @@ description = "TiDB util/serialization: Go pkg/util/serialization (Rust rewrite)
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-datatype = { path = "../tidb-datatype" }

@@ -469,7 +469,7 @@ fn exclude_to_include_for_int_point(mut p: Point) -> Option<Point> {
 /// otherwise the satisfiable single points.
 fn all_single_points(
     points: Vec<Point>,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Option<Vec<Point>> {
     let mut result = Vec::with_capacity(points.len());
     let mut iter = points.into_iter();
@@ -724,7 +724,7 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
         let col_collation = cols[i]
             .ret_type
             .as_ref()
-            .map_or(tidb_datatype::Collation::Binary, |ft| ft.collation());
+            .map_or(tidb_charset::Collation::Binary, |ft| ft.collation());
         match all_single_points(std::mem::take(&mut points[i]), col_collation) {
             None => {
                 // An interval longer than a point: not an equality chain.
@@ -924,7 +924,7 @@ impl RangeDetacher<'_> {
         let mut range_points = super::points::get_full_range();
         for cond in &access_conds[eq_and_in_count..] {
             let collator = if self.convert_to_sort_key {
-                tidb_datatype::Collation::Binary
+                tidb_charset::Collation::Binary
             } else {
                 self.new_tp_slice[eq_and_in_count].collation()
             };
@@ -1302,7 +1302,7 @@ fn is_same_value(lhs: &Option<ValueInfo>, rhs: &Option<ValueInfo>) -> bool {
         (Some(left), Some(right)) if !left.mutable && !right.mutable => {
             match (&left.value, &right.value) {
                 (Some(a), Some(b)) => a
-                    .compare(b, tidb_datatype::Collation::Binary)
+                    .compare(b, tidb_charset::Collation::Binary)
                     .map(|order| order == std::cmp::Ordering::Equal)
                     .unwrap_or(false),
                 _ => false,

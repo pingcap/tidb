@@ -11,6 +11,7 @@ description = "TiDB auto-analyze execution package."
 workspace = true
 
 [dependencies]
+tidb-charset = { path = "../tidb-charset" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 chrono.workspace = true

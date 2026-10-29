@@ -192,22 +192,22 @@ pub fn fetch_show_tables(
 /// (alphabetical by collation name). `Utf8Mb4ZhPinyinTiDbAsCs` is
 /// deliberately excluded: it is a reserved stub collation, and Go's own
 /// `SHOW COLLATION` capture omits it too.
-pub const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
-    tidb_datatype::Collation::AsciiBin,
-    tidb_datatype::Collation::Binary,
-    tidb_datatype::Collation::Gb18030Bin,
-    tidb_datatype::Collation::Gb18030ChineseCi,
-    tidb_datatype::Collation::GbkBin,
-    tidb_datatype::Collation::GbkChineseCi,
-    tidb_datatype::Collation::Latin1Bin,
-    tidb_datatype::Collation::Utf8Bin,
-    tidb_datatype::Collation::Utf8GeneralCi,
-    tidb_datatype::Collation::Utf8UnicodeCi,
-    tidb_datatype::Collation::Utf8Mb40900AiCi,
-    tidb_datatype::Collation::Utf8Mb40900Bin,
-    tidb_datatype::Collation::Utf8Mb4Bin,
-    tidb_datatype::Collation::Utf8Mb4GeneralCi,
-    tidb_datatype::Collation::Utf8Mb4UnicodeCi,
+pub const SHOW_COLLATION_ROWS: &[tidb_charset::Collation] = &[
+    tidb_charset::Collation::AsciiBin,
+    tidb_charset::Collation::Binary,
+    tidb_charset::Collation::Gb18030Bin,
+    tidb_charset::Collation::Gb18030ChineseCi,
+    tidb_charset::Collation::GbkBin,
+    tidb_charset::Collation::GbkChineseCi,
+    tidb_charset::Collation::Latin1Bin,
+    tidb_charset::Collation::Utf8Bin,
+    tidb_charset::Collation::Utf8GeneralCi,
+    tidb_charset::Collation::Utf8UnicodeCi,
+    tidb_charset::Collation::Utf8Mb40900AiCi,
+    tidb_charset::Collation::Utf8Mb40900Bin,
+    tidb_charset::Collation::Utf8Mb4Bin,
+    tidb_charset::Collation::Utf8Mb4GeneralCi,
+    tidb_charset::Collation::Utf8Mb4UnicodeCi,
 ];
 
 /// Whether `collation` is the one `SHOW COLLATION` marks `Default`.
@@ -217,12 +217,12 @@ pub const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
 /// "`collation` is its charset's default" and is derived rather than listed.
 /// An explicit list here was a second place for the `gbk`/`gb18030` default to
 /// be spelled, and it carried a doc claim -- that
-/// [`tidb_datatype::Charset::default_collation`] returns the `_bin`
+/// [`tidb_charset::Charset::default_collation`] returns the `_bin`
 /// collations for those charsets -- that was already untrue when read.
-fn is_default_show_collation(collation: tidb_datatype::Collation, utf8mb4_default: &str) -> bool {
+fn is_default_show_collation(collation: tidb_charset::Collation, utf8mb4_default: &str) -> bool {
     // Go `isUTF8MB4AndDefaultCollation`: utf8mb4's default is the session's
     // `default_collation_for_utf8mb4`.
-    if collation.charset() == tidb_datatype::Charset::Utf8Mb4 {
+    if collation.charset() == tidb_charset::Charset::Utf8Mb4 {
         return collation.name() == utf8mb4_default;
     }
     collation.charset().default_collation() == collation
@@ -242,7 +242,7 @@ fn utf8mb4_default_collation(ctx: &dyn SessionContext) -> String {
 /// it: the plan's selection applies LIKE / WHERE.
 pub fn fetch_show_charset(ctx: &dyn SessionContext) -> Vec<Vec<Datum>> {
     let utf8mb4_default = utf8mb4_default_collation(ctx);
-    tidb_datatype::get_supported_charsets()
+    tidb_charset::get_supported_charsets()
         .into_iter()
         .map(|info| {
             let default_collation = if info.name == "utf8mb4" {
@@ -288,10 +288,10 @@ pub fn fetch_show_collation(ctx: &dyn SessionContext, extractor: Extractor<'_>) 
             continue;
         }
         let (sortlen, pad_attribute): (i64, &str) = match collation {
-            tidb_datatype::Collation::Utf8UnicodeCi
-            | tidb_datatype::Collation::Utf8Mb4UnicodeCi => (8, "PAD SPACE"),
-            tidb_datatype::Collation::Utf8Mb40900AiCi => (0, "NO PAD"),
-            tidb_datatype::Collation::Binary | tidb_datatype::Collation::Utf8Mb40900Bin => {
+            tidb_charset::Collation::Utf8UnicodeCi
+            | tidb_charset::Collation::Utf8Mb4UnicodeCi => (8, "PAD SPACE"),
+            tidb_charset::Collation::Utf8Mb40900AiCi => (0, "NO PAD"),
+            tidb_charset::Collation::Binary | tidb_charset::Collation::Utf8Mb40900Bin => {
                 (1, "NO PAD")
             }
             _ => (1, "PAD SPACE"),

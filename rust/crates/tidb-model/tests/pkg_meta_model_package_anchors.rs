@@ -406,7 +406,7 @@ fn pkg_meta_model_reorg_identity() {
     warning_counts.write().insert("w".into(), 2);
     assert!(warning_counts.ptr_eq(clone.warnings_count.as_ref().unwrap()));
     assert_eq!(
-        clone.warnings_count.as_ref().unwrap().read()[&tidb_datatype::GoString::from("w")],
+        clone.warnings_count.as_ref().unwrap().read()[&tidb_goruntime::GoString::from("w")],
         2
     );
     source.set_max_write_speed(20);

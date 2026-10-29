@@ -2811,7 +2811,7 @@ fn lower_alter_table_catalog(
                 // go's CONVERT TO accepts any identifier at the grammar and
                 // answers `ErrUnknownCharacterSet` (1115) when the name is
                 // not a charset — a collation name, say.
-                if tidb_datatype::get_charset_info(name).is_err() {
+                if tidb_charset::get_charset_info(name).is_err() {
                     return Err(DdlAdmissionError::from_terror(
                         &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                             .generate_with_stack_by_args(&[name.into()]),
@@ -3936,8 +3936,8 @@ fn apply_table_charset_and_collate(
     info.charset = to_charset.clone();
     info.collate = to_collate.clone();
     if overwrite_columns {
-        let collation = tidb_datatype::Collation::from_name(&to_collate)
-            .unwrap_or(tidb_datatype::Collation::Binary);
+        let collation = tidb_charset::Collation::from_name(&to_collate)
+            .unwrap_or(tidb_charset::Collation::Binary);
         for column in info.columns.iter_deref() {
             let mut column = column.write();
             // Go `field_types.HasCharset`: a type that holds text takes the
@@ -3949,7 +3949,7 @@ fn apply_table_charset_and_collate(
                 column.field_type.set_charset_name("binary");
                 column
                     .field_type
-                    .set_collation(tidb_datatype::Collation::Binary);
+                    .set_collation(tidb_charset::Collation::Binary);
             }
         }
     }
@@ -8557,7 +8557,7 @@ fn unsupported_charset_change(proto: &'static TerrorError, reason: String) -> Dd
 /// CHARACTERS, so a wider charset lowers the ceiling.
 fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result<(), DdlPlanError> {
     const MAX_FIELD_VARCHAR_LENGTH: i64 = 65535;
-    let Ok(info) = tidb_datatype::get_charset_info(to_charset) else {
+    let Ok(info) = tidb_charset::get_charset_info(to_charset) else {
         return Ok(());
     };
     let max = MAX_FIELD_VARCHAR_LENGTH / info.maxlen as i64;

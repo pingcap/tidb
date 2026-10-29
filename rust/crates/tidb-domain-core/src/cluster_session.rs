@@ -201,9 +201,9 @@ pub fn cluster_session_catalog_with_templates(
         // name falls back to the server default rather than refusing the
         // whole database.
         let charset = tidb_table::kv_table::TableCharset {
-            charset: tidb_datatype::Charset::from_name(&database.info.charset)
+            charset: tidb_charset::Charset::from_name(&database.info.charset)
                 .unwrap_or(tidb_table::kv_table::TableCharset::default().charset),
-            collation: tidb_datatype::Collation::from_name(&database.info.collate)
+            collation: tidb_charset::Collation::from_name(&database.info.collate)
                 .unwrap_or(tidb_table::kv_table::TableCharset::default().collation),
         };
         catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);

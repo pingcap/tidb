@@ -78,7 +78,7 @@ pub struct SnapshotGetResult {
     /// Number of physical requests issued by this read.
     pub rpc_count: u64,
 }
-pub use tidb_txnkv::kv_storage::SnapshotScanRegion;
+use tidb_txnkv::kv_storage::SnapshotScanRegion;
 
 impl<S: PdClient> tidb_txnkv::new_txn::TxnResourceGroup for ClientTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {

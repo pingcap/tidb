@@ -1498,7 +1498,7 @@ mod tests {
     #[test]
     fn rank_topn_compares_every_declared_prefix_column() {
         let field_type = FieldType::new(FieldTypeCode::Varchar)
-            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
 
         // Scenario A: the first row after the boundary differs only in the
         // 12-character prefix of column 1, so an implementation that compared
@@ -1561,7 +1561,7 @@ mod tests {
     #[test]
     fn rank_topn_unspecified_prefix_uses_exact_value_equality() {
         let field_type = FieldType::new(FieldTypeCode::Varchar)
-            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
         let exec = TopNExec::new(
             ExecutorMeta::new(schema_of(1), 1, 2, 4),
             by(&[(0, false)]),
@@ -1575,11 +1575,11 @@ mod tests {
 
         let upper = vec![Datum::new_collation_string(
             b"Prefix".to_vec(),
-            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+            tidb_charset::Collation::Utf8Mb4GeneralCi,
         )];
         let lower = vec![Datum::new_collation_string(
             b"prefix".to_vec(),
-            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+            tidb_charset::Collation::Utf8Mb4GeneralCi,
         )];
         assert!(!exec.rank_prefixes_equal(&upper, &lower).unwrap());
     }
@@ -1587,7 +1587,7 @@ mod tests {
     #[test]
     fn rank_topn_truncated_prefix_uses_column_collation() {
         let field_type = FieldType::new(FieldTypeCode::Varchar)
-            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
         let exec = TopNExec::new(
             ExecutorMeta::new(schema_of(1), 1, 2, 4),
             by(&[(0, false)]),

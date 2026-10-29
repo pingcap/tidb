@@ -157,7 +157,7 @@ pub fn name_value_pair_value(
     // written and converts nothing, so nothing can be reported. The detached
     // rule answers the same key without a diagnostic.
     if column.code() == FieldTypeCode::String
-        && column.collation() == tidb_datatype::Collation::Binary
+        && column.collation() == tidb_charset::Collation::Binary
     {
         return match point_get_value(column, &value) {
             Some(key) => NameValuePairValue::Key(key),

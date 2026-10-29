@@ -39,7 +39,8 @@
 //!   need, plus [`DataSource::handle_is_int`].
 
 #[cfg(test)]
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expression::{CorrelatedColumn, Expression};

@@ -35,13 +35,15 @@
 //! [`crate::column_field_type`].
 
 use tidb_ast::{ColumnDef, ColumnOption, TableOption};
-use tidb_datatype::{CharsetInfo, CollationInfo, FieldTypeCode};
+use tidb_datatype::FieldTypeCode;
+use tidb_charset::CharsetInfo;
+use tidb_charset::CollationInfo;
 use tidb_terror::MysqlError;
 
 /// Go `charset.GetCharsetInfo` as a DDL statement reaches it: a name Go's
 /// parser would have refused is `ErrUnknownCharacterSet` (1115).
 fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
-    tidb_datatype::get_charset_info(name).map_err(|_| {
+    tidb_charset::get_charset_info(name).map_err(|_| {
         MysqlError::from_terror(
             &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                 .generate_with_stack_by_args(&[name.into()]),
@@ -107,7 +109,7 @@ pub fn resolve_charset_collation(
         if !col.is_empty() {
             let collation = get_collation_by_name(col)?;
             // Go compares against the parser's canonical charset name.
-            let written_charset = tidb_datatype::get_charset_info(chs)
+            let written_charset = tidb_charset::get_charset_info(chs)
                 .map_or_else(|_| (*chs).to_owned(), |info| info.name);
             if !chs.is_empty() && collation.charset_name != written_charset {
                 return Err(MysqlError::from_terror(
@@ -123,7 +125,7 @@ pub fn resolve_charset_collation(
             return Ok((chs, coll));
         }
     }
-    let (chs, coll) = tidb_datatype::get_default_charset_and_collate();
+    let (chs, coll) = tidb_charset::get_default_charset_and_collate();
     let utf8mb4_coll = get_default_collation_for_utf8mb4(chs, utf8mb4_default_coll);
     if !utf8mb4_coll.is_empty() {
         return Ok((chs.to_owned(), utf8mb4_coll.to_owned()));

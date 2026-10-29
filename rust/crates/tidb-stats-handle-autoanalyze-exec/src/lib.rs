@@ -312,7 +312,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use tidb_datatype::{Collation, StringDatum};
+    use tidb_datatype::StringDatum;
+use tidb_charset::Collation;
     use tidb_sqlexec::{
         exec_option, ExecutionContext, RecordSet, RestrictedSqlExecutor, SqlExecutor, TrackProcess,
     };

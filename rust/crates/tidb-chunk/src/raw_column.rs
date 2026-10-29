@@ -831,7 +831,8 @@ fn take<'a>(
 
 #[cfg(test)]
 mod tests {
-    use tidb_datatype::{Collation, Decimal, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet};
+    use tidb_datatype::{Decimal, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
     use super::*;
 

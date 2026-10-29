@@ -18,7 +18,8 @@
 //! package reuses its native Rust owner. `OutputFormat` is intentionally owned
 //! here because the util package additionally doubles backslashes.
 
-use tidb_datatype::{go_chars, GoStringSource};
+use tidb_goruntime::go_chars;
+use tidb_goruntime::GoStringSource;
 
 /// Applies `pkg/util/format.OutputFormat` to a byte-preserving Go string.
 pub fn output_format(input: impl GoStringSource) -> String {

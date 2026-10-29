@@ -31,7 +31,7 @@ use std::hash::{Hash, Hasher};
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 
 use crate::go_runtime::{go_64_slice_decode_capacity, GoShared};
 use tidb_goruntime::go_runtime::GoSliceElementLayout;

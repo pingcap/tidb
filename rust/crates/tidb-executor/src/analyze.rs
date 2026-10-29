@@ -57,7 +57,8 @@ use tidb_datatype::CollationCollator;
 #[cfg(test)]
 use tidb_codec::encode_value;
 use tidb_codec::encode_value_in_timezone;
-use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::Histogram;

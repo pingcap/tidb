@@ -24,10 +24,8 @@ use crate::context::NoColumns;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
-use tidb_datatype::{
-    BinaryJSON, Collation, Decimal, FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration,
-    MysqlEnum, Time, TimeType,
-};
+use tidb_datatype::{BinaryJSON, Decimal, FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, MysqlEnum, Time, TimeType};
+use tidb_charset::Collation;
 
 /// A [`Columns`] stub that records warnings exactly like Go's
 /// `StmtCtx.GetWarnings()`. Default trait methods answer every other session

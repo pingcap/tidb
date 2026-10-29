@@ -15,7 +15,9 @@
 //! Go `pkg/server/internal/column/convert.go`: `ConvertColumnInfo`, the wire
 //! column definition of a resolved result field.
 
-use tidb_datatype::{Charset, Collation, FieldTypeCode};
+use tidb_datatype::FieldTypeCode;
+use tidb_charset::Charset;
+use tidb_charset::Collation;
 use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC};
 use tidb_protocol::{ColumnInfo, TYPE_VAR_STRING};
 
@@ -94,13 +96,13 @@ fn decimal_places(field: &ResultFieldTypeMetadata) -> u8 {
 
 fn max_bytes_per_character(collation: Collation) -> u32 {
     match collation.charset() {
-        tidb_datatype::Charset::Binary
-        | tidb_datatype::Charset::Ascii
-        | tidb_datatype::Charset::Latin1 => 1,
-        tidb_datatype::Charset::Utf8 => 3,
-        tidb_datatype::Charset::Utf8Mb4 => 4,
-        tidb_datatype::Charset::Gbk => 2,
-        tidb_datatype::Charset::Gb18030 => 4,
+        tidb_charset::Charset::Binary
+        | tidb_charset::Charset::Ascii
+        | tidb_charset::Charset::Latin1 => 1,
+        tidb_charset::Charset::Utf8 => 3,
+        tidb_charset::Charset::Utf8Mb4 => 4,
+        tidb_charset::Charset::Gbk => 2,
+        tidb_charset::Charset::Gb18030 => 4,
     }
 }
 
@@ -160,7 +162,8 @@ fn default_field_length(code: FieldTypeCode) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use tidb_datatype::{Collation, FieldTypeCode};
+    use tidb_datatype::FieldTypeCode;
+use tidb_charset::Collation;
     use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC, UNSIGNED_FLAG};
     use tidb_protocol::{ColumnDefault, TYPE_VAR_STRING};
 

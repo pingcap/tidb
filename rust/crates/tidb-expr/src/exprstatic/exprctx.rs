@@ -217,7 +217,7 @@ impl ExprContext {
     /// Go `NewExprContext`.
     #[must_use]
     pub fn new(opts: impl IntoIterator<Item = ExprCtxOption>) -> ExprContext {
-        let charset_info = tidb_datatype::get_charset_info(tidb_mysql::charset::DefaultCharset)
+        let charset_info = tidb_charset::get_charset_info(tidb_mysql::charset::DefaultCharset)
             .expect("mysql.DefaultCharset is always registered");
 
         let mut state = ExprCtxState {
@@ -584,7 +584,7 @@ mod tests {
     fn check_default_static_expr_ctx(ctx: &ExprContext) {
         let (charset_name, collation) = ctx.get_charset_info();
         assert_eq!(charset_name, tidb_mysql::charset::DefaultCharset);
-        let info = tidb_datatype::get_charset_info(charset_name).unwrap();
+        let info = tidb_charset::get_charset_info(charset_name).unwrap();
         assert_eq!(charset_name, info.name);
         assert_eq!(collation, info.default_collation);
         assert_eq!(

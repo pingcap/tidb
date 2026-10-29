@@ -419,7 +419,7 @@ fn scan_column_descriptor(
     // charset at all. Recover both from that one id so the scalar leaf and the
     // scanned column cannot disagree about their collator.
     let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
+    let charset = tidb_charset::get_collation_by_name(&collation)
         .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
     Some(tidb_expr::pushdown_catalog::ColumnDescriptor {
         tp: column.tp,
@@ -646,7 +646,7 @@ fn scan_field_type(
     let flags = u32::try_from(column.flag)
         .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
     let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
+    let charset = tidb_charset::get_collation_by_name(&collation)
         .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
     let field_type = FieldType::new(code)
         .with_flags(flags)
@@ -707,7 +707,7 @@ fn string_column_operand(
         return Err(WideScanSelectionError::UnsupportedColumnType { offset });
     }
     let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
+    let charset = tidb_charset::get_collation_by_name(&collation)
         .map(|row| row.charset_name)
         .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
     Ok(StringPbOperand::Column {

@@ -771,9 +771,9 @@ fn test_refine_args_with_cast_enum() {
             }
             let mut ft = FieldType::new(FieldTypeCode::Enum);
             ft.set_elems(GoSharedSlice::from_vec(vec![
-                tidb_datatype::GoString::from("1"),
-                tidb_datatype::GoString::from("2"),
-                tidb_datatype::GoString::from("3"),
+                tidb_goruntime::GoString::from("1"),
+                tidb_goruntime::GoString::from("2"),
+                tidb_goruntime::GoString::from("3"),
             ]));
             ft.add_flags(FieldTypeFlags::ENUM_SET_AS_INT);
             Some((0, ft, 0))

@@ -36,7 +36,7 @@ fn long_col(name: &str, id: i64) -> KvColumn {
 fn varchar_col(name: &str, id: i64) -> KvColumn {
     let mut ft = FieldType::new(FieldTypeCode::Varchar);
     ft.set_flen(63);
-    ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+    ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
     KvColumn {
         name: name.to_owned(),

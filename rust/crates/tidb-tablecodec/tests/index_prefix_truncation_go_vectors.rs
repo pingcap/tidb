@@ -23,7 +23,8 @@
 //!
 //! Fixture: `generate_index_prefix_truncation.go` beside the `.tsv`.
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_tablecodec::{
     cut_datum_by_prefix_len, reach_prefix_len, truncate_index_value, IndexColumn, TableColumn,
 };

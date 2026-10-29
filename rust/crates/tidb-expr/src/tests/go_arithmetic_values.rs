@@ -77,7 +77,7 @@ fn datum_equal(actual: &Datum, expected: &Datum) -> bool {
         return actual.is_null() && expected.is_null();
     }
     actual
-        .compare(expected, tidb_datatype::Collation::Binary)
+        .compare(expected, tidb_charset::Collation::Binary)
         .map(|ordering| ordering == std::cmp::Ordering::Equal)
         .unwrap_or(false)
 }
@@ -332,7 +332,7 @@ fn go_test_arithmetic_mod_hybrid_operand_kinds() {
             vec![
                 Datum::Set(
                     tidb_datatype::MysqlSet::new("abc", 7),
-                    tidb_datatype::Collation::Utf8Mb4Bin,
+                    tidb_charset::Collation::Utf8Mb4Bin,
                 ),
                 Datum::new_string("12".to_string()),
             ],
@@ -352,7 +352,8 @@ fn go_test_arithmetic_mod_hybrid_operand_kinds() {
 #[test]
 fn hybrid_arithmetic_uses_go_typed_numeric_arguments() {
     use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
-    use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
+    use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
     struct Strict;
     impl crate::Columns for Strict {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -649,7 +650,7 @@ fn hybrid_arithmetic_preserves_null_and_selection_order() {
     let datum = |number| {
         Datum::Set(
             tidb_datatype::MysqlSet::new("999", number),
-            tidb_datatype::Collation::Binary,
+            tidb_charset::Collation::Binary,
         )
     };
     for (op, expected) in [
@@ -1603,9 +1604,8 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
 #[test]
 fn json_cast_source_signatures_preserve_binary_types_in_both_modes() {
     use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
-    use tidb_datatype::{
-        BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, MysqlEnum, MysqlSet,
-    };
+    use tidb_datatype::{BinaryJSON, BinaryJSONValue, BinaryLiteral, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
     let cases = [
         ("int", 9, "-1"),
         ("uint", 10, "18446744073709551615"),

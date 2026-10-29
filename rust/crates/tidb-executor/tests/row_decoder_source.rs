@@ -769,7 +769,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
             &tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(4)],
                 high_val: vec![Datum::Int(4)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
             },
@@ -984,7 +984,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             assert_eq!(projected, vec![row[1].clone()]);
             assert_eq!(
                 row[1].collation(),
-                Some(tidb_datatype::Collation::Utf8Mb4GeneralCi)
+                Some(tidb_charset::Collation::Utf8Mb4GeneralCi)
             );
             match &row[1] {
                 Datum::Enum(member, _) => assert_eq!(member.value(), expected),
@@ -993,7 +993,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             }
             assert_eq!(
                 table.columns()[1].field_type.collation(),
-                tidb_datatype::Collation::Utf8Mb4GeneralCi
+                tidb_charset::Collation::Utf8Mb4GeneralCi
             );
         }
     }

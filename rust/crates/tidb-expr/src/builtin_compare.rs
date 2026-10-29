@@ -164,7 +164,7 @@ fn compare_int_with_constant(
 ) -> Result<std::cmp::Ordering, ()> {
     note_string_truncation(ctx, original)?;
     int_datum
-        .compare(original, tidb_datatype::Collation::Binary)
+        .compare(original, tidb_charset::Collation::Binary)
         .map_err(|_| ())
 }
 

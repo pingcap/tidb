@@ -122,7 +122,7 @@ pub(crate) const BINARY_COLLATE_ERR: &str = "Not support binary collation so far
 /// type flags are appended so the rightmost user flag keeps precedence.
 pub(crate) fn regexp_match_type_with_collation(
     match_type: &str,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> String {
     let initial = if tidb_datatype::is_ci_collation(collation.name()) {
         "i"
@@ -187,7 +187,7 @@ pub(crate) fn regexp_match(text: &str, pattern: &str) -> Result<bool, EvalError>
 pub(crate) fn regexp_match_with_collation(
     text: &str,
     pattern: &str,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<bool, EvalError> {
     let match_type = regexp_match_type_with_collation("", collation);
     regexp_like(text, pattern, &match_type)
@@ -213,7 +213,7 @@ pub(crate) fn regexp_like_with_collation(
     text: &str,
     pattern: &str,
     match_type: &str,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<bool, EvalError> {
     let match_type = regexp_match_type_with_collation(match_type, collation);
     regexp_like(text, pattern, &match_type)

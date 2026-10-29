@@ -137,7 +137,8 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::collections::BTreeSet;
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Collation, Datum, FieldType};
+use tidb_datatype::{Datum, FieldType};
+use tidb_charset::Collation;
 use tidb_expr::schema::Schema;
 
 use crate::access_path::{HandleOutputColumn, HandleSourceExec};

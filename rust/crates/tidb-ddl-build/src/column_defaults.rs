@@ -581,9 +581,8 @@ pub fn normalize_column_default(
 #[cfg(test)]
 mod normalize_default_tests {
     use super::{enum_set_column_default, normalize_column_default};
-    use tidb_datatype::{
-        BinaryLiteral, Datum, FieldType, FieldTypeCode, GoString, SessionTimeZone,
-    };
+    use tidb_datatype::{BinaryLiteral, Datum, FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_goruntime::GoString;
 
     #[test]
     fn enum_set_defaults_preserve_raw_member_bytes() {

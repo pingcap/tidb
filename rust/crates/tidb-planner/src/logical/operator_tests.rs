@@ -3832,7 +3832,7 @@ fn string_const(value: &str) -> Expression {
     Expression::Constant(Constant::new(
         Datum::String(tidb_datatype::StringDatum::new(
             value.as_bytes().to_vec(),
-            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+            tidb_charset::Collation::Utf8Mb4GeneralCi,
         )),
         FieldType::new(FieldTypeCode::VarString),
     ))

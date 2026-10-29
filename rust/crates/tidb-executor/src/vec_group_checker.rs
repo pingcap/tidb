@@ -24,7 +24,8 @@
 use tidb_datatype::RuntimeCollator;
 use tidb_datatype::CollationCollator;
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Collation, Datum, StringDatum};
+use tidb_datatype::{Datum, StringDatum};
+use tidb_charset::Collation;
 use tidb_expr::{collation_derive::collation_of_node, expression::Expression};
 use tidb_expr::{Columns, EvalError};
 

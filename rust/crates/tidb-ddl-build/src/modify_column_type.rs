@@ -560,7 +560,7 @@ pub fn check_modify_charset_and_collation(
     from_collation: &str,
     need_rewrite_collation_data: bool,
 ) -> Result<(), CharsetChangeRefusal> {
-    if !tidb_datatype::valid_charset_and_collation(to_charset, to_collation) {
+    if !tidb_charset::valid_charset_and_collation(to_charset, to_collation) {
         return Err(CharsetChangeRefusal::UnknownCharset(format!(
             "Unknown character set: '{to_charset}', collation: '{to_collation}'"
         )));

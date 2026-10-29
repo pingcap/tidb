@@ -17,7 +17,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_datatype::{Collation, CoreTime, Datum, FieldTypeCode, StringDatum, Time, TimeType};
+use tidb_datatype::{CoreTime, Datum, FieldTypeCode, StringDatum, Time, TimeType};
+use tidb_charset::Collation;
 use tidb_deadlockhistory::{DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY};
 use tidb_infoschema::TableEntry;
 use tidb_stmtsummary::statement_summary::{

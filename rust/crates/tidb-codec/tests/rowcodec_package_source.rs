@@ -18,10 +18,8 @@ use std::collections::BTreeMap;
 
 use tidb_codec::{decode_one, encode_int, encode_value};
 use tidb_rowcodec::{calculate_raw_checksum, decode_row_to_datums, decode_row_to_map, decode_row_to_old_bytes, encode_raw_row, encode_raw_uint, encode_row, encode_row_with_checksum, is_new_format, is_row_key, remove_keyspace_prefix, ColumnInfo, DatumColumn, DecodeRowOptions, Handle, RawRowColumn, RowChecksumPolicy, RowData, RowLayout, RowPackageError};
-use tidb_datatype::{
-    BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32,
-};
+use tidb_datatype::{BinaryJSON, BinaryLiteral, BinaryLiteralWidth, CoreTime, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32};
+use tidb_charset::Collation;
 
 fn field(code: FieldTypeCode) -> FieldType {
     FieldType::new(code)

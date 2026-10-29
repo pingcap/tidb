@@ -4782,7 +4782,7 @@ mod tests {
                     // The charset is derived from the collation, exactly as
                     // the served scan descriptor derives it: `tipb.ColumnInfo`
                     // states a collation id and no charset at all.
-                    charset: tidb_datatype::get_collation_by_name(field_type.collation_name())
+                    charset: tidb_charset::get_collation_by_name(field_type.collation_name())
                         .map_or_else(|_| "binary".to_owned(), |row| row.charset_name),
                     collation: field_type.collation_name().to_owned(),
                     elems: field_type
@@ -5152,7 +5152,7 @@ mod tests {
             assert_eq!(
                 leaf.charset.as_deref(),
                 Some(
-                    tidb_datatype::get_collation_by_name(name)
+                    tidb_charset::get_collation_by_name(name)
                         .unwrap()
                         .charset_name
                         .as_str()

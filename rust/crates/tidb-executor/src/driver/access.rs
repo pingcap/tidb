@@ -754,8 +754,8 @@ pub(crate) enum PreparedParameterType {
     Real,
     Float32,
     String {
-        charset: tidb_datatype::Charset,
-        collation: tidb_datatype::Collation,
+        charset: tidb_charset::Charset,
+        collation: tidb_charset::Collation,
     },
     Bytes,
     Raw,
@@ -2103,12 +2103,12 @@ fn point_byte_safe(field_type: &FieldType) -> bool {
     field_type.eval_type() != tidb_datatype::EvalType::String
         || matches!(
             field_type.collation(),
-            tidb_datatype::Collation::Binary
-                | tidb_datatype::Collation::AsciiBin
-                | tidb_datatype::Collation::Latin1Bin
-                | tidb_datatype::Collation::Utf8Bin
-                | tidb_datatype::Collation::Utf8Mb4Bin
-                | tidb_datatype::Collation::Utf8Mb40900Bin
+            tidb_charset::Collation::Binary
+                | tidb_charset::Collation::AsciiBin
+                | tidb_charset::Collation::Latin1Bin
+                | tidb_charset::Collation::Utf8Bin
+                | tidb_charset::Collation::Utf8Mb4Bin
+                | tidb_charset::Collation::Utf8Mb40900Bin
         )
 }
 

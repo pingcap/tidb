@@ -24,7 +24,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use tidb_datatype::{FieldType, GoString};
+use tidb_datatype::FieldType;
+use tidb_goruntime::GoString;
 use tidb_model::go_any::GoAny;
 use tidb_model::go_any::GoAnyView;
 

@@ -19,10 +19,8 @@
 
 use std::mem::size_of;
 
-use tidb_datatype::{
-    deserialize_vector_float32, BinaryJSON, GoString, MyDecimal, MySqlDuration, MysqlEnum,
-    MysqlSet, Opaque, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
-};
+use tidb_datatype::{deserialize_vector_float32, BinaryJSON, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Opaque, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
+use tidb_goruntime::GoString;
 
 /// Runtime tag for a boolean interface value.
 pub const BOOL_TYPE: u8 = 0;

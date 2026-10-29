@@ -49,7 +49,7 @@ pub(super) enum AggInputMode<T = usize> {
     },
     CountDistinctString {
         column: T,
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
     },
     CountDistinctDecimal(T),
     CountDistinctDuration {
@@ -72,7 +72,7 @@ pub(super) enum AggInputMode<T = usize> {
     },
     String {
         column: T,
-        collation: tidb_datatype::Collation,
+        collation: tidb_charset::Collation,
         is_max: bool,
     },
     Time {

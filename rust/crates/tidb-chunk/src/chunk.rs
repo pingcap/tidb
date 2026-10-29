@@ -30,9 +30,9 @@ use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, Column
 use crate::compare::{compare, sort_search};
 use crate::row::Row;
 use std::cmp::Ordering;
-use tidb_datatype::{
-    Datum, FieldType, GoString, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
-};
+use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
+use tidb_goruntime::GoString;
+use tidb_goruntime::GoStringSource;
 
 /// Go `chunk.InitialCapacity`: the capacity a chunk grows to when it is renewed
 /// from a chunk that had no capacity of its own.
@@ -1585,7 +1585,7 @@ mod tests {
     /// The value Go's `TestCompare`/`TestCopyTo` append for each type, as the
     /// datum this port's `append_datum` takes.
     fn go_all_types_value(field_type: &FieldType, k: u64) -> Datum {
-        use tidb_datatype::Collation;
+        use tidb_charset::Collation;
         // The same collation `Row::get_datum` stamps on an enum/set datum.
         fn collation_of(field_type: &FieldType) -> Collation {
             field_type.collation()

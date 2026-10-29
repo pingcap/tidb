@@ -900,7 +900,7 @@ fn build_shard_jobs(
     let collation = shard_column_info
         .map(|info| info.field_type.collation())
         // Go `collate.GetCollator("")` for `_tidb_rowid`.
-        .unwrap_or(tidb_datatype::Collation::Binary);
+        .unwrap_or(tidb_charset::Collation::Binary);
     let batch_size = usize::try_from(stmt.limit).unwrap_or(usize::MAX);
     if batch_size == 0 {
         return Err(plain_error(

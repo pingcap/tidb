@@ -31,7 +31,8 @@ use tidb_executor::KvTableReader;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_ranger::types::Range;
 use tidb_table::kv_table::KvColumn;
@@ -255,7 +256,7 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
         high_val: row.to_vec(),
         collators: row
             .iter()
-            .map(|value| value.collation().unwrap_or(tidb_datatype::Collation::Binary))
+            .map(|value| value.collation().unwrap_or(tidb_charset::Collation::Binary))
             .collect(),
         low_exclude: false,
         high_exclude: false,

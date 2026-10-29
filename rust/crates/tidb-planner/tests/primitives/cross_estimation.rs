@@ -14,7 +14,8 @@
 
 //! Direct source-contract tests for `convertRangeFromExpectedCnt`.
 
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 use tidb_planner::cardinality::cross_estimation::{convert_range_from_expected_cnt, CountedRange};
 use tidb_ranger::types::Range;
 

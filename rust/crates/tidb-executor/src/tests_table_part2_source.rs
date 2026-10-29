@@ -200,15 +200,15 @@ fn point_get_key_partitioning_returns_the_matching_row() {
         vec![vec![
             tidb_datatype::Datum::String(tidb_datatype::StringDatum::new(
                 "Aa",
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             )),
             tidb_datatype::Datum::String(tidb_datatype::StringDatum::new(
                 "Ab",
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             )),
             tidb_datatype::Datum::String(tidb_datatype::StringDatum::new(
                 "Ac",
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             )),
         ]]
     );

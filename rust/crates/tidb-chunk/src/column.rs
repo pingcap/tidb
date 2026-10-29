@@ -49,10 +49,9 @@
 //! storage are implemented below. Go strings remain arbitrary bytes, so the
 //! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
-use tidb_datatype::{
-    deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, GoString, GoStringSource,
-    MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
-};
+use tidb_datatype::{deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
+use tidb_goruntime::GoString;
+use tidb_goruntime::GoStringSource;
 
 use crate::column_view::{ColumnBytes, ColumnBytesStorage};
 use crate::shared_bytes::{SharedBytes, SharedBytesRead};

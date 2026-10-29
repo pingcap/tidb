@@ -11,4 +11,5 @@ description = "TiDB util/format: Go pkg/util/format (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-datatype = { path = "../tidb-datatype" }

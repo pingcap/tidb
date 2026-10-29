@@ -20,7 +20,8 @@
 use std::sync::Arc;
 use std::thread;
 
-use tidb_datatype::{BinaryJSON, Collation, Datum, Decimal, FieldType, FieldTypeCode};
+use tidb_datatype::{BinaryJSON, Datum, Decimal, FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 use tidb_expr::{column::Column, expression::Expression, NoColumns};
 
 use crate::apply_cache::{apply_cache_kv_mem, ApplyCache};

@@ -96,7 +96,7 @@ fn index_join_cuts_equality_probe_to_go_prefix_index_key() {
         rows,
         vec![vec![Datum::new_collation_string(
             b"abcdef".to_vec(),
-            tidb_datatype::Collation::Utf8Mb4Bin,
+            tidb_charset::Collation::Utf8Mb4Bin,
         )]]
     );
 }
@@ -137,11 +137,11 @@ fn index_join_deduplicates_go_prefix_lookup_keys_before_reading() {
         vec![
             vec![Datum::new_collation_string(
                 b"abcdef".to_vec(),
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             )],
             vec![Datum::new_collation_string(
                 b"abcxyz".to_vec(),
-                tidb_datatype::Collation::Utf8Mb4Bin,
+                tidb_charset::Collation::Utf8Mb4Bin,
             )],
         ],
         "Go cuts dLookUpKey before sortAndDedupLookUpContents, so one prefix range is read once",

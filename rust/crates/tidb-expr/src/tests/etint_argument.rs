@@ -29,7 +29,8 @@
 
 use super::*;
 use crate::arg_eval_type::wrap_int_args;
-use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
+use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
 /// Both evaluator tiers impose the layer, so every value assertion is made
 /// twice. A tier that stopped calling `wrap_int_args` would otherwise keep

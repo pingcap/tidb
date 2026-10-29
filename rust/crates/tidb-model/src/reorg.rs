@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_terror::{TerrorCode, TerrorError};
 
 use crate::go_runtime::GoShared;

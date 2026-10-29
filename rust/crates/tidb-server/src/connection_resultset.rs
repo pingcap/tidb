@@ -574,7 +574,7 @@ mod tests {
             row(
                 Datum::Enum(
                     MysqlEnum::new("green", 2),
-                    tidb_datatype::Collation::Utf8Mb4Bin
+                    tidb_charset::Collation::Utf8Mb4Bin
                 ),
                 tidb_protocol::TYPE_ENUM
             ),
@@ -584,7 +584,7 @@ mod tests {
             row(
                 Datum::Set(
                     MysqlSet::new("a,c", 5),
-                    tidb_datatype::Collation::Utf8Mb4Bin
+                    tidb_charset::Collation::Utf8Mb4Bin
                 ),
                 tidb_protocol::TYPE_SET
             ),

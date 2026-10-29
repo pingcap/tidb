@@ -161,7 +161,7 @@ pub fn index_condition_literal_type(
             value,
         } => {
             let introducer = introducer.to_ascii_lowercase();
-            let collation = tidb_datatype::get_default_collation(&introducer).ok()?;
+            let collation = tidb_charset::get_default_collation(&introducer).ok()?;
             default_field_type_for_value(FieldTypeValue::String(value), &introducer, &collation)
         }
         tidb_ast::Expr::CharsetBinary {
@@ -169,7 +169,7 @@ pub fn index_condition_literal_type(
             value,
         } => {
             let introducer = introducer.to_ascii_lowercase();
-            let collation = tidb_datatype::get_default_collation(&introducer).ok()?;
+            let collation = tidb_charset::get_default_collation(&introducer).ok()?;
             index_condition_literal_type(value, (charset, collation.as_str()))?
                 .with_charset_name(&introducer)
                 .with_collation_name(&collation)
@@ -724,7 +724,7 @@ pub fn check_index_column(
 
 /// Go `charset.GetCharsetInfo(cs).Maxlen`, with Go's lookup error text.
 fn charset_maxlen(charset: &str) -> Result<i64, String> {
-    tidb_datatype::get_charset_info(charset)
+    tidb_charset::get_charset_info(charset)
         .map(|info| i64::try_from(info.maxlen).expect("a charset's maxlen fits in i64"))
         .map_err(|error| error.to_string())
 }

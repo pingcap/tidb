@@ -27,7 +27,7 @@
 //! instead of importing Go's planner-layer hasher interface.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use tidb_datatype::CharsetName;
+use tidb_charset::CharsetName;
 
 // Charset / collation name constants, mirroring `pkg/parser/charset`. Kept as
 // local literals because `tidb-datatype` exposes these names only as enum arms,

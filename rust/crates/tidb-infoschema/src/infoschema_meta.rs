@@ -28,7 +28,8 @@
 //! the only tier that can see sessions and privileges.
 
 use crate::Catalog;
-use tidb_datatype::{FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
+use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+use tidb_goruntime::GoString;
 use tidb_hack::GoCaseCompare;
 
 /// Go's schema name for the virtual database.
@@ -102,7 +103,7 @@ impl InfoColumn {
         ) {
             field_type.set_charset_name(CHARSET);
             field_type.set_collation_name(COLLATION);
-            field_type.set_collation(tidb_datatype::Collation::DEFAULT);
+            field_type.set_collation(tidb_charset::Collation::DEFAULT);
         }
         field_type.set_flen(match self.tp {
             FieldTypeCode::Blob => 1 << 16,

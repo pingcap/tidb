@@ -26,7 +26,8 @@
 
 
 use tidb_ast::{ColumnOrUserVar, LoadDataOnDuplicate, LoadDataStmt};
-use tidb_datatype::{Collation, Datum, FieldTypeCode};
+use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_charset::Collation;
 
 use crate::{Catalog, DriverError, TableEntry};
 use tidb_lightning_mydump::{CharsetConvertor, CsvConfig, CsvError, CsvParser};

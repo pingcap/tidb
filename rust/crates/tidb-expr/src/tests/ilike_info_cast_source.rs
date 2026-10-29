@@ -158,7 +158,7 @@ fn like_pattern_cache_reuses_only_within_context() {
     use crate::builtin_ext::BuiltinFuncCache;
     use crate::like::{CompiledIlikePattern, CompiledLikePattern};
     use std::sync::Arc;
-    use tidb_datatype::Collation;
+    use tidb_charset::Collation;
 
     let like_cache = BuiltinFuncCache::<CompiledLikePattern>::default();
     let first = like_cache

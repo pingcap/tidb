@@ -25,7 +25,8 @@
 
 use std::{convert::TryFrom, io};
 
-use tidb_datatype::{find_encoding_take_utf8_as_noop, TransformOp};
+use tidb_charset::find_encoding_take_utf8_as_noop;
+use tidb_charset::TransformOp;
 use tidb_errno::errcode;
 
 use crate::{

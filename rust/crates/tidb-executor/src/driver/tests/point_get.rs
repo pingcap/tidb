@@ -565,7 +565,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 Datum::Int(4),
                 Datum::String(tidb_datatype::StringDatum::new(
                     b"b".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4Bin,
+                    tidb_charset::Collation::Utf8Mb4Bin,
                 )),
             ],
             "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'b' ORDER BY id",
@@ -576,7 +576,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 Datum::Int(4),
                 Datum::String(tidb_datatype::StringDatum::new(
                     b"c".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4Bin,
+                    tidb_charset::Collation::Utf8Mb4Bin,
                 )),
             ],
             "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'c' ORDER BY id",
@@ -1614,11 +1614,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             vec![
                 vec![Datum::String(tidb_datatype::StringDatum::new(
                     b"a".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4Bin,
+                    tidb_charset::Collation::Utf8Mb4Bin,
                 ))],
                 vec![Datum::String(tidb_datatype::StringDatum::new(
                     b"zz".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4Bin,
+                    tidb_charset::Collation::Utf8Mb4Bin,
                 ))],
             ],
         )),

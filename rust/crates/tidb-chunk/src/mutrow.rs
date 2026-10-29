@@ -582,9 +582,8 @@ fn set_mut_row_json(column: &mut Column, value: &BinaryJSON) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::{
-        BinaryLiteral, Collation, CoreTime, Decimal, FieldTypeCode as C, MysqlEnum, MysqlSet,
-    };
+    use tidb_datatype::{BinaryLiteral, CoreTime, Decimal, FieldTypeCode as C, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
     /// Every line was printed by the REAL Go `pkg/util/chunk` MutRow; see
     /// `rust/difftests/chunk-tests/fixtures/generate_mutrow_vectors.go` for the

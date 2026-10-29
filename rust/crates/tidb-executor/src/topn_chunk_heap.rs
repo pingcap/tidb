@@ -611,7 +611,9 @@ mod tests {
     //! and collation ordering, and compaction.
 
     use super::*;
-    use tidb_datatype::{Collation, FieldTypeCode, GoString};
+    use tidb_datatype::FieldTypeCode;
+use tidb_charset::Collation;
+use tidb_goruntime::GoString;
     use tidb_expr::column::Column;
     use tidb_expr::expression::Expression;
 

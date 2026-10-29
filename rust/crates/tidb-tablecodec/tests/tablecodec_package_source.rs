@@ -21,10 +21,8 @@ const UTC: tidb_datatype::SessionTimeZone = tidb_datatype::SessionTimeZone::Name
 use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_key, encode_value, Encoder, BYTES_FLAG, DECIMAL_FLAG};
 use tidb_tablecodec::table_key::decode_table_id;
 use tidb_rowcodec::{encode_row, ColumnInfo};
-use tidb_datatype::{
-    BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
-};
+use tidb_datatype::{BinaryLiteral, BinaryLiteralWidth, CoreTime, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH};
+use tidb_charset::Collation;
 use tidb_tablecodec::table_key::TABLE_PREFIX;
 use tidb_tablecodec::table_key::RECORD_ROW_KEY_LEN;
 use tidb_tablecodec::table_key::META_PREFIX;

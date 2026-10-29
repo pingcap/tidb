@@ -360,7 +360,7 @@ fn range_columns_min_cmp(
     bound: &[tidb_table::partition_routing::RangeColumnBound],
     low: &[Datum],
     field_types: &[tidb_datatype::FieldType],
-    collations: &[tidb_datatype::Collation],
+    collations: &[tidb_charset::Collation],
     low_exclusive: bool,
 ) -> Result<bool, tidb_table::partition_routing::RoutingError> {
     for ((bound, value), collation) in bound.iter().zip(low).zip(collations) {
@@ -395,7 +395,7 @@ fn range_columns_min_cmp(
 fn range_columns_max_cmp(
     bound: &[tidb_table::partition_routing::RangeColumnBound],
     high: &[Datum],
-    collations: &[tidb_datatype::Collation],
+    collations: &[tidb_charset::Collation],
     high_exclusive: bool,
 ) -> Result<bool, tidb_table::partition_routing::RoutingError> {
     for ((bound, value), collation) in bound.iter().zip(high).zip(collations) {
@@ -419,7 +419,7 @@ fn range_columns_max_cmp(
 fn compare_range_column_bound(
     bound: &tidb_table::partition_routing::RangeColumnBound,
     endpoint: &Datum,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Ordering, tidb_table::partition_routing::RoutingError> {
     let tidb_table::partition_routing::RangeColumnBound::Value(bound) = bound else {
         return Ok(Ordering::Greater);
@@ -947,7 +947,7 @@ mod tests {
                 let width = range.low_val.len().max(range.high_val.len());
                 Range {
                     collators: field_types.map_or_else(
-                        || vec![tidb_datatype::Collation::Binary; width],
+                        || vec![tidb_charset::Collation::Binary; width],
                         |field_types| {
                             field_types
                                 .iter()
@@ -1137,7 +1137,7 @@ mod tests {
     #[test]
     fn list_column_locations_keep_go_point_collation_and_default_rules() {
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
-            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
         let values = vec![
             (vec![Datum::new_string("a")], 0),
             (vec![Datum::new_string("b")], 1),
@@ -1606,7 +1606,8 @@ mod tests {
     #[test]
     fn range_columns_pruning_uses_each_partition_columns_collation() {
         use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
-        use tidb_datatype::{Collation, FieldType, FieldTypeCode, StringDatum};
+        use tidb_datatype::{FieldType, FieldTypeCode, StringDatum};
+use tidb_charset::Collation;
 
         let string = |text: &str, collation| {
             Datum::String(StringDatum::new(text.as_bytes().to_vec(), collation))
@@ -1652,7 +1653,8 @@ mod tests {
     #[test]
     fn range_columns_pruning_uses_the_ranger_interval_collator() {
         use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
-        use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_charset::Collation;
 
         let field_type =
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4GeneralCi);

@@ -17,7 +17,7 @@
 
 use std::any::Any;
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_mysql::to_lowercase;
 
 use crate::lattice::{

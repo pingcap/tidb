@@ -52,7 +52,11 @@
 //! transform is already the identity -- which is why `latin1` never appears
 //! in the wrap decision below.
 
-use tidb_datatype::{find_encoding, Charset, Collation, Datum, FieldType, TransformOp};
+use tidb_datatype::{Datum, FieldType};
+use tidb_charset::find_encoding;
+use tidb_charset::Charset;
+use tidb_charset::Collation;
+use tidb_charset::TransformOp;
 
 use crate::EvalError;
 
@@ -253,7 +257,7 @@ pub fn convert_using(
     arg_type: &FieldType,
     result_charset: &str,
 ) -> Result<Datum, EvalError> {
-    if !tidb_datatype::is_supported_encoding(result_charset) {
+    if !tidb_charset::is_supported_encoding(result_charset) {
         return Err(EvalError::Unsupported("unknown character set"));
     }
     let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();

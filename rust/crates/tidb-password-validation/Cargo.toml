@@ -11,6 +11,7 @@ description = "TiDB util/password-validation: Go pkg/util/password-validation (R
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-datatype = { path = "../tidb-datatype" }

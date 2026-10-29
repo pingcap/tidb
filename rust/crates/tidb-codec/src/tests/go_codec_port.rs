@@ -18,10 +18,8 @@
 use crate::*;
 use chrono::Utc;
 use std::cmp::Ordering;
-use tidb_datatype::{
-    BinaryJSON, BinaryLiteral, Collation, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags,
-    MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
-};
+use tidb_datatype::{BinaryJSON, BinaryLiteral, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType};
+use tidb_charset::Collation;
 
 fn parse_datetime_str(s: &str) -> Time {
     tidb_datatype::parse_datetime(s, &Utc, false, false)
@@ -1054,9 +1052,9 @@ fn hash_fixture() -> (Vec<Vec<Datum>>, Vec<FieldType>) {
     let mut unsigned_longlong = FieldType::new(FieldTypeCode::LongLong);
     unsigned_longlong.toggle_flags(FieldTypeFlags::UNSIGNED);
     let mut enum_tp = FieldType::new(FieldTypeCode::Enum);
-    enum_tp.set_elems(vec![tidb_datatype::GoString::from("a")]);
+    enum_tp.set_elems(vec![tidb_goruntime::GoString::from("a")]);
     let mut set_tp = FieldType::new(FieldTypeCode::Set);
-    set_tp.set_elems(vec![tidb_datatype::GoString::from("a")]);
+    set_tp.set_elems(vec![tidb_goruntime::GoString::from("a")]);
     let mut bit_tp = FieldType::new(FieldTypeCode::Bit);
     bit_tp.set_flen(8);
     let mut dec_tp = FieldType::new(FieldTypeCode::NewDecimal);

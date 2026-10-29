@@ -16,7 +16,7 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_model::job::{JOB_PAUSE_REASON_KV_DISK_FULL, JOB_RESUME_REASON_KV_DISK_FULL};
 use tidb_model::{AdminCommandOperator, Job, JobState};
 

@@ -130,7 +130,7 @@ fn same_key(left: &[Datum], right: &[Datum], ctx: &crate::StmtContext) -> bool {
         && left.iter().zip(right).all(|(left, right)| {
             let (ordering, error) = left.compare_with_context(
                 right,
-                left.collation().unwrap_or(tidb_datatype::Collation::Binary),
+                left.collation().unwrap_or(tidb_charset::Collation::Binary),
                 &context,
                 &zone,
             );

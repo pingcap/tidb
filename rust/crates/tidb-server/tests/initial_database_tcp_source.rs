@@ -88,7 +88,7 @@ impl ResultSetSource for Rows {
                 flags: 0x0001,
                 flen: Some(20),
                 decimal: Some(0),
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             },
         }])
     }

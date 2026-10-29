@@ -539,7 +539,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             vec![Range {
                 low_val: vec![Datum::Int(5)],
                 high_val: vec![Datum::MaxValue],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: true,
                 high_exclude: false,
             }]
@@ -552,7 +552,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             vec![Range {
                 low_val: vec![Datum::MinNotNull],
                 high_val: vec![Datum::Int(5)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: true,
             }]
@@ -566,7 +566,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             vec![Range {
                 low_val: vec![Datum::Int(5)],
                 high_val: vec![Datum::Int(9)],
-                collators: vec![tidb_datatype::Collation::Binary],
+                collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: true,
                 high_exclude: false,
             }]
@@ -587,14 +587,14 @@ fn index_ranges_are_built_the_way_go_builds_them() {
                 Range {
                     low_val: vec![Datum::MinNotNull],
                     high_val: vec![Datum::Int(0)],
-                    collators: vec![tidb_datatype::Collation::Binary],
+                    collators: vec![tidb_charset::Collation::Binary],
                     low_exclude: false,
                     high_exclude: true,
                 },
                 Range {
                     low_val: vec![Datum::Int(1)],
                     high_val: vec![Datum::MaxValue],
-                    collators: vec![tidb_datatype::Collation::Binary],
+                    collators: vec![tidb_charset::Collation::Binary],
                     low_exclude: true,
                     high_exclude: false,
                 }
@@ -750,7 +750,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
         Some(vec![Range {
             low_val: vec![Datum::Int(1), Datum::Int(1)],
             high_val: vec![Datum::Int(1), Datum::MaxValue],
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_exclude: true,
             high_exclude: false,
         }])
@@ -762,7 +762,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
         Some(vec![Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::Int(1)],
-            collators: vec![tidb_datatype::Collation::Binary],
+            collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
         }])
@@ -983,7 +983,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
         vec![Range {
             low_val: vec![Datum::Int(1), Datum::Int(1)],
             high_val: vec![Datum::Int(1), Datum::MaxValue],
-            collators: vec![tidb_datatype::Collation::Binary; 2],
+            collators: vec![tidb_charset::Collation::Binary; 2],
             low_exclude: true,
             high_exclude: false,
         }],

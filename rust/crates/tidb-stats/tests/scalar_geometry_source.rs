@@ -14,10 +14,8 @@
 
 //! Source-backed tests for scalar geometry.
 
-use tidb_datatype::{
-    BinaryJSON, Collation, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time,
-    TimeType, VectorFloat32,
-};
+use tidb_datatype::{BinaryJSON, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32};
+use tidb_charset::Collation;
 use tidb_stats::{
     calc_fraction, calc_fraction_from_datums, common_prefix_length, convert_bytes_to_scalar,
     convert_datum_to_scalar,

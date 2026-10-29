@@ -251,7 +251,7 @@ impl ResultSetSource for BlockingResultSet {
                 flags: 0x0003,
                 flen: Some(20),
                 decimal: Some(0),
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             },
         }])
     }

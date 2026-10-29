@@ -113,7 +113,7 @@ impl ResultSetSource for PanickingRows {
                 flags: 0,
                 flen: Some(20),
                 decimal: Some(0),
-                collation: tidb_datatype::Collation::Binary,
+                collation: tidb_charset::Collation::Binary,
             },
         }])
     }

@@ -40,7 +40,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tidb_chunk::column::VAR_ELEM_LEN;
-use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_datatype::{Datum, DatumValueError};
+use tidb_charset::Collation;
 use tidb_generic::BoundedMinHeap;
 use tidb_memory::Tracker;
 

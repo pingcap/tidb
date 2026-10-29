@@ -1772,7 +1772,7 @@ pub struct IndexRangeSourceExec {
     dirty_used_index: Vec<usize>,
     /// One collation per `dirty_used_index` entry -- Go
     /// `us.collators[colOff]`, indexed by the COLUMN offset.
-    dirty_collations: Vec<tidb_datatype::Collation>,
+    dirty_collations: Vec<tidb_charset::Collation>,
     /// The added stream's fetched rows, in the index order the walk produced
     /// them. Go `addedRowsIter`, buffered per batch because the staged rows
     /// live behind the same session-local storage the snapshot lookup uses.
@@ -2121,7 +2121,7 @@ impl IndexRangeSourceExec {
                 .1
                 .ret_type
                 .as_ref()
-                .map_or(tidb_datatype::Collation::Binary, |field_type| {
+                .map_or(tidb_charset::Collation::Binary, |field_type| {
                     field_type.collation()
                 });
             self.dirty_used_index.push(position);
@@ -3356,13 +3356,13 @@ impl IndexRangeSourceExec {
                     Extreme {
                         value: Option<Datum>,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                     ExtremeCount {
                         value: Option<Datum>,
                         count: i64,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                 }
 
@@ -3556,13 +3556,13 @@ impl IndexRangeSourceExec {
                     Extreme {
                         value: Option<Datum>,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                     ExtremeCount {
                         value: Option<Datum>,
                         count: i64,
                         is_max: bool,
-                        collation: tidb_datatype::Collation,
+                        collation: tidb_charset::Collation,
                     },
                 }
                 let new_values = || {
@@ -4910,13 +4910,13 @@ pub(crate) enum LookupProbePart {
 /// fills the keys into the planner's template, whose collators are the index
 /// columns'; a key datum converted into its column's domain carries that
 /// column's collation (a string does, any other kind compares binary).
-pub(crate) fn key_collators(low: &[Datum], high: &[Datum]) -> Vec<tidb_datatype::Collation> {
+pub(crate) fn key_collators(low: &[Datum], high: &[Datum]) -> Vec<tidb_charset::Collation> {
     (0..low.len().max(high.len()))
         .map(|position| {
             low.get(position)
                 .and_then(Datum::collation)
                 .or_else(|| high.get(position).and_then(Datum::collation))
-                .unwrap_or(tidb_datatype::Collation::Binary)
+                .unwrap_or(tidb_charset::Collation::Binary)
         })
         .collect()
 }

@@ -32,7 +32,8 @@
 //! ordinary, uncached `TableDual` plans, matching Go's physical cache
 //! refusal for a parameterized `PhysicalTableDual`.
 
-use tidb_datatype::{Collation, Datum, StringDatum};
+use tidb_datatype::{Datum, StringDatum};
+use tidb_charset::Collation;
 
 use crate::{
     build_prepared_select_plan, run_create_table_on, run_insert_on, run_prepared_select_for_test,

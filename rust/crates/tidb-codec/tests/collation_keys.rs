@@ -16,7 +16,8 @@
 //! `utf8mb4_bin` padding behavior owned by `pkg/util/collate/bin.go`.
 
 use tidb_codec::{encode_key, Encoder};
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::Datum;
+use tidb_charset::Collation;
 
 #[test]
 fn default_utf8mb4_bin_key_ignores_trailing_spaces() {

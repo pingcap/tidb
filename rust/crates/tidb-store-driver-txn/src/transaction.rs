@@ -23,7 +23,7 @@ mod coordinator;
 
 pub use coordinator::{
     CommitProtocol, ProductionTransaction, RealOptimisticTransactionOpener, RealTransaction,
-    SnapshotGetResult, SnapshotScanRegion, StoreClient,
+    SnapshotGetResult, StoreClient,
 };
 
 /// TiDB facade over the native optimistic and pessimistic transaction owner.

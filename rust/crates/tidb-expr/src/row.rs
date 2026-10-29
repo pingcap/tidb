@@ -62,7 +62,7 @@ pub fn compare_datums(l: &Datum, r: &Datum) -> Result<Ordering, EvalError> {
 pub fn compare_datums_with_collation(
     l: &Datum,
     r: &Datum,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
 ) -> Result<Ordering, EvalError> {
     match (l, r) {
         (Datum::Null, Datum::Null) => return Ok(Ordering::Equal),
@@ -175,7 +175,8 @@ pub(crate) fn row_compare(op: BinaryOp, l: &[Datum], r: &[Datum]) -> Result<Datu
 #[cfg(test)]
 mod tests {
     use super::compare_datums_with_collation;
-    use tidb_datatype::{parse_datetime, Collation, Datum};
+    use tidb_datatype::{parse_datetime, Datum};
+use tidb_charset::Collation;
 
     #[test]
     fn invalid_temporal_comparison_returns_an_error_instead_of_panicking() {

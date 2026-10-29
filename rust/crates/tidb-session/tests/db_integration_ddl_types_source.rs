@@ -16,7 +16,8 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use crate::support::testkit::TestKit;
-use tidb_datatype::{Charset, Datum, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, FieldTypeCode, FieldTypeFlags};
+use tidb_charset::Charset;
 use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvColumn;
 use tidb_table::kv_table::KvTable;

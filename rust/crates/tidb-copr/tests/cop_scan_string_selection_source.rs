@@ -345,7 +345,7 @@ fn expected(collation: &str, ids: &[i64]) -> Vec<Vec<Datum>> {
                 Datum::Int(*id),
                 Datum::String(tidb_datatype::StringDatum::new(
                     value.as_bytes().to_vec(),
-                    tidb_datatype::Collation::from_name(collation).expect("a known collation"),
+                    tidb_charset::Collation::from_name(collation).expect("a known collation"),
                 )),
             ]
         })

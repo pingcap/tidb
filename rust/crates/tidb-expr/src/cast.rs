@@ -734,7 +734,7 @@ fn eval_cast_value(
                 .unwrap_or(connection_charset)
                 .to_ascii_lowercase();
             let target_collation = match charset {
-                Some(_) => tidb_datatype::get_default_collation(&target_charset)
+                Some(_) => tidb_charset::get_default_collation(&target_charset)
                     .map_err(|_| EvalError::Unsupported("CAST charset"))?,
                 None => connection_collation.to_owned(),
             };

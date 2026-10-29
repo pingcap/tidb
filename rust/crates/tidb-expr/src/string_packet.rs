@@ -249,7 +249,7 @@ fn pad_bytes(source: &[u8], len: usize, pad: &[u8], left: bool) -> Datum {
 pub(crate) fn weight_string(
     value: &Datum,
     padding: Option<(bool, i64)>,
-    collation: tidb_datatype::Collation,
+    collation: tidb_charset::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     let Some(bytes) = coerce_str_bytes(value)? else {
@@ -285,7 +285,7 @@ pub(crate) fn weight_string(
                         tidb_datatype::warning_subject_byte_cap(&String::from_utf8_lossy(&bytes))
                     ),
                 );
-                (bytes[..length].to_vec(), tidb_datatype::Collation::Binary)
+                (bytes[..length].to_vec(), tidb_charset::Collation::Binary)
             } else {
                 if (length - bytes.len()) as u64 > ctx.max_allowed_packet() {
                     // Go names this one `cast_as_binary`, not `weight_string`.
@@ -294,7 +294,7 @@ pub(crate) fn weight_string(
                 }
                 let mut padded = bytes;
                 padded.resize(length, 0);
-                (padded, tidb_datatype::Collation::Binary)
+                (padded, tidb_charset::Collation::Binary)
             }
         }
     };
@@ -654,7 +654,7 @@ mod to_base64_tests {
 mod weight_string_source_tests {
     use super::weight_string;
     use crate::{Datum, NoColumns};
-    use tidb_datatype::Collation;
+    use tidb_charset::Collation;
 
     type SourceCase = (&'static str, Option<(bool, i64)>, &'static [u8]);
 

@@ -1035,10 +1035,10 @@ mod tests {
             ),
             (
                 FieldType::new(FieldTypeCode::Varchar)
-                    .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi),
+                    .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi),
                 Datum::new_collation_string(
                     b"AbC".to_vec(),
-                    tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                    tidb_charset::Collation::Utf8Mb4GeneralCi,
                 ),
                 "a='ABC'",
             ),

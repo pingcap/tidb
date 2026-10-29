@@ -716,7 +716,7 @@ pub struct StaticSessionVars {
 impl Default for StaticSessionVars {
     /// Go `variable.NewSessionVars(nil)`, in the fields this type carries.
     fn default() -> Self {
-        let (charset, collation) = tidb_datatype::get_default_charset_and_collate();
+        let (charset, collation) = tidb_charset::get_default_charset_and_collate();
         StaticSessionVars {
             location: TimeZone::Named(chrono_tz::Tz::UTC),
             sql_mode: default_sql_mode(),
@@ -765,13 +765,13 @@ impl StaticSessionVars {
                 self.div_precision_increment = parse_number(DIV_PRECISION_INCREMENT, val)?;
             }
             CHARACTER_SET_CONNECTION => {
-                let info = tidb_datatype::get_charset_info(val)
+                let info = tidb_charset::get_charset_info(val)
                     .map_err(|err| EvalCtxError::new(err.to_string()))?;
                 self.charset = info.name;
                 self.collation = info.default_collation;
             }
             COLLATION_CONNECTION => {
-                let info = tidb_datatype::get_collation_by_name(val)
+                let info = tidb_charset::get_collation_by_name(val)
                     .map_err(|err| EvalCtxError::new(err.to_string()))?;
                 self.charset = info.charset_name;
                 self.collation = info.name;

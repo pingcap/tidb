@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use tidb_datatype::GoString;
+use tidb_goruntime::GoString;
 use tidb_model::TableInfo as ModelTableInfo;
 
 /// Go `DBInfo`: a target TiDB database for import.

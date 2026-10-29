@@ -58,10 +58,8 @@
 //! keeps the column's SCALE, so the zero is rounded to it rather than being
 //! the bare integer zero.
 
-use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, BinaryLiteral, Charset, CoreTime, Datum, Decimal, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, StringDatum, Time, TimeType, VectorFloat32,
-};
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, BinaryLiteral, CoreTime, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, StringDatum, Time, TimeType, VectorFloat32};
+use tidb_charset::Charset;
 
 use crate::column::ColumnError;
 

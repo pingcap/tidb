@@ -19,10 +19,8 @@ use std::cmp::Ordering;
 
 use chrono::{FixedOffset, Utc};
 use tidb_codec::*;
-use tidb_datatype::{
-    parse_datetime, BinaryJSON, BinaryLiteral, Collation, CoreTime, Datum, Decimal, FieldType,
-    FieldTypeCode, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time, TimeType, VectorFloat32,
-};
+use tidb_datatype::{parse_datetime, BinaryJSON, BinaryLiteral, CoreTime, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time, TimeType, VectorFloat32};
+use tidb_charset::Collation;
 
 fn varchar(collation: Collation) -> FieldType {
     FieldType::new(FieldTypeCode::Varchar)

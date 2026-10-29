@@ -17,7 +17,7 @@
 //! and the fixed schemas `buildShowSchema` delegates to.
 
 use tidb_ast::{Expr, ShowStmt, ShowStmtType};
-use tidb_datatype::Collation;
+use tidb_charset::Collation;
 use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
 use tidb_datatype::{FieldName, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::column::Column;

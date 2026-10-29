@@ -19,10 +19,8 @@ use tidb_datatype::RuntimeCollator;
 use super::{names, AggFuncDesc, AggFunctionMode, BaseFuncDesc};
 use crate::{Columns, EvalError};
 use tidb_chunk::row::Row;
-use tidb_datatype::{
-    Collation, ConversionContext, ConversionLocation, Datum, Decimal, DecimalCodecWarning,
-    EvalType, FieldType, FieldTypeCode, SessionTimeZone,
-};
+use tidb_datatype::{ConversionContext, ConversionLocation, Datum, Decimal, DecimalCodecWarning, EvalType, FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_charset::Collation;
 use tidb_proto::tipb;
 
 /// A decoded distributed aggregate. The descriptor retains typed arguments and

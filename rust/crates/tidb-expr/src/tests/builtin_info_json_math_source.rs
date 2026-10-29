@@ -28,10 +28,8 @@ use crate::rewriter::rewrite_expr;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, Datum, EvalError, MysqlRng, NoColumns};
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
-use tidb_datatype::{
-    compare_binary_json, Collation, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, Time,
-    TimeType,
-};
+use tidb_datatype::{compare_binary_json, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, Time, TimeType};
+use tidb_charset::Collation;
 use tidb_mysql::runtime_versions;
 use tidb_printer::get_tidb_info;
 

@@ -81,7 +81,7 @@ fn pushed(
     column_on_left: bool,
 ) -> ScanPredicate {
     ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+        collation: tidb_charset::Collation::Utf8Mb4Bin,
         column_offset,
         column_type: bigint(),
         literal_type: bigint(),
@@ -315,7 +315,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
     let upper_discount = Decimal::from_literal("0.07");
     let predicates = vec![
         ScanPredicate::Compare(ScanComparison {
-            collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_charset::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -326,7 +326,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             column_on_left: true,
         }),
         ScanPredicate::Compare(ScanComparison {
-            collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_charset::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -338,7 +338,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         }),
         ScanPredicate::And(vec![
             ScanPredicate::Compare(ScanComparison {
-                collation: tidb_datatype::Collation::Utf8Mb4Bin,
+                collation: tidb_charset::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -351,7 +351,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
                 column_on_left: true,
             }),
             ScanPredicate::Compare(ScanComparison {
-                collation: tidb_datatype::Collation::Utf8Mb4Bin,
+                collation: tidb_charset::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -365,7 +365,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             }),
         ]),
         ScanPredicate::Compare(ScanComparison {
-            collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_charset::Collation::Utf8Mb4Bin,
             column_offset: 2,
             column_type: FieldType::new(FieldTypeCode::NewDecimal)
                 .with_flen(15)
@@ -675,7 +675,7 @@ fn string_compare_in(
     collation: &str,
 ) -> ScanPredicate {
     ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::from_name(collation).unwrap(),
+        collation: tidb_charset::Collation::from_name(collation).unwrap(),
         column_offset: 0,
         column_type: FieldType::new(FieldTypeCode::Varchar),
         literal_type: FieldType::new(FieldTypeCode::VarString)
@@ -685,7 +685,7 @@ fn string_compare_in(
         // `constantToPBExpr` sends as `ExprType_String`.
         literal: Datum::String(tidb_datatype::StringDatum::new(
             literal.to_vec(),
-            tidb_datatype::Collation::Utf8Mb4Bin,
+            tidb_charset::Collation::Utf8Mb4Bin,
         )),
         column_on_left,
     })
@@ -703,7 +703,7 @@ fn string_scalar_in_with(
     collation: &str,
 ) -> ScanPredicate {
     ScanPredicate::ScalarIn {
-        collation: tidb_datatype::Collation::from_name(collation).unwrap(),
+        collation: tidb_charset::Collation::from_name(collation).unwrap(),
         tested,
         literals,
         negated,
@@ -817,7 +817,7 @@ fn not_like_lowers_to_unary_not_over_gos_like_signature() {
         .with_charset_name("utf8mb4")
         .with_collation_name("utf8mb4_bin");
     let predicate = ScanPredicate::Not(Box::new(ScanPredicate::Like {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+        collation: tidb_charset::Collation::Utf8Mb4Bin,
         column_offset: 0,
         column_type,
         pattern: b"%pending%deposits%".to_vec(),
@@ -1003,7 +1003,7 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
     // constant under the comparison's collation; `NOT IN` wraps it in
     // `UnaryNotInt`. TPC-H Q19's `l_shipmode IN ('AIR', 'AIR REG')` stayed a
     // root-side residual over every lineitem row while this was refused.
-    let string_in = |negated, literals: &[&[u8]], collation: tidb_datatype::Collation| {
+    let string_in = |negated, literals: &[&[u8]], collation: tidb_charset::Collation| {
         wide_scan_selection_conditions(
             &[ScanPredicate::In {
                 collation,
@@ -1023,7 +1023,7 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
     let two = string_in(
         false,
         &[b"AIR", b"AIR REG"],
-        tidb_datatype::Collation::Utf8Mb4Bin,
+        tidb_charset::Collation::Utf8Mb4Bin,
     );
     assert_eq!(two.sig, Some(ScalarFuncSig::InString as i32));
     assert_eq!(
@@ -1039,14 +1039,14 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
     let deduplicated = string_in(
         false,
         &[b"a", b"A"],
-        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        tidb_charset::Collation::Utf8Mb4GeneralCi,
     );
     assert_eq!(
         deduplicated.children.len(),
         2,
         "duplicates under the comparison's collation never reach the wire"
     );
-    let not_in = string_in(true, &[b"AIR"], tidb_datatype::Collation::Utf8Mb4Bin);
+    let not_in = string_in(true, &[b"AIR"], tidb_charset::Collation::Utf8Mb4Bin);
     assert_eq!(not_in.sig, Some(ScalarFuncSig::UnaryNotInt as i32));
     assert_eq!(not_in.children[0].sig, Some(ScalarFuncSig::InString as i32));
     // `IS NULL` uses the evaluation-family-specific signature selected by
@@ -1134,7 +1134,7 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
     }
 
     let membership = |negated, literals: Vec<i64>| ScanPredicate::In {
-        collation: tidb_datatype::Collation::Binary,
+        collation: tidb_charset::Collation::Binary,
         column_offset: 0,
         column_type: bigint(),
         literals: literals.into_iter().map(Datum::Int).collect(),

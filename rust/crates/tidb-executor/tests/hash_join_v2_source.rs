@@ -3536,10 +3536,8 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
 #[test]
 fn inner_join_probe_all_join_keys_source() {
     use tidb_chunk::column::get_fixed_len;
-    use tidb_datatype::{
-        BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, CoreTime, Datum, Decimal,
-        FieldTypeFlags, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
-    };
+    use tidb_datatype::{BinaryJSON, BinaryJSONValue, BinaryLiteral, CoreTime, Datum, Decimal, FieldTypeFlags, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType};
+use tidb_charset::Collation;
     let mut cases: Vec<(FieldType, ColumnType, Datum, Datum)> = Vec::new();
     for code in [FieldTypeCode::Tiny, FieldTypeCode::LongLong] {
         cases.push((

@@ -98,7 +98,7 @@ fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_ranger::types::Ranges {
         .map(|values| tidb_ranger::types::Range {
             low_val: values.clone(),
             high_val: values.clone(),
-            collators: vec![tidb_datatype::Collation::Binary; values.len()],
+            collators: vec![tidb_charset::Collation::Binary; values.len()],
             low_exclude: false,
             high_exclude: false,
         })

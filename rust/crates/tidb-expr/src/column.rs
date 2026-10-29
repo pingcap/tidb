@@ -542,7 +542,7 @@ impl CorrelatedColumn {
                 field
                     .runtime_collator_with_mode(true)
                     .new_collation()
-                    .unwrap_or(tidb_datatype::Collation::Binary),
+                    .unwrap_or(tidb_charset::Collation::Binary),
             ))),
             (EvalType::Decimal, value @ Datum::Decimal(_))
             | (EvalType::Datetime | EvalType::Timestamp, value @ Datum::Time(_))

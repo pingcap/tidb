@@ -347,7 +347,7 @@ impl ColumnRangeTable {
             ft.set_flen(3);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             ft
         });
         let e = Column::new(5, {
@@ -975,7 +975,7 @@ impl PrefixScanTable {
             ft.set_flen(50);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             Column::new(unique_id, ft)
         };
         Self {
@@ -1158,7 +1158,7 @@ impl IndexRangeTable {
         let varchar = |unique_id: i64,
                        flen: i64,
                        collation_name: &str,
-                       collation: tidb_datatype::Collation| {
+                       collation: tidb_charset::Collation| {
             let mut ft = FieldType::new(FieldTypeCode::Varchar);
             ft.set_flen(flen);
             ft.set_charset_name(if collation_name.starts_with("utf8_") {
@@ -1170,17 +1170,17 @@ impl IndexRangeTable {
             ft.set_collation(collation);
             Column::new(unique_id, ft)
         };
-        let a = varchar(1, 50, "utf8mb4_bin", tidb_datatype::Collation::Utf8Mb4Bin);
+        let a = varchar(1, 50, "utf8mb4_bin", tidb_charset::Collation::Utf8Mb4Bin);
         let b = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
         let c = Column::new(3, FieldType::new(FieldTypeCode::Double));
-        let d = varchar(4, 10, "utf8mb4_bin", tidb_datatype::Collation::Utf8Mb4Bin);
+        let d = varchar(4, 10, "utf8mb4_bin", tidb_charset::Collation::Utf8Mb4Bin);
         let e = Column::new(5, {
             // `binary(10)`: the CHAR family with the binary charset.
             let mut ft = FieldType::new(FieldTypeCode::String);
             ft.set_flen(10);
             ft.set_charset_name("binary");
             ft.set_collation_name("binary");
-            ft.set_collation(tidb_datatype::Collation::Binary);
+            ft.set_collation(tidb_charset::Collation::Binary);
             ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
             ft
         });
@@ -1188,17 +1188,17 @@ impl IndexRangeTable {
             6,
             10,
             "utf8mb4_general_ci",
-            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+            tidb_charset::Collation::Utf8Mb4GeneralCi,
         );
         let g = Column::new(7, {
             let mut ft = FieldType::new(FieldTypeCode::Enum);
             ft.set_elems(vec!["A".into(), "B".into(), "C".into()]);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_general_ci");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
             ft
         });
-        let h = varchar(8, 10, "utf8_bin", tidb_datatype::Collation::Utf8Bin);
+        let h = varchar(8, 10, "utf8_bin", tidb_charset::Collation::Utf8Bin);
         Self {
             columns: vec![a, b, c, d, e, f, g, h],
         }
@@ -1671,7 +1671,7 @@ impl Issue40997Table {
             ft.set_flen(8);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             ft.set_flags(ft.flags() | FieldTypeFlags::NOT_NULL);
             ft
         });
@@ -2443,7 +2443,7 @@ fn append_ranges_to_point_ranges_matches_go() {
     let int_range = |low: &[i64], high: &[i64]| Range {
         low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
         high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
-        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        collators: vec![tidb_charset::Collation::Binary; low.len()],
         low_exclude: false,
         high_exclude: false,
     };
@@ -2475,7 +2475,7 @@ impl PrefixNullTable {
             ft.set_flen(50);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             Column::new(unique_id, ft)
         };
         let text = |unique_id: i64| {
@@ -2483,7 +2483,7 @@ impl PrefixNullTable {
             let mut ft = FieldType::new(FieldTypeCode::TinyBlob);
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
-            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             Column::new(unique_id, ft)
         };
         let varbinary = |unique_id: i64| {
@@ -2491,7 +2491,7 @@ impl PrefixNullTable {
             ft.set_flen(50);
             ft.set_charset_name("binary");
             ft.set_collation_name("binary");
-            ft.set_collation(tidb_datatype::Collation::Binary);
+            ft.set_collation(tidb_charset::Collation::Binary);
             ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
             Column::new(unique_id, ft)
         };
@@ -2730,7 +2730,7 @@ fn range_mem_usage_matches_go() {
     let r1 = Range {
         low_val: vec![Datum::Int(0)],
         high_val: vec![Datum::Int(1)],
-        collators: vec![tidb_datatype::Collation::Binary],
+        collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,
     };
@@ -2739,13 +2739,13 @@ fn range_mem_usage_matches_go() {
     let string_datum = |text: &str| {
         Datum::String(tidb_datatype::StringDatum::new(
             text.as_bytes().to_vec(),
-            tidb_datatype::Collation::Utf8Mb4Bin,
+            tidb_charset::Collation::Utf8Mb4Bin,
         ))
     };
     let r2 = Range {
         low_val: vec![string_datum("abcde")],
         high_val: vec![string_datum("fghij")],
-        collators: vec![tidb_datatype::Collation::Binary],
+        collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,
     };
@@ -2771,7 +2771,7 @@ fn taobench_edge_dnf_index_ranges_match_go() {
             let big =
                 |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
             let mut varchar = FieldType::new(FieldTypeCode::Varchar);
-            varchar.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            varchar.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
             varchar.add_flags(FieldTypeFlags::NOT_NULL);
             vec![big(1), big(2), Column::new(3, varchar)]
         }

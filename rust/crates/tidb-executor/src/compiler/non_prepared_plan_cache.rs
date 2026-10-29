@@ -28,7 +28,8 @@ use super::*;
 use tidb_ast::{
     Expr, GroupByItem, IsTarget, JoinNode, OrderItem, QueryStmt, SelectField, SelectStmt, Stmt,
 };
-use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
+use tidb_datatype::{Datum, Decimal, StringDatum};
+use tidb_charset::Collation;
 use crate::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;

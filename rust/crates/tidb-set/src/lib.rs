@@ -23,7 +23,8 @@ use tidb_memory::Tracker;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
-use tidb_datatype::{GoString, MyDecimal};
+use tidb_datatype::MyDecimal;
+use tidb_goruntime::GoString;
 use tidb_hack::{MapValueLayout, MemAwareMap};
 use tidb_mysql::{to_lowercase, to_uppercase};
 

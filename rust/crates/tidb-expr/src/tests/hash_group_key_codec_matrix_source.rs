@@ -43,7 +43,8 @@
 
 use chrono::Utc;
 use tidb_codec::{encode_value_in_timezone, hash_group_key_in_timezone};
-use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, TimeType};
+use tidb_datatype::{Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, TimeType};
+use tidb_charset::Collation;
 
 /// Go `eType2FieldType(eTypes[i])` for the seven types in TestHashGroupKey's
 /// table order.

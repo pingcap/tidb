@@ -46,7 +46,8 @@
 
 use super::*;
 use crate::arg_eval_type::{eval_string, wrap_string_args};
-use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
+use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
+use tidb_charset::Collation;
 
 /// Both evaluator tiers impose the layer, so every expression assertion is
 /// made twice. A tier that stopped calling `wrap_string_args` would otherwise
