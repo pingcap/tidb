@@ -16,9 +16,10 @@
 
 use tidb_chunk::row::Row;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_protocol::resultset_stream::{ResultSetStream, ResultSetStreamError, TextRowWriter};
+use crate::resultset_stream::{ResultSetStream, ResultSetStreamError, TextRowWriter};
 use tidb_format_textrow::TextScalar;
-use tidb_protocol::{PacketWriter, ResultSetOptions};
+use tidb_protocol::PacketWriter;
+use crate::resultset::ResultSetOptions;
 
 use tidb_session::domain::resultset_source::ResultSetSource;
 
@@ -554,7 +555,7 @@ fn append_owned_chunk_text(
 /// cursor) the options already carry.
 pub(crate) fn apply_statement_status(
     status: &tidb_session::domain::resultset_source::StatementStatus<'_>,
-    options: &mut tidb_protocol::ResultSetOptions,
+    options: &mut crate::resultset::ResultSetOptions,
 ) {
     const SESSION_BITS: u16 = tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS
         | tidb_session::domain::wire_status::SERVER_STATUS_AUTOCOMMIT;

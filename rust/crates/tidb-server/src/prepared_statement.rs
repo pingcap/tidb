@@ -19,39 +19,39 @@
 //! `parseBinaryParams` -> `expression.ExecBinaryParam` boundary.
 
 use tidb_param::PreparedValue;
-use crate::append_length_encoded_bytes;
-use crate::append_length_encoded_int;
-use crate::encode_eof_packet;
-use crate::ColumnInfo;
-use crate::EofPacket;
-use crate::ResultSetOptions;
-use crate::DEFAULT_COLLATION_ID;
-use crate::TYPE_BIT;
-use crate::TYPE_BLOB;
+use tidb_server_internal_dump::append_length_encoded_bytes;
+use tidb_server_internal_dump::append_length_encoded_int;
+use crate::resultset::encode_eof_packet;
+use tidb_server_internal_column::ColumnInfo;
+use crate::resultset::EofPacket;
+use crate::resultset::ResultSetOptions;
+use tidb_server_internal_column::DEFAULT_COLLATION_ID;
+use tidb_server_internal_column::TYPE_BIT;
+use tidb_server_internal_column::TYPE_BLOB;
 use tidb_format_textrow::TYPE_DATE;
 use tidb_format_textrow::TYPE_DATETIME;
 use tidb_format_textrow::TYPE_DOUBLE;
 use tidb_format_textrow::TYPE_DURATION;
-use crate::TYPE_ENUM;
+use tidb_server_internal_column::TYPE_ENUM;
 use tidb_format_textrow::TYPE_FLOAT;
 use tidb_format_textrow::TYPE_GEOMETRY;
 use tidb_format_textrow::TYPE_INT24;
-use crate::TYPE_JSON;
+use tidb_server_internal_column::TYPE_JSON;
 use tidb_format_textrow::TYPE_LONG;
 use tidb_format_textrow::TYPE_LONGLONG;
-use crate::TYPE_LONG_BLOB;
-use crate::TYPE_MEDIUM_BLOB;
+use tidb_server_internal_column::TYPE_LONG_BLOB;
+use tidb_server_internal_column::TYPE_MEDIUM_BLOB;
 use tidb_format_textrow::TYPE_NEW_DECIMAL;
-use crate::TYPE_SET;
+use tidb_server_internal_column::TYPE_SET;
 use tidb_format_textrow::TYPE_SHORT;
-use crate::TYPE_STRING;
-use crate::TYPE_TIDB_VECTOR_FLOAT32;
+use tidb_server_internal_column::TYPE_STRING;
+use tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32;
 use tidb_format_textrow::TYPE_TIMESTAMP;
 use tidb_format_textrow::TYPE_TINY;
-use crate::TYPE_TINY_BLOB;
-use crate::TYPE_UNSPECIFIED;
-use crate::TYPE_VARCHAR;
-use crate::TYPE_VAR_STRING;
+use tidb_server_internal_column::TYPE_TINY_BLOB;
+use crate::binary_params::TYPE_UNSPECIFIED;
+use tidb_server_internal_column::TYPE_VARCHAR;
+use tidb_server_internal_column::TYPE_VAR_STRING;
 use tidb_format_textrow::TYPE_YEAR;
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -165,7 +165,7 @@ pub enum PreparedStatementError {
         actual: usize,
     },
     /// The package-level raw parameter splitter rejected the value section.
-    BinaryParameter(crate::BinaryParamError),
+    BinaryParameter(crate::binary_params::BinaryParamError),
     /// The packet contained bytes after every declared value was decoded.
     TrailingBytes {
         /// Number of unexpected bytes.
@@ -272,8 +272,8 @@ impl PreparedStatementError {
     }
 }
 
-impl From<crate::BinaryParamError> for PreparedStatementError {
-    fn from(error: crate::BinaryParamError) -> Self {
+impl From<crate::binary_params::BinaryParamError> for PreparedStatementError {
+    fn from(error: crate::binary_params::BinaryParamError) -> Self {
         Self::BinaryParameter(error)
     }
 }
@@ -319,7 +319,7 @@ impl PreparedStatementExecutePacket<'_> {
         }
         let bound_params: Vec<Option<&[u8]>> =
             bound_params.iter().map(|bound| bound.as_deref()).collect();
-        let values = crate::parse_binary_params(
+        let values = crate::binary_params::parse_binary_params(
             self.types.len(),
             &bound_params,
             &self.null_bitmap,
@@ -437,7 +437,7 @@ pub fn decode_prepared_statement_execute_with_bound_params(
 fn prepared_value_from_binary_param(
     parameter: tidb_param::BinaryParam,
 ) -> Result<PreparedValue, PreparedStatementError> {
-    if parameter.tp == crate::TYPE_NULL {
+    if parameter.tp == crate::binary_params::TYPE_NULL {
         return Ok(PreparedValue::Null);
     }
     if parameter.is_null {
@@ -499,7 +499,7 @@ fn prepared_value_from_binary_param(
         TYPE_UNSPECIFIED | TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_ENUM | TYPE_SET
         | TYPE_GEOMETRY | TYPE_BIT => PreparedValue::String(parameter.val),
         type_code => {
-            return Err(crate::BinaryParamError::UnknownFieldType { type_code }.into());
+            return Err(crate::binary_params::BinaryParamError::UnknownFieldType { type_code }.into());
         }
     };
     Ok(value)

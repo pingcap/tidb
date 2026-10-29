@@ -21,16 +21,16 @@
 use std::io::Write;
 use tidb_format_textrow::result_encoder::ResultEncoder;
 
-use tidb_protocol::encode_error_packet;
-use tidb_protocol::encode_ok_packet;
-use tidb_protocol::ColumnInfo;
-use tidb_protocol::ErrorPacket;
-use tidb_protocol::OkPacket;
+use crate::error_packet::encode_error_packet;
+use crate::resultset::encode_ok_packet;
+use tidb_server_internal_column::ColumnInfo;
+use crate::error_packet::ErrorPacket;
+use crate::resultset::OkPacket;
 use tidb_protocol::PacketIoWriter;
 use tidb_protocol::PacketWriter;
-use tidb_protocol::ResultSetOptions;
-use tidb_protocol::BINARY_DEFAULT_COLLATION_ID;
-use tidb_protocol::MYSQL_TYPE_LONGLONG;
+use crate::resultset::ResultSetOptions;
+use tidb_server_internal_column::BINARY_DEFAULT_COLLATION_ID;
+use crate::prepared_statement::MYSQL_TYPE_LONGLONG;
 
 use crate::mysql_connection::MysqlConnectionError;
 use crate::mysql_connection::ER_UNKNOWN_STMT_HANDLER;
@@ -130,7 +130,7 @@ pub(crate) fn write_eof_or_ok<O: ConnectionPacketOutput + ?Sized>(
     sequence: u8,
     options: ResultSetOptions,
 ) -> Result<(), MysqlConnectionError> {
-    let payload = tidb_protocol::encode_eof_packet(&tidb_protocol::EofPacket {
+    let payload = crate::resultset::encode_eof_packet(&crate::resultset::EofPacket {
         affected_rows: options.affected_rows,
         last_insert_id: options.last_insert_id,
         warnings: options.warnings,

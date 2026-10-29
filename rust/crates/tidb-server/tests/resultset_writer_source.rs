@@ -19,7 +19,14 @@ use std::collections::VecDeque;
 
 use tidb_datatype::{BinaryJSON, BinaryLiteral, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32};
 use tidb_charset::Collation;
-use tidb_protocol::{append_length_encoded_bytes, ResultSetOptions, TYPE_BIT, TYPE_ENUM, TYPE_JSON, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_VAR_STRING};
+use tidb_server::resultset::ResultSetOptions;
+use tidb_server_internal_column::TYPE_BIT;
+use tidb_server_internal_column::TYPE_ENUM;
+use tidb_server_internal_column::TYPE_JSON;
+use tidb_server_internal_column::TYPE_SET;
+use tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32;
+use tidb_server_internal_column::TYPE_VAR_STRING;
+use tidb_server_internal_dump::append_length_encoded_bytes;
 use tidb_format_textrow::TYPE_DATETIME;
 use tidb_format_textrow::TYPE_DOUBLE;
 use tidb_format_textrow::TYPE_DURATION;

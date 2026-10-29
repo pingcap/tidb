@@ -1,0 +1,13 @@
+[package]
+name = "tidb-server-internal-dump"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/server/internal/dump (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]

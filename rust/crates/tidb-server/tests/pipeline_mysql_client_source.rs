@@ -24,10 +24,16 @@
 use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
-use tidb_protocol::{
-    PacketReader, PacketWriter, COM_PING, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE,
-    COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_PING;
+use tidb_server::command::COM_QUERY;
+use tidb_server::command::COM_STMT_CLOSE;
+use tidb_server::command::COM_STMT_EXECUTE;
+use tidb_server::command::COM_STMT_FETCH;
+use tidb_server::command::COM_STMT_PREPARE;
+use tidb_server::command::COM_STMT_RESET;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
     ConnectionTracker,
@@ -2706,7 +2712,7 @@ fn session_migration_moves_text_and_binary_prepared_handles_over_mysql() {
     let exported = execute_statement(&mut target, &mut reader, export, &[]);
     let exported: serde_json::Value = serde_json::from_str(&exported[0][0]).unwrap();
     assert_eq!(exported["prepared-stmts"][id.to_string()]["types"], "CAA=");
-    let mut long_data = vec![tidb_protocol::COM_STMT_SEND_LONG_DATA];
+    let mut long_data = vec![tidb_server::command::COM_STMT_SEND_LONG_DATA];
     long_data.extend_from_slice(&id.to_le_bytes());
     long_data.extend_from_slice(&0u16.to_le_bytes());
     write_packet(&mut target, 0, &long_data);

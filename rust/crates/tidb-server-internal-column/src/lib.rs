@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::result::append_length_encoded_bytes;
+//! Go `pkg/server/internal/column`: a result column's protocol metadata
+//! (`Info`) and its column-definition packet (`Dump`).
+
+use tidb_server_internal_dump::append_length_encoded_bytes;
 use tidb_format_textrow::result_encoder::ResultEncoder;
+
 /// Maximum byte length advertised for a column name by TiDB's server.
 pub const MAX_COLUMN_NAME_SIZE: usize = 256;
 

@@ -14,7 +14,10 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{TYPE_ENUM, TYPE_JSON, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32};
+use tidb_server_internal_column::TYPE_ENUM;
+use tidb_server_internal_column::TYPE_JSON;
+use tidb_server_internal_column::TYPE_SET;
+use tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32;
 use tidb_format_textrow::append_format_float;
 use tidb_format_textrow::format_text_value;
 use tidb_format_textrow::TextColumn;
@@ -142,7 +145,7 @@ fn source_scalar_formatter_keeps_numeric_and_byte_boundaries() {
     );
     assert_eq!(
         format_text_value(
-            TextColumn::new(tidb_protocol::TYPE_VARCHAR),
+            TextColumn::new(tidb_server_internal_column::TYPE_VARCHAR),
             TextScalar::Bytes(&[0xff, 0]),
         )
         .unwrap(),
@@ -178,11 +181,11 @@ fn source_scalar_formatter_rejects_mismatched_and_invalid_branches() {
     );
     assert_eq!(
         format_text_value(
-            TextColumn::new(tidb_protocol::TYPE_VARCHAR),
+            TextColumn::new(tidb_server_internal_column::TYPE_VARCHAR),
             TextScalar::Signed(1),
         )
         .unwrap_err(),
-        TextFormatError::ScalarTypeMismatch(tidb_protocol::TYPE_VARCHAR)
+        TextFormatError::ScalarTypeMismatch(tidb_server_internal_column::TYPE_VARCHAR)
     );
 
     // The temporal branches are connected now, and they take their OWN

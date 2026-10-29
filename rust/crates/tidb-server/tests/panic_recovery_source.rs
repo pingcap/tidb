@@ -17,10 +17,16 @@ use std::time::Duration;
 use tidb_datatype::{Datum, FieldTypeCode};
 
 use sha1::{Digest, Sha1};
-use tidb_protocol::{
-    CompressionAlgorithm, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
-    COM_PING, COM_QUERY, COM_QUIT, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_protocol::CompressionAlgorithm;
+use tidb_protocol::PacketIoReader;
+use tidb_protocol::PacketIoWriter;
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_PING;
+use tidb_server::command::COM_QUERY;
+use tidb_server::command::COM_QUIT;
+use tidb_server::command::COM_STMT_PREPARE;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{ConcurrentSqlNode, ConfiguredUserStore, NodeConfig, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 

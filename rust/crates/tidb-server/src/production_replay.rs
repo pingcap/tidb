@@ -108,7 +108,7 @@ impl ReplaySession for UnistoreSession {
             Some(mut result) => Some(
                 crate::connection_resultset::write_connection_result_set(
                     result.source(),
-                    tidb_protocol::ResultSetOptions::default(),
+                    crate::resultset::ResultSetOptions::default(),
                     1024,
                 )
                 .map_err(|error| source_error(error.cause))?,

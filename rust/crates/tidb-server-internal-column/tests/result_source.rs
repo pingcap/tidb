@@ -15,11 +15,20 @@
 #![allow(missing_docs)]
 
 use tidb_format_textrow::result_encoder::{is_string_column_type, ResultEncoder};
-use tidb_protocol::{
-    append_length_encoded_bytes, append_length_encoded_int, dump_column, dump_column_with_default,
-    dump_flag, dump_type, encode_text_row, ColumnDefault, ColumnInfo,
-    PacketError, TYPE_ENUM, TYPE_NEW_DATE, TYPE_SET, TYPE_STRING,
-};
+use tidb_protocol::PacketError;
+use tidb_server_internal_column::dump_column;
+use tidb_server_internal_column::dump_column_with_default;
+use tidb_server_internal_column::dump_flag;
+use tidb_server_internal_column::dump_type;
+use tidb_server_internal_column::ColumnDefault;
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server_internal_column::TYPE_ENUM;
+use tidb_server_internal_column::TYPE_NEW_DATE;
+use tidb_server_internal_column::TYPE_SET;
+use tidb_server_internal_column::TYPE_STRING;
+use tidb_server_internal_dump::append_length_encoded_bytes;
+use tidb_server_internal_dump::append_length_encoded_int;
+use tidb_server_internal_dump::encode_text_row;
 
 fn source_column(default_value: Option<ColumnDefault>) -> ColumnInfo {
     ColumnInfo {
@@ -148,9 +157,9 @@ fn test_dump_text_value_framing() {
     append_length_encoded_bytes(&mut prefixed, Some(b"abc"));
     assert_eq!(prefixed, b"\xaa\x03abc");
 
-    assert!(is_string_column_type(tidb_protocol::TYPE_VARCHAR));
+    assert!(is_string_column_type(tidb_server_internal_column::TYPE_VARCHAR));
     assert!(is_string_column_type(
-        tidb_protocol::TYPE_TIDB_VECTOR_FLOAT32
+        tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32
     ));
     assert!(!is_string_column_type(8));
 }

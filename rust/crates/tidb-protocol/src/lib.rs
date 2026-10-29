@@ -19,61 +19,16 @@
 //! TLS, authentication, socket deadlines, metrics, and server dispatch remain
 //! explicit server obligations.
 
-mod binary_params;
-mod column;
-mod command;
 mod compression;
 mod error;
-mod error_packet;
 mod packet;
-mod prepared_statement;
-mod result;
-mod resultset;
-pub mod resultset_stream;
 
-pub use binary_params::{
-    parse_binary_params, parse_length_encoded_bytes, parse_length_encoded_int,
-    parse_null_term_string, BinaryParamError, TYPE_NULL, TYPE_UNSPECIFIED,
-};
-pub use column::{
-    dump_column, dump_column_with_default, dump_flag, dump_type, ColumnDefault, ColumnInfo,
-    BINARY_DEFAULT_COLLATION_ID, BINARY_FLAG, DEFAULT_COLLATION_ID, ENUM_FLAG,
-    MAX_COLUMN_NAME_SIZE, MAX_LONG_BLOB_WIDTH, SET_FLAG, TYPE_BIT, TYPE_BLOB, TYPE_ENUM, TYPE_JSON,
-    TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DATE, TYPE_SET, TYPE_STRING,
-    TYPE_TIDB_VECTOR_FLOAT32, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING,
-};
-pub use command::{
-    decode_command, Command, CommandError, COM_FIELD_LIST, COM_INIT_DB, COM_PING, COM_QUERY,
-    COM_QUIT, COM_REFRESH, COM_RESET_CONNECTION, COM_SET_OPTION, COM_STMT_CLOSE, COM_STMT_EXECUTE,
-    COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA,
-};
 pub use compression::{
     CompressedHeader, CompressedReader, CompressedWriter, CompressionAlgorithm,
     MAX_COMPRESSED_BATCH_SIZE, MIN_COMPRESS_LENGTH,
 };
 pub use error::PacketError;
-pub use error_packet::{encode_error_packet, ErrorPacket, ERR_HEADER};
 pub use packet::{
     PacketHeader, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
     DEFAULT_MAX_ALLOWED_PACKET, MAX_PAYLOAD_LEN,
-};
-pub use prepared_statement::{
-    decode_prepared_statement_close, decode_prepared_statement_execute,
-    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
-    decode_prepared_statement_send_long_data, encode_binary_datetime, encode_binary_result_row,
-    encode_binary_signed_longlong_row, encode_binary_time,
-    encode_prepared_statement_prepare_response, is_binary_datetime_result_type,
-    is_binary_decimal_result_type, is_binary_duration_result_type, is_binary_float_result_type,
-    is_binary_integer_result_type, is_binary_string_result_type, split_prepared_statement_execute,
-    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
-    PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute,
-    PreparedStatementExecutePacket, PreparedStatementSendLongData,
-    CURSOR_TYPE_READ_ONLY, MAX_STMT_FETCH_SIZE, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
-};
-pub use result::{
-    append_length_encoded_bytes, append_length_encoded_int, encode_text_row, NULL_MARKER,
-};
-pub use resultset::{
-    encode_eof_packet, encode_ok_packet, encode_text_result_set, EofPacket, OkPacket,
-    ResultSetError, ResultSetOptions, EOF_HEADER, OK_HEADER,
 };

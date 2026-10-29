@@ -12,9 +12,12 @@ use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::Datum;
-use tidb_protocol::{
-    PacketReader, PacketWriter, COM_PING, COM_QUERY, COM_QUIT,
-    DEFAULT_MAX_ALLOWED_PACKET, };
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_PING;
+use tidb_server::command::COM_QUERY;
+use tidb_server::command::COM_QUIT;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 

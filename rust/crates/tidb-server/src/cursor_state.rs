@@ -34,7 +34,7 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 pub(crate) struct CursorState {
     current_tso: Option<tidb_exprctx::CurrentTso>,
     _start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
-    columns: Vec<tidb_protocol::ColumnInfo>,
+    columns: Vec<tidb_server_internal_column::ColumnInfo>,
     field_types: Vec<tidb_datatype::FieldType>,
     init_chunk_size: usize,
     max_chunk_size: usize,
@@ -214,7 +214,7 @@ impl CursorState {
             .map_err(|error| SqlQueryError::from(error))
     }
 
-    pub(crate) fn columns(&self) -> &[tidb_protocol::ColumnInfo] {
+    pub(crate) fn columns(&self) -> &[tidb_server_internal_column::ColumnInfo] {
         &self.columns
     }
 
@@ -228,10 +228,10 @@ impl CursorState {
         &mut self,
         output: &mut O,
         row_count: usize,
-        options: tidb_protocol::ResultSetOptions,
+        options: crate::resultset::ResultSetOptions,
     ) -> Result<(), CursorFetchError> {
         let mut stream =
-            tidb_protocol::BinaryResultSetStream::new(self.columns.clone(), options.clone())
+            crate::prepared_statement::BinaryResultSetStream::new(self.columns.clone(), options.clone())
                 .map_err(|error| CursorFetchError::Protocol {
                     message: error.to_string(),
                     sequence: 1,

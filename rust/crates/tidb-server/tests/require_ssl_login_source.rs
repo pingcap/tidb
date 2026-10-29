@@ -35,7 +35,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sha1::{Digest, Sha1};
-use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_QUIT;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection_with_tls, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, MysqlServerTls, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_privilege::{encode_password, PrivilegeRegistry, SslType};

@@ -15,11 +15,19 @@
 #![allow(missing_docs)]
 
 use tidb_format_textrow::result_encoder::ResultEncoder;
-use tidb_protocol::{
-    dump_column, dump_column_with_default, ColumnDefault, ColumnInfo, BINARY_DEFAULT_COLLATION_ID,
-    BINARY_FLAG, DEFAULT_COLLATION_ID, ENUM_FLAG, MAX_LONG_BLOB_WIDTH, SET_FLAG, TYPE_LONG_BLOB,
-    TYPE_NEW_DATE, TYPE_TIDB_VECTOR_FLOAT32,
-};
+use tidb_server_internal_column::dump_column;
+use tidb_server_internal_column::dump_column_with_default;
+use tidb_server_internal_column::ColumnDefault;
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server_internal_column::BINARY_DEFAULT_COLLATION_ID;
+use tidb_server_internal_column::BINARY_FLAG;
+use tidb_server_internal_column::DEFAULT_COLLATION_ID;
+use tidb_server_internal_column::ENUM_FLAG;
+use tidb_server_internal_column::MAX_LONG_BLOB_WIDTH;
+use tidb_server_internal_column::SET_FLAG;
+use tidb_server_internal_column::TYPE_LONG_BLOB;
+use tidb_server_internal_column::TYPE_NEW_DATE;
+use tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32;
 
 fn source_column() -> ColumnInfo {
     ColumnInfo {

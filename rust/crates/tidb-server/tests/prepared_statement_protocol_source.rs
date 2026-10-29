@@ -15,29 +15,29 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{Decimal, PackedTime};
-use tidb_protocol::decode_prepared_statement_close;
-use tidb_protocol::decode_prepared_statement_execute;
-use tidb_protocol::decode_prepared_statement_execute_with_bound_params;
-use tidb_protocol::decode_prepared_statement_fetch;
-use tidb_protocol::decode_prepared_statement_send_long_data;
-use tidb_protocol::encode_binary_datetime;
-use tidb_protocol::encode_binary_result_row;
-use tidb_protocol::encode_binary_signed_longlong_row;
-use tidb_protocol::encode_binary_time;
-use tidb_protocol::encode_prepared_statement_prepare_response;
-use tidb_protocol::split_prepared_statement_execute;
-use tidb_protocol::BinaryDateTimeType;
-use tidb_protocol::BinaryResultCell;
-use tidb_protocol::BinaryResultSetStream;
-use tidb_protocol::ColumnInfo;
-use tidb_protocol::PreparedParameterType;
-use tidb_protocol::PreparedParameterTypes;
-use tidb_protocol::PreparedStatementError;
-use tidb_protocol::PreparedStatementSendLongData;
+use tidb_server::prepared_statement::decode_prepared_statement_close;
+use tidb_server::prepared_statement::decode_prepared_statement_execute;
+use tidb_server::prepared_statement::decode_prepared_statement_execute_with_bound_params;
+use tidb_server::prepared_statement::decode_prepared_statement_fetch;
+use tidb_server::prepared_statement::decode_prepared_statement_send_long_data;
+use tidb_server::prepared_statement::encode_binary_datetime;
+use tidb_server::prepared_statement::encode_binary_result_row;
+use tidb_server::prepared_statement::encode_binary_signed_longlong_row;
+use tidb_server::prepared_statement::encode_binary_time;
+use tidb_server::prepared_statement::encode_prepared_statement_prepare_response;
+use tidb_server::prepared_statement::split_prepared_statement_execute;
+use tidb_server::prepared_statement::BinaryDateTimeType;
+use tidb_server::prepared_statement::BinaryResultCell;
+use tidb_server::prepared_statement::BinaryResultSetStream;
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server::prepared_statement::PreparedParameterType;
+use tidb_server::prepared_statement::PreparedParameterTypes;
+use tidb_server::prepared_statement::PreparedStatementError;
+use tidb_server::prepared_statement::PreparedStatementSendLongData;
 use tidb_param::PreparedValue;
-use tidb_protocol::ResultSetOptions;
-use tidb_protocol::BINARY_DEFAULT_COLLATION_ID;
-use tidb_protocol::TYPE_JSON;
+use tidb_server::resultset::ResultSetOptions;
+use tidb_server_internal_column::BINARY_DEFAULT_COLLATION_ID;
+use tidb_server_internal_column::TYPE_JSON;
 use tidb_format_textrow::TYPE_LONGLONG;
 use tidb_format_textrow::result_encoder::ResultEncoder;
 
@@ -267,14 +267,14 @@ fn execute_rejects_malformed_headers_cursor_modes_and_values() {
     assert_eq!(
         decode_prepared_statement_execute(&execute_payload(1, true, 1)[..15], 1, None),
         Err(PreparedStatementError::BinaryParameter(
-            tidb_protocol::BinaryParamError::MalformedPacket
+            tidb_server::binary_params::BinaryParamError::MalformedPacket
         ))
     );
     let unknown = execute_payload_typed(1, 0x9f, 0, &[]);
     assert_eq!(
         decode_prepared_statement_execute(&unknown, 1, None),
         Err(PreparedStatementError::BinaryParameter(
-            tidb_protocol::BinaryParamError::UnknownFieldType { type_code: 0x9f }
+            tidb_server::binary_params::BinaryParamError::UnknownFieldType { type_code: 0x9f }
         ))
     );
 }

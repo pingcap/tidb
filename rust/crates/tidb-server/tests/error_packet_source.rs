@@ -14,7 +14,9 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{encode_error_packet, ErrorPacket, ERR_HEADER};
+use tidb_server::error_packet::encode_error_packet;
+use tidb_server::error_packet::ErrorPacket;
+use tidb_server::error_packet::ERR_HEADER;
 
 #[test]
 fn write_error_protocol_41_matches_go_field_order() {

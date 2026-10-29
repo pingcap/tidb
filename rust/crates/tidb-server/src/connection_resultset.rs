@@ -15,7 +15,14 @@
 //! Connection routing for incremental result-set responses.
 
 use tidb_datatype::{Datum, PackedTime, TimeType};
-use tidb_protocol::{is_binary_datetime_result_type, is_binary_decimal_result_type, is_binary_duration_result_type, is_binary_string_result_type, BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, ResultSetOptions};
+use crate::prepared_statement::is_binary_datetime_result_type;
+use crate::prepared_statement::is_binary_decimal_result_type;
+use crate::prepared_statement::is_binary_duration_result_type;
+use crate::prepared_statement::is_binary_string_result_type;
+use crate::prepared_statement::BinaryDateTimeType;
+use crate::prepared_statement::BinaryResultCell;
+use crate::prepared_statement::BinaryResultSetStream;
+use crate::resultset::ResultSetOptions;
 use tidb_format_textrow::TYPE_DOUBLE;
 use tidb_format_textrow::TYPE_FLOAT;
 use tidb_format_textrow::TYPE_INT24;
@@ -296,7 +303,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         for row in batch {
             if row.len() != columns.len() {
                 return Err(binary_failure(
-                    tidb_protocol::PreparedStatementError::RowColumnCount {
+                    crate::prepared_statement::PreparedStatementError::RowColumnCount {
                         expected: columns.len(),
                         actual: row.len(),
                     }
@@ -403,7 +410,7 @@ mod tests {
         BinaryJSON, CoreTime, Datum, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
         VectorFloat32,
     };
-    use tidb_protocol::encode_binary_result_row;
+    use crate::prepared_statement::encode_binary_result_row;
 
     /// The fixture was captured from production `column.DumpBinaryRow` over
     /// real chunk rows at the accepted source boundary. This asserts the
@@ -437,13 +444,13 @@ mod tests {
         chunk.append_datum(0, &datum);
         let cell = datum_to_binary_cell(datum, type_code).expect("column type admits this datum");
         let expected = encode_binary_result_row(std::slice::from_ref(&cell));
-        let mut stream = tidb_protocol::BinaryResultSetStream::new(
-            vec![tidb_protocol::ColumnInfo {
+        let mut stream = crate::prepared_statement::BinaryResultSetStream::new(
+            vec![tidb_server_internal_column::ColumnInfo {
                 type_code,
                 charset: 63,
-                ..tidb_protocol::ColumnInfo::default()
+                ..tidb_server_internal_column::ColumnInfo::default()
             }],
-            tidb_protocol::ResultSetOptions::default(),
+            crate::resultset::ResultSetOptions::default(),
         )
         .unwrap();
         stream.metadata_packets().unwrap();
@@ -555,21 +562,21 @@ mod tests {
         assert_eq!(
             row(
                 Datum::Bytes(b"hello blob".to_vec()),
-                tidb_protocol::TYPE_BLOB
+                tidb_server_internal_column::TYPE_BLOB
             ),
             go_row("blob")
         );
         assert_eq!(
             row(
                 Datum::Bytes(b"tiny".to_vec()),
-                tidb_protocol::TYPE_TINY_BLOB
+                tidb_server_internal_column::TYPE_TINY_BLOB
             ),
             go_row("tiny_blob")
         );
         assert_eq!(
             row(
                 Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![0x01, 0x02])),
-                tidb_protocol::TYPE_BIT
+                tidb_server_internal_column::TYPE_BIT
             ),
             go_row("bit")
         );
@@ -579,7 +586,7 @@ mod tests {
                     MysqlEnum::new("green", 2),
                     tidb_charset::Collation::Utf8Mb4Bin
                 ),
-                tidb_protocol::TYPE_ENUM
+                tidb_server_internal_column::TYPE_ENUM
             ),
             go_row("enum")
         );
@@ -589,14 +596,14 @@ mod tests {
                     MysqlSet::new("a,c", 5),
                     tidb_charset::Collation::Utf8Mb4Bin
                 ),
-                tidb_protocol::TYPE_SET
+                tidb_server_internal_column::TYPE_SET
             ),
             go_row("set")
         );
         assert_eq!(
             row(
                 Datum::Json(BinaryJSON::parse(r#"{"a": [1, 2]}"#).expect("json")),
-                tidb_protocol::TYPE_JSON
+                tidb_server_internal_column::TYPE_JSON
             ),
             go_row("json")
         );
@@ -617,7 +624,7 @@ mod tests {
         assert_eq!(
             row(
                 Datum::new_vector_float32(VectorFloat32::parse("[1,2]").unwrap()),
-                tidb_protocol::TYPE_TIDB_VECTOR_FLOAT32
+                tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32
             ),
             b"\0\0\x05[1,2]"
         );
@@ -685,7 +692,7 @@ mod tests {
         let started = std::time::Instant::now();
         let response = super::write_connection_result_set(
             &mut source,
-            tidb_protocol::ResultSetOptions::default(),
+            crate::resultset::ResultSetOptions::default(),
             2,
         )
         .unwrap();

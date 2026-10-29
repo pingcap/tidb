@@ -30,7 +30,10 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
-use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_QUIT;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_parser::auth::hash_password_with_salt_bytes;
 use tidb_server::{serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;

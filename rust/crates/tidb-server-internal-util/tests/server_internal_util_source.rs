@@ -16,7 +16,7 @@
 
 use std::io::ErrorKind;
 
-use tidb_protocol::{parse_length_encoded_bytes, parse_null_term_string};
+use tidb_server_internal_util::{parse_length_encoded_bytes, parse_null_term_string};
 
 #[test]
 fn parse_length_encoded_bytes_matches_go_contract() {

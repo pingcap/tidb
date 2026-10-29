@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Go `pkg/server/internal/dump`: the length-encoded integers and strings
+//! the text protocol writes, and one text row's framing.
+
 /// The text-protocol marker for a SQL `NULL` value.
 pub const NULL_MARKER: u8 = 0xfb;
 

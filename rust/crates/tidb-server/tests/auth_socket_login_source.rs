@@ -24,7 +24,10 @@
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
-use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_QUIT;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionReport, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::peer_address::PeerAddress;

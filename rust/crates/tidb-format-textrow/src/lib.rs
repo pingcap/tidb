@@ -17,7 +17,7 @@
 //! This module owns the scalar formatting rules from
 //! `pkg/format/textrow/textrow.go`. Charset conversion and TiDB `Datum`
 //! projection stay at their existing owners: callers pass rendered bytes and
-//! `tidb_protocol::resultset_stream::ResultSetStream` applies the column/session
+//! `tidb_server::resultset_stream::ResultSetStream` applies the column/session
 //! charset policy exactly once.
 
 pub mod result_encoder;
@@ -462,7 +462,7 @@ pub fn append_datum_text_owned(
 }
 
 /// Formats one source-shaped scalar without claiming charset or Datum
-/// semantics. The result is suitable for `tidb_protocol::encode_text_row`.
+/// semantics. The result is suitable for `tidb_server_internal_dump::encode_text_row`.
 pub fn format_text_value(
     column: TextColumn,
     value: TextScalar<'_>,

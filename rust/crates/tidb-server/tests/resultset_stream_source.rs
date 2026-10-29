@@ -15,10 +15,12 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{Datum, Decimal};
-use tidb_protocol::resultset_stream::{
+use tidb_server::resultset_stream::{
     ResultSetStream, ResultSetStreamError, ResultSetStreamState,
 };
-use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_VAR_STRING};
+use tidb_server::resultset::ResultSetOptions;
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server_internal_column::TYPE_VAR_STRING;
 use tidb_format_textrow::TextScalar;
 use tidb_format_textrow::TYPE_LONG;
 use tidb_format_textrow::TYPE_NEW_DECIMAL;

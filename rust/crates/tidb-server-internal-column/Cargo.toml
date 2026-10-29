@@ -1,0 +1,19 @@
+[package]
+name = "tidb-server-internal-column"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/server/internal/column (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-server-internal-dump = { path = "../tidb-server-internal-dump" }
+tidb-format-textrow = { path = "../tidb-format-textrow" }
+tidb-hack = { path = "../tidb-hack" }
+
+[dev-dependencies]
+tidb-protocol = { path = "../tidb-protocol" }

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::append_length_encoded_int;
-use crate::encode_text_row;
-use crate::ColumnInfo;
+use tidb_server_internal_dump::append_length_encoded_int;
+use tidb_server_internal_dump::encode_text_row;
+use tidb_server_internal_column::ColumnInfo;
 
 /// MySQL's OK packet header.
 pub const OK_HEADER: u8 = 0x00;
@@ -201,7 +201,7 @@ pub fn encode_eof_packet(packet: &EofPacket) -> Vec<u8> {
 /// The sequence mirrors `clientConn.writeChunks`: column count, one packet per
 /// column, an old-client metadata EOF, each text row, and a terminal EOF. The
 /// caller owns packet framing/sequence numbers and can pass each returned
-/// payload to [`crate::PacketWriter`]. Typed Datum formatting, charset
+/// payload to [`tidb_protocol::PacketWriter`]. Typed Datum formatting, charset
 /// conversion, and result-set iteration remain outside this protocol leaf.
 pub fn encode_text_result_set(
     columns: &[ColumnInfo],

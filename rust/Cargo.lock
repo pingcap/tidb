@@ -639,7 +639,7 @@ dependencies = [
  "tidb-memory",
  "tidb-parser",
  "tidb-privilege",
- "tidb-protocol",
+ "tidb-server-internal-column",
  "tidb-session",
  "tidb-sessmgr",
  "tidb-sqlkiller",
@@ -5006,6 +5006,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-goruntime",
  "tidb-mysql",
+ "tidb-server-internal-column",
 ]
 
 [[package]]
@@ -6019,15 +6020,6 @@ name = "tidb-protocol"
 version = "0.0.0"
 dependencies = [
  "flate2",
- "tidb-charset",
- "tidb-chunk",
- "tidb-datatype",
- "tidb-errno",
- "tidb-format-textrow",
- "tidb-goruntime",
- "tidb-hack",
- "tidb-mysql",
- "tidb-param",
  "zstd",
 ]
 
@@ -6376,6 +6368,9 @@ dependencies = [
  "tidb-sem",
  "tidb-sem-v2",
  "tidb-server-err",
+ "tidb-server-internal-column",
+ "tidb-server-internal-dump",
+ "tidb-server-internal-util",
  "tidb-servermemorylimit",
  "tidb-session",
  "tidb-sessionctx",
@@ -6433,6 +6428,24 @@ dependencies = [
  "tidb-errno",
  "tidb-terror",
 ]
+
+[[package]]
+name = "tidb-server-internal-column"
+version = "0.0.0"
+dependencies = [
+ "tidb-format-textrow",
+ "tidb-hack",
+ "tidb-protocol",
+ "tidb-server-internal-dump",
+]
+
+[[package]]
+name = "tidb-server-internal-dump"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-server-internal-util"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-servermemorylimit"

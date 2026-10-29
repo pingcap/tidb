@@ -25,9 +25,10 @@
 #![allow(missing_docs)]
 
 use tidb_param::BinaryParam;
-use tidb_protocol::{
-    parse_binary_params, parse_length_encoded_int, BinaryParamError, TYPE_NULL,
-};
+use tidb_server::binary_params::parse_binary_params;
+use tidb_server::binary_params::BinaryParamError;
+use tidb_server::binary_params::TYPE_NULL;
+use tidb_server_internal_util::parse_length_encoded_int;
 
 fn param(tp: u8, is_unsigned: bool, is_null: bool, val: &[u8]) -> BinaryParam {
     BinaryParam {

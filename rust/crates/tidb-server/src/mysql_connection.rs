@@ -23,20 +23,20 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tidb_format_textrow::result_encoder::ResultEncoder;
-use tidb_protocol::decode_command;
-use tidb_protocol::decode_prepared_statement_close;
-use tidb_protocol::decode_prepared_statement_fetch;
-use tidb_protocol::decode_prepared_statement_send_long_data;
-use tidb_protocol::encode_prepared_statement_prepare_response;
-use tidb_protocol::split_prepared_statement_execute;
-use tidb_protocol::Command;
+use crate::command::decode_command;
+use crate::prepared_statement::decode_prepared_statement_close;
+use crate::prepared_statement::decode_prepared_statement_fetch;
+use crate::prepared_statement::decode_prepared_statement_send_long_data;
+use crate::prepared_statement::encode_prepared_statement_prepare_response;
+use crate::prepared_statement::split_prepared_statement_execute;
+use crate::command::Command;
 use tidb_protocol::CompressionAlgorithm;
 use tidb_protocol::PacketError;
 use tidb_protocol::PacketIoReader;
 use tidb_protocol::PacketIoWriter;
 use tidb_protocol::PacketReader;
-use tidb_protocol::PreparedParameterType;
-use tidb_protocol::PreparedParameterTypes;
+use crate::prepared_statement::PreparedParameterType;
+use crate::prepared_statement::PreparedParameterTypes;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 
 use crate::auth_exchange::AuthSwitchRequest;
@@ -111,7 +111,7 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
         result_encoder,
     );
     let mut stream =
-        tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options.clone())
+        crate::prepared_statement::BinaryResultSetStream::new(cursor.columns().to_vec(), options.clone())
             .map_err(|error| {
                 PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
             })?;
@@ -2743,7 +2743,7 @@ fn run_connection_commands<S: QuerySession>(
                     // only the column definitions plus an EOF whose
                     // status advertises the open cursor; the rows travel
                     // later through COM_STMT_FETCH.
-                    if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                    if execute.cursor_flags & crate::prepared_statement::CURSOR_TYPE_READ_ONLY != 0 {
                         let mut write_outcome = None;
                         match engine.execute_general(general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {

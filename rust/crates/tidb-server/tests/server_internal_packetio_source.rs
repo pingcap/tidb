@@ -18,10 +18,16 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tidb_protocol::{
-    CompressionAlgorithm, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter, COM_PING,
-    COM_QUERY, COM_QUIT, COM_REFRESH, DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_protocol::CompressionAlgorithm;
+use tidb_protocol::PacketIoReader;
+use tidb_protocol::PacketIoWriter;
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_PING;
+use tidb_server::command::COM_QUERY;
+use tidb_server::command::COM_QUIT;
+use tidb_server::command::COM_REFRESH;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::handshake::CLIENT_ZSTD_COMPRESSION_ALGORITHM;
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionReport,

@@ -20,14 +20,14 @@
 
 use tidb_format_textrow::result_encoder::is_string_column_type;
 use tidb_format_textrow::{append_datum_text_owned, OwnedDatumText, TextColumn, TextFormatError};
-use crate::append_length_encoded_bytes;
-use crate::append_length_encoded_int;
-use crate::encode_eof_packet;
-use crate::encode_text_row;
-use crate::ColumnInfo;
-use crate::EofPacket;
-use crate::ResultSetOptions;
-use crate::NULL_MARKER;
+use tidb_server_internal_dump::append_length_encoded_bytes;
+use tidb_server_internal_dump::append_length_encoded_int;
+use crate::resultset::encode_eof_packet;
+use tidb_server_internal_dump::encode_text_row;
+use tidb_server_internal_column::ColumnInfo;
+use crate::resultset::EofPacket;
+use crate::resultset::ResultSetOptions;
+use tidb_server_internal_dump::NULL_MARKER;
 use tidb_datatype::{Datum, MyDecimal};
 
 /// Lifecycle of an incremental result-set payload stream.
@@ -378,7 +378,7 @@ impl ResultSetStream {
                 // Go treats JSON and VECTOR as utf8mb4 regardless of the
                 // column's own (binary) collation.
                 let collation = match column.type_code {
-                    crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
+                    tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => {
                         tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
                     }
                     _ => column.charset,
@@ -421,7 +421,7 @@ impl ResultSetStream {
             // Go treats JSON and VECTOR as utf8mb4 regardless of the
             // column's own (binary) collation.
             let collation = match column.type_code {
-                crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
+                tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => {
                     tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
                 }
                 _ => column.charset,
@@ -486,7 +486,7 @@ fn encode_owned_cell(
     // Go treats JSON and VECTOR as utf8mb4 regardless of their binary column
     // collation; all other string columns use their declared charset.
     let collation = match column.type_code {
-        crate::TYPE_JSON | crate::TYPE_TIDB_VECTOR_FLOAT32 => tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID,
+        tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID,
         _ => column.charset,
     };
     if encoder.update_data_encoding(collation).is_err() {

@@ -15,3 +15,6 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-datatype = { path = "../tidb-datatype" }
+
+[dev-dependencies]
+tidb-server-internal-column = { path = "../tidb-server-internal-column" }

@@ -12,6 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-server-internal-dump = { path = "../tidb-server-internal-dump" }
+tidb-server-internal-util = { path = "../tidb-server-internal-util" }
+tidb-server-internal-column = { path = "../tidb-server-internal-column" }
 tidb-param = { path = "../tidb-param" }
 tidb-ddl-systable = { path = "../tidb-ddl-systable" }
 tidb-executor-sortexec = { path = "../tidb-executor-sortexec" }

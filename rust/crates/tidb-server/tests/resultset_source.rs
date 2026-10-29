@@ -14,10 +14,15 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{
-    encode_eof_packet, encode_ok_packet, encode_text_result_set, ColumnInfo, EofPacket, OkPacket,
-    ResultSetError, ResultSetOptions, TYPE_NEW_DATE,
-};
+use tidb_server::resultset::encode_eof_packet;
+use tidb_server::resultset::encode_ok_packet;
+use tidb_server::resultset::encode_text_result_set;
+use tidb_server::resultset::EofPacket;
+use tidb_server::resultset::OkPacket;
+use tidb_server::resultset::ResultSetError;
+use tidb_server::resultset::ResultSetOptions;
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server_internal_column::TYPE_NEW_DATE;
 
 fn source_column() -> ColumnInfo {
     ColumnInfo {

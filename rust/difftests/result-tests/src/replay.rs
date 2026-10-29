@@ -279,7 +279,7 @@ fn render_rows(
     // each one to `maxColumnNameSize` bytes.
     let mut out = vec![columns
         .iter()
-        .map(|(name, _)| &name.as_bytes()[..name.len().min(tidb_protocol::MAX_COLUMN_NAME_SIZE)])
+        .map(|(name, _)| &name.as_bytes()[..name.len().min(tidb_server_internal_column::MAX_COLUMN_NAME_SIZE)])
         .collect::<Vec<_>>()
         .join(&b'\t')];
     out.extend(rows.iter().map(|row| {

@@ -19,7 +19,8 @@ use tidb_datatype::FieldTypeCode;
 use tidb_charset::Charset;
 use tidb_charset::Collation;
 use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC};
-use tidb_protocol::{ColumnInfo, TYPE_VAR_STRING};
+use tidb_server_internal_column::ColumnInfo;
+use tidb_server_internal_column::TYPE_VAR_STRING;
 
 /// Converts one resolved result field to protocol column metadata.
 ///
@@ -167,7 +168,7 @@ mod tests {
     use tidb_datatype::FieldTypeCode;
 use tidb_charset::Collation;
     use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC, UNSIGNED_FLAG};
-    use tidb_protocol::TYPE_VAR_STRING;
+    use tidb_server_internal_column::TYPE_VAR_STRING;
 
     use super::convert_column_info;
 

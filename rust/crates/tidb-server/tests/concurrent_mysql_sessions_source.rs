@@ -13,10 +13,12 @@ use std::time::{Duration, Instant};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldTypeCode};
-use tidb_protocol::{
-    PacketReader, PacketWriter, COM_PING, COM_QUERY,
-    COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_protocol::PacketReader;
+use tidb_protocol::PacketWriter;
+use tidb_server::command::COM_PING;
+use tidb_server::command::COM_QUERY;
+use tidb_server::command::COM_QUIT;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation, NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_globalconn::{parse_conn_id, Gcid};
@@ -436,9 +438,9 @@ fn command_token_releases_on_error_no_response_quit_protocol_failure_and_panic()
         .unwrap();
     for command in [
         [&[COM_QUERY][..], b"error"].concat(),
-        [&[tidb_protocol::COM_STMT_PREPARE][..], b"select ?"].concat(),
+        [&[tidb_server::command::COM_STMT_PREPARE][..], b"select ?"].concat(),
         // Unknown prepared handle: dispatch returns a protocol ERR.
-        vec![tidb_protocol::COM_STMT_EXECUTE, 123, 0, 0, 0, 0, 1, 0, 0, 0],
+        vec![tidb_server::command::COM_STMT_EXECUTE, 123, 0, 0, 0, 0, 1, 0, 0, 0],
         vec![0xfe],
     ] {
         write_packet(&mut first, 0, &command);
@@ -449,7 +451,7 @@ fn command_token_releases_on_error_no_response_quit_protocol_failure_and_panic()
     write_packet(
         &mut first,
         0,
-        &[tidb_protocol::COM_STMT_CLOSE, 123, 0, 0, 0],
+        &[tidb_server::command::COM_STMT_CLOSE, 123, 0, 0, 0],
     );
     write_packet(&mut first, 0, &[COM_PING]);
     reader.set_sequence(1);
@@ -459,7 +461,7 @@ fn command_token_releases_on_error_no_response_quit_protocol_failure_and_panic()
     drop(first);
 
     for command in [
-        vec![tidb_protocol::COM_SET_OPTION],
+        vec![tidb_server::command::COM_SET_OPTION],
         [&[COM_QUERY][..], b"panic"].concat(),
     ] {
         let (mut client, mut reader) = authenticate(address);
