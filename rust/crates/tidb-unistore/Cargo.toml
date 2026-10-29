@@ -33,6 +33,7 @@ tokio.workspace = true
 async-trait.workspace = true
 
 [dev-dependencies]
+tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-domain = { path = "../tidb-domain" }
 flate2.workspace = true

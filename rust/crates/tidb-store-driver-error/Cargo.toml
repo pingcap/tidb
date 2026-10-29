@@ -21,7 +21,7 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-config = { path = "../tidb-config" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tikv-client.workspace = true
 
 [dev-dependencies]
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
-tikv-client.workspace = true

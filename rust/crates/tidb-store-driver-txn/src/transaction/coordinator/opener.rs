@@ -43,7 +43,7 @@ pub struct RealOptimisticTransactionOpener<S: tikv_client::PdClient = PdRpcClien
     /// The same store as the coprocessor reads through it (Go's copr over
     /// the `KVStore`), for the reads this opener's users issue themselves --
     /// ANALYZE's sampling.
-    cop_store: Arc<dyn crate::driver::cop_store::NativeCopStore>,
+    cop_store: Arc<dyn tidb_copr::cop_store::NativeCopStore>,
 }
 
 impl<S: tikv_client::PdClient> Clone for RealOptimisticTransactionOpener<S> {
@@ -61,7 +61,7 @@ impl<S: tikv_client::PdClient> Clone for RealOptimisticTransactionOpener<S> {
 impl<S: tikv_client::PdClient> RealOptimisticTransactionOpener<S> {
     /// The node's store for coprocessor reads.
     #[must_use]
-    pub fn cop_store(&self) -> Option<&Arc<dyn crate::driver::cop_store::NativeCopStore>> {
+    pub fn cop_store(&self) -> Option<&Arc<dyn tidb_copr::cop_store::NativeCopStore>> {
         Some(&self.cop_store)
     }
 
@@ -103,7 +103,7 @@ where
         // Go `store/driver/txn` imports `tablecodec`, whose `init` has run
         // before any transaction of this store tags a request.
         tidb_tablecodec::init();
-        let cop_store: Arc<dyn crate::driver::cop_store::NativeCopStore> = Arc::new(store.clone());
+        let cop_store: Arc<dyn tidb_copr::cop_store::NativeCopStore> = Arc::new(store.clone());
         Ok(Self {
             store,
             timeout,

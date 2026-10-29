@@ -531,7 +531,7 @@ pub(crate) fn classify_client_cause(
 ) -> tidb_txnkv::transaction::TransactionCause {
     use tidb_txnkv::transaction::TransactionCause;
     use tikv_client::Error as ClientError;
-    if let Some(kind) = client_backoff_kind(client_error) {
+    if let Some(kind) = tidb_store_driver_error::backoff::client_backoff_kind(client_error) {
         return TransactionCause::BackoffExhausted {
             kind,
             detail: client_error.to_string(),
@@ -623,32 +623,6 @@ pub(crate) fn classify_client_cause(
             detail: client_error.to_string(),
         },
     }
-}
-
-/// Go `ToTiDBErr`'s backoff arm: the backoff class whose sentinel client-go
-/// returns when that class's budget ran out (`tikverr.ErrRegionUnavailable`
-/// for `BoRegionMiss`, and so on), from client-rust's sentinel.
-pub fn client_backoff_kind(error: &tikv_client::Error) -> Option<tidb_txnkv::retry::RegionBackoffKind> {
-    use tidb_txnkv::retry::RegionBackoffKind as Kind;
-    use tikv_client::error::StaticError;
-    let terminal = match error {
-        tikv_client::Error::Static(error) => *error,
-        tikv_client::Error::PdServerTimeout(_) => return Some(Kind::PdRpc),
-        _ => return None,
-    };
-    Some(match terminal {
-        StaticError::TiKvServerTimeout => Kind::TikvRpc,
-        StaticError::RegionUnavailable => Kind::RegionMiss,
-        StaticError::TiKvStaleCommand => Kind::StaleCommand,
-        StaticError::TiKvMaxTimestampNotSynced => Kind::MaxTimestampNotSynced,
-        StaticError::ResolveLockTimeout => Kind::TxnLock,
-        StaticError::TiKvServerBusy => Kind::TikvServerBusy,
-        StaticError::TiKvDiskFull => Kind::TikvDiskFull,
-        StaticError::RegionRecoveryInProgress => Kind::RegionRecoveryInProgress,
-        StaticError::RegionNotInitialized => Kind::RegionNotInitialized,
-        StaticError::IsWitness => Kind::IsWitness,
-        _ => return None,
-    })
 }
 
 /// Pessimistic-path surface, as Go `KVTxn`'s statement-time locking.

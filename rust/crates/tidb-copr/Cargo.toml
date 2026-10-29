@@ -19,7 +19,7 @@ tidb-paging = { path = "../tidb-paging" }
 tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-trxevents = { path = "../tidb-trxevents" }
-tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-fastrand = { path = "../tidb-fastrand" }
@@ -44,6 +44,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-infoschema = { path = "../tidb-infoschema" }

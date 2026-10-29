@@ -20,6 +20,7 @@ pub mod range_diagnostics;
 pub mod mpp_probe;
 pub mod region_location;
 pub mod copr_cache;
+pub mod cop_store;
 pub mod coprocessor_request;
 pub mod read_bytes_ema;
 pub mod region_task;

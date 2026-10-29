@@ -24,6 +24,7 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
+tidb-copr = { path = "../tidb-copr" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }

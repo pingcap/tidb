@@ -927,7 +927,7 @@ fn native_transport<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
 ) -> Result<
-    tidb_copr::cop_paging::NativeCopTransport<dyn tidb_store_driver_txn::driver::cop_store::NativeCopStore>,
+    tidb_copr::cop_paging::NativeCopTransport<dyn tidb_copr::cop_store::NativeCopStore>,
     String,
 > {
     let store = opener
