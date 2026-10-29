@@ -4508,9 +4508,7 @@ func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
 // it also replaces max_allowed_packet in tableContents with the config value.
 func SysVarCacheValues(tableContents map[string]string) (session, global map[string]string) {
 	if deploymode.IsStarter() {
-		if _, ok := tableContents[vardef.MaxAllowedPacket]; ok {
-			tableContents[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
-		}
+		overrideSysVarWithConfig(tableContents)
 	}
 	session = make(map[string]string)
 	global = make(map[string]string)
@@ -4529,4 +4527,12 @@ func SysVarCacheValues(tableContents map[string]string) (session, global map[str
 		}
 	}
 	return session, global
+}
+
+// overrideSysVarWithConfig replaces the sysvars in tableContents that the config
+// owns on Starter, where max_allowed_packet is set by config instead of SET GLOBAL.
+func overrideSysVarWithConfig(tableContents map[string]string) {
+	if _, ok := tableContents[vardef.MaxAllowedPacket]; ok {
+		tableContents[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
+	}
 }
