@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -80,6 +83,52 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 		return false
 	}, 10*time.Second, 100*time.Millisecond, "RPC server failed to start")
 	return srv
+}
+
+func TestClusterTableSlowQueryInMemoryOriginalQuery(t *testing.T) {
+	executor.StartSlowQueryCache()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	t.Cleanup(srv.Stop)
+
+	slowLogFile := filepath.Join(t.TempDir(), "tidb-slow.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFile
+	})
+	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	tk := testkit.NewTestKit(t, store)
+	originalMode := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0].(string)
+	originalThreshold := fmt.Sprint(tk.MustQuery("select @@tidb_slow_log_threshold").Rows()[0][0])
+	t.Cleanup(func() {
+		tk.MustExec("set tidb_slow_log_threshold = " + originalThreshold)
+		tk.MustExec("set global tidb_redact_log = '" + originalMode + "'")
+	})
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustExec("set global tidb_redact_log = 'ON'")
+	tk.MustExec("select 7123456789")
+
+	// Establish that the SQL was cached locally before exercising the remote
+	// session created by the cluster table's coprocessor request.
+	tk.EventuallyMustQueryAndCheck(
+		"select query, in_memory_original_query from information_schema.slow_query where query = 'select ?;'",
+		nil, testkit.Rows("select ?; select 7123456789"), 3*time.Second, 20*time.Millisecond,
+	)
+
+	for _, mode := range []string{vardef.On, vardef.Off, vardef.Marker, vardef.On} {
+		t.Run(mode, func(t *testing.T) {
+			tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+			tk.MustExec("set global tidb_redact_log = '" + mode + "'")
+			// Reading ignores tidb_redact_log, including a requesting session whose
+			// value differs from the global mode and the coprocessor session.
+			vars := tk.Session().GetSessionVars()
+			vars.EnableRedactLog = vardef.Off
+			if mode == vardef.Off {
+				vars.EnableRedactLog = vardef.On
+			}
+			tk.MustQuery("select query, in_memory_original_query from information_schema.cluster_slow_query where query = 'select ?;'").
+				Check(testkit.Rows("select ?; select 7123456789"))
+		})
+	}
 }
 
 func TestClusterTableSlowQuery(t *testing.T) {

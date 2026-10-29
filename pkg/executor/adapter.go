@@ -2129,6 +2129,18 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	if slowItems == nil {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
+
+	var unredactedSQL string
+	// tidb_redact_log off already writes the original SQL to the slow log, so
+	// skip the cache. ON and MARKER redact that line. Only non-sensitive SELECT
+	// statements are queued, and SensitiveStmtNode must never retain its
+	// original SQL in memory.
+	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQueryCacheable() {
+		// Capture the original text before it is redacted into the slow log line.
+		// Only this SQL string is retained in memory.
+		unredactedSQL = sessVars.StmtCtx.OriginalSQL
+	}
+
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
@@ -2138,6 +2150,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
+
+	if unredactedSQL != "" {
+		// Queue the plaintext before the redacted line is written. A full queue
+		// drops the cache entry and the disk write below still happens.
+		globalSlowQueryCache.putIntoCache(
+			slowQueryKeyOf(slowItems.TxnTS, slowQueryTimeKey(slowItems.TimeTotal), slowItems.Digest),
+			unredactedSQL,
+		)
+	}
+
 	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
@@ -2521,6 +2543,20 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
+}
+
+// isSlowQueryCacheable reports whether this statement may keep its original SQL
+// in the plaintext slow-query cache. Only a directly executed SELECT qualifies.
+// Prepared executions, TABLE, VALUES, and sensitive statements do not.
+func (a *ExecStmt) isSlowQueryCacheable() bool {
+	if a.isPreparedStmt {
+		return false
+	}
+	if _, sensitive := a.StmtNode.(ast.SensitiveStmtNode); sensitive {
+		return false
+	}
+	sel, ok := a.StmtNode.(*ast.SelectStmt)
+	return ok && sel.Kind == ast.SelectStmtKindSelect
 }
 
 func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {

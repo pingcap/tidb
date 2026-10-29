@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -93,6 +94,73 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 		retriever.columnValueFactoryMap[col.Name.O] = factory
 	}
 	return parseLog(retriever, sctx, reader)
+}
+
+func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
+	// The lookup does not consult tidb_redact_log. The column is filled whenever
+	// the cache has retained SQL.
+	sqlText := "select secret_value;"
+	key := slowQueryKeyOf(42, 1.5, "mem-digest")
+	// The production Server.Run path starts the process-wide worker before
+	// accepting connections. Unit tests start it explicitly.
+	globalSlowQueryCache.start()
+	globalSlowQueryCache.putIntoCache(key, sqlText)
+	require.Eventually(t, func() bool {
+		got, err := globalSlowQueryCache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
+		return err == nil && len(got) == 1 && got[0] == sqlText
+	}, time.Second, 5*time.Millisecond)
+
+	row := []types.Datum{types.NewStringDatum("")}
+	retriever := &slowQueryRetriever{
+		inMemoryOriginalQueryIndex: 0,
+		taskList:                   make(chan slowLogTask, 1),
+		memTracker:                 memory.NewTracker(0, -1),
+	}
+	retriever.memConsume(types.EstimatedMemUsage(row, 1))
+	resultCh := make(chan parsedSlowLog, 1)
+	resultCh <- parsedSlowLog{rows: [][]types.Datum{row}, keys: []slowQueryKey{key}}
+	retriever.taskList <- slowLogTask{resultCh: resultCh}
+
+	rows, err := retriever.dataForSlowLog(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, sqlText, rows[0][0].GetString())
+	require.Equal(t, types.EstimatedMemUsage(rows[0], 1), retriever.memTracker.BytesConsumed())
+	require.Equal(t, retriever.lastFetchSize, retriever.memTracker.BytesConsumed())
+
+	close(retriever.taskList)
+	rows, err = retriever.dataForSlowLog(context.Background())
+	require.NoError(t, err)
+	require.Nil(t, rows)
+	require.Zero(t, retriever.memTracker.BytesConsumed())
+}
+
+func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
+	selectStmt := &ast.SelectStmt{Kind: ast.SelectStmtKindSelect}
+	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindTable}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindValues}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.InsertStmt{}}).isSlowQueryCacheable())
+	sensitiveStmt := &ast.SetStmt{}
+	_, ok := any(sensitiveStmt).(ast.SensitiveStmtNode)
+	require.True(t, ok)
+	require.False(t, (&ExecStmt{StmtNode: sensitiveStmt}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SetOprStmt{}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{}).isSlowQueryCacheable())
+
+	require.False(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		Plan:     &plannercore.Execute{Stmt: selectStmt},
+	}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		Plan:     &plannercore.Execute{Stmt: &ast.UpdateStmt{}},
+	}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		PsStmt:   &plannercore.PlanCacheStmt{PreparedAst: &ast.Prepared{Stmt: selectStmt}},
+	}).isSlowQueryCacheable())
+	require.False(t, (&ExecStmt{StmtNode: selectStmt, isPreparedStmt: true}).isSlowQueryCacheable())
 }
 
 func TestParseSlowLogPanic(t *testing.T) {
@@ -202,7 +270,7 @@ select * from t;`
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
 		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,null,select * from t;`
+		`,update t set i = 1;,null,select * from t;,`
 	require.Equal(t, expectRecordString, recordString)
 
 	// Issue 20928
@@ -225,7 +293,7 @@ select * from t;`
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
 		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,null,select * from t;`
+		`,update t set i = 1;,null,select * from t;,`
 	require.Equal(t, expectRecordString, recordString)
 
 	// fix sql contain '# ' bug
@@ -318,7 +386,12 @@ select * from t;
 	retriever, err := newSlowQueryRetriever()
 	require.NoError(t, err)
 	retriever.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(retriever.outputCols))
+	retriever.inMemoryOriginalQueryIndex = -1
 	for idx, col := range retriever.outputCols {
+		if strings.EqualFold(col.Name.O, variable.SlowLogInMemoryOriginalQueryStr) {
+			retriever.inMemoryOriginalQueryIndex = idx
+			continue
+		}
 		factory, err := getColumnValueFactoryByName(col.Name.O, idx)
 		require.NoError(t, err)
 		require.NotNil(t, factory, "column %s should have a factory", col.Name.O)
@@ -586,15 +659,23 @@ select 7;`
 			err = retriever.initialize(context.Background(), sctx)
 			require.NoError(t, err)
 			comment := fmt.Sprintf("compressed: %v, case id: %v", k, i)
+			queryIdx := -1
+			for idx, col := range retriever.outputCols {
+				if col.Name.O == variable.SlowLogQuerySQLStr {
+					queryIdx = idx
+					break
+				}
+			}
+			require.NotEqual(t, -1, queryIdx, comment)
 			if len(retriever.files) > 0 {
 				var reader *bufio.Reader
 				reader, err := retriever.getNextReader()
 				require.NoError(t, err, comment)
 				rows, err := parseLog(retriever, sctx, reader)
 				require.NoError(t, err, comment)
-				require.Equal(t, len(rows), len(cas.querys), comment)
+				require.Equal(t, len(cas.querys), len(rows), comment)
 				for i, row := range rows {
-					require.Equal(t, row[len(row)-1].GetString(), cas.querys[i], comment)
+					require.Equal(t, cas.querys[i], row[queryIdx].GetString(), comment)
 				}
 			}
 
