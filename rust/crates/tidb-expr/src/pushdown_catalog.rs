@@ -3578,11 +3578,9 @@ pub fn from_expression_in(
 /// blacklist every conversion is gated by. Go reads the blacklist from the
 /// global `DefaultExprPushDownBlacklist`; this tier captures it per statement,
 /// so the statement's context answers it.
-pub trait PbConverterContext: crate::Columns + Send + Sync {
-    /// The `mysql.expr_pushdown_blacklist` image this statement converts
-    /// under.
-    fn expr_pushdown_blacklist(&self) -> &crate::infer_pushdown::ExprPushDownBlacklist;
-}
+pub trait PbConverterContext: crate::Columns + Send + Sync {}
+
+impl<T: crate::Columns + Send + Sync + ?Sized> PbConverterContext for T {}
 
 /// Go `PbConverter.conOrCorColToPBExpr`: every deferred constant (a parameter
 /// marker or a value bound at execution) and every correlated column under

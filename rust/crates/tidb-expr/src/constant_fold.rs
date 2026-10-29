@@ -980,72 +980,24 @@ mod deferred_function_tests {
     }
 }
 
-/// Warnings the constant-fold evaluation raised, stashed for the caller that
-/// owns the statement's warning buffer. The fold evaluates column-free
-/// expressions against a sessionless context whose `append_warning` would
-/// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
-/// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
-thread_local! {
-    static FOLD_WARNINGS: std::cell::RefCell<Vec<tidb_context::SqlWarn>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Records one fold-time warning into this thread's stash.
-pub fn record_fold_warning(code: u16, message: &str) {
-    record_fold_sql_warn(tidb_context::SqlWarn::with_code(
-        tidb_context::WarningLevel::Warning,
-        code,
-        message,
-    ));
-}
-
-/// Records one fold-time warning, error and all, into this thread's stash.
-pub fn record_fold_sql_warn(warning: tidb_context::SqlWarn) {
-    FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().push(warning));
-}
-
-/// The current stash depth, so a failed fold attempt can roll its own
-/// diagnostics back ([`truncate_fold_warnings`]).
-#[must_use]
-pub fn fold_warnings_len() -> usize {
-    FOLD_WARNINGS.with(|warnings| warnings.borrow().len())
-}
-
-/// Rolls the stash back to `len`: a fold attempt whose evaluation FAILED
-/// must leave no diagnostics behind -- go's foldConstant keeps the original
-/// expression and the EXECUTION re-evaluates it, re-emitting each warning
-/// exactly once. Keeping the failed attempt's warnings multiplied every
-/// statement-error warning (fold + scalar exec + chunk exec).
-pub fn truncate_fold_warnings(len: usize) {
-    FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().truncate(len));
-}
-
 /// Re-homes the warnings a fold emitted straight into a LIVE statement
 /// context: the statement boundary's warning reset clears the live list
 /// between planning and execution, so entries appended during PLANNING
 /// never reach `SHOW WARNINGS`. Moving the fold's delta into the thread
 /// stash hands them to the record-set's post-execution drain
-/// ([`take_fold_warnings`]), which runs after the reset.
+/// (`tidb_context::fold_warnings::take_fold_warnings`), which runs after the reset.
 pub fn move_live_warnings_to_stash(ctx: &dyn crate::Columns, bookmark: usize) {
     if ctx.warning_count() > bookmark {
         for warning in ctx.take_warnings_since(bookmark) {
-            record_fold_sql_warn(warning);
+            tidb_context::fold_warnings::record_fold_sql_warn(warning);
         }
     }
 }
 
-/// Drains this thread's fold warnings. The statement driver calls this right
-/// after planning, forwarding the pairs into the statement's warning buffer
-/// so `SHOW WARNINGS` and the OK packet's count see them.
-#[must_use]
-pub fn take_fold_warnings() -> Vec<tidb_context::SqlWarn> {
-    let taken = FOLD_WARNINGS.with(std::cell::RefCell::take);
-    taken
-}
 
 /// The columns context the fold evaluates against: reads like
 /// [`ZonedNoColumns`](crate::ZonedNoColumns) but every warning the evaluated
-/// expression raises lands in [`record_fold_warning`] instead of being
+/// expression raises lands in [`tidb_context::fold_warnings::record_fold_warning`] instead of being
 /// dropped.
 pub struct FoldWarningContext {
     zone: tidb_datatype::SessionTimeZone,
@@ -1069,11 +1021,11 @@ impl Columns for FoldWarningContext {
     }
 
     fn append_warning(&self, code: u16, message: &str) {
-        record_fold_warning(code, message);
+        tidb_context::fold_warnings::record_fold_warning(code, message);
     }
 
     fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
-        record_fold_sql_warn(tidb_context::SqlWarn::from_error(
+        tidb_context::fold_warnings::record_fold_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,
             error.code,
             error.message.clone(),
@@ -1082,10 +1034,10 @@ impl Columns for FoldWarningContext {
     }
 
     fn warning_count(&self) -> usize {
-        fold_warnings_len()
+        tidb_context::fold_warnings::fold_warnings_len()
     }
 
     fn truncate_warnings(&self, bookmark: usize) {
-        truncate_fold_warnings(bookmark);
+        tidb_context::fold_warnings::truncate_fold_warnings(bookmark);
     }
 }

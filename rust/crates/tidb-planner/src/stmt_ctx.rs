@@ -199,9 +199,6 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn allow_derive_topn(&self) -> bool {
         StmtContext::allow_derive_topn(self)
     }
-    fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
-        StmtContext::expr_pushdown_blacklist(self)
-    }
     fn logical_rule_disabled(&self, name: &str) -> bool {
         StmtContext::logical_rule_disabled(self, name)
     }

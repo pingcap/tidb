@@ -2143,12 +2143,12 @@ impl ScalarFunction {
             };
             let value = argument.eval(ctx, row)?;
             if value.is_null() {
-                ctx.handle_sleep_incorrect_argument()?;
+                crate::expression_errors::handle_sleep_incorrect_argument(ctx)?;
                 return Ok(Datum::Int(0));
             }
             let seconds = crate::ops::to_f64_with_mysql_string(&value, ctx)?;
             if seconds < 0.0 {
-                ctx.handle_sleep_incorrect_argument()?;
+                crate::expression_errors::handle_sleep_incorrect_argument(ctx)?;
                 return Ok(Datum::Int(0));
             }
             if seconds > f64::MAX / 1_000_000_000.0 {

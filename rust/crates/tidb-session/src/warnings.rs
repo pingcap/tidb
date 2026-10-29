@@ -182,7 +182,7 @@ impl Session {
     /// order go's buffer carries them -- the fold rows first, the error row
     /// last).
     pub fn drain_fold_stash(&mut self) {
-        for warning in tidb_expr::constant_fold::take_fold_warnings() {
+        for warning in tidb_context::fold_warnings::take_fold_warnings() {
             self.append_sql_warning(warning);
         }
     }

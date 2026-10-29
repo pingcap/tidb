@@ -637,7 +637,7 @@ impl Session {
                 // error (go's FORMAT('x', 'y') keeps both coercion warnings
                 // beside the 1582, and the error itself stays out of the
                 // buffer on the read door).
-                for warning in tidb_expr::constant_fold::take_fold_warnings() {
+                for warning in tidb_context::fold_warnings::take_fold_warnings() {
                     self.append_sql_warning(warning);
                 }
                 Err(error)

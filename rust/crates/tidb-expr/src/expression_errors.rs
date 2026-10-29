@@ -641,3 +641,18 @@ pub fn handle_division_by_zero<C: Columns + ?Sized>(ctx: &C) -> Result<(), EvalE
         ErrorLevel::Error => Err(EvalError::DivisionByZero),
     }
 }
+
+/// Go `builtinSleepSig`'s `ec.HandleErrorWithAlias(errBadNull, errIncorrectArgs,
+/// errIncorrectArgs.FastGenByArgs("sleep"))` for `SLEEP(NULL)` and a negative
+/// duration: the statement's `ErrGroupBadNull` level decides.
+pub fn handle_sleep_incorrect_argument<C: Columns + ?Sized>(ctx: &C) -> Result<(), EvalError> {
+    let error = EvalError::IncorrectArguments("Incorrect arguments to sleep".to_owned());
+    match ctx.bad_null_level() {
+        ErrorLevel::Ignore => Ok(()),
+        ErrorLevel::Warn => {
+            ctx.append_error_warning(&error.to_sql_error());
+            Ok(())
+        }
+        ErrorLevel::Error => Err(error),
+    }
+}

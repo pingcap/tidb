@@ -880,14 +880,11 @@ fn sleep_vectorized_incorrect_argument_levels() {
         /// Go errctx maps BadNull/NoDefault to LevelWarn on the mock session:
         /// the "Incorrect arguments to sleep" event downgrades to a warning
         /// instead of failing the statement.
-        fn handle_sleep_incorrect_argument(&self) -> Result<(), EvalError> {
+        fn bad_null_level(&self) -> tidb_exprctx::ErrorLevel {
             if self.warn {
-                self.append_warning(1210, "Incorrect arguments to sleep");
-                Ok(())
+                tidb_exprctx::ErrorLevel::Warn
             } else {
-                Err(EvalError::IncorrectArguments(
-                    "Incorrect arguments to sleep".to_owned(),
-                ))
+                tidb_exprctx::ErrorLevel::Error
             }
         }
         fn sleep_for(&self, _duration: std::time::Duration) -> bool {

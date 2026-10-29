@@ -727,11 +727,21 @@ pub trait Columns {
     }
 
 
-    /// Applies `ErrGroupBadNull` to `SLEEP(NULL)` and negative durations.
-    fn handle_sleep_incorrect_argument(&self) -> Result<(), EvalError> {
-        Err(EvalError::IncorrectArguments(
-            "Incorrect arguments to sleep".to_owned(),
-        ))
+    /// The `mysql.expr_pushdown_blacklist` image this statement converts
+    /// expressions to coprocessor form under (Go `map[string]uint32`). Go
+    /// reads the process-global `expression.DefaultExprPushDownBlacklist`;
+    /// this tier captures each node's published image per statement, so the
+    /// statement's context answers it. A context with none blocks nothing.
+    fn expr_pushdown_blacklist(&self) -> &std::collections::HashMap<String, u32> {
+        static EMPTY: std::sync::LazyLock<std::collections::HashMap<String, u32>> =
+            std::sync::LazyLock::new(std::collections::HashMap::new);
+        &EMPTY
+    }
+
+    /// Go `errctx.ErrGroupBadNull`'s level for the running statement, which
+    /// `SLEEP(NULL)` and negative durations are handled at.
+    fn bad_null_level(&self) -> ErrorLevel {
+        ErrorLevel::Error
     }
 
     /// Waits for a SQL `SLEEP` duration, returning whether the statement was
@@ -801,7 +811,7 @@ pub trait Columns {
 
     /// Removes and returns the warnings at and after `bookmark`. The plan
     /// builder's fold uses this to RE-HOME fold-time diagnostics into the
-    /// thread stash (`tidb_expr::constant_fold::record_fold_warning`): the
+    /// thread stash (`tidb_context::fold_warnings::record_fold_warning`): the
     /// stash survives the statement boundary's warning reset, while entries
     /// appended straight into the live list during PLANNING are cleared by
     /// it before execution reads them.

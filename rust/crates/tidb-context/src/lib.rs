@@ -23,6 +23,7 @@
 //! no Rust counterpart because wrapper layers don't exist here.
 
 mod collector;
+pub mod fold_warnings;
 mod plancache;
 mod warn;
 

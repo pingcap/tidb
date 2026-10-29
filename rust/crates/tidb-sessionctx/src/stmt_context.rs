@@ -1091,7 +1091,7 @@ pub struct StmtContextData {
     /// EXPR_PUSHDOWN_BLACKLIST` publishes one, and every decision that
     /// consults it short-circuits on empty, so the ordinary path pays
     /// nothing.
-    expr_pushdown_blacklist: std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+    expr_pushdown_blacklist: std::sync::Arc<std::collections::HashMap<String, u32>>,
     /// Go `domain.GetDomain(sctx).StatsHandle()`: the domain's statistics
     /// handle this statement plans from, held as Go holds the domain on the
     /// session (an `any` value); the executor's `StatsStmtCtx` reads it.
@@ -2065,7 +2065,7 @@ context_configuration! {
     pub fn with_pushdown_blacklists(
         mut self,
         published: (
-            std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+            std::sync::Arc<std::collections::HashMap<String, u32>>,
             std::sync::Arc<std::collections::HashSet<String>>,
         ),
     ) -> Self {
@@ -4293,7 +4293,7 @@ impl StmtContext {
 
     /// The published `mysql.expr_pushdown_blacklist`.
     #[must_use]
-    pub fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
+    pub fn expr_pushdown_blacklist(&self) -> &std::collections::HashMap<String, u32> {
         &self.expr_pushdown_blacklist
     }
 
@@ -5054,7 +5054,7 @@ impl StmtContext {
     /// datetime value: 'abc'`), and the OK packet's count and `SHOW
     /// WARNINGS` both read them.
     pub fn drain_fold_warnings(&self) {
-        for warning in tidb_expr::constant_fold::take_fold_warnings() {
+        for warning in tidb_context::fold_warnings::take_fold_warnings() {
             self.append_sql_warn(warning);
         }
     }
@@ -5512,7 +5512,7 @@ impl StmtContext {
         // executor raises. The fold stash is thread-local and joins this list
         // only when drained, so an executor warning appended first would
         // overtake it: move the stash in ahead of every later append.
-        let folded = tidb_expr::constant_fold::take_fold_warnings();
+        let folded = tidb_context::fold_warnings::take_fold_warnings();
         let mut warnings = self
             .warnings
             .lock()
@@ -5565,7 +5565,6 @@ impl Drop for CopEvalGuard<'_> {
 }
 
 use tidb_tblctx::resolve_statement_clock;
-use tidb_expr::EvalErrorSql;
 
 /// The executor's statement context behind a table-layer context the
 /// executor built (Go asserts its own context type back the same way).
@@ -5685,12 +5684,6 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         StmtContext::session_zone(self)
-    }
-}
-
-impl tidb_expr::pushdown_catalog::PbConverterContext for StmtContext {
-    fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
-        StmtContext::expr_pushdown_blacklist(self)
     }
 }
 
@@ -6049,18 +6042,12 @@ impl Columns for StmtContext {
         self.truncate
     }
 
-    fn handle_sleep_incorrect_argument(&self) -> Result<(), tidb_exprctx::EvalError> {
-        let message = "Incorrect arguments to sleep";
-        match self.bad_null {
-            ErrorLevel::Ignore => Ok(()),
-            ErrorLevel::Warn => {
-                self.append_error_warning(
-                    &tidb_exprctx::EvalError::IncorrectArguments(message.to_owned()).to_sql_error(),
-                );
-                Ok(())
-            }
-            ErrorLevel::Error => Err(tidb_exprctx::EvalError::IncorrectArguments(message.to_owned())),
-        }
+    fn bad_null_level(&self) -> ErrorLevel {
+        self.bad_null
+    }
+
+    fn expr_pushdown_blacklist(&self) -> &std::collections::HashMap<String, u32> {
+        StmtContext::expr_pushdown_blacklist(self)
     }
 
     fn sleep_for(&self, duration: std::time::Duration) -> bool {

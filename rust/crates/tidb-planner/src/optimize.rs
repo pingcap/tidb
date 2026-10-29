@@ -54,8 +54,6 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn optimizer_cost_env(&self) -> &CostEnv;
     /// Go `SessionVars.AllowDeriveTopN`.
     fn allow_derive_topn(&self) -> bool;
-    /// Go `expression.DefaultExprPushDownBlacklist`.
-    fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist;
     /// Go `optRuleBlacklist`: whether a logical rule is disabled.
     fn logical_rule_disabled(&self, name: &str) -> bool;
     /// Go `SessionVars.OptIndexPruneThreshold`.

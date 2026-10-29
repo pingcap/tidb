@@ -3695,7 +3695,7 @@ fn get_mpp_hash_aggs(
             }
         }
         if preferred.is_empty() {
-            tidb_expr::constant_fold::record_fold_warning(
+            tidb_context::fold_warnings::record_fold_warning(
                 1815,
                 "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid",
             );
@@ -3803,7 +3803,7 @@ pub fn get_stream_aggs(
             (tidb_hint::PREFER_MPP_2_PHASE_AGG, "MPP_2PHASE_AGG"),
         ] {
             if agg.prefer_agg_type & bit != 0 {
-                tidb_expr::constant_fold::record_fold_warning(
+                tidb_context::fold_warnings::record_fold_warning(
                     1815,
                     &format!(
                         "The agg can not push down to the MPP side, the {name}() hint is invalid"

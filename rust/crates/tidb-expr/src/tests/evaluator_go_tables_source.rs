@@ -302,14 +302,11 @@ fn sleep_errctx_levels_and_null_arguments_follow_the_caller() {
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
         }
-        fn handle_sleep_incorrect_argument(&self) -> Result<(), EvalError> {
+        fn bad_null_level(&self) -> tidb_exprctx::ErrorLevel {
             if self.warn {
-                self.append_warning(1210, "Incorrect arguments to sleep");
-                Ok(())
+                tidb_exprctx::ErrorLevel::Warn
             } else {
-                Err(EvalError::IncorrectArguments(
-                    "Incorrect arguments to sleep".to_owned(),
-                ))
+                tidb_exprctx::ErrorLevel::Error
             }
         }
         fn sleep_for(&self, _duration: std::time::Duration) -> bool {
