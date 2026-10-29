@@ -40,6 +40,3 @@ prometheus = { version = "0.14", default-features = false }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-tidb-domain = { path = "../tidb-domain" }

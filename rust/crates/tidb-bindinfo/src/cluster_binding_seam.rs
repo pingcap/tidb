@@ -380,7 +380,7 @@ mod tests {
                     databases: Vec::new(),
                 },
             )),
-            globals: std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::default()),
+            globals: std::sync::Arc::new(tidb_variable::MockGlobalAccessor::new()),
             cache: SharedBindingCache::default(),
             timeout: Duration::from_secs(1),
             owner: owner.clone(),

@@ -3462,7 +3462,6 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-ddl",
- "tidb-domain",
  "tidb-driver-error",
  "tidb-hack",
  "tidb-hint",
