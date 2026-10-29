@@ -1,0 +1,13 @@
+[package]
+name = "tidb-murmur3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native owner of github.com/twmb/murmur3's Sum32."
+
+[dependencies]
+
+[lints]
+workspace = true

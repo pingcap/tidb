@@ -3507,6 +3507,7 @@ dependencies = [
  "tidb-planner",
  "tidb-privilege",
  "tidb-proto",
+ "tidb-store-driver",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3544,6 +3545,31 @@ dependencies = [
  "tidb-naming",
  "tidb-tikvutil",
  "toml",
+]
+
+[[package]]
+name = "tidb-copr"
+version = "0.0.0"
+dependencies = [
+ "prost 0.14.4",
+ "tidb-config",
+ "tidb-distsql",
+ "tidb-error",
+ "tidb-executor",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-murmur3",
+ "tidb-pd-client",
+ "tidb-placement",
+ "tidb-proto",
+ "tidb-store-driver",
+ "tidb-txnkv",
+ "tidb-unistore",
+ "tidb-util",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]
@@ -3615,6 +3641,7 @@ dependencies = [
  "tidb-privilege",
  "tidb-proto",
  "tidb-schemaver",
+ "tidb-store-driver",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3865,6 +3892,7 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-util",
+ "tidb-store-driver",
  "tidb-syssession",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3945,6 +3973,7 @@ dependencies = [
  "tidb-cluster",
  "tidb-codec",
  "tidb-config",
+ "tidb-copr",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
@@ -3983,6 +4012,7 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtsummary",
+ "tidb-store-driver",
  "tidb-sysutil",
  "tidb-table",
  "tidb-tablecodec",
@@ -4030,6 +4060,7 @@ dependencies = [
  "tidb-cluster",
  "tidb-codec",
  "tidb-config",
+ "tidb-copr",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
@@ -4052,6 +4083,7 @@ dependencies = [
  "tidb-log",
  "tidb-metadef",
  "tidb-model",
+ "tidb-murmur3",
  "tidb-mysql",
  "tidb-parser",
  "tidb-pd-client",
@@ -4181,6 +4213,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-placement",
  "tidb-session",
+ "tidb-store-driver",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
@@ -4403,6 +4436,10 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
 ]
+
+[[package]]
+name = "tidb-murmur3"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-mysql"
@@ -4667,6 +4704,7 @@ dependencies = [
  "tidb-cluster",
  "tidb-codec",
  "tidb-config",
+ "tidb-copr",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-logutil",
@@ -4717,6 +4755,7 @@ dependencies = [
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
+ "tidb-store-driver",
  "tidb-syssession",
  "tidb-sysutil",
  "tidb-tablecodec",
@@ -4767,6 +4806,7 @@ dependencies = [
  "tidb-cluster",
  "tidb-codec",
  "tidb-config",
+ "tidb-copr",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
@@ -4828,6 +4868,7 @@ dependencies = [
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
+ "tidb-store-driver",
  "tidb-syssession",
  "tidb-sysutil",
  "tidb-tablecodec",
@@ -5168,6 +5209,20 @@ dependencies = [
  "tidb-model",
  "tidb-parser",
  "tidb-util",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-store-driver"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-distsql",
+ "tidb-pd-client",
+ "tidb-proto",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-vardef",
  "tikv-client",
 ]
 

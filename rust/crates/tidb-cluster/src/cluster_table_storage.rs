@@ -850,7 +850,7 @@ impl<S: StoreClient> SessionTransaction<S> {
     pub fn begin(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
-        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+        options: impl Into<tidb_store_driver::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin()?;
         options.into().apply(&mut transaction);
@@ -878,7 +878,7 @@ impl<S: StoreClient> SessionTransaction<S> {
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         start_ts: u64,
         timeout: Duration,
-        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+        options: impl Into<tidb_store_driver::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin_at(start_ts)?;
         options.into().apply(&mut transaction);
@@ -902,7 +902,7 @@ impl<S: StoreClient> SessionTransaction<S> {
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         start_ts: u64,
         timeout: Duration,
-        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+        options: impl Into<tidb_store_driver::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin_at(start_ts)?;
         options.into().apply(&mut transaction);
@@ -931,7 +931,7 @@ impl<S: StoreClient> SessionTransaction<S> {
     pub fn begin_pessimistic(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
-        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+        options: impl Into<tidb_store_driver::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin()?;
         options.into().apply(&mut transaction);
@@ -2270,7 +2270,7 @@ pub fn commit_staged_buffer<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     buffer: &MutationBuffer,
     read_ts: Option<u64>,
-    options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+    options: impl Into<tidb_store_driver::session_commit_protocol::SessionTransactionOptions>,
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
     on_activated: impl FnOnce(u64),
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {

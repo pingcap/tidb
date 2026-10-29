@@ -34,8 +34,6 @@ pub mod mdl_info_load;
 pub mod mysql_system_tables;
 pub mod pessimistic_lock_error;
 pub mod real_tikv_catalog;
-pub mod real_tikv_read;
-pub mod session_commit_protocol;
 pub mod sql_query_error;
 pub mod system_row_write;
 

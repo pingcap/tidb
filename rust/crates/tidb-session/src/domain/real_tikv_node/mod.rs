@@ -22,7 +22,7 @@ use crate::GlobalSysvars;
 use tidb_cluster::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_cluster::cluster_catalog::ClusterCatalog;
 use tidb_cluster::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_cluster::real_tikv_read::{
+use tidb_store_driver::real_tikv_read::{
     ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
 };
 use tidb_exec::real_tikv_stats::{

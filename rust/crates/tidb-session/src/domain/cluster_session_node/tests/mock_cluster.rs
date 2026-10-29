@@ -17,7 +17,7 @@ use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tidb_cluster::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::retry::RegionBackoffKind;

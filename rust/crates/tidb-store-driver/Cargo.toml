@@ -1,0 +1,21 @@
+[package]
+name = "tidb-store-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB's TiKV store: Go pkg/store/driver (Rust rewrite)."
+
+[dependencies]
+tidb-config = { path = "../tidb-config" }
+tikv-client.workspace = true
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[lints]
+workspace = true

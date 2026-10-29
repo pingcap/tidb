@@ -68,8 +68,8 @@ use tidb_cluster::cluster_table_storage::{
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_cluster::pessimistic_lock_error::LockSqlError;
-use tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener;
-use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };

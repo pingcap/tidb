@@ -26,7 +26,6 @@
 //! `tidb-executor`. This crate provides cluster storage and result metadata;
 //! it does not keep a second operator or aggregate-state implementation.
 
-mod batch_cop_tasks;
 pub mod bootstrap_publish;
 pub mod cluster_analyze;
 pub mod cluster_discovery;
@@ -38,10 +37,8 @@ pub mod cluster_stats_dump;
 pub mod cluster_stats_load;
 pub mod cluster_stats_lock;
 pub mod cluster_stats_write;
-pub mod cop_client;
 pub mod ddl_session_pool;
 pub mod in_memory_meta;
-pub mod mpp_client;
 pub mod explain;
 pub mod label_delivery;
 pub mod meta_txn;

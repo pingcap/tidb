@@ -1238,7 +1238,7 @@ impl ParallelSpillPartitions {
 
 /// Go `murmur3.Sum32(key) % finalConcurrency`.
 fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
-    crate::shuffle::murmur3_sum32(key) as usize % bucket_count
+    tidb_murmur3::sum32(key) as usize % bucket_count
 }
 
 fn map_key_bucket(key: PipelineMapKeyRef<'_>, bucket_count: usize) -> usize {

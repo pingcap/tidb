@@ -27,7 +27,7 @@ use crate::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 
 use tidb_distsql::cop_paging::CopRuntimeConfig;
-use tidb_cluster::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 #[cfg(test)]
 use tidb_unistore::kv_handler::KvHandler;
@@ -126,7 +126,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let buffer = MutationBuffer::new();
@@ -171,7 +171,7 @@ mod transaction_buffer_tests {
         let mut transaction = SessionTransaction::begin(
             Arc::new(opener),
             IN_PROCESS_TIMEOUT,
-            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let checked = Arc::new(CheckedTables::default());
@@ -204,7 +204,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let key = b"locked".to_vec();
@@ -652,7 +652,7 @@ pub fn unistore_cluster_session_stack_from(
         crate::domain::cluster_session_node::STATS_OWNER_KEY,
     ));
     let kv_client: Arc<dyn tidb_txnkv::Client> = Arc::new(
-        tidb_exec::cop_client::CopClient::new(transport_factory),
+        tidb_copr::cop_client::CopClient::new(transport_factory),
     );
     let (bindings, binding_reloader) = crate::domain::cluster_binding_seam::start_binding_cache(
         opener.clone(),

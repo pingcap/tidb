@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-ast = { path = "../tidb-ast" }

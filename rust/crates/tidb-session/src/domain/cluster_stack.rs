@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use tidb_ddl::ddl_systable::MinJobIdRefresher;
 use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster_at;
-use tidb_cluster::real_tikv_read::ProductionReadProcessAuthority;
+use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 
 use crate::domain::cluster_account_seam::RealClusterAccountWriter;
 use crate::domain::cluster_analyze_seam::RealClusterAnalyze;
@@ -565,7 +565,7 @@ pub fn cluster_session_stack(
     )
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_mpp_client(mpp_client)
-    .with_kv_client(Arc::new(tidb_exec::cop_client::CopClient::new(
+    .with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(
         authority.transport_factory(),
     )))
     .with_region_store(region_store)

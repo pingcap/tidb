@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-metrics = { path = "../tidb-metrics" }
 tikv-client.workspace = true

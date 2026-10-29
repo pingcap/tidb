@@ -3146,10 +3146,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
 /// Go `copr.MPPClient` over the node's `KVStore`.
 #[must_use]
 pub fn build_mpp_client(
-    authority: &tidb_cluster::real_tikv_read::ProductionReadProcessAuthority,
+    authority: &tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority,
     schema_version: impl Fn() -> i64 + Send + Sync + 'static,
-) -> tidb_exec::mpp_client::TiFlashMppClient {
-    tidb_exec::mpp_client::TiFlashMppClient::new(
+) -> tidb_copr::mpp_client::TiFlashMppClient {
+    tidb_copr::mpp_client::TiFlashMppClient::new(
         authority.tikv_store().clone(),
         schema_version,
     )

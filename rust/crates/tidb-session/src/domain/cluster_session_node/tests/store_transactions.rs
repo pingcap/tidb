@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener;
-use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_cluster::sql_query_error::SqlQueryError;
 use tidb_executor::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};

@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-copr = { path = "../tidb-copr" }
+tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-keyspace = { path = "../tidb-keyspace" }

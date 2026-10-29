@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use tidb_cluster::cluster_table_storage::LockKeysOutcome;
-use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };

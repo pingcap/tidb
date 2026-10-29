@@ -22,13 +22,13 @@
 //! this file used to hold a second, unused state machine that assumed `BEGIN`
 //! is lazy, which Go's `OnInitialize` (`activeNow = true`) refutes.
 
-use tidb_cluster::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 
 /// A restricted operation without a retained SQL session starts with the
 /// global values a new system session would inherit.
 pub fn restricted_transaction_options(
     globals: &tidb_domain::global_sysvars::GlobalSysvars,
-) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
+) -> tidb_store_driver::session_commit_protocol::SessionTransactionOptions {
     options_from_getter(|name| {
         globals
             .get(name)
@@ -38,7 +38,7 @@ pub fn restricted_transaction_options(
 
 fn options_from_getter<V: AsRef<str>>(
     get: impl Fn(&str) -> V,
-) -> tidb_cluster::session_commit_protocol::SessionTransactionOptions {
+) -> tidb_store_driver::session_commit_protocol::SessionTransactionOptions {
     use tidb_variable::varsutil::{tidb_opt_assertion_level, AssertionLevel};
     use tidb_vardef::tidb_vars::{
         TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,

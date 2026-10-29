@@ -20,7 +20,7 @@
 //! `constructDAGReq`), the dispatch loop over the store's `kv.MPPClient`, the
 //! gather of the root tasks' streams, Go's `mppErrRecovery`, and the rows.
 //! Task locations, the RPCs and the streams themselves are the store's (Go
-//! `copr.MPPClient`, `tidb_exec::mpp_client`).
+//! `copr.MPPClient`, `tidb_copr::mpp_client`).
 
 use std::collections::VecDeque;
 use std::sync::Arc;

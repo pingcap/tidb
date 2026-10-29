@@ -41,9 +41,9 @@ use tidb_cluster::cluster_catalog::ClusterCatalog;
 use tidb_cluster::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
-use tidb_exec::cop_client::CopClient;
+use tidb_copr::cop_client::CopClient;
 use tidb_cluster::real_tikv_catalog::load_catalog_from_cluster;
-use tidb_cluster::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
+use tidb_store_driver::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_exec::stats_watch::StatsSnapshot;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
@@ -166,7 +166,7 @@ fn run() -> Result<(), String> {
 /// overwrite. A run whose statements read nothing has no timestamp and takes a
 /// fresh one.
 fn run_autocommit(
-    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -186,7 +186,7 @@ fn run_autocommit(
         opener,
         buffer,
         read_ts,
-        tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
         None,
         |_| {},
     ) {
@@ -205,7 +205,7 @@ fn run_autocommit(
 /// The explicit shape: one transaction for the whole run, every statement read
 /// at its `start_ts`, and the commit prewritten at that same timestamp.
 fn run_explicit_transaction(
-    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -214,7 +214,7 @@ fn run_explicit_transaction(
     let transaction = match SessionTransaction::begin(
         Arc::clone(opener),
         TIMEOUT,
-        tidb_cluster::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
     ) {
         Ok(transaction) => transaction,
         Err(error) => return Some(error.to_string()),
@@ -294,7 +294,7 @@ fn run_in_transaction(
 /// Runs one statement at its own snapshot, over the session's staged writes,
 /// and answers with the timestamp that snapshot read at.
 fn run_statement(
-    opener: &Arc<tidb_cluster::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     schema: &str,
