@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/inference"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1086,4 +1088,16 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
 		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
 	}
+}
+
+func TestGetMPPServerID(t *testing.T) {
+	// A session without a Domain, like one of a cross-keyspace runtime, takes
+	// the server ID from the server info of the process.
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), t.Name(), func() uint64 { return 7 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	require.Nil(t, domain.GetDomain(sctx))
+	serverID, err := getMPPServerID(sctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, serverID)
 }

@@ -4272,12 +4272,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	serverID, err := getMPPServerID(b.sctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},

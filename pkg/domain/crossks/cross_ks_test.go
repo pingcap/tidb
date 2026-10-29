@@ -479,6 +479,14 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		ksMgr.CloseKS(targetKS)
 	})
 	require.Same(t, targetStore, handle.Store())
+	t.Run("info schema has an auto-ID client", func(t *testing.T) {
+		mgr := storage.NewTaskManager(handle.SysSessionPool())
+		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+			require.True(t, se.IsCrossKS())
+			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
+			return nil
+		}))
+	})
 
 	crossKSMgr := sysKSDom.GetCrossKSMgr()
 	sessMgr, ok := crossKSMgr.Get(targetKS)

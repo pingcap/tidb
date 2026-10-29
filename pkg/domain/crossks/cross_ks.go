@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -251,6 +252,8 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
+	// Service discovery and connection creation are deferred until ID allocation.
+	autoidClient := autoid.NewClientDiscover(etcdCli)
 	ctx, cancel := context.WithCancel(context.Background())
 	var svrInfoSyncer *serverinfo.Syncer
 	serverInfoRegistered := false
@@ -265,6 +268,7 @@ func (*Manager) createSessionManager(
 			if err2 != nil {
 				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
 			}
+			autoidClient.ResetConn(nil)
 		}
 	}()
 
@@ -303,7 +307,7 @@ func (*Manager) createSessionManager(
 			return coordinator
 		},
 		schemaVerSyncer,
-		nil, nil,
+		autoidClient, nil,
 	)
 	if err = isSyncer.Reload(); err != nil {
 		return nil, errors.Trace(err)
@@ -327,6 +331,7 @@ func (*Manager) createSessionManager(
 		exitCh:            make(chan struct{}),
 		store:             store,
 		etcdCli:           etcdCli,
+		autoidClient:      autoidClient,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
 		infoCache:         infoCache,
@@ -489,6 +494,7 @@ type SessionManager struct {
 	exitCh            chan struct{}
 	store             kv.Storage
 	etcdCli           *clientv3.Client
+	autoidClient      *autoid.ClientDiscover
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 	infoCache         *infoschema.InfoCache
@@ -544,9 +550,12 @@ func (m *SessionManager) close() {
 		m.svrInfoSyncer.RevokeSession()
 	}
 	m.schemaVerSyncer.Close()
+	// Close etcd first, so an auto-ID allocation that looks up the leader fails
+	// instead of holding the client while it is reset, or connecting again.
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
+	m.autoidClient.ResetConn(nil)
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
 	failpoint.InjectCall("skipCloseStore", &needCloseStore)
