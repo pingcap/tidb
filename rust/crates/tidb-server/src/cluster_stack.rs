@@ -405,7 +405,7 @@ pub fn cluster_session_stack(
         )),
     };
     let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
-        authority.transaction_opener(),
+        Arc::new(authority.transaction_opener()),
         Arc::clone(&catalog),
         Arc::new(users.global_vars()),
         CONTROL_PLANE_TIMEOUT,

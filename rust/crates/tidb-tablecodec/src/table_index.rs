@@ -25,7 +25,7 @@ use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 use crate::table_row::{decode_column_value, TableRowError};
 use crate::table_key::encode_index_seek_key;
 use crate::table_key::{
-    is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
+    MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_value, CodecError, Encoder, BYTES_FLAG, INT_FLAG};
 use tidb_rowcodec::{decode_row_to_old_bytes, encode_row, ColumnInfo, RowPackageError, ROW_CODEC_VERSION};
@@ -1494,6 +1494,7 @@ pub fn temp_index_value_is_untouched(value: &[u8]) -> bool {
 #[cfg(test)]
 mod source_tests {
     use super::*;
+    use crate::table_key::is_untouched_index_kv;
     use tidb_datatype::Collation;
 
     fn long_column(id: i64, offset: usize) -> TableColumn {

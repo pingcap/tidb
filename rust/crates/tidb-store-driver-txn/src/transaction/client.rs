@@ -78,16 +78,7 @@ pub struct SnapshotGetResult {
     /// Number of physical requests issued by this read.
     pub rpc_count: u64,
 }
-/// The rows served by one snapshot region.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SnapshotScanRegion {
-    /// Region that served these rows.
-    pub region: tikv_client::RegionVerId,
-    /// Exclusive region boundary observed by the response.
-    pub end_key: Vec<u8>,
-    /// Rows from this serving region.
-    pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
-}
+pub use tidb_txnkv::kv_storage::SnapshotScanRegion;
 
 impl<S: PdClient> tidb_txnkv::new_txn::TxnResourceGroup for ClientTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {

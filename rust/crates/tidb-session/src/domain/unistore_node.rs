@@ -656,7 +656,7 @@ pub fn unistore_cluster_session_stack_from(
         tidb_copr::cop_client::CopClient::new(transport_factory),
     );
     let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
-        opener.clone(),
+        Arc::new(opener.clone()),
         Arc::clone(&catalog),
         Arc::new(users.global_vars()),
         IN_PROCESS_TIMEOUT,

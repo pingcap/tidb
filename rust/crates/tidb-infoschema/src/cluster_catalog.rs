@@ -131,7 +131,7 @@ pub trait RegionPagedMetaSnapshot: PagedMetaSnapshot {
         &mut self,
         start: &[u8],
         end: &[u8],
-    ) -> Result<Vec<tidb_store_driver_txn::transaction::SnapshotScanRegion>, ClusterCatalogError>;
+    ) -> Result<Vec<tidb_txnkv::kv_storage::SnapshotScanRegion>, ClusterCatalogError>;
 }
 
 /// The stored JSON of one `DBInfo`, as the catalog itself writes it.

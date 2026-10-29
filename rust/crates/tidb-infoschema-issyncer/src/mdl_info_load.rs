@@ -34,7 +34,7 @@ use std::time::Duration;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_datatype::Datum;
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_txnkv::kv_storage::Storage;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaPairs, MetaSnapshot};
 
@@ -65,8 +65,8 @@ fn str_to_int64s(text: &str) -> Vec<i64> {
 /// no meta walk happens here — only the table's own record scan. A catalog
 /// that predates the table returns a retryable missing-table error; the caller
 /// refreshes the catalog and retries, matching Go's SQL behavior.
-pub fn load_mdl_jobs<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+pub fn load_mdl_jobs(
+    opener: &dyn Storage,
     timeout: Duration,
     catalog: &ClusterCatalog,
     min_job_id: i64,
@@ -87,7 +87,7 @@ pub fn load_mdl_jobs<S: StoreClient>(
         .begin_read_only()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let loaded: Result<MetaPairs, SystemTableError> = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
         // Go executes the restricted SQL query against a fresh session. Keep
         // the same result semantics by scanning the system-table record
         // prefix and applying both predicates after decoding. This avoids

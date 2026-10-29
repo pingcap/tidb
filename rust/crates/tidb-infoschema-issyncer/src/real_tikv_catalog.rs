@@ -21,8 +21,7 @@ use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::OptimisticCoordinatorError;
-use tidb_store_driver_txn::transaction::StoreClient;
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_txnkv::kv_storage::{SnapshotScanRegion, Storage, Transaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
@@ -61,8 +60,8 @@ fn storage_catalog_error(error: StorageError) -> ClusterCatalogError {
 ///
 /// Holding the transaction for the whole load is the point: every key the
 /// loader reads is served at the same `start_ts`.
-pub struct TransactionMetaSnapshot<'transaction, S: tidb_store_driver_txn::transaction::StoreClient> {
-    transaction: &'transaction mut RealTransaction<S>,
+pub struct TransactionMetaSnapshot<'transaction> {
+    transaction: &'transaction mut dyn Transaction,
     /// One read request's deadline. Go bounds each storage request, not the
     /// statement issuing them: every cop task takes
     /// `TiKVClient.CoprReqTimeout` (default 120s,
@@ -76,11 +75,9 @@ pub struct TransactionMetaSnapshot<'transaction, S: tidb_store_driver_txn::trans
     timeout: Duration,
 }
 
-impl<'transaction, S: tidb_store_driver_txn::transaction::StoreClient>
-    TransactionMetaSnapshot<'transaction, S>
-{
+impl<'transaction> TransactionMetaSnapshot<'transaction> {
     /// Binds one transaction and the per-request deadline every read stamps.
-    pub fn new(transaction: &'transaction mut RealTransaction<S>, timeout: Duration) -> Self {
+    pub fn new(transaction: &'transaction mut dyn Transaction, timeout: Duration) -> Self {
         Self {
             transaction,
             timeout,
@@ -88,15 +85,11 @@ impl<'transaction, S: tidb_store_driver_txn::transaction::StoreClient>
     }
 }
 
-impl<S> MetaSnapshot for TransactionMetaSnapshot<'_, S>
-where
-    S: tidb_store_driver_txn::transaction::StoreClient,
-{
+impl MetaSnapshot for TransactionMetaSnapshot<'_> {
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_get(key, &call)
-            .map(|result| result.value)
+            .get(key, &call)
             .map_err(coordinator_catalog_error)
     }
 
@@ -108,22 +101,19 @@ where
         };
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_scan(prefix, &end, None, &call)
+            .scan(prefix, &end, None, &call)
             .map_err(coordinator_catalog_error)
     }
 
     fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_scan(start, end, None, &call)
+            .scan(start, end, None, &call)
             .map_err(coordinator_catalog_error)
     }
 }
 
-impl<S> PagedMetaSnapshot for TransactionMetaSnapshot<'_, S>
-where
-    S: tidb_store_driver_txn::transaction::StoreClient,
-{
+impl PagedMetaSnapshot for TransactionMetaSnapshot<'_> {
     fn scan_page(
         &mut self,
         start: &[u8],
@@ -132,23 +122,20 @@ where
     ) -> Result<MetaPairs, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_scan(start, end, Some(limit), &call)
+            .scan(start, end, Some(limit), &call)
             .map_err(coordinator_catalog_error)
     }
 }
 
-impl<S> tidb_infoschema::cluster_catalog::RegionPagedMetaSnapshot for TransactionMetaSnapshot<'_, S>
-where
-    S: tidb_store_driver_txn::transaction::StoreClient,
-{
+impl tidb_infoschema::cluster_catalog::RegionPagedMetaSnapshot for TransactionMetaSnapshot<'_> {
     fn scan_regions(
         &mut self,
         start: &[u8],
         end: &[u8],
-    ) -> Result<Vec<tidb_store_driver_txn::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+    ) -> Result<Vec<SnapshotScanRegion>, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_scan_regions(start, end, &call)
+            .scan_regions(start, end, &call)
             .map_err(coordinator_catalog_error)
     }
 }
@@ -254,8 +241,8 @@ impl PagedMetaSnapshot for SnapshotMetaSnapshot {
 ///
 /// The transaction is opened for reading only and finished without writes, so
 /// the load leaves no locks behind and consumes exactly one PD timestamp.
-pub fn load_catalog_from_cluster<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+pub fn load_catalog_from_cluster(
+    opener: &dyn Storage,
     timeout: Duration,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     load_catalog_from_cluster_at(opener, timeout).map(|(catalog, _)| catalog)
@@ -266,8 +253,8 @@ pub fn load_catalog_from_cluster<S: StoreClient>(
 /// (`issyncer/syncer.go:420-427`), which grants the schema validator its
 /// first lease (`schemaValidator.Update(version, ...)`, `:494`) before the
 /// node serves any statement.
-pub fn load_catalog_from_cluster_at<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+pub fn load_catalog_from_cluster_at(
+    opener: &dyn Storage,
     timeout: Duration,
 ) -> Result<(ClusterCatalog, u64), ClusterCatalogError> {
     let mut transaction = opener
@@ -275,7 +262,7 @@ pub fn load_catalog_from_cluster_at<S: StoreClient>(
         .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
     let catalog = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
         load_cluster_catalog(&mut snapshot)?
     };
     transaction
@@ -290,8 +277,8 @@ pub fn load_catalog_from_cluster_at<S: StoreClient>(
 /// diffs, and any object a diff points at are all read at that one timestamp,
 /// so a pass never publishes a blend of two schema versions. The transaction
 /// is read-only and finished without writes, leaving no locks behind.
-pub fn reload_catalog_from_cluster<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+pub fn reload_catalog_from_cluster(
+    opener: &dyn Storage,
     timeout: Duration,
     current: &ClusterCatalog,
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -303,7 +290,7 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
     let reloaded = {
         // The node's allocator registry, so an applied rebase diff drops the
         // ranges reserved before it (see `catalog_reload`).
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
         reload_cluster_catalog(&mut snapshot, current, Some(row_ids.as_ref()))?
     };
     transaction

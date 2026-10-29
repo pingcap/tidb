@@ -324,6 +324,14 @@ where
     ) -> Result<Box<dyn tidb_txnkv::kv_storage::Transaction>, OptimisticCoordinatorError> {
         Ok(Box::new(RealOptimisticTransactionOpener::begin(self)?))
     }
+
+    fn begin_read_only(
+        &self,
+    ) -> Result<Box<dyn tidb_txnkv::kv_storage::Transaction>, OptimisticCoordinatorError> {
+        Ok(Box::new(RealOptimisticTransactionOpener::begin_read_only(
+            self,
+        )?))
+    }
 }
 
 /// Go `tikvTxn` as `kv.Transaction`.
@@ -331,12 +339,35 @@ impl<S> tidb_txnkv::kv_storage::Transaction for RealTransaction<S>
 where
     S: StoreClient + 'static,
 {
+    fn start_ts(&self) -> u64 {
+        RealTransaction::start_ts(self)
+    }
+
     fn get(
         &mut self,
         key: &[u8],
         call: &tidb_txnkv::UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
         self.snapshot_get(key, call).map(|result| result.value)
+    }
+
+    fn scan(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: Option<usize>,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        self.snapshot_scan(start, end, limit, call)
+    }
+
+    fn scan_regions(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<Vec<tidb_txnkv::kv_storage::SnapshotScanRegion>, OptimisticCoordinatorError> {
+        self.snapshot_scan_regions(start, end, call)
     }
 
     fn commit(

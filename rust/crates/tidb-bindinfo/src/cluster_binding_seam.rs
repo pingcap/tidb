@@ -24,7 +24,7 @@ use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemT
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_kv::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_txnkv::kv_storage::Storage;
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = Duration::from_secs(3);
@@ -71,8 +71,8 @@ pub trait ClusterBindings: Send + Sync {
     fn close(&self);
 }
 
-struct StoredBindings<S: StoreClient> {
-    opener: RealOptimisticTransactionOpener<S>,
+struct StoredBindings {
+    opener: Arc<dyn Storage>,
     catalog: Arc<SharedClusterCatalog>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     cache: SharedBindingCache,
@@ -85,7 +85,7 @@ struct StoredBindings<S: StoreClient> {
     record_range: RwLock<Option<(tidb_txnkv::Key, tidb_txnkv::Key)>>,
 }
 
-impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
+impl ClusterBindings for StoredBindings {
     fn cache(&self) -> SharedBindingCache {
         self.cache.clone()
     }
@@ -119,7 +119,7 @@ impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
         } else {
             let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
             let rows = {
-                let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
+                let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), self.timeout);
                 scan_system_table(&mut snapshot, &view)
                     .map_err(|error| error.to_string())?
                     .into_iter()
@@ -219,16 +219,13 @@ impl Drop for BindingReloader {
 }
 
 /// Load the initial image before accepting connections, then follow peer changes.
-pub fn start_binding_cache<S>(
-    opener: RealOptimisticTransactionOpener<S>,
+pub fn start_binding_cache(
+    opener: Arc<dyn Storage>,
     catalog: Arc<SharedClusterCatalog>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
-) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String>
-where
-    S: StoreClient,
-{
+) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String> {
     let bindings: Arc<dyn ClusterBindings> = Arc::new(StoredBindings {
         opener,
         catalog,
@@ -374,7 +371,7 @@ mod tests {
         ));
         let pool = Arc::new(Pool(AtomicUsize::new(0)));
         let bindings = StoredBindings {
-            opener,
+            opener: Arc::new(opener),
             catalog: Arc::new(SharedClusterCatalog::new(
                 tidb_infoschema::cluster_catalog::ClusterCatalog {
                     resource_groups: Vec::new(),
