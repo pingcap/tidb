@@ -31,8 +31,10 @@ use crate::hash_table_v2::SharedHashTableSlots;
 use crate::join_row_table::RowLayoutMeta;
 use crate::join_row_table::RowTableSegment;
 use crate::row_table_builder::{BuildContext, PartitionInfo, RowTableBuildError};
-use crate::sort_util::recover_worker_panic;
-use crate::{ExecError, Executor, StatementMemory};
+use tidb_driver_error::panic_recovery::recover_worker_panic;
+use tidb_driver_error::ExecError;
+use tidb_executor_internal_exec::Executor;
+use tidb_kv::mem_quota::StatementMemory;
 use std::sync::{Arc, Mutex};
 
 /// The immutable part of a build call that a persistent worker can own.
@@ -240,7 +242,7 @@ impl HashJoinV2Exec {
                 .zip(std::mem::take(&mut self.hash_table_context.row_tables))
                 .map(|state| Arc::new(Mutex::new(state)))
                 .collect();
-            let lane_pool = crate::worker_pool::LanePool::new("hash-join-build", concurrency);
+            let lane_pool = tidb_goruntime::worker_pool::LanePool::new("hash-join-build", concurrency);
             let result = recover_worker_panic(|| {
                 let (input_tx, input_rx) = bounded(1);
                 // At most N workers, one queued chunk and one fetcher-owned
@@ -768,7 +770,7 @@ impl HashJoinV2Exec {
         });
         // Join and restore every owned range, including after the first error.
         let mut result = Ok(());
-        for (partition, segments, outcome) in crate::worker_pool::map(ready, concurrency) {
+        for (partition, segments, outcome) in tidb_goruntime::worker_pool::map(ready, concurrency) {
             self.hash_table_context.hash_table.tables[partition]
                 .as_mut()
                 .unwrap()

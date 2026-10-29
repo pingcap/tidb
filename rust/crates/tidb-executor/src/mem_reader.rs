@@ -68,7 +68,7 @@
 //! * [`tidb_tablecodec::decode_index_kv`] is Go `tablecodec.DecodeIndexKVEx`;
 //!   [`tidb_tablecodec::decode_index_handle`] is `tablecodec.DecodeIndexHandle`;
 //!   [`tidb_tablecodec::split_index_value`] is `tablecodec.SplitIndexValue`.
-//! * [`crate::predicate_pushdown::ScanFilterProbe`] is Go
+//! * [`tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe`] is Go
 //!   `expression.EvalBool(ctx, m.conditions, mutableRow.ToRow())` -- it owns
 //!   the scratch chunk that Go's `chunk.MutRowFromTypes` owns.
 //! * [`crate::kv_table::TableHandle`] is Go `kv.Handle`. Go's
@@ -133,7 +133,7 @@ use tidb_txnkv::{Handle as KvHandle, Key, KvIterator};
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecoder;
-use crate::predicate_pushdown::ScanFilterProbe;
+use tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe;
 
 /// A half-open `[start, end)` key interval, the crate's spelling of Go
 /// `kv.KeyRange` (see [`crate::handle_range::record_key_ranges`]).

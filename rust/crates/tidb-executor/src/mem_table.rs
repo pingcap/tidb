@@ -15,9 +15,9 @@
 //! The row source used by Go's `executorBuilder.buildMemTable` path after a
 //! `PhysicalMemTable` resolves its virtual-table rows.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};
+use tidb_executor_internal_exec::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
@@ -126,12 +126,12 @@ impl Executor for MemTableSourceExec {
         self.meta.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
 }
 
-impl crate::table_access::TableAccess for MemTableSourceExec {
+impl tidb_executor_internal_exec::table_access::TableAccess for MemTableSourceExec {
     /// Every row this source can emit is in `rows`, and each one is tested,
     /// so the promise `accept_scan_filter` makes holds unconditionally --
     /// there is no second, unfiltered half of the stream to lose.

@@ -28,7 +28,7 @@
 //! [`MemTableSourceExec`] remains the source for catalog-backed in-memory
 //! tables.
 
-use crate::executor::Executor;
+use tidb_executor_internal_exec::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_kv::mem_quota;
@@ -870,7 +870,7 @@ fn visit_executor_rows_writing<C: ?Sized>(
 #[cfg(test)]
 mod dml_batch_tests {
     use super::*;
-    use crate::executor::ExecutorMeta;
+    use tidb_executor_internal_exec::ExecutorMeta;
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     use tidb_expr::schema::Schema;
     struct Source {

@@ -32,16 +32,16 @@ use crate::access_path::{
 };
 use crate::apply::NestedLoopApplyExec;
 use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
-use crate::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
+use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
     ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExec, MergeByItem, PartialHandleBatch,
     PartialHandleColumns, PartialHandleSource, PartitionedHandleSource,
     PushedDownLimit as ExecutorPushedDownLimit,
 };
 use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
-use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
+use tidb_executor_join::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::TableScanExec;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
@@ -59,11 +59,11 @@ use tidb_distsql::remote_scan::CopPlanKind;
 use tidb_distsql::remote_scan::CopPlanId;
 use crate::select_lock::{SelectLockExec, SelectedRecordKey};
 use crate::selection::SelectionExec;
-use crate::sort::{SortByItem, SortExec};
-use crate::table_access::TableAccess;
+use tidb_executor_sortexec::{SortByItem, SortExec};
+use tidb_executor_internal_exec::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
 use crate::table_sample::{SampleOutputColumn, TableSampleExec};
-use crate::topn::TopNExec;
+use tidb_executor_sortexec::topn::TopNExec;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
@@ -195,7 +195,7 @@ pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
 
 #[derive(Clone)]
 pub(crate) struct PhysicalRuntimeCounter {
-    rows: crate::executor::RowCount,
+    rows: tidb_executor_internal_exec::RowCount,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
     apply: Option<crate::apply::native::ApplyRuntimeSink>,
     /// Go `RURuntimeStats`, which `ExplainExec.executeAnalyzeExec` registers
@@ -207,8 +207,8 @@ pub(crate) struct PhysicalRuntimeCounter {
     snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 }
 
-impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
-    fn from(rows: crate::executor::RowCount) -> Self {
+impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
+    fn from(rows: tidb_executor_internal_exec::RowCount) -> Self {
         Self {
             rows,
             calls: None,
@@ -356,7 +356,7 @@ impl BuildState {
         if let Some(counters) = self.runtime_counters.as_mut() {
             counters
                 .entry(runtime_plan_key(plan))
-                .or_insert_with(|| crate::executor::RowCount::default().into())
+                .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into())
                 .snapshot = Some(Arc::clone(&stats));
         }
         Some(stats)
@@ -370,7 +370,7 @@ impl BuildState {
             .runtime_counters
             .as_mut()?
             .entry(plan_key)
-            .or_insert_with(|| crate::executor::RowCount::default().into());
+            .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
         Some(Arc::clone(
             counter
                 .apply
@@ -458,7 +458,7 @@ impl BuildState {
             counters
                 .entry(runtime_plan_key(plan))
                 .or_insert_with(|| PhysicalRuntimeCounter {
-                    rows: crate::executor::RowCount::default(),
+                    rows: tidb_executor_internal_exec::RowCount::default(),
                     calls: None,
                     apply: None,
                     ru: None,
@@ -649,7 +649,7 @@ impl Executor for SqlKillerCheckExec {
             trace.after_open_region
         });
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
-        let result = crate::sort_util::recover_executor_panic(|| self.child.open());
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.open());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_open(start.elapsed());
         }
@@ -673,7 +673,7 @@ impl Executor for SqlKillerCheckExec {
             tidb_tracing::thread_event(|| event.clone());
         }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
-        let result = crate::sort_util::recover_executor_panic(|| {
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| {
             self.memory.check().map_err(crate::ExecError::from)?;
             self.child.next(req)?;
             self.memory.check().map_err(crate::ExecError::from)
@@ -692,7 +692,7 @@ impl Executor for SqlKillerCheckExec {
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let close_started = Instant::now();
         let start = self.runtime_stats.as_ref().map(|_| close_started);
-        let result = crate::sort_util::recover_executor_panic(|| self.child.close());
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.close());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_close(start.elapsed());
         }
@@ -741,7 +741,7 @@ impl Executor for SqlKillerCheckExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         self.child.table_access()
     }
 
@@ -755,14 +755,14 @@ impl Executor for SqlKillerCheckExec {
 /// for one retained physical node; it never selects or rebuilds a plan.
 struct PhysicalCountExec {
     child: Box<dyn Executor>,
-    counter: crate::executor::RowCount,
+    counter: tidb_executor_internal_exec::RowCount,
     calls: Arc<Mutex<PhysicalCallStats>>,
 }
 
 impl Executor for PhysicalCountExec {
     fn open(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = crate::sort_util::recover_executor_panic(|| self.child.open());
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.open());
         let mut calls = self.calls.lock().unwrap();
         calls.open += start.elapsed();
         result
@@ -770,7 +770,7 @@ impl Executor for PhysicalCountExec {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = crate::sort_util::recover_executor_panic(|| self.child.next(req));
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.next(req));
         let mut calls = self.calls.lock().unwrap();
         calls.next += start.elapsed();
         calls.loops += 1;
@@ -783,7 +783,7 @@ impl Executor for PhysicalCountExec {
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = crate::sort_util::recover_executor_panic(|| self.child.close());
+        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.close());
         let mut calls = self.calls.lock().unwrap();
         calls.close += start.elapsed();
         result
@@ -809,7 +809,7 @@ impl Executor for PhysicalCountExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         self.child.table_access()
     }
 
@@ -2417,7 +2417,7 @@ fn lower_index_lookup_selections(
     }
     let filters = resolve_expressions(&conditions, source.schema())?;
     let pushed =
-        crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(filters, ctx);
+        tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(filters, ctx);
     if !source.accept_scan_filter(&pushed, ctx) {
         return Err(DriverError::unsupported(
             "a physical index lookup cannot apply its retained Selection",
@@ -6823,7 +6823,7 @@ fn build_with_state(
             // planner never admitted (`oct(a) > '0'`, `RAND()` without a
             // seed). Only a condition the shared admission would have pushed
             // may be offered to the source.
-            let pushed = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+            let pushed = tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(
                 filters.clone(),
                 ctx,
             );
@@ -7950,7 +7950,7 @@ use super::*;
     #[test]
     fn a_slow_limit_close_records_its_span() {
         struct SlowClose {
-            meta: crate::executor::ExecutorMeta,
+            meta: tidb_executor_internal_exec::ExecutorMeta,
             close_for: Duration,
         }
         impl Executor for SlowClose {
@@ -7991,7 +7991,7 @@ use super::*;
         for close_for in [Duration::from_millis(3), Duration::ZERO] {
             let mut limit = SqlKillerCheckExec {
                 child: Box::new(SlowClose {
-                    meta: crate::executor::ExecutorMeta::new(Schema::new(Vec::new()), 1, 1, 1),
+                    meta: tidb_executor_internal_exec::ExecutorMeta::new(Schema::new(Vec::new()), 1, 1, 1),
                     close_for,
                 }),
                 memory: crate::StatementMemory::default(),
@@ -8024,7 +8024,7 @@ use super::*;
     /// stats and before the close-registered groups.
     #[test]
     fn ru_runtime_stats_follow_basic_stats_in_execution_info() {
-        let mut counter = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
+        let mut counter = PhysicalRuntimeCounter::from(tidb_executor_internal_exec::RowCount::default());
         counter.calls = Some(Arc::new(Mutex::new(PhysicalCallStats {
             loops: 2,
             ..PhysicalCallStats::default()
@@ -8050,7 +8050,7 @@ use super::*;
             "time:0s, open:0s, close:0s, loops:2, RU:2.83, concurrency:OFF, cache:OFF"
         );
         // No RU details registers nothing visible.
-        let mut empty = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
+        let mut empty = PhysicalRuntimeCounter::from(tidb_executor_internal_exec::RowCount::default());
         empty.register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats::default());
         assert_eq!(empty.execution_info(), None);
     }
@@ -8348,7 +8348,7 @@ use super::*;
                     meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
                     panic_at,
                 }),
-                counter: crate::executor::RowCount::default(),
+                counter: tidb_executor_internal_exec::RowCount::default(),
                 calls: Arc::clone(&calls),
             };
             (executor, calls)

@@ -1579,7 +1579,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
         // channel cannot fill beyond its configured worker count.
         let _ = self.resources.send(input);
         if self.error.is_none() && !self.abort.raised() {
-            let fold = crate::sort_util::recover_worker_panic(|| {
+            let fold = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                 let final_concurrency = self.maps.len();
                 fold_chunk(
                     FoldInputs {
@@ -1657,7 +1657,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
     }
 
     fn schedule(queue: Arc<Mutex<PartialLaneState<C>>>, mut worker: PartialWorker<C>) {
-        crate::worker_pool::enqueue_public(Box::new(move || {
+        tidb_goruntime::worker_pool::enqueue_public(Box::new(move || {
             // Drain a bounded prefix outside the queue lock. New commands
             // can arrive while this batch folds; yielding after the prefix
             // keeps concurrent queries from being held behind one hot lane.
@@ -1697,7 +1697,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
                 return;
             }
             for command in commands {
-                if let Err(error) = crate::sort_util::recover_worker_panic(|| {
+                if let Err(error) = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                     worker.process(command);
                     Ok(())
                 }) {
@@ -1851,7 +1851,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PipelineWorkers<C> {
             if self.abort.raised() {
                 break;
             }
-            let result = crate::sort_util::recover_worker_panic(|| child.next(&mut input.chunk));
+            let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| child.next(&mut input.chunk));
             input.account();
             if let Err(error) = result {
                 fetch_error = Some(error);
@@ -2378,8 +2378,8 @@ impl Drop for FinalWorkerCompletion {
 
 impl<C: Columns + Send + Sync + Clone + 'static> FinalWorker<C> {
     fn schedule(mut self, mut chunk: Chunk) {
-        crate::worker_pool::enqueue_public(Box::new(move || {
-            let result = crate::sort_util::recover_worker_panic(|| self.fill(&mut chunk));
+        tidb_goruntime::worker_pool::enqueue_public(Box::new(move || {
+            let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| self.fill(&mut chunk));
             match result {
                 Err(error) => {
                     let _ = self.output.send(Err(error));

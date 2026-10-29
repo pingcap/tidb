@@ -35,8 +35,11 @@ use crate::join_row_table::RowLayoutMeta;
 use crate::join_table_meta::{ColumnType, JoinTableMeta};
 use crate::joiner::JoinType;
 use crate::row_table_builder::{BuildContext, PartitionInfo};
-use crate::sort_util::recover_worker_panic;
-use crate::{ExecError, Executor, ExecutorMeta, StatementMemory};
+use tidb_driver_error::panic_recovery::recover_worker_panic;
+use tidb_driver_error::ExecError;
+use tidb_executor_internal_exec::Executor;
+use tidb_executor_internal_exec::ExecutorMeta;
+use tidb_kv::mem_quota::StatementMemory;
 
 /// Go builder's resolved child indices, comparison types, projection and ON
 /// conditions. Key types include the equality expression's collation and flags;
@@ -361,7 +364,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
                 Box<dyn Executor>,
                 Result<usize, ExecError>,
             )>(1);
-            let coordinator = crate::worker_pool::LanePool::new("hash-join-build-coordinator", 1);
+            let coordinator = tidb_goruntime::worker_pool::LanePool::new("hash-join-build-coordinator", 1);
             // Go starts fetchAndBuildHashTable independently, and its probe
             // fetcher calls Next BEFORE wait4BuildSide. Keep exactly that one
             // chunk (including EOF), and never probe an unfinished table.

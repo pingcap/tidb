@@ -22,7 +22,7 @@ use tidb_expr::schema::Schema;
 use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
 use tidb_stats::table_statistics::TableStatistics;
-use crate::executor::Executor;
+use tidb_executor_internal_exec::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::KvTable;
 
@@ -396,7 +396,7 @@ impl Executor for CopIndexUsageExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         self.child.table_access()
     }
 }
@@ -410,7 +410,7 @@ mod tests {
     use super::*;
 
     struct CountedScanExecutor {
-        meta: crate::executor::ExecutorMeta,
+        meta: tidb_executor_internal_exec::ExecutorMeta,
     }
 
     impl Executor for CountedScanExecutor {
@@ -446,12 +446,12 @@ mod tests {
             self.meta.new_chunk()
         }
 
-        fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
             Some(self)
         }
     }
 
-    impl crate::table_access::TableAccess for CountedScanExecutor {
+    impl tidb_executor_internal_exec::table_access::TableAccess for CountedScanExecutor {
         fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
             Some((1, 70))
         }
@@ -500,7 +500,7 @@ mod tests {
     fn cop_executor_reports_live_scan_counts_on_close() {
         let (global, session, statement) = collectors();
         let scan = CountedScanExecutor {
-            meta: crate::executor::ExecutorMeta::new(Schema::default(), 0, 1, 1),
+            meta: tidb_executor_internal_exec::ExecutorMeta::new(Schema::default(), 0, 1, 1),
         };
         let mut reporter = CopIndexUsageExec::new(
             Box::new(scan),

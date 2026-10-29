@@ -51,7 +51,7 @@
 use tidb_executor_internal_applycache::ApplyCache;
 pub mod native;
 pub(crate) mod parallel;
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_kv::mem_quota::StatementMemory;
 pub use native::NestedLoopApplyExec;
@@ -604,8 +604,8 @@ fn datum_bytes(value: &Datum) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::RowCount;
-    use crate::joiner::JoinType;
+    use tidb_executor_internal_exec::RowCount;
+    use tidb_executor_join::joiner::JoinType;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
     use tidb_expr::expression::Expression;
@@ -721,7 +721,7 @@ use tidb_exprctx::Columns;
     #[test]
     fn native_apply_closes_failed_inner_open_and_stops() {
         let context = crate::StmtContext::for_query();
-        let joiner = crate::joiner::new_joiner(
+        let joiner = tidb_executor_join::joiner::new_joiner(
             context.clone(),
             JoinType::Inner,
             false,
@@ -731,7 +731,7 @@ use tidb_exprctx::Columns;
             &[long()],
             None,
             false,
-            crate::joiner::JoinerChunkSizes {
+            tidb_executor_join::joiner::JoinerChunkSizes {
                 vectorized: true,
                 init_chunk_size: 2,
                 max_chunk_size: 8,
@@ -794,7 +794,7 @@ use tidb_exprctx::Columns;
         }) {
             let context =
                 crate::StmtContext::for_query().with_enable_vectorized_expression(vectorized);
-            let joiner = crate::joiner::new_joiner(
+            let joiner = tidb_executor_join::joiner::new_joiner(
                 context.clone(),
                 JoinType::Inner,
                 false,
@@ -804,7 +804,7 @@ use tidb_exprctx::Columns;
                 &[long()],
                 None,
                 false,
-                crate::joiner::JoinerChunkSizes {
+                tidb_executor_join::joiner::JoinerChunkSizes {
                     vectorized,
                     init_chunk_size: 2,
                     max_chunk_size: 8,
@@ -885,7 +885,7 @@ use tidb_exprctx::Columns;
             let reads = Arc::new(AtomicUsize::new(0));
             let mut condition = Constant::new(Datum::Int(1), long());
             condition.param_marker = Some(ParamMarker { order: 0 });
-            let joiner = crate::joiner::new_joiner(
+            let joiner = tidb_executor_join::joiner::new_joiner(
                 Parameters(Arc::clone(&reads)),
                 JoinType::Inner,
                 false,
@@ -895,7 +895,7 @@ use tidb_exprctx::Columns;
                 &[long()],
                 None,
                 false,
-                crate::joiner::JoinerChunkSizes {
+                tidb_executor_join::joiner::JoinerChunkSizes {
                     vectorized,
                     init_chunk_size: 2,
                     max_chunk_size: 8,

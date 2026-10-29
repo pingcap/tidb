@@ -24,8 +24,9 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
 
 use crate::join_row_table::{RowTable, RowTableSegment};
-use crate::sort_util::recover_worker_panic;
-use crate::{ExecError, StatementMemory};
+use tidb_driver_error::panic_recovery::recover_worker_panic;
+use tidb_driver_error::ExecError;
+use tidb_kv::mem_quota::StatementMemory;
 
 /// Go spillChunkSize; both disk sides use native columnar batches.
 pub const SPILL_CHUNK_SIZE: usize = 1024;
@@ -338,7 +339,7 @@ impl HashJoinSpill {
             let build_types = self.build_types.clone();
             let probe_types = self.probe_types.clone();
             let spill_lanes =
-                crate::worker_pool::LanePool::new("hash-join-spill", self.concurrency);
+                tidb_goruntime::worker_pool::LanePool::new("hash-join-spill", self.concurrency);
 
             // Take only the selected row-table options out of the caller's
             // slices. The spill lanes themselves stay in `self` and retain

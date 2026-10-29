@@ -21,7 +21,7 @@
 //! offers to the selected reader: [`prune_scan_columns`],
 //! [`negotiate_scan_filter`], and [`offer_scan_limit`].
 //!
-//! The offers are not commands: [`crate::table_access`] holds the
+//! The offers are not commands: [`tidb_executor_internal_exec::table_access`] holds the
 //! contract, every method of it is fail-closed, and the source alone decides.
 //! The order matters and is fixed here -- pruning runs before the predicate
 //! split so a pushed conjunct's `column_offset` is already in narrow space,

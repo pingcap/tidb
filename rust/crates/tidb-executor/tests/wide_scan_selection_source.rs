@@ -26,7 +26,7 @@ use tidb_executor::dag_request::{
 use tidb_executor::wide_scan_selection::{
     accepts, wide_scan_selection_conditions, WideScanSelectionError,
 };
-use tidb_executor::predicate_pushdown::{
+use tidb_executor_internal_exec::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
 };
 use tidb_expr::pushdown_catalog::{build_call, PbScalar};

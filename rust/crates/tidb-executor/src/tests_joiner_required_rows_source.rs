@@ -16,7 +16,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_exprctx::Columns;
 use tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE;
 
-use crate::joiner::{new_joiner, JoinType, JoinerChunkSizes, NAAJType};
+use tidb_executor_join::joiner::{new_joiner, JoinType, JoinerChunkSizes, NAAJType};
 
 #[derive(Clone)]
 struct TestCtx;

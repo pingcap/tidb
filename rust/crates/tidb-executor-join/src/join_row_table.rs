@@ -195,17 +195,17 @@ impl RowTableSegment {
         self.init_tagged_bits();
     }
 
-    pub(crate) fn allocate_used_flags(&mut self, rows: usize) {
+    pub fn allocate_used_flags(&mut self, rows: usize) {
         self.used_flags = RowUsedFlags((0..rows).map(|_| AtomicBool::new(false)).collect());
     }
 
     #[inline]
-    pub(crate) fn mark_row_used(&self, row: usize) {
+    pub fn mark_row_used(&self, row: usize) {
         self.used_flags.0[row].store(true, Ordering::SeqCst);
     }
 
     #[inline]
-    pub(crate) fn is_row_used(&self, row: usize) -> bool {
+    pub fn is_row_used(&self, row: usize) -> bool {
         self.used_flags.0[row].load(Ordering::SeqCst)
     }
 
@@ -234,7 +234,7 @@ impl RowTableSegment {
 
     /// Binds the finished segment to its merged table's native address space.
     /// No bucket may retain a segment address until this ownership transfer.
-    pub(crate) fn bind_address(&mut self, base_address: usize) {
+    pub fn bind_address(&mut self, base_address: usize) {
         self.base_address = base_address;
         self.next_row_addresses.clear();
         self.init_tagged_bits();
@@ -322,7 +322,7 @@ impl RowTableSegment {
 
     /// Writes a chain link and records its row-indexed native form.
     #[inline(always)]
-    pub(crate) fn set_next_row_address_at(&mut self, row: usize, next_row_address: usize) {
+    pub fn set_next_row_address_at(&mut self, row: usize, next_row_address: usize) {
         let row_offset = self.row_start_offset[row] as usize;
         self.raw_data[row_offset..row_offset + SIZE_OF_NEXT_PTR]
             .copy_from_slice(&(next_row_address as u64).to_le_bytes());
@@ -348,7 +348,7 @@ impl RowTableSegment {
     /// already been linked and falling back to the packed bytes otherwise.
     #[must_use]
     #[inline(always)]
-    pub(crate) fn next_row_address_at(&self, row: usize, hash_tag_value: u64) -> usize {
+    pub fn next_row_address_at(&self, row: usize, hash_tag_value: u64) -> usize {
         let raw = if self.next_row_addresses.len() == self.row_start_offset.len() {
             self.next_row_addresses[row]
         } else {

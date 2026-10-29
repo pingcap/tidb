@@ -36,7 +36,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_vecgroupchecker::VecGroupChecker;
 

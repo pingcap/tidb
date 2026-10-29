@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for [`tidb_executor::hash_join_v2`], the port of
+//! Tests for [`tidb_executor_join`], the port of
 //! `pkg/executor/join/hash_join_v2.go`.
 //!
 //! Go-source join matrices and native build/probe transport fixtures. Component
@@ -26,19 +26,21 @@ use tidb_codec::{JoinKeyColumns, SerializeMode};
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 
-use tidb_executor::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext};
-use tidb_executor::hash_join_v2::probe_worker::{ProbeWorkerEvent, ProbeWorkerV2};
-use tidb_executor::hash_join_v2::{
+use tidb_executor_join::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext};
+use tidb_executor_join::probe_worker::{ProbeWorkerEvent, ProbeWorkerV2};
+use tidb_executor_join::{
     new_join_build_worker_v2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
     HashJoinCtxV2, HashJoinV2Exec, HashTableContext, InnerJoinProbe, LeftOuterSemiJoinProbe,
     OuterJoinProbe, ProbeV2, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
 };
-use tidb_executor::hash_table_v2::{get_hash_table_length_by_row_len, get_hash_table_memory_usage};
-use tidb_executor::join_row_table::{RowLayoutMeta, RowTableSegment};
-use tidb_executor::join_table_meta::{ColumnType, JoinTableMeta, KeyMode};
-use tidb_executor::row_table_builder::{get_partition_mask_offset, BuildContext, PartitionInfo};
-use tidb_executor::joiner::JoinType;
-use tidb_executor::{Executor, ExecutorMeta, StatementMemory};
+use tidb_executor_join::hash_table_v2::{get_hash_table_length_by_row_len, get_hash_table_memory_usage};
+use tidb_executor_join::join_row_table::{RowLayoutMeta, RowTableSegment};
+use tidb_executor_join::join_table_meta::{ColumnType, JoinTableMeta, KeyMode};
+use tidb_executor_join::row_table_builder::{get_partition_mask_offset, BuildContext, PartitionInfo};
+use tidb_executor_join::joiner::JoinType;
+use tidb_executor::StatementMemory;
+use tidb_executor_internal_exec::Executor;
+use tidb_executor_internal_exec::ExecutorMeta;
 use tidb_driver_error::ExecError;
 use tidb_vardef::OomAction;
 
@@ -206,7 +208,7 @@ impl Executor for BuildSource {
 #[test]
 fn native_build_partition_spill_source() {
     use std::sync::Arc;
-    use tidb_executor::hash_join_v2::spill::HashJoinSpill;
+    use tidb_executor_join::spill::HashJoinSpill;
     use tidb_memory::ActionOnExceed;
     use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     for concurrency in [1, 2, 4, 5] {
@@ -387,7 +389,7 @@ fn native_build_partition_spill_source() {
                             let chunk = files.build.get_chunk(index).unwrap();
                             assert!(
                                 chunk.num_rows()
-                                    <= tidb_executor::hash_join_v2::spill::SPILL_CHUNK_SIZE
+                                    <= tidb_executor_join::spill::SPILL_CHUNK_SIZE
                             );
                             for row in 0..chunk.num_rows() {
                                 let row = chunk.get_row(row);
@@ -446,7 +448,7 @@ fn native_build_partition_spill_source() {
 #[test]
 fn native_hash_join_recursive_restore_source() {
     use std::sync::Arc;
-    use tidb_executor::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
+    use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
     use tidb_expr::{
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
@@ -661,7 +663,7 @@ fn native_hash_join_recursive_restore_source() {
 /// empty bucket tables for the spilled partitions.
 #[test]
 fn native_hash_bucket_allocation_spill_source() {
-    use tidb_executor::hash_join_v2::spill::HashJoinSpill;
+    use tidb_executor_join::spill::HashJoinSpill;
     use tidb_memory::ActionOnExceed;
     let memory = StatementMemory::new(-1, OomAction::Cancel, 1);
     let mut exec = HashJoinV2Exec::new(HashJoinCtxV2::new(4, JoinType::Inner, true), &[0], &[true]);
@@ -827,7 +829,7 @@ fn native_build_stage_errors_join_workers_and_release_memory_source() {
             FieldType::new(FieldTypeCode::LongLong),
         );
         parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
-        let filter = tidb_executor::base_join_probe::JoinFilter::new(
+        let filter = tidb_executor_join::base_join_probe::JoinFilter::new(
             FilterContext {
                 mode,
                 memory: &memory,
@@ -1126,9 +1128,9 @@ fn matches_for(exec: &HashJoinV2Exec, layout: &RowLayoutMeta, keys: &[i64]) -> V
             let serialized = probe.serialized_keys()[logical_row].to_vec();
             let mut current = probe.matched_rows_headers()[logical_row];
             while current != 0 {
-                let row = tidb_executor::base_join_probe::BuildRowSource::row_bytes(
+                let row = tidb_executor_join::base_join_probe::BuildRowSource::row_bytes(
                     hash_table,
-                    tidb_executor::hash_table_v2::row_address_of(&ctx.tag_helper, current),
+                    tidb_executor_join::hash_table_v2::row_address_of(&ctx.tag_helper, current),
                 );
                 if is_key_matched(layout.key_mode, &serialized, row, layout) {
                     let mut bytes = [0_u8; 8];
@@ -2222,7 +2224,8 @@ fn check_semi_family(
 ) {
     use tidb_ast::CiString;
     use tidb_datatype::Datum;
-    use tidb_executor::{base_join_probe::JoinFilter, hash_join_v2::JoinOtherCondition};
+    use tidb_executor_join::base_join_probe::JoinFilter;
+    use tidb_executor_join::JoinOtherCondition;
     use tidb_expr::{
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
@@ -2501,7 +2504,7 @@ fn assert_probe_canceled(probe: &mut dyn ProbeV2, input: Chunk, new_output: &dyn
     probe.set_chunk_for_probe(input).unwrap();
     let mut output = new_output();
     assert!(matches!(probe.probe(&mut output, &killer),
-        Err(tidb_executor::base_join_probe::ProbeError::Killed(ref error)) if error.code == 1317));
+        Err(tidb_executor_join::base_join_probe::ProbeError::Killed(ref error)) if error.code == 1317));
     assert!(
         !output.is_incomplete_chunk(),
         "Go defer restores the output shape on error"
@@ -2510,7 +2513,7 @@ fn assert_probe_canceled(probe: &mut dyn ProbeV2, input: Chunk, new_output: &dyn
         output.reset();
         probe.init_for_scan_row_table();
         assert!(matches!(probe.scan_row_table(&mut output, &killer),
-            Err(tidb_executor::base_join_probe::ProbeError::Killed(ref error)) if error.code == 1317));
+            Err(tidb_executor_join::base_join_probe::ProbeError::Killed(ref error)) if error.code == 1317));
     }
 }
 
@@ -2519,7 +2522,7 @@ fn assert_probe_canceled(probe: &mut dyn ProbeV2, input: Chunk, new_output: &dyn
 #[test]
 fn native_hash_join_executor_lifecycle_source() {
     use tidb_datatype::Datum;
-    use tidb_executor::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
+    use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
     use tidb_expr::{
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
@@ -2861,7 +2864,7 @@ fn native_hash_join_executor_lifecycle_source() {
 fn native_probe_stage_next_close_and_error_source() {
     use std::sync::Arc;
     use std::time::Duration;
-    use tidb_executor::hash_join_v2::probe_stage::ProbeStage;
+    use tidb_executor_join::probe_stage::ProbeStage;
     use tidb_sqlkiller::KillSignal;
     for concurrency in [1, 4, 5] {
         for kind in [JoinType::Inner, JoinType::LeftOuter, JoinType::RightOuter] {
@@ -2957,7 +2960,7 @@ fn native_probe_stage_next_close_and_error_source() {
                             concurrency,
                             max_chunk_size: 3,
                         };
-                        let filter = tidb_executor::base_join_probe::JoinFilter::new(
+                        let filter = tidb_executor_join::base_join_probe::JoinFilter::new(
                             tidb_exprctx::NoColumns,
                             vec![tidb_expr::expression::Expression::ScalarFunction(
                                 tidb_expr::expression::ScalarFunction::new(
@@ -3168,7 +3171,7 @@ fn outer_join_probe_both_build_sides_source() {
 fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: bool) {
     use tidb_ast::CiString;
     use tidb_datatype::Datum;
-    use tidb_executor::hash_join_v2::JoinOtherCondition;
+    use tidb_executor_join::JoinOtherCondition;
     use tidb_expr::{
         column::Column,
         expression::{Expression, ScalarFunction},
@@ -3246,7 +3249,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
     ));
     // Go createSimpleFilter: column 0 > 10000, on the preserved outer
     // side (left for inner). Rejected preserved rows must still be emitted.
-    let side_filter = tidb_executor::base_join_probe::JoinFilter::new(
+    let side_filter = tidb_executor_join::base_join_probe::JoinFilter::new(
         NoColumns,
         vec![Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("gt"),
@@ -3509,7 +3512,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
                 let mut output = Chunk::new(&output_types, 128, 128);
                 assert_eq!(
                     failing_probe.probe(&mut output, &tidb_sqlkiller::SqlKiller::default()),
-                    Err(tidb_executor::base_join_probe::ProbeError::Expression(
+                    Err(tidb_executor_join::base_join_probe::ProbeError::Expression(
                         tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                     ))
                 );
@@ -3826,7 +3829,7 @@ use tidb_charset::Collation;
                 );
                 // The owning executor derives row layout and serializer modes
                 // from native field types instead of the fixture categories.
-                use tidb_executor::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
+                use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
                 let source = || {
                     let mut source = BuildSource::new(vec![input.clone()]);
                     source.meta = ExecutorMeta::new(

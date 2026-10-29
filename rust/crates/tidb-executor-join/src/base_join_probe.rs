@@ -22,7 +22,7 @@
 //! `outerJoinProbe`, `semiJoinProbe`, `antiSemiJoinProbe`,
 //! `leftOuterSemiJoinProbe`) that decides which matches become rows. The base
 //! owns the shared state; the per-join-type probe wrappers live in
-//! [`crate::hash_join_v2`] and reuse it rather than duplicating the lookup
+//! [`crate`] and reuse it rather than duplicating the lookup
 //! machinery. [`new_join_probe`] still validates and constructs only the base,
 //! exactly as Go's factory does before dispatching to those wrappers.
 //!
@@ -154,15 +154,15 @@ impl std::fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
-impl From<crate::ExecError> for ProbeError {
-    fn from(error: crate::ExecError) -> Self {
+impl From<tidb_driver_error::ExecError> for ProbeError {
+    fn from(error: tidb_driver_error::ExecError) -> Self {
         match error {
-            crate::ExecError::Killed(error) => Self::Killed(error),
-            crate::ExecError::MemoryExceedForQuery { conn_id } => {
+            tidb_driver_error::ExecError::Killed(error) => Self::Killed(error),
+            tidb_driver_error::ExecError::MemoryExceedForQuery { conn_id } => {
                 Self::Killed(tidb_sqlkiller::memory_exceed_for_query(conn_id))
             }
-            crate::ExecError::Eval(error) => Self::Expression(error),
-            crate::ExecError::SpillFailed(error) => Self::Spill(error),
+            tidb_driver_error::ExecError::Eval(error) => Self::Expression(error),
+            tidb_driver_error::ExecError::SpillFailed(error) => Self::Spill(error),
             other => Self::Seam(format!("{other:?}")),
         }
     }
@@ -284,7 +284,7 @@ pub type ProbeFilter<'a> = &'a JoinFilter<'a>;
 /// is the narrowed boundary, carrying one field per Go access site.
 pub struct ProbeContext<'a> {
     /// Immutable routing and worker-private disk lanes for this build round.
-    pub spill: Option<&'a crate::hash_join_v2::spill::HashJoinSpill>,
+    pub spill: Option<&'a crate::spill::HashJoinSpill>,
     /// Go `hashTableContext.hashTable`.
     pub hash_table: &'a HashTableV2,
     /// Go `hashTableMeta`, row-layout half.
@@ -520,7 +520,7 @@ impl BaseJoinProbe {
     /// evaluation. A `Some` entry is the decoded build-row handle from the
     /// chain walk; `None` is kept for address-only test sources.
     #[must_use]
-    pub(crate) fn row_index_locations(&self) -> &[Option<BuildRowLocation>] {
+    pub fn row_index_locations(&self) -> &[Option<BuildRowLocation>] {
         &self.row_index_locations
     }
 
@@ -570,7 +570,7 @@ impl BaseJoinProbe {
                     .map(|_| {
                         Chunk::new_with_capacity(
                             spill.probe_field_types(),
-                            crate::hash_join_v2::spill::SPILL_CHUNK_SIZE,
+                            crate::spill::SPILL_CHUNK_SIZE,
                         )
                     })
                     .collect();
@@ -941,7 +941,7 @@ impl BaseJoinProbe {
     /// Keep the probe key/hash and current chain head local until a batch
     /// boundary so reconstruction cannot invalidate their borrowed state.
     /// Returns the number of matches staged, not the number of collisions.
-    pub(crate) fn collect_inner_candidate_batch(
+    pub fn collect_inner_candidate_batch(
         &mut self,
         ctx: &ProbeContext<'_>,
         capacity: usize,
@@ -1590,7 +1590,7 @@ pub fn is_key_matched(
 /// once per chunk and use this monomorphized form for every chain candidate.
 #[must_use]
 #[inline(always)]
-pub(crate) fn is_key_matched_mode<const INTEGER_KEY: bool, const VARIABLE_KEY: bool>(
+pub fn is_key_matched_mode<const INTEGER_KEY: bool, const VARIABLE_KEY: bool>(
     serialized_key: &[u8],
     row: &[u8],
     meta: &RowLayoutMeta,
@@ -1689,7 +1689,7 @@ fn build_column_destinations(
 /// Builds the shared base and applies every validation Go's factory performs.
 /// The per-join-type wrappers Go returns (`innerJoinProbe`,
 /// `newOuterJoinProbe`, `newSemiJoinProbe`, `newAntiSemiJoinProbe`,
-/// `newLeftOuterSemiJoinProbe`) live in [`crate::hash_join_v2`]. This helper
+/// `newLeftOuterSemiJoinProbe`) live in [`crate`]. This helper
 /// keeps the factory's validation and base-state construction separate from
 /// those wrappers, matching the source's dispatch boundary.
 ///

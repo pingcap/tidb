@@ -1,0 +1,32 @@
+[package]
+name = "tidb-executor-join"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/join (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-serialization = { path = "../tidb-serialization" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+crossbeam-channel = "0.5"
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-mysql = { path = "../tidb-mysql" }
+tracing = "0.1"

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor::expand::ExpandExec;
 use tidb_executor::projection::ProjectionExec;
 use tidb_executor::table_dual::TableDualExec;

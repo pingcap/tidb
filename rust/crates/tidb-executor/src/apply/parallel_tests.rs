@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::joiner::{new_joiner, JoinType, JoinerChunkSizes};
+use tidb_executor_join::joiner::{new_joiner, JoinType, JoinerChunkSizes};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_expr::column::{Column, CorrelatedColumn};

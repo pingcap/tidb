@@ -12,7 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go hash-join V2 row-table build stages and probe state machines.
+//! Go `pkg/executor/join`: the hash joins (v1's key analysis and build side in
+//! [`hash_join`], v2 at this root), the joiners, the v2 row tables and the
+//! index-lookup-join statistics. The nested-loop and index joins over the
+//! executor's readers (`tidb_executor::join`) are not here yet.
+//!
+//! This root is Go hash-join V2's row-table build stages and probe state
+//! machines.
 //!
 //! Build workers consume native chunks incrementally. After the build barrier,
 //! row tables are merged and linked before probing starts. Each `ProbeV2` fills
@@ -23,6 +29,17 @@
 //! and parallel linking consume an opened child. The owning Executor facade
 //! opens/closes children and shares the built table with those workers. SQL
 //! builder selection, full probe accounting and spill restoration remain open.
+
+pub mod hash_join;
+pub mod base_join_probe;
+pub mod joiner;
+pub mod row_table_builder;
+pub mod hash_table_v2;
+pub mod join_row_table;
+pub mod join_table_meta;
+pub mod join_stats;
+pub mod concurrent_entry_map;
+pub mod tagged_ptr;
 
 use std::sync::Arc;
 
@@ -304,7 +321,7 @@ impl HashTableContext {
         &mut self,
         partition_number: usize,
         spill: &mut spill::HashJoinSpill,
-    ) -> Result<usize, crate::ExecError> {
+    ) -> Result<usize, tidb_driver_error::ExecError> {
         let hash_bytes: Vec<_> = (0..partition_number)
             .map(|id| {
                 let count = self

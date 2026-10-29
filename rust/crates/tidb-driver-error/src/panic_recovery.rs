@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shared Go-style executor and worker panic recovery.
-//! Sorting, spilling and cursor ownership live in the active Sort and TopN operators.
+//! Go-style executor and worker panic recovery: a recovered panic becomes
+//! its query error as Go's `processPanicAndLog` makes it with
+//! `util.GetRecoverError` (`pkg/util/util.go`).
 
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use tidb_driver_error::ExecError;
+use crate::ExecError;
 
 /// Recovers one Go-style executor panic and turns it into its query error.
 ///
 /// Go's `processPanicAndLog` calls `util.GetRecoverError`: string panic values
 /// retain their text, while non-string values use a stable formatted fallback.
-pub(crate) fn recover_executor_panic<T>(
+pub fn recover_executor_panic<T>(
     operation: impl FnOnce() -> Result<T, ExecError>,
 ) -> Result<T, ExecError> {
     catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
@@ -36,7 +37,7 @@ pub(crate) fn recover_executor_panic<T>(
 /// Recovers a worker panic before it unwinds through the persistent executor
 /// pool, where the receiver would otherwise report a misleading "dropped
 /// result" error.
-pub(crate) fn recover_worker_panic<T>(
+pub fn recover_worker_panic<T>(
     operation: impl FnOnce() -> Result<T, ExecError>,
 ) -> Result<T, ExecError> {
     recover_executor_panic(operation)
@@ -58,7 +59,7 @@ mod tests {
 
     #[test]
     fn worker_panic_is_recovered_without_poisoning_the_pool() {
-        let recovered = crate::worker_pool::submit(|| {
+        let recovered = tidb_goruntime::worker_pool::submit(|| {
             recover_worker_panic(|| -> Result<(), ExecError> {
                 panic!("sort worker boom");
             })
@@ -71,6 +72,6 @@ mod tests {
         // Go's recovered worker remains part of the goroutine pool.  A later
         // task must still run after the panic boundary has converted the
         // first task to an executor error.
-        assert_eq!(crate::worker_pool::submit(|| 7_u8), 7);
+        assert_eq!(tidb_goruntime::worker_pool::submit(|| 7_u8), 7);
     }
 }

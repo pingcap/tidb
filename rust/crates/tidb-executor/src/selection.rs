@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
@@ -370,7 +370,7 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
     }
 
     /// Negotiate through this filter, not through its unfiltered child.
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
 }
@@ -383,10 +383,10 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
 // columns and its base PushDownTopN retains the cut above the Selection.
 // Predicate/range negotiation remains available to reordered joins without
 // allowing them to bypass this operator's obligations.
-impl<C: Columns> crate::table_access::TableAccess for SelectionExec<C> {
+impl<C: Columns> tidb_executor_internal_exec::table_access::TableAccess for SelectionExec<C> {
     fn accept_scan_filter(
         &mut self,
-        filter: &crate::predicate_pushdown::PushedScanFilter,
+        filter: &tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
         self.child
@@ -450,7 +450,8 @@ mod tests {
     use tidb_expr::expression::ScalarFunction;
     use tidb_exprctx::NoColumns;
 
-    use crate::{OomAction, StatementMemory};
+    use crate::OomAction;
+    use crate::StatementMemory;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)

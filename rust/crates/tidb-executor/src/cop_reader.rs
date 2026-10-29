@@ -79,7 +79,7 @@ use crate::dag_request::{
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
-use crate::predicate_pushdown::ScanPredicate;
+use tidb_executor_internal_exec::predicate_pushdown::ScanPredicate;
 use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
 use tidb_distsql::remote_scan::PushdownScannerError;
 use tidb_distsql::remote_scan::PushdownScanRequest;
@@ -227,7 +227,7 @@ pub fn open_cop_scan(
         .iter()
         .flat_map(tidb_expr::expr_util::split_cnf_items)
         .map(|condition| {
-            crate::predicate_pushdown::describe_request_condition(&condition, eval_context).ok()
+            tidb_executor_internal_exec::predicate_pushdown::describe_request_condition(&condition, eval_context).ok()
         })
         .collect();
     let described = described.filter(|predicates| {

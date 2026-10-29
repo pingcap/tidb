@@ -64,7 +64,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::truthy_of;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_hack::GoCaseCompare;
 
@@ -582,7 +582,7 @@ pub struct HandleSourceExec {
     /// The next handle to read.
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
-    produced: crate::executor::RowCount,
+    produced: tidb_executor_internal_exec::RowCount,
     /// The statement-class flags for an origin default plus the session zone
     /// a stored `TIMESTAMP` is read back into, captured where the statement's
     /// context is (`Executor` has none).
@@ -643,7 +643,7 @@ impl HandleSourceExec {
             remote_rows: None,
             decoder: None,
             initialized: false,
-            produced: crate::executor::RowCount::default(),
+            produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context,
             output_columns: None,
             extra_handle_slot: None,
@@ -744,7 +744,7 @@ impl HandleSourceExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> crate::executor::RowCount {
+    pub fn produced_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.produced.clone()
     }
 
@@ -1072,13 +1072,13 @@ impl Executor for HandleSourceExec {
         self.meta.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
 }
 
 /// This source refuses every offer, on purpose, by taking the fail-closed
-/// defaults of [`crate::table_access`] wholesale.
+/// defaults of [`tidb_executor_internal_exec::table_access`] wholesale.
 ///
 /// It is listed as an access path rather than left unnegotiable so the refusal
 /// is a stated position instead of an omission: the handle list is fixed by the
@@ -1087,7 +1087,7 @@ impl Executor for HandleSourceExec {
 /// the handles is still applied above by design (`TryFastPlan` narrows the
 /// source, it does not replace the filter), and there is no scanned-row count
 /// to report because nothing is scanned.
-impl crate::table_access::TableAccess for HandleSourceExec {}
+impl tidb_executor_internal_exec::table_access::TableAccess for HandleSourceExec {}
 
 /// Go's secondary-unique PointGet/BatchPointGet first resolves retained index
 /// keys to record handles, then delegates the record reads to
@@ -1454,7 +1454,7 @@ fn project_index_identity(
 /// `can_reorder_handles` is this tier's `canReorderHandles`. The driver clears
 /// it through [`Self::answer_in_index_order`] for the paths whose answer IS the
 /// index walk, and through
-/// [`crate::table_access::TableAccess::accept_keep_order`] when the statement's
+/// [`tidb_executor_internal_exec::table_access::TableAccess::accept_keep_order`] when the statement's
 /// `ORDER BY` is the one this index path already produces. Cleared, the walk
 /// order IS the answer and no sort happens -- the same net effect as Go's
 /// sort-then-restore, one pass cheaper.
@@ -1588,15 +1588,15 @@ pub struct IndexRangeSourceExec {
     cursor: Option<IndexRangeCursor>,
     /// Rows produced so far, which the trace reads as this node's `actRows`
     /// when no filter was pushed into it.
-    produced: crate::executor::RowCount,
+    produced: tidb_executor_internal_exec::RowCount,
     /// Rows read from the range before any pushed filter -- the `actRows` the
     /// access operator reports once it filters internally.
-    scanned: crate::executor::RowCount,
+    scanned: tidb_executor_internal_exec::RowCount,
     /// Index entries consumed from the local cursor before index-side and
     /// table-side filtering. Remote scans use their coprocessor counters.
-    index_entries_scanned: crate::executor::RowCount,
+    index_entries_scanned: tidb_executor_internal_exec::RowCount,
     /// Conjuncts this source took over from the `Selection` above it.
-    filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
+    filter: Option<tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe>,
     /// The same conjunct descriptions, lowered into an index-side
     /// coprocessor Selection before a handle TopN or table lookup.
     pushed: Vec<Expression>,
@@ -1605,7 +1605,7 @@ pub struct IndexRangeSourceExec {
     /// a semantic check after the table lookup.
     index_filter: bool,
     /// Selection retained inside the physical index subtree, before lookup.
-    index_probe: Option<crate::predicate_pushdown::ScanFilterProbe>,
+    index_probe: Option<tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe>,
     /// A bounded TopN that can run on the index stream before table lookup.
     top_n: Option<tidb_distsql::remote_scan::PushdownTopN>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
@@ -1755,7 +1755,7 @@ pub struct IndexRangeSourceExec {
     /// Go's persistent table-worker set for the lookup pipeline. The pool is
     /// owned by this source so Close can stop and join every worker before
     /// releasing a queued lookup's cloned table/request state.
-    lookup_lanes: Option<Arc<crate::worker_pool::LanePool>>,
+    lookup_lanes: Option<Arc<tidb_goruntime::worker_pool::LanePool>>,
     /// Row demand the parent has EXPOSED so far: the sum of every output
     /// chunk's `required_rows`. The prefetch pipeline may never hold more
     /// unemitted windows than this minus what was produced -- a parent that
@@ -1941,8 +1941,8 @@ impl IndexRangeSourceExec {
         ctx: &crate::StmtContext,
     ) {
         self.index_probe = (!conditions.is_empty()).then(|| {
-            crate::predicate_pushdown::ScanFilterProbe::new(
-                crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+            tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
+                tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(
                     conditions, ctx,
                 ),
                 ctx.clone(),
@@ -2011,9 +2011,9 @@ impl IndexRangeSourceExec {
             range_rebuilder: None,
             next_range: 0,
             cursor: None,
-            produced: crate::executor::RowCount::default(),
-            scanned: crate::executor::RowCount::default(),
-            index_entries_scanned: crate::executor::RowCount::default(),
+            produced: tidb_executor_internal_exec::RowCount::default(),
+            scanned: tidb_executor_internal_exec::RowCount::default(),
+            index_entries_scanned: tidb_executor_internal_exec::RowCount::default(),
             filter: None,
             pushed: Vec::new(),
             index_filter: false,
@@ -2161,7 +2161,7 @@ impl IndexRangeSourceExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> crate::executor::RowCount {
+    pub fn produced_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.produced.clone()
     }
 
@@ -2465,7 +2465,7 @@ impl IndexRangeSourceExec {
                     && self
                         .filter
                         .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
+                        .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
                 self.lookup_chunk = batch.chunk;
                 self.lookup_chunk_row = 0;
                 if self.lookup_chunk.is_some() {
@@ -2572,7 +2572,7 @@ impl IndexRangeSourceExec {
                     && self
                         .filter
                         .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
+                        .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
                 debug_assert!(
                     batch.chunk.is_none(),
                     "a dirty double read never takes the chunk path",
@@ -2975,7 +2975,7 @@ impl IndexRangeSourceExec {
         let allow_lookup_chunks = self
             .filter
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
+            .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
         if self.partial_aggregate.is_some() {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
@@ -3109,7 +3109,7 @@ impl IndexRangeSourceExec {
             // through Executor::open. Keep those callers on the same
             // persistent-worker path rather than falling back to one thread
             // per window; normal executors install this pool in open.
-            Arc::new(crate::worker_pool::LanePool::new(
+            Arc::new(tidb_goruntime::worker_pool::LanePool::new(
                 "tidb-lookup",
                 concurrency,
             ))
@@ -3824,7 +3824,7 @@ impl IndexRangeSourceExec {
             .collect();
         predicates.iter().all(|predicate| {
             let mut probe = predicate.clone();
-            crate::predicate_pushdown::remap_expression(&mut probe, &carried_slots).is_some()
+            tidb_executor_internal_exec::predicate_pushdown::remap_expression(&mut probe, &carried_slots).is_some()
         })
     }
 
@@ -4046,12 +4046,12 @@ impl Executor for IndexRangeSourceExec {
         let index_filter_described = self
             .index_probe
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable)
+            .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable)
             && (!legacy_index_filter
                 || self
                     .filter
                     .as_ref()
-                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable));
+                    .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable));
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
@@ -4160,7 +4160,7 @@ impl Executor for IndexRangeSourceExec {
         // not issue table lookups, so avoid creating an unused worker set for
         // those single-read paths.
         self.lookup_lanes = if !self.covering && self.partial_aggregate.is_none() {
-            Some(Arc::new(crate::worker_pool::LanePool::new(
+            Some(Arc::new(tidb_goruntime::worker_pool::LanePool::new(
                 "tidb-lookup",
                 self.lookup_concurrency,
             )))
@@ -4243,7 +4243,7 @@ impl Executor for IndexRangeSourceExec {
                 && self
                     .filter
                     .as_ref()
-                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
+                    .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                     self.retain_remote_index_stats();
@@ -4406,7 +4406,7 @@ impl Executor for IndexRangeSourceExec {
         self.meta.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
 }
@@ -4421,7 +4421,7 @@ impl Drop for IndexRangeSourceExec {
     }
 }
 
-impl crate::table_access::TableAccess for IndexRangeSourceExec {
+impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSourceExec {
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
         let mut stats = self.cop_stats;
         if let Some(remote) = self.remote_index.as_ref() {
@@ -4531,7 +4531,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         // Go `CheckAggPushDown` ends with `IsPushDownEnabled(aggFunc.Name,
         // storeType)`, so `mysql.expr_pushdown_blacklist` refuses an
         // aggregate by its own name exactly as it refuses a scalar function.
-        if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
+        if !aggregate_admits(aggregate, ctx) {
             return false;
         }
         // Go pushes an aggregate to TiKV together with the cop Selection that
@@ -4704,10 +4704,10 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// full scan reads -- the snapshot with the session's staged mutation
     /// buffer merged in, for both the index entries and the row lookups --
     /// and every one of them is tested here, which is how the staged-row
-    /// promise in [`crate::table_access`] is kept.
+    /// promise in [`tidb_executor_internal_exec::table_access`] is kept.
     fn accept_scan_filter(
         &mut self,
-        filter: &crate::predicate_pushdown::PushedScanFilter,
+        filter: &tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
         if filter.is_empty() {
@@ -4740,7 +4740,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         match self.filter.as_mut() {
             Some(existing) => existing.conjoin(filter),
             None => {
-                self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                self.filter = Some(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
                     filter.clone(),
                     ctx.clone(),
                     self.meta.new_chunk(),
@@ -4854,7 +4854,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         accepted
     }
 
-    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
+    fn scanned_rows_counter(&self) -> Option<tidb_executor_internal_exec::RowCount> {
         Some(self.scanned.clone())
     }
 
@@ -5043,7 +5043,7 @@ impl LookupForkTemplate {
             // has no `_tidb_rowid` to report.
             emit_extra_handle: false,
             current_handle: None,
-            produced: crate::executor::RowCount::default(),
+            produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
             index_filters: self.index_filters.clone(),
@@ -5155,7 +5155,7 @@ pub struct IndexJoinLookupExec {
     /// The handle of the row [`Self::next_lookup_row`] returned last.
     current_handle: Option<TableHandle>,
     /// Rows produced since `open`, which the trace reads as `actRows`.
-    produced: crate::executor::RowCount,
+    produced: tidb_executor_internal_exec::RowCount,
     /// See [`HandleSourceExec`].
     decode_context: tidb_table::kv_table::RowDecodeContext,
     /// Statement flags, warning sink, and time zone carried by a batched
@@ -5259,7 +5259,7 @@ impl IndexJoinLookupExec {
             lookup_row_at: 0,
             emit_extra_handle: false,
             current_handle: None,
-            produced: crate::executor::RowCount::default(),
+            produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context,
             statement,
             index_filters: Vec::new(),
@@ -5533,7 +5533,7 @@ impl IndexJoinLookupExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> crate::executor::RowCount {
+    pub fn produced_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.produced.clone()
     }
 
@@ -6444,8 +6444,8 @@ fn scan_conditions_for_filters(
     let mut remapped = Vec::with_capacity(filters.len());
     for filter in filters {
         let mut condition = filter.clone();
-        if crate::predicate_pushdown::pb_condition_exists(&condition, context)
-            && crate::predicate_pushdown::remap_expression(&mut condition, keep).is_some()
+        if tidb_executor_internal_exec::predicate_pushdown::pb_condition_exists(&condition, context)
+            && tidb_executor_internal_exec::predicate_pushdown::remap_expression(&mut condition, keep).is_some()
         {
             remapped.push(condition);
         } else {
@@ -6942,7 +6942,7 @@ use std::collections::HashMap;
 
     #[test]
     fn index_lookup_retains_partition_identity_for_equal_row_handles() {
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         for global in [false, true] {
             let storage = CountingStorage::default();
             let gets = Arc::clone(&storage.gets);
@@ -7068,8 +7068,8 @@ use std::collections::HashMap;
                                     )),
                                 ],
                             ));
-                        source.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
-                            crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+                        source.filter = Some(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
+                            tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(
                                 vec![condition],
                                 &ctx,
                             ),
@@ -7242,7 +7242,7 @@ use std::collections::HashMap;
 
     #[test]
     fn prefix_limit_resets_after_partial_reads_and_retains_a_group_across_batches() {
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         let ctx = crate::StmtContext::for_query();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
@@ -7800,7 +7800,7 @@ use std::collections::HashMap;
 
     #[test]
     fn pushed_limit_closes_index_before_inline_table_lookup() {
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         let check_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request = Arc::new(std::sync::Mutex::new(None));
         let mut table = KvTable::with_storage(
@@ -7884,7 +7884,7 @@ use std::collections::HashMap;
         assert_eq!(first_request.limit(), Some(1));
         source.close().unwrap();
 
-        let filter = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+        let filter = tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(
             vec![condition],
             &ctx,
         );
@@ -8535,7 +8535,7 @@ use std::collections::HashMap;
         );
         // The single output slot names stored column `c` (offset 2).
         exec.read_table_columns(vec![2]);
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         // `c` is not ranked by the entries before an unpinned prefix: refuse
         // the bounded reverse read...
         assert!(!exec.accept_extreme_boundary(0, true));
@@ -8745,11 +8745,11 @@ use std::collections::HashMap;
             exec.answer_in_index_order();
         }
         if keep_order {
-            use crate::table_access::TableAccess;
+            use tidb_executor_internal_exec::table_access::TableAccess;
             assert!(exec.accept_keep_order(false));
         }
         if let Some(cap) = cap {
-            use crate::table_access::TableAccess;
+            use tidb_executor_internal_exec::table_access::TableAccess;
             assert!(exec.accept_scan_limit(cap));
         }
         exec.open().unwrap();
@@ -8907,3 +8907,42 @@ use std::collections::HashMap;
 /// Go unistore `cophandler.DefaultBatchSize`: the index rows a
 /// `LocalIndexLookUp` gathers, then sorts by handle, per table lookup.
 const LOCAL_INDEX_LOOKUP_BATCH_SIZE: usize = 32;
+
+/// Go `CheckAggPushDown`'s last line: `ret = IsPushDownEnabled(aggFunc.Name,
+/// storeType)`, asked of every function in a pushed aggregate, plus the
+/// argument walk `CheckAggCanPushCop` performs beside it.
+///
+/// The store is `kv.TiKV`: this is the coprocessor stage, which is the only
+/// one this tier pushes an aggregate into.
+pub(crate) fn aggregate_admits(
+    aggregate: &tidb_distsql::remote_scan::PushdownPartialAggregate,
+    ctx: &crate::StmtContext,
+) -> bool {
+    use tidb_distsql::remote_scan::PushdownPartialAggregate as Agg;
+    use tidb_distsql::remote_scan::PushdownAggregateKind;
+    let blacklist = ctx.expr_pushdown_blacklist();
+    if blacklist.is_empty() {
+        return true;
+    }
+    // Go's `aggFunc.Name`, already lower-case by `newBaseFuncDesc`.
+    let name_of = |kind: PushdownAggregateKind| match kind {
+        PushdownAggregateKind::Count => "count",
+        PushdownAggregateKind::Sum => "sum",
+        PushdownAggregateKind::Min => "min",
+        PushdownAggregateKind::Max => "max",
+        PushdownAggregateKind::MinCount => "min_count",
+        PushdownAggregateKind::MaxCount => "max_count",
+    };
+    let admits_name = |name: &str| tidb_expr::infer_pushdown::is_push_down_enabled(blacklist, name, tidb_expr::infer_pushdown::PushDownStore::TiKv);
+    let admits_arg = |input: Option<&tidb_expr::expression::Expression>| {
+        input.is_none_or(|expr| tidb_expr::pushdown_blacklist::admits(expr, blacklist, tidb_expr::infer_pushdown::PushDownStore::TiKv))
+    };
+    match aggregate {
+        Agg::Grouped { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
+        Agg::Global { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
+    }
+}

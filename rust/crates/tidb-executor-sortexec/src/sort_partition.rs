@@ -49,7 +49,7 @@ use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
 use tidb_kv::mem_quota::StatementMemory;
-use crate::sort::{compare_rows, eval_sort_key, SortByItem};
+use crate::{compare_rows, eval_sort_key, SortByItem};
 use tidb_chunk::compare::ColumnCompareFunc;
 use tidb_chunk::ColumnRead;
 
@@ -249,7 +249,7 @@ impl SortPartition {
     /// Statement-aware variant of [`Self::sort`] that mirrors Go's
     /// `sortPartition.keyColumnsLess` signal checkpoint while the serial sort
     /// comparator is running.
-    pub(crate) fn sort_with_memory<C: Columns>(
+    pub fn sort_with_memory<C: Columns>(
         &mut self,
         by_items: &[SortByItem],
         compare_funcs: &[Option<ColumnCompareFunc>],
@@ -374,7 +374,7 @@ impl SortPartition {
 
     /// Statement-aware serial spill variant. Go sorts a partition with the
     /// same SQL-killer checkpoint before writing its sorted rows to disk.
-    pub(crate) fn spill_to_disk_with_memory<C: Columns>(
+    pub fn spill_to_disk_with_memory<C: Columns>(
         &mut self,
         by_items: &[SortByItem],
         compare_funcs: &[Option<ColumnCompareFunc>],

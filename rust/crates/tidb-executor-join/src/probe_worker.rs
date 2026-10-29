@@ -24,7 +24,8 @@ use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 
 use super::ProbeV2;
 use crate::base_join_probe::ProbeError;
-use crate::{ExecError, StatementMemory};
+use tidb_driver_error::ExecError;
+use tidb_kv::mem_quota::StatementMemory;
 
 /// One worker's fetcher and result-chunk resource queues, each of capacity one.
 pub struct ProbeWorkerPorts {
@@ -177,7 +178,7 @@ impl ProbeWorkerV2 {
         restored: Option<(&mut DataInDiskByChunks, Chunk)>,
     ) {
         let killed = memory.sql_killer().get_kill_event_chan();
-        let result = crate::sort_util::recover_worker_panic(|| {
+        let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
             match self.run_inner(probe, memory, &killed, restored) {
                 Ok(()) | Err(Stop::Closed) => Ok(()),
                 Err(Stop::Error(error)) => Err(error),

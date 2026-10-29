@@ -15,7 +15,7 @@
 //! Go NestedLoopApplyExec: reopen a built inner executor after rebinding
 //! correlated datum cells; tuple semantics belong to the shared Joiner.
 use tidb_executor_internal_applycache::ApplyCache;
-use crate::joiner::{Joiner, NAAJType};
+use tidb_executor_join::joiner::{Joiner, NAAJType};
 use crate::ExecError;
 use crate::Executor;
 use crate::ExecutorMeta;
@@ -243,7 +243,7 @@ impl NestedLoopApplyExec {
             rows.list.mem_tracker().attach_to(tracker);
         }
         rows.list.reset();
-        let result: Result<(), ExecError> = crate::sort_util::recover_executor_panic(|| {
+        let result: Result<(), ExecError> = tidb_driver_error::panic_recovery::recover_executor_panic(|| {
             self.inner.open()?;
             loop {
                 self.inner.next(&mut self.inner_chunk)?;
@@ -282,7 +282,7 @@ impl NestedLoopApplyExec {
                 self.memory.check().map_err(ExecError::from)?;
             }
         });
-        if let Err(error) = crate::sort_util::recover_executor_panic(|| self.inner.close()) {
+        if let Err(error) = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.inner.close()) {
             eprintln!("Apply inner close: {error:?}");
         }
         result?;

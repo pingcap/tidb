@@ -1,0 +1,35 @@
+[package]
+name = "tidb-executor-sortexec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/sortexec (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+crossbeam-channel = "0.5"
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-vardef = { path = "../tidb-vardef" }
+tracing = "0.1"
+
+[dev-dependencies]
+tidb-executor = { path = "../tidb-executor" }

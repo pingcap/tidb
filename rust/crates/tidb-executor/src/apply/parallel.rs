@@ -20,9 +20,12 @@
 //! joins all admitted work, then retires shared rows/cache and the outer child.
 
 use super::native::{ApplyRuntimeSink, ApplyRuntimeSnapshot, InnerRows, NestedLoopApplyExec};
-use crate::{
-    worker_pool::LanePool, ExecError, Executor, ExecutorMeta, StatementMemory, StmtContext,
-};
+use tidb_goruntime::worker_pool::LanePool;
+use crate::ExecError;
+use crate::Executor;
+use crate::ExecutorMeta;
+use crate::StatementMemory;
+use crate::StmtContext;
 use tidb_executor_internal_applycache::ApplyCache;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -328,7 +331,7 @@ impl ParallelNestedLoopApplyExec {
                     let mut executor = executor
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let result = crate::sort_util::recover_worker_panic(
+                    let result = tidb_driver_error::panic_recovery::recover_worker_panic(
                         || -> Result<ApplyRuntimeSnapshot, ExecError> {
                             executor.open()?;
                             executor.prepare_worker_row(selected, cache, rows_tracker);
@@ -348,7 +351,7 @@ impl ParallelNestedLoopApplyExec {
                             Ok(executor.cache_snapshot())
                         },
                     );
-                    let closed = crate::sort_util::recover_worker_panic(|| executor.close());
+                    let closed = tidb_driver_error::panic_recovery::recover_worker_panic(|| executor.close());
                     let result = result.and_then(|snapshot| closed.map(|()| snapshot));
                     let event = match result {
                         Ok(snapshot) => Event::Done(snapshot),

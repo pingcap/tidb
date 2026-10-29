@@ -1,0 +1,22 @@
+[package]
+name = "tidb-executor-internal-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/internal/exec (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-expr = { path = "../tidb-expr" }

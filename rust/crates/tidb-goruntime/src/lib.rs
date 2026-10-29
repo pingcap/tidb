@@ -17,6 +17,7 @@
 //! (`go_runtime`), Go strings as byte sequences (`go_string`) and `strconv`'s
 //! number formatting (`go_strconv`).
 
+pub mod worker_pool;
 pub mod go_runtime;
 pub mod go_strconv;
 mod go_string;

@@ -319,6 +319,7 @@
 //! file's `eval_in`, the single recursive expression evaluator every other
 //! module calls back into for its own subexpressions.
 
+pub mod pushdown_blacklist;
 pub mod param_errors;
 pub mod expression_errors;
 pub mod explain;

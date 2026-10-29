@@ -70,7 +70,7 @@ fn insert_ignore_keeps_the_nonduplicate_rows() {
 #[test]
 fn worker_pool_preserves_the_go_submission_contract() {
     let values: Vec<usize> = (0..16).collect();
-    let output = crate::worker_pool::map(
+    let output = tidb_goruntime::worker_pool::map(
         values.iter().map(|value| {
             let value = *value;
             move || {

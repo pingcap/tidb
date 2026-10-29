@@ -17,8 +17,8 @@
 //! `container/heap` sift rules both this file and `multi_way_merge.go` import.
 //!
 //! This crate ports `pkg/executor/sortexec` in pieces. COVERED here:
-//! `topn_chunk_heap.go`. Covered elsewhere: `sort.go` -> [`crate::sort`],
-//! `sort_util.go` -> [`crate::sort_util`], `sort_partition.go` ->
+//! `topn_chunk_heap.go`. Covered elsewhere: `sort.go` -> [`crate`],
+//! `sort_util.go` -> [`tidb_driver_error::panic_recovery`], `sort_partition.go` ->
 //! [`crate::sort_partition`], `topn.go` -> [`crate::topn`], `topn_spill.go` ->
 //! [`crate::topn_spill`]. Sort and TopN own their active result heaps.
 //! NOT COVERED anywhere yet: `parallel_sort_worker.go`,
@@ -76,7 +76,7 @@ use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 
 use tidb_driver_error::ExecError;
-use crate::sort::{less_by_items, SortByItem};
+use crate::{less_by_items, SortByItem};
 
 /// Go stdlib `container/heap`, which both `topn_chunk_heap.go` and
 /// `multi_way_merge.go` import.
@@ -85,9 +85,9 @@ use crate::sort::{less_by_items, SortByItem};
 /// has ties, so it is reproduced rather than approximated. `less` takes the two
 /// ELEMENTS instead of two indices, which lets a caller keep its comparison
 /// state (evaluated keys, a captured comparison error) outside `data`.
-pub(crate) mod go_heap {
+pub mod go_heap {
     /// Go `container/heap.down`. Returns whether the element moved.
-    pub(crate) fn down<T>(
+    pub fn down<T>(
         data: &mut [T],
         i0: usize,
         n: usize,
@@ -114,7 +114,7 @@ pub(crate) mod go_heap {
     }
 
     /// Go `container/heap.up`.
-    pub(crate) fn up<T>(data: &mut [T], j0: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
+    pub fn up<T>(data: &mut [T], j0: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
         let mut j = j0;
         loop {
             // Go's `i := (j - 1) / 2` on a signed int gives 0 for j == 0
@@ -130,7 +130,7 @@ pub(crate) mod go_heap {
     }
 
     /// Go `container/heap.Init`.
-    pub(crate) fn init<T>(data: &mut [T], less: &mut dyn FnMut(&T, &T) -> bool) {
+    pub fn init<T>(data: &mut [T], less: &mut dyn FnMut(&T, &T) -> bool) {
         let n = data.len();
         for i in (0..n / 2).rev() {
             down(data, i, n, less);
@@ -138,7 +138,7 @@ pub(crate) mod go_heap {
     }
 
     /// Go `container/heap.Fix`.
-    pub(crate) fn fix<T>(data: &mut [T], i: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
+    pub fn fix<T>(data: &mut [T], i: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
         let n = data.len();
         if !down(data, i, n, less) {
             up(data, i, less);
@@ -147,7 +147,7 @@ pub(crate) mod go_heap {
 
     /// Go `container/heap.Pop`: the root is swapped to the end, the rest is
     /// sifted, and the tail element is removed and returned.
-    pub(crate) fn pop<T>(data: &mut Vec<T>, less: &mut dyn FnMut(&T, &T) -> bool) -> Option<T> {
+    pub fn pop<T>(data: &mut Vec<T>, less: &mut dyn FnMut(&T, &T) -> bool) -> Option<T> {
         let n = data.len().checked_sub(1)?;
         data.swap(0, n);
         down(data, 0, n, less);
@@ -155,7 +155,7 @@ pub(crate) mod go_heap {
     }
 
     /// Go `container/heap.Remove`.
-    pub(crate) fn remove<T>(
+    pub fn remove<T>(
         data: &mut Vec<T>,
         i: usize,
         less: &mut dyn FnMut(&T, &T) -> bool,

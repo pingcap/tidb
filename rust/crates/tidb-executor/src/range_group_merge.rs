@@ -24,9 +24,11 @@
 
 use std::cmp::Ordering;
 
-use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
-use crate::topn_chunk_heap::go_heap;
-use crate::{ExecError, Executor, ExecutorMeta};
+use tidb_executor_sortexec::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use tidb_executor_sortexec::topn_chunk_heap::go_heap;
+use crate::ExecError;
+use crate::Executor;
+use crate::ExecutorMeta;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;

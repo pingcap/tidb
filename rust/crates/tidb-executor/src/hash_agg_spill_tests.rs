@@ -20,7 +20,7 @@
 //! once under a quota it cannot, compared group by group. Nothing here trusts
 //! a hand-written expectation about what a spilled aggregation "should" say.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use tidb_kv::mem_quota::StatementMemory;

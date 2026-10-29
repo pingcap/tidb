@@ -75,7 +75,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
@@ -84,8 +84,8 @@ use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 use tidb_kv::mem_quota::StatementMemory;
-use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
-use crate::sort_util::recover_worker_panic;
+use crate::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use tidb_driver_error::panic_recovery::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
@@ -112,7 +112,7 @@ pub struct TopNExec<C: Columns> {
     /// so `Next` must not drain the child even when `offset` is nonzero.
     count: u64,
     /// Go `chkHeap.totalLimit` = `Limit.Offset + Limit.Count`, saturated the
-    /// way [`crate::limit::LimitExec`] saturates its `end` (Go's planner
+    /// way `tidb_executor::limit::LimitExec` saturates its `end` (Go's planner
     /// clamps the count so the sum cannot wrap).
     total_limit: u64,
     /// Go `fetched`: whether the whole child has been consumed.
@@ -340,7 +340,7 @@ where
     /// Builds a `TopN` over `child` keeping `count` rows from `offset` in
     /// `by_items` order.
     ///
-    /// `memory` is required for the same reason [`crate::sort::SortExec::new`]
+    /// `memory` is required for the same reason [`crate::SortExec::new`]
     /// requires it: a call site must not be able to build an UNACCOUNTED
     /// row store by omitting it.
     #[must_use]
@@ -701,7 +701,7 @@ where
                 let mut worker = idle.pop().expect("an available TopN heap");
                 let completion_sender = completed_tx.clone();
                 in_flight += 1;
-                crate::worker_pool::enqueue_public(Box::new(move || {
+                tidb_goruntime::worker_pool::enqueue_public(Box::new(move || {
                     let result = recover_worker_panic(|| worker.process_chunk(chunk));
                     // Exactly one completion per admitted worker, and capacity
                     // for all workers: publication never parks a CPU thread.
@@ -711,7 +711,7 @@ where
                 // barrier until every admitted chunk and every spill finishes.
                 if self.need_spill.load(SeqCst) {
                     join_topn_workers(&completed, &mut idle, &mut in_flight)?;
-                    let outcomes = crate::worker_pool::map(
+                    let outcomes = tidb_goruntime::worker_pool::map(
                         std::mem::take(&mut idle).into_iter().map(|mut worker| {
                             move || {
                                 let result = recover_worker_panic(|| worker.spill());
@@ -737,7 +737,7 @@ where
         // Go's deferred spillRemainingRowsWhenNeeded runs after the final
         // input barrier, even if fetching failed. All heaps join before their
         // memory is released, and the original fetch error remains primary.
-        let results = crate::worker_pool::map(
+        let results = tidb_goruntime::worker_pool::map(
             idle.into_iter().map(|mut worker| {
                 move || {
                     recover_worker_panic(|| {
@@ -1157,9 +1157,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::limit::LimitExec;
+    use tidb_executor::limit::LimitExec;
     use tidb_vardef::OomAction;
-    use crate::sort::SortExec;
+    use crate::SortExec;
     use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
@@ -1274,7 +1274,7 @@ mod tests {
         }
     }
 
-    pub(super) fn schema_of(n_cols: usize) -> Schema {
+    pub fn schema_of(n_cols: usize) -> Schema {
         let cols = (0..n_cols)
             .map(|i| {
                 let mut c = Column::new(i as i64 + 1, long());
@@ -1302,7 +1302,7 @@ mod tests {
         ))
     }
 
-    pub(super) fn source(
+    pub fn source(
         rows: &[Vec<Option<i64>>],
         n_cols: usize,
         batch: usize,
@@ -1315,7 +1315,7 @@ mod tests {
         })
     }
 
-    pub(super) fn by(items: &[(usize, bool)]) -> Vec<SortByItem> {
+    pub fn by(items: &[(usize, bool)]) -> Vec<SortByItem> {
         items
             .iter()
             .map(|&(idx, desc)| SortByItem {
@@ -1635,7 +1635,7 @@ mod tests {
         )
     }
 
-    pub(super) fn drain(exec: &mut dyn Executor) -> Vec<Vec<Option<i64>>> {
+    pub fn drain(exec: &mut dyn Executor) -> Vec<Vec<Option<i64>>> {
         exec.open().unwrap();
         let n_cols = exec.ret_field_types().len();
         let mut out = Vec::new();

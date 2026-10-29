@@ -213,7 +213,7 @@ mod tests {
     use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::{build_prepared_select_plan, run_select_on, PreparedPlanCacheEnvironment};
     use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
-    use crate::executor::{Executor, ExecutorMeta};
+    use tidb_executor_internal_exec::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use tidb_table::kv_table::TableHandle;
     use tidb_table::kv_table::KvTable;
@@ -2129,7 +2129,7 @@ mod tests {
     /// The correctness core. A coprocessor answers from the snapshot, so the
     /// transaction's own staged writes must be merged back in and filtered by
     /// the same predicate: this is the remote twin of the byte-level test in
-    /// `crate::predicate_pushdown`, and it must produce the identical answer.
+    /// `tidb_executor_internal_exec::predicate_pushdown`, and it must produce the identical answer.
     #[test]
     fn staged_rows_survive_the_remote_scan_and_are_filtered_by_the_same_predicate() {
         let mut fixture = fixture();

@@ -3435,7 +3435,7 @@ fn register_ru_runtime_stats(
     if let Some(ru_details) = statement_context.ru_details() {
         runtime
             .entry(crate::driver::physical_builder::runtime_plan_key(physical))
-            .or_insert_with(|| crate::executor::RowCount::default().into())
+            .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into())
             .register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
                 ru_details: Some(ru_details.cloned()),
                 metrics: None,
@@ -4027,7 +4027,7 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, crate::executor::RowCount::default().into());
+    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,
@@ -4157,7 +4157,7 @@ pub fn explain_analyze_update_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, crate::executor::RowCount::default().into());
+    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,
@@ -4212,7 +4212,7 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, crate::executor::RowCount::default().into());
+    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,

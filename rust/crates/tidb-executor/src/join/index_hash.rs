@@ -16,7 +16,7 @@ use super::*;
 type OuterHashMap = std::collections::HashMap<
     u64,
     OuterBucket,
-    std::hash::BuildHasherDefault<crate::hash_join::IdentityU64Hasher>,
+    std::hash::BuildHasherDefault<tidb_executor_join::hash_join::IdentityU64Hasher>,
 >;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -212,7 +212,7 @@ impl IndexHashOutput {
         state.scratch.append_partial_row(left.len(), right);
         Ok(super::fold_verdict(
             self.kind,
-            crate::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?,
+            tidb_executor_join::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?,
         ))
     }
 
@@ -641,7 +641,7 @@ pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
     let outer = Arc::new(outer);
     let build_outer = Arc::clone(&outer);
     let build_shared = Arc::clone(shared);
-    let build = crate::worker_pool::spawn(move || {
+    let build = tidb_goruntime::worker_pool::spawn(move || {
         let result = IndexHashState::build(
             build_shared.hash_output.as_ref().expect("hash variant"),
             &build_shared.keys,

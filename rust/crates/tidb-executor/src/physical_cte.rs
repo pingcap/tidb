@@ -26,7 +26,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 
 use tidb_cteutil::CteStorage;
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::StmtContext;
 
@@ -462,7 +462,7 @@ impl CteProducer {
         }
         // Go computeSeedPart/computeRecursivePart turn panics into the error
         // cached by genCTEResult, before releasing shared materialization.
-        let result = crate::sort_util::recover_worker_panic(|| {
+        let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
             self.compute_seed().and_then(|()| self.compute_recursive())
         });
         match result {
@@ -646,7 +646,7 @@ impl Executor for CteExec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::RowCount;
+    use tidb_executor_internal_exec::RowCount;
 
     struct CteInput {
         meta: ExecutorMeta,
@@ -725,7 +725,7 @@ mod tests {
             let mut reader = CteExec::new(meta.clone(), producer.clone(), false, 0, 0);
             reader.open().unwrap();
             let mut output = reader.new_chunk();
-            let first = crate::sort_util::recover_worker_panic(|| reader.next(&mut output));
+            let first = tidb_driver_error::panic_recovery::recover_worker_panic(|| reader.next(&mut output));
             assert!(
                 matches!(first, Err(ExecError::Internal(ref message)) if message.contains("CTE input panic"))
             );

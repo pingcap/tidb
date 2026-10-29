@@ -29,7 +29,7 @@
 //! # Algorithm: hash, with the nested loop as the stated fallback
 //!
 //! When the `ON` clause carries at least one `col = col` conjunct this module
-//! can index (see [`crate::hash_join`] for the encoding and the classes it
+//! can index (see [`tidb_executor_join::hash_join`] for the encoding and the classes it
 //! refuses), the join builds a hash table on the costed build side and streams
 //! the other side through it: O(build + probe x fanout) instead of
 //! O(build x probe). Everything else -- a cross join, a join whose only
@@ -120,7 +120,7 @@
 //!
 //! Two call sites now consume against [`tidb_kv::mem_quota::StatementMemory`],
 //! each followed immediately by `check()`, exactly as
-//! [`crate::sort::SortExec::fetch_and_sort`] does:
+//! [`tidb_executor_sortexec::SortExec::fetch_and_sort`] does:
 //!
 //! - [`JoinExec::drain`], per chunk, for both sides of the nested-loop
 //!   fallback (the hash build side accounts through its container instead).
@@ -152,9 +152,9 @@
 //! The check fires INSIDE both loops, never after: after the loop there is
 //! nothing left to save.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use crate::hash_join::{
+use tidb_executor_join::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
     row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
     Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
@@ -923,7 +923,7 @@ struct IndexTaskShared<C: Columns> {
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     /// Go `innerWorker.stats`.
-    stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
+    stats: Option<Arc<tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats>>,
 }
 
 /// What the pool worker of one index task hands back.
@@ -1379,7 +1379,7 @@ pub struct JoinExec<C: Columns> {
     /// its `indexLookUpJoinRuntimeStats` on at Close.
     index_join_runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `IndexLookUpJoin.stats`, created with the first task.
-    index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
+    index_join_stats: Option<Arc<tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1392,7 +1392,7 @@ pub struct JoinExec<C: Columns> {
     /// that no longer describes a projected join row.
     residual_conditions: Vec<Expression>,
     /// Whether some conjunct equates the two sides -- Go would KEY this
-    /// join (`updateEQCond`); see [`crate::hash_join::has_cross_side_equality`].
+    /// join (`updateEQCond`); see [`tidb_executor_join::hash_join::has_cross_side_equality`].
     cross_side_equality: bool,
     /// The joined left-then-right row types the residual conditions read. Semi joins
     /// return only their left child, so this cannot be derived from `meta`.
@@ -1419,7 +1419,7 @@ pub struct JoinExec<C: Columns> {
     keys: Vec<EquiKey>,
     /// Go `HashContext.NaKeyColIdx`: the null-aware key conjuncts a `NOT IN`
     /// / `!= ALL` rewrite marked `IsEQCondFromIn` (see
-    /// [`crate::joiner::is_eq_cond_from_in`]). Disjoint from `keys` in
+    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`]). Disjoint from `keys` in
     /// practice -- Go's own NAAJ conversion only fires when
     /// `EqualConditions` is empty -- and, unlike an ordinary equality, a
     /// build row whose key holds a NULL is not dropped: it is indexed into
@@ -1457,7 +1457,7 @@ pub struct JoinExec<C: Columns> {
     /// Reusable blocking lanes for the index-join worker set. The pool is
     /// owned by the executor so Close can wait for every worker before the
     /// lookup source or executor is reused.
-    index_task_lanes: Option<Arc<crate::worker_pool::LanePool>>,
+    index_task_lanes: Option<Arc<tidb_goruntime::worker_pool::LanePool>>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -1526,12 +1526,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let left_width = left_types.len();
-        let split = crate::hash_join::split_equi(&conditions, left_width);
+        let split = tidb_executor_join::hash_join::split_equi(&conditions, left_width);
         let cross_side_equality =
-            crate::hash_join::has_cross_side_equality(&conditions, left_width);
+            tidb_executor_join::hash_join::has_cross_side_equality(&conditions, left_width);
         let flattened = conditions
             .iter()
-            .flat_map(crate::hash_join::split_conjuncts)
+            .flat_map(tidb_executor_join::hash_join::split_conjuncts)
             .collect::<Vec<_>>();
         let residual_conditions: Vec<Expression> = flattened
             .into_iter()
@@ -1546,7 +1546,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let output = JoinOutput::all(kind, left_width, right_types.len());
         let native_hash = matches!(kind, JoinKind::AntiSemi | JoinKind::AntiLeftOuterSemi)
-            && conditions.iter().any(crate::joiner::is_eq_cond_from_in);
+            && conditions.iter().any(tidb_executor_join::joiner::is_eq_cond_from_in);
         JoinExec {
             meta,
             output,
@@ -1715,14 +1715,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// the ordinary `ON` clause) -- so, unlike a scheme that recovers these
     /// from a shared list, nothing here depends on where in that list they
     /// would have been, or on re-deriving eligibility from
-    /// [`crate::joiner::is_eq_cond_from_in`] (a marker that survives on an
+    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`] (a marker that survives on an
     /// expression whether or not the planner's NAAJ conversion actually
     /// fired for it).
     pub(crate) fn set_na_conditions(&mut self, na_conditions: Vec<Expression>) {
         let left_width = self.left_types.len();
         let keys = na_conditions
             .iter()
-            .map(|condition| crate::hash_join::na_equi_key(condition, left_width))
+            .map(|condition| tidb_executor_join::hash_join::na_equi_key(condition, left_width))
             .collect::<Option<Vec<_>>>();
         match keys {
             Some(keys) => {
@@ -1940,7 +1940,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = chunk.get_row(0);
         Ok(fold_verdict(
             self.kind,
-            crate::joiner::eval_bool(&self.ctx, conditions, row)?,
+            tidb_executor_join::joiner::eval_bool(&self.ctx, conditions, row)?,
         ))
     }
 
@@ -1968,7 +1968,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = scratch.get_row(0);
         Ok(fold_verdict(
             kind,
-            crate::joiner::eval_bool(ctx, conditions, row)?,
+            tidb_executor_join::joiner::eval_bool(ctx, conditions, row)?,
         ))
     }
 
@@ -2088,7 +2088,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = scratch.get_row(0);
         Ok(fold_verdict(
             self.kind,
-            crate::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
+            tidb_executor_join::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
         ))
     }
 
@@ -2272,7 +2272,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 IndexLookupSource::Composite { .. } => None,
             };
             let prefetch_disabled = template.is_none();
-            let lane_pool = Arc::new(crate::worker_pool::LanePool::new(
+            let lane_pool = Arc::new(tidb_goruntime::worker_pool::LanePool::new(
                 "tidb-index-join",
                 self.index_lookup_concurrency,
             ));
@@ -2298,7 +2298,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 memory: self.memory.clone(),
                 stats: self.index_join_runtime_stats.as_ref().map(|_| {
                     Arc::clone(self.index_join_stats.get_or_insert_with(|| {
-                        Arc::new(crate::join_stats::IndexLookUpJoinRuntimeStats::new(
+                        Arc::new(tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats::new(
                             self.index_lookup_concurrency,
                         ))
                     }))
@@ -2562,7 +2562,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
         shared: &Arc<IndexTaskShared<C>>,
-        lane_pool: &Arc<crate::worker_pool::LanePool>,
+        lane_pool: &Arc<tidb_goruntime::worker_pool::LanePool>,
         target: usize,
     ) -> Result<(), ExecError> {
         let outer_types = outer_child.ret_field_types().to_vec();
@@ -2919,9 +2919,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 self.residual_conditions =
                     self.conditions
                         .iter()
-                        .flat_map(crate::hash_join::split_conjuncts)
+                        .flat_map(tidb_executor_join::hash_join::split_conjuncts)
                         .filter(|condition| {
-                            !crate::hash_join::equi_key(condition, width).is_some_and(|key| {
+                            !tidb_executor_join::hash_join::equi_key(condition, width).is_some_and(|key| {
                                 !key.null_safe
                                     && plan.keys.iter().any(|merge| {
                                         merge.left == key.left && merge.right == key.right
@@ -2980,7 +2980,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             side.selected.clear();
             for index in 0..side.chunk.num_rows() {
                 side.selected
-                    .push(crate::joiner::eval_bool(ctx, filters, side.chunk.get_row(index))?.0);
+                    .push(tidb_executor_join::joiner::eval_bool(ctx, filters, side.chunk.get_row(index))?.0);
             }
             side.group_checker.split_into_groups(ctx, &side.chunk)?;
         }
@@ -3948,9 +3948,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         pipeline.batch_target = (pipeline.batch_target * 2).min(PARALLEL_PROBE_MAX_BATCH);
         let shared = Arc::clone(&pipeline.shared);
         let result_tx = pipeline.result_tx.clone();
-        crate::worker_pool::enqueue_public(Box::new(move || {
+        tidb_goruntime::worker_pool::enqueue_public(Box::new(move || {
             // A dropped receiver means the join is already closed or failed.
-            let result = crate::sort_util::recover_worker_panic(|| {
+            let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                 Self::probe_batch(&shared, inputs, output)
             });
             let _ = result_tx.send((seq, result));
@@ -4781,7 +4781,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             if !self.outer_filter.is_empty() && self.filter_is_left == build_is_left {
                 let selected = (0..chunk.num_rows())
                     .map(|index| {
-                        crate::joiner::eval_bool(
+                        tidb_executor_join::joiner::eval_bool(
                             &self.ctx,
                             &self.outer_filter,
                             chunk.get_row(index),
@@ -4888,7 +4888,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         {
             (0..chunk.num_rows())
                 .map(|index| {
-                    crate::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index))
+                    tidb_executor_join::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index))
                         .map(|result| result.0)
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -5411,9 +5411,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// marker).
     ///
     /// Deliberately a plain truthy check, never [`Self::matches`]: Go's
-    /// `EvalBool` (ported as [`crate::joiner::eval_bool`]) forgives a NULL
+    /// `EvalBool` (ported as [`tidb_executor_join::joiner::eval_bool`]) forgives a NULL
     /// into `has_null` only for a condition itself marked
-    /// [`crate::joiner::is_eq_cond_from_in`], and `Self::matches` turns that
+    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`], and `Self::matches` turns that
     /// into an outright match for `JoinKind::AntiSemi`
     /// (`matched || has_null`) -- but Go's own `nullAwareAntiSemiJoiner` /
     /// `nullAwareAntiLeftOuterSemiJoiner.TryToMatchInners` call `EvalBool`

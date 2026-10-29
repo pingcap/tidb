@@ -62,7 +62,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::Datum;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_driver_error::ExecError;
-use tidb_executor::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor::hash_agg::{AggFunc, AggKind, HashAggContext, HashAggExec};
 use tidb_kv::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
@@ -1214,8 +1214,8 @@ fn report_join(
 /// (`tidb_hash_join_version = optimized`): `HashJoinV2Executor` with one
 /// worker, the probe side left and the build side right.
 fn bench_hash_join_v2_probe() {
-    use tidb_executor::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
-    use tidb_executor::joiner::JoinType;
+    use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
+    use tidb_executor_join::joiner::JoinType;
     let rows: usize = std::env::var("BENCH_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())

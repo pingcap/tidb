@@ -24,7 +24,7 @@
 //! batch. Every later whole batch transfers column owners, including Limit's
 //! inline reordered/duplicate child-column projection.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;

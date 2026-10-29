@@ -14,7 +14,7 @@
 
 //! Serial Go ExpandExec: evaluate every grouping level over one cached chunk.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::StatementMemory;
 use std::sync::Arc;

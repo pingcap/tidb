@@ -20,10 +20,8 @@ use tidb_datatype::{
     CoreTime, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration,
     SessionTimeZone, Time, TimeType,
 };
-use tidb_executor::{
-    admin_check::check_table,
-    analyze::{kv::analyze_kv_table, AnalyzeOptions},
-};
+use tidb_executor::admin_check::check_table;
+use tidb_executor::analyze::{kv::analyze_kv_table, AnalyzeOptions};
 use tidb_sessionctx::StmtContext;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::{
@@ -101,7 +99,7 @@ fn assert_point_chunks(
     rows: &[(TableHandle, Vec<u8>, Vec<Datum>)],
     zone: &SessionTimeZone,
 ) {
-    use tidb_executor::executor::Executor;
+    use tidb_executor_internal_exec::Executor;
     use tidb_kv::storage::{MemTableStorage, TableStorage};
     let mut storage = MemTableStorage::new();
     for (handle, bytes, _) in rows {
@@ -135,7 +133,7 @@ fn assert_point_chunks(
             .collect(),
     );
     let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
-        tidb_executor::ExecutorMeta::new(schema, 0, 8, 8),
+        tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 8, 8),
         table,
         rows.iter().map(|(handle, _, _)| handle.clone()).collect(),
         query_context(zone),

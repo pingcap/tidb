@@ -49,8 +49,6 @@ pub mod admin_errors;
 pub mod handle_range;
 pub mod exec_stmt_observation;
 pub mod adapter;
-pub mod base_join_probe;
-pub mod concurrent_entry_map;
 pub mod sessionctx;
 pub mod stats_stmt_ctx;
 pub use stats_stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
@@ -80,36 +78,15 @@ pub mod memtable_retrievers;
 pub mod compact_table;
 pub mod set;
 pub mod simple;
-pub mod join_stats;
 pub mod index_lookup_stats;
-pub mod hash_join_v2;
-pub mod hash_table_v2;
-pub mod join_row_table;
-pub mod join_table_meta;
 pub mod show_regions;
-pub mod row_table_builder;
 pub mod split_region;
-pub mod tagged_ptr;
 
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
 pub mod checksum;
-pub mod worker_pool;
 
-/// Submits a fire-and-forget task to the persistent exec pool.
-pub fn worker_pool_spawn<F>(task: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    worker_pool::enqueue_public(Box::new(task));
-}
-
-/// Whether the persistent exec pool is available.
-#[must_use]
-pub fn worker_pool_available() -> bool {
-    worker_pool::available()
-}
 pub mod agg_spill;
 pub mod analyze;
 pub mod cluster_analyze;
@@ -119,6 +96,8 @@ mod approx_count_distinct;
 pub(crate) use tidb_table::bad_null;
 #[cfg(test)]
 mod tests_bad_null;
+#[cfg(test)]
+mod tests_predicate_pushdown;
 #[cfg(test)]
 mod tests_cluster_storage;
 pub mod ddl;
@@ -130,10 +109,12 @@ pub(crate) mod test_region;
 pub mod dag_request;
 pub mod driver;
 pub mod wide_scan_selection;
-pub mod executor;
 pub mod explain;
 mod farmhash;
 pub(crate) mod foreign_key;
+use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;
+use tidb_executor_internal_exec::table_access::TableAccess;
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_distsql::select_response::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
@@ -142,10 +123,8 @@ use tidb_distsql::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
-mod hash_join;
 pub mod index_merge_reader;
 pub mod join;
-pub mod joiner;
 pub mod import_into_options;
 pub mod kv_table;
 pub mod limit;
@@ -202,18 +181,12 @@ pub mod slow_query;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod expand;
 pub mod fts_like_rewrite;
-pub mod predicate_pushdown;
 pub mod projection;
-mod pushdown_blacklist;
 pub mod remote_scan;
 pub mod selection;
 pub mod show_stats;
 pub mod shuffle;
-pub mod sort;
-pub mod sort_partition;
-pub mod sort_util;
 pub mod stats_lock;
-pub mod table_access;
 pub mod table_dual;
 mod table_sample;
 #[cfg(test)]
@@ -232,9 +205,6 @@ mod tests_memtest_source;
 mod tests_oomtest_source;
 #[cfg(test)]
 mod tests_passwordtest_source;
-pub mod topn;
-pub mod topn_chunk_heap;
-pub mod topn_spill;
 pub mod union_scan;
 pub mod view;
 pub mod window;
@@ -266,7 +236,6 @@ pub use driver::{
 use tidb_infoschema::{Catalog, MemTable, TableEntry, ViewDef, DEFAULT_DATABASE};
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
-pub use executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
@@ -280,16 +249,13 @@ pub use mem_quota::{SessionMemory, StatementCancellation, StatementMemory};
 use tidb_vardef::OomAction;
 pub use mem_table::MemTableSourceExec;
 pub use mpp_query::MppQueryInfo;
-pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate};
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
-pub use sort::{SortByItem, SortExec};
 use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 use tidb_stmtctx::{PlanSource, ProcessPlanInfo, StoredPlan};
 use tidb_variable::session_vars::DdlReorgVars;
 use tidb_variable::MdlRelatedTableRecorder;
 use tidb_kv::keys_read::KeysReadBudget;
-pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 use tidb_txnkv::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
@@ -302,7 +268,6 @@ use tidb_exprctx::BlockEncryptionMode;
 use tidb_exprctx::EvalError;
 use tidb_datatype::SessionTimeZone;
 use tidb_mathutil::MysqlRng;
-pub use topn::TopNExec;
 pub use view::{resolve_view_definition, view_column_list};
 
 #[cfg(test)]

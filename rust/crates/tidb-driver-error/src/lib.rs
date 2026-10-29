@@ -29,6 +29,7 @@
 
 mod driver_error;
 mod exec;
+pub mod panic_recovery;
 mod var;
 
 pub use driver_error::DriverError;

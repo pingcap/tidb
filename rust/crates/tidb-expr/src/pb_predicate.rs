@@ -363,7 +363,7 @@ fn check_string_comparison_collation_is_sendable(
 /// so that inference sent TiKV a BINARY comparison for
 /// `a LIKE 'aa' COLLATE utf8mb4_general_ci` over a `utf8mb4_bin` column. The
 /// collation is now CARRIED from the description
-/// (`tidb_executor::predicate_pushdown::ScanPredicate`), which takes it from
+/// (`tidb_executor_internal_exec::predicate_pushdown::ScanPredicate`), which takes it from
 /// the built expression -- the same value Go writes onto the function's own
 /// `FieldType` for `ExprToPB` to send.
 ///

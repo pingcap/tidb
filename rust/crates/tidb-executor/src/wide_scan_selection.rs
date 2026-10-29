@@ -17,7 +17,7 @@
 //!
 //! The driver splits a `WHERE` into the conjuncts a base-table scan applies
 //! itself and the residual above it
-//! ([`crate::predicate_pushdown`]). Those pushed conjuncts are described
+//! ([`tidb_executor_internal_exec::predicate_pushdown`]). Those pushed conjuncts are described
 //! independently of how they are evaluated; this module turns one description
 //! into the TiPB condition tree
 //! [`crate::dag_request::construct_capped_read_only_dag_req_with_conditions`]
@@ -86,14 +86,14 @@
 //! staged mutation buffer is merged into the read client-side and never
 //! passed through TiKV, so a caller that lowers a predicate through here must
 //! keep applying the full predicate to the merged staged rows. That is the
-//! promise [`crate::table_access::TableAccess::accept_scan_filter`]
+//! promise [`tidb_executor_internal_exec::table_access::TableAccess::accept_scan_filter`]
 //! governs, and a source that cannot keep it must refuse the push-down.
 
 use std::error::Error;
 use std::fmt;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use crate::predicate_pushdown::{
+use tidb_executor_internal_exec::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
 };
 use tidb_expr::pb_predicate::{

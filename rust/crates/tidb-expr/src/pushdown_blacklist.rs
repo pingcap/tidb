@@ -58,7 +58,7 @@
 //! Two more differences worth naming:
 //!
 //!  * `mysql.opt_rule_blacklist` is honoured for `predicate_push_down` alone
-//!    (see `crate::driver::access`'s `pushed_down_conds`). Go's
+//!    (see `tidb_executor::driver::access`'s `pushed_down_conds`). Go's
 //!    `isLogicalRuleDisabled` gates all ~30 entries of `optRuleList`; this
 //!    tier is not rule-structured, so each further name needs its own
 //!    equivalent found first. Any other name is loaded and ignored.
@@ -74,12 +74,12 @@
 //! `SET`, `GEOMETRY` and unspecified-typed columns UNCONDITIONALLY, and
 //! `canFuncBePushed` first consults the whole `scalarExprSupportedByTiKV`
 //! whitelist; this tier answers both elsewhere and by its own route
-//! ([`crate::predicate_pushdown`]'s shape list). Everything here
+//! ([`tidb_executor_internal_exec::predicate_pushdown`]'s shape list). Everything here
 //! short-circuits on an empty blacklist, so a session that never ran `ADMIN
 //! RELOAD` takes exactly the path it took before.
 
-use tidb_expr::expression::Expression;
-use tidb_expr::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
+use crate::expression::Expression;
+use crate::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
 
 /// Go `ast.TypeStr(mysql.TypeBit)`, the name `columnToPBExpr` looks a BIT
 /// column up under.
@@ -91,56 +91,18 @@ const ENUM_TYPE_NAME: &str = "enum";
 
 /// The blacklist verdict for a condition its planner already built. Go
 /// `PushDownExprs` walks this tree; it does not rewrite the SQL again.
-pub(crate) fn compiled_blacklist_admits(
+pub fn compiled_blacklist_admits(
     condition: &Expression,
-    ctx: &dyn tidb_expr::pushdown_catalog::PbConverterContext,
+    ctx: &dyn crate::pushdown_catalog::PbConverterContext,
     store: PushDownStore,
 ) -> bool {
     let blacklist = ctx.expr_pushdown_blacklist();
     blacklist.is_empty() || admits(condition, blacklist, store)
 }
 
-/// Go `CheckAggPushDown`'s last line: `ret = IsPushDownEnabled(aggFunc.Name,
-/// storeType)`, asked of every function in a pushed aggregate, plus the
-/// argument walk `CheckAggCanPushCop` performs beside it.
-///
-/// The store is `kv.TiKV`: this is the coprocessor stage, which is the only
-/// one this tier pushes an aggregate into.
-pub(crate) fn aggregate_admits(
-    aggregate: &tidb_distsql::remote_scan::PushdownPartialAggregate,
-    ctx: &crate::StmtContext,
-) -> bool {
-    use tidb_distsql::remote_scan::PushdownPartialAggregate as Agg;
-    use tidb_distsql::remote_scan::PushdownAggregateKind;
-    let blacklist = ctx.expr_pushdown_blacklist();
-    if blacklist.is_empty() {
-        return true;
-    }
-    // Go's `aggFunc.Name`, already lower-case by `newBaseFuncDesc`.
-    let name_of = |kind: PushdownAggregateKind| match kind {
-        PushdownAggregateKind::Count => "count",
-        PushdownAggregateKind::Sum => "sum",
-        PushdownAggregateKind::Min => "min",
-        PushdownAggregateKind::Max => "max",
-        PushdownAggregateKind::MinCount => "min_count",
-        PushdownAggregateKind::MaxCount => "max_count",
-    };
-    let admits_name = |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
-    let admits_arg = |input: Option<&Expression>| {
-        input.is_none_or(|expr| admits(expr, blacklist, PushDownStore::TiKv))
-    };
-    match aggregate {
-        Agg::Grouped { functions, .. } => functions.iter().all(|function| {
-            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
-        }),
-        Agg::Global { functions, .. } => functions.iter().all(|function| {
-            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
-        }),
-    }
-}
-
 /// The walk itself, over the typed tree Go walks.
-fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: PushDownStore) -> bool {
+/// Go `PushDownExprs`' blacklist walk over one expression for `store`.
+pub fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: PushDownStore) -> bool {
     match expr {
         // Go `columnToPBExpr`, whose two blacklist-driven refusals are by
         // COLUMN TYPE rather than by any function name. `enum` is asked under

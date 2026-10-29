@@ -26,7 +26,10 @@ use tidb_chunk::chunk::Chunk;
 use super::probe_worker::{ProbeWorkerEvent, ProbeWorkerV2};
 use super::HashJoinV2Exec;
 use crate::joiner::JoinType;
-use crate::{ExecError, Executor, ExecutorMeta, StatementMemory};
+use tidb_driver_error::ExecError;
+use tidb_executor_internal_exec::Executor;
+use tidb_executor_internal_exec::ExecutorMeta;
+use tidb_kv::mem_quota::StatementMemory;
 
 struct FetchRequest {
     worker_id: usize,
@@ -88,7 +91,7 @@ pub struct ProbeStage {
     inputs: Vec<Sender<Chunk>>,
     resources: VecDeque<(usize, Chunk)>,
     first_fetched: bool,
-    workers: Option<Arc<crate::worker_pool::LanePool>>,
+    workers: Option<Arc<tidb_goruntime::worker_pool::LanePool>>,
     fetcher: Option<FetcherHandle>,
     source: Option<Box<dyn Executor>>,
     probe_done: Vec<bool>,
@@ -160,7 +163,7 @@ impl ProbeStage {
             inputs: Vec::with_capacity(concurrency),
             resources: VecDeque::with_capacity(concurrency),
             first_fetched: first_chunk.is_some(),
-            workers: Some(Arc::new(crate::worker_pool::LanePool::new(
+            workers: Some(Arc::new(tidb_goruntime::worker_pool::LanePool::new(
                 "hash-join-probe",
                 concurrency,
             ))),
@@ -215,7 +218,7 @@ impl ProbeStage {
                 .clone();
             worker_pool
                 .submit(move || {
-                    let result = crate::sort_util::recover_worker_panic(|| {
+                    let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                         run(id, worker, &memory);
                         Ok(())
                     });
@@ -273,7 +276,7 @@ impl ProbeStage {
         Ok(stage)
     }
 
-    pub(super) fn should_limit_fetch_size(join_type: JoinType, right_build: bool) -> bool {
+    pub fn should_limit_fetch_size(join_type: JoinType, right_build: bool) -> bool {
         matches!(
             (join_type, right_build),
             (JoinType::LeftOuter, true) | (JoinType::RightOuter, false)
@@ -326,7 +329,7 @@ impl ProbeStage {
         if self.finished {
             return Ok(());
         }
-        let result = crate::sort_util::recover_worker_panic(|| self.next_inner(output));
+        let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| self.next_inner(output));
         if result.is_err() {
             // Preserve the original error; Close only drains and joins workers.
             let _ = self.close();
@@ -511,7 +514,7 @@ impl ProbeFetcher {
         };
         if should_schedule {
             let fetcher = Arc::clone(self);
-            crate::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
+            tidb_goruntime::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
         }
     }
 
@@ -544,7 +547,7 @@ impl ProbeFetcher {
             self.complete();
             return;
         };
-        let result = crate::sort_util::recover_worker_panic(|| self.run_batch_inner(&mut *source));
+        let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| self.run_batch_inner(&mut *source));
         *self
             .source
             .lock()
@@ -607,7 +610,7 @@ impl ProbeFetcher {
         if self.is_closed() {
             return Ok(FetchResult::Closed);
         }
-        let result = crate::sort_util::recover_worker_panic(|| {
+        let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
             if self.is_closed() {
                 return Ok(FetchResult::Closed);
             }
@@ -695,7 +698,7 @@ impl ProbeFetcher {
             self.complete();
         } else if should_schedule {
             let fetcher = Arc::clone(self);
-            crate::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
+            tidb_goruntime::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
         }
     }
 

@@ -14,7 +14,7 @@
 
 use tidb_kv::staged_writes::{StagedKey, StagedWrites};
 use super::*;
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_tablecodec::table_key::{get_table_handle_key_range, RecordHandle};
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;

@@ -83,9 +83,9 @@ use group_key::GroupKeyBuffer;
 use input::AggInputMode;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use crate::hash_join::FastBytesMap;
+use tidb_executor_join::hash_join::FastBytesMap;
 use tidb_kv::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 
@@ -2447,7 +2447,7 @@ impl Partial {
                     for value in values {
                         heap.push(value);
                         let last = heap.len() - 1;
-                        crate::topn_chunk_heap::go_heap::up(&mut heap, last, &mut |a, b| {
+                        tidb_executor_sortexec::topn_chunk_heap::go_heap::up(&mut heap, last, &mut |a, b| {
                             compare(a, b) == Ordering::Greater
                         });
                     }
@@ -3296,7 +3296,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// `group_by` (empty for a global aggregate).
     ///
     /// `memory` is the statement's budget, required for the same reason
-    /// [`crate::sort::SortExec::new`] requires it: a call site must not be
+    /// [`tidb_executor_sortexec::SortExec::new`] requires it: a call site must not be
     /// able to build an UNACCOUNTED group table by omitting it.
     #[must_use]
     pub fn new(

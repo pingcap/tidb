@@ -19,7 +19,7 @@
 //! (which is what [`BuildTable`] is), `pkg/executor/join/hash_join_v1.go`'s
 //! `BuildWorkerV1.BuildHashTableForList`, and the `LogicalJoin.EqualConditions`
 //! split the planner performs above all of it. v1 rather than v2 because this
-//! executor is v1-shaped; see `crate::join`'s module doc for that
+//! executor is v1-shaped; see `tidb_executor::join`'s module doc for that
 //! determination and what it excludes.
 //!
 //! # What the hash table is, and is not
@@ -80,7 +80,7 @@ use tidb_spill_storage::SpillStorage;
 /// encoded key is still compared after a bucket hit, so this hash is only a
 /// fast bucket selector and collisions cannot change SQL results.
 #[derive(Default)]
-pub(crate) struct FastBytesHasher {
+pub struct FastBytesHasher {
     hash: u64,
     initialized: bool,
 }
@@ -109,10 +109,10 @@ impl Hasher for FastBytesHasher {
     }
 }
 
-pub(crate) type FastBytesMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<FastBytesHasher>>;
+pub type FastBytesMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<FastBytesHasher>>;
 
 #[derive(Default)]
-pub(crate) struct IdentityU64Hasher(u64);
+pub struct IdentityU64Hasher(u64);
 
 impl Hasher for IdentityU64Hasher {
     fn finish(&self) -> u64 {
@@ -383,35 +383,35 @@ impl ChainStore {
 /// The build rows chained under one key, in build order. `Copy`, so a
 /// caller can walk it more than once.
 #[derive(Clone, Copy)]
-pub(crate) struct Chain<'a> {
+pub struct Chain<'a> {
     entries: &'a [ChainEntry],
     next: u32,
 }
 
 impl<'a> Chain<'a> {
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Chain {
             entries: &[],
             next: CHAIN_END,
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.next == CHAIN_END
     }
 
     /// The number of rows in the chain, walked.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         (*self).count()
     }
 
-    pub(crate) fn first(&self) -> Option<RowPtr> {
+    pub fn first(&self) -> Option<RowPtr> {
         let mut chain = *self;
         chain.next()
     }
 
     /// The chain's only row, `None` when it holds none or more than one.
-    pub(crate) fn single(&self) -> Option<RowPtr> {
+    pub fn single(&self) -> Option<RowPtr> {
         let mut chain = *self;
         let first = chain.next()?;
         chain.next().is_none().then_some(first)
@@ -436,7 +436,7 @@ impl Iterator for Chain<'_> {
 /// One variant per arm of `eval_binary_full`'s comparison dispatch that this
 /// module can encode injectively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum KeyClass {
+pub enum KeyClass {
     /// Both keys are integral. Go `types.CompareInt` (and this tier's
     /// `integer_cmp`) never reinterprets one side's bit pattern in the
     /// other's domain, so the key is the value's exact `i128` position:
@@ -475,7 +475,7 @@ impl KeyClass {
     /// `Json`/`VectorFloat32` are deliberately absent: their equality
     /// involves structural folding that this unit has not proven injective,
     /// and an unproven key is a dropped row.
-    pub(crate) fn of(left: &FieldType, right: &FieldType, collation: Collation) -> Option<Self> {
+    pub fn of(left: &FieldType, right: &FieldType, collation: Collation) -> Option<Self> {
         let temporal = |eval_type| matches!(eval_type, EvalType::Datetime | EvalType::Timestamp);
         if temporal(left.eval_type()) && temporal(right.eval_type()) {
             return Some(KeyClass::Time);
@@ -498,29 +498,29 @@ impl KeyClass {
 /// One `probe.col = build.col` or `probe.col <=> build.col` conjunct the hash
 /// table indexes.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct EquiKey {
+pub struct EquiKey {
     /// The key column's offset inside a LEFT-child row.
-    pub(crate) left: usize,
+    pub left: usize,
     /// The key column's offset inside a RIGHT-child row.
-    pub(crate) right: usize,
+    pub right: usize,
     /// The domain both offsets are encoded in.
-    pub(crate) class: KeyClass,
+    pub class: KeyClass,
     /// Whether NULL is a matchable key value (`<=>`) instead of an
     /// unmatchable row (`=`). Go carries this as `PhysicalHashJoin.IsNullEQ`.
-    pub(crate) null_safe: bool,
+    pub null_safe: bool,
 }
 
 /// The `ON` clause split the way Go's planner splits `LogicalJoin`:
 /// `EqualConditions` that the hash table can index, and everything else.
-pub(crate) struct EquiSplit {
+pub struct EquiSplit {
     /// The indexable `col = col` conjuncts, in `ON` order (Go prints them in
     /// this order inside `equal:[...]`).
-    pub(crate) keys: Vec<EquiKey>,
+    pub keys: Vec<EquiKey>,
     /// One flag per flattened `ON` conjunct: `true` where that conjunct
     /// became an [`EquiKey`]. `EXPLAIN` renders the `true` positions as
     /// `equal:[...]` and the rest as `other cond:`, so the printed plan and
     /// the executed plan cannot drift apart.
-    pub(crate) equal_mask: Vec<bool>,
+    pub equal_mask: Vec<bool>,
 }
 
 /// Flattens an `AND` tree into its conjuncts, left to right.
@@ -528,7 +528,7 @@ pub(crate) struct EquiSplit {
 /// Go's `expression.SplitCNFItems`; the driver hands the join a single
 /// rewritten `ON` expression, so the split happens here rather than at the
 /// plan layer.
-pub(crate) fn split_conjuncts(expr: &Expression) -> Vec<&Expression> {
+pub fn split_conjuncts(expr: &Expression) -> Vec<&Expression> {
     let mut out = Vec::new();
     push_conjuncts(expr, &mut out);
     out
@@ -571,12 +571,12 @@ fn push_conjuncts<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
 /// One of these joins CAN leave the nested path now: an index-family hint
 /// naming the signed-int side probes that side's handle with the computed
 /// `cast(str AS SIGNED)` key produced by the logical planner, running
-/// [`crate::join::JoinExec`]'s index strategy. Its emission is outer-major
+/// `tidb_executor::join::JoinExec`'s index strategy. Its emission is outer-major
 /// in outer order -- the same forward order this marker pins for the
 /// nested path -- so the boundary stays order-consistent. The hash
 /// statements themselves still run here: this port carries the rewritten
 /// key on the index plan alone rather than making it a split key.
-pub(crate) fn has_cross_side_equality(conditions: &[Expression], left_width: usize) -> bool {
+pub fn has_cross_side_equality(conditions: &[Expression], left_width: usize) -> bool {
     fn sides(expr: &Expression, left_width: usize, has: &mut (bool, bool)) {
         match expr {
             Expression::Column(column) => {
@@ -613,7 +613,7 @@ pub(crate) fn has_cross_side_equality(conditions: &[Expression], left_width: usi
     })
 }
 
-pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSplit {
+pub fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSplit {
     let mut keys = Vec::new();
     let mut equal_mask = Vec::new();
     for condition in conditions {
@@ -626,7 +626,7 @@ pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSp
     EquiSplit { keys, equal_mask }
 }
 
-pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
+pub fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
     // Go keeps IN equalities in OtherConditions unless the planner explicitly
     // builds null-aware keys. Ordinary hashing would discard UNKNOWN pairs.
     if crate::joiner::is_eq_cond_from_in(conjunct) {
@@ -653,7 +653,7 @@ pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiK
 /// `adjustKeyForm` builds a key over a projected expression from fresh
 /// projection columns, which carry no marker. A `NOT IN` / `!= ALL`
 /// rewrite only ever builds a plain `eq`, so `null_safe` is always `false`.
-pub(crate) fn na_equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
+pub fn na_equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
     let Expression::ScalarFunction(f) = conjunct else {
         return None;
     };
@@ -775,7 +775,7 @@ fn key_part(class: KeyClass, datum: &Datum) -> Result<Option<Vec<u8>>, KeyError>
 
 /// A datum outside its key column's statically determined class.
 #[derive(Debug)]
-pub(crate) struct KeyError;
+pub struct KeyError;
 
 /// The whole key of one row: every key column's encoding, length-prefixed so
 /// two columns cannot borrow each other's bytes (`('ab', 'c')` and
@@ -783,7 +783,7 @@ pub(crate) struct KeyError;
 ///
 /// `None` when any part is `None` -- one unmatched key column is enough to
 /// make the row match nothing.
-pub(crate) fn row_key(
+pub fn row_key(
     keys: &[EquiKey],
     row: &[Datum],
     offset: impl Fn(&EquiKey) -> usize,
@@ -795,7 +795,7 @@ pub(crate) fn row_key(
 /// use this when the source row has many projected columns but the join key is
 /// narrow; decoding only the key columns avoids materializing the rest of the
 /// inner row before the chunk-backed output path consumes it.
-pub(crate) fn row_key_by(
+pub fn row_key_by(
     keys: &[EquiKey],
     mut datum: impl FnMut(&EquiKey) -> Datum,
 ) -> Result<Option<Vec<u8>>, KeyError> {
@@ -861,7 +861,7 @@ pub(crate) fn row_key_by(
 /// bucket without retaining a temporary byte slice. The bucket hit is only a
 /// candidate; [`equi_keys_equal`] performs Go's `matchJoinKey` collision
 /// check before any row is emitted.
-pub(crate) fn row_hash(
+pub fn row_hash(
     keys: &[EquiKey],
     row: &[Datum],
     offset: impl Fn(&EquiKey) -> usize,
@@ -869,7 +869,7 @@ pub(crate) fn row_hash(
     row_hash_by(keys, |key| row[offset(key)].clone())
 }
 
-pub(crate) fn row_hash_by(
+pub fn row_hash_by(
     keys: &[EquiKey],
     mut datum: impl FnMut(&EquiKey) -> Datum,
 ) -> Result<Option<u64>, KeyError> {
@@ -923,7 +923,7 @@ pub(crate) fn row_hash_by(
 /// Chunk-backed hash construction used by the build worker. Fixed-width key
 /// columns are already typed in the chunk, so decoding them into temporary
 /// `Datum`s would only add work and allocations before the FNV write.
-pub(crate) fn row_hash_chunk(
+pub fn row_hash_chunk(
     keys: &[EquiKey],
     row: Row<'_>,
     types: &[FieldType],
@@ -989,7 +989,7 @@ pub(crate) fn row_hash_chunk(
 /// `None` means that one of the key columns needs the general datum path
 /// (currently hybrid columns). Callers can then fall back to
 /// [`row_hash_chunk`] without changing the accepted key domain.
-pub(crate) fn row_hash_chunk_batched(
+pub fn row_hash_chunk_batched(
     chunk: &Chunk,
     keys: &[EquiKey],
     types: &[FieldType],
@@ -1189,7 +1189,7 @@ fn is_raw_string_cell(field_type: &FieldType) -> bool {
 /// Returns the exact signed comparison-domain value for the one-key integer
 /// fast path. The caller has already proved that the key is not NULL-safe, so
 /// NULL is an unmatchable row and can be represented by `None`.
-pub(crate) fn exact_int_key_chunk(
+pub fn exact_int_key_chunk(
     row: Row<'_>,
     offset: usize,
     field_type: &FieldType,
@@ -1202,7 +1202,7 @@ pub(crate) fn exact_int_key_chunk(
 /// doing the same here avoids rebuilding a [`Row`] and reacquiring the packed
 /// data guard for each lookup. Hybrid integer cells stay on the scalar datum
 /// path because their variable-width storage is not an eight-byte integer.
-pub(crate) fn exact_int_keys_chunk(
+pub fn exact_int_keys_chunk(
     chunk: &Chunk,
     offset: usize,
     field_type: &FieldType,
@@ -1310,7 +1310,7 @@ fn datum_int_key(datum: &Datum) -> Option<i128> {
 /// other. Hash probing uses this before decoding a complete build row: Go's
 /// `matchJoinKey` only needs the equality columns, while the old Rust path
 /// decoded every projected column before doing the same check.
-pub(crate) fn equi_keys_equal_row(
+pub fn equi_keys_equal_row(
     keys: &[EquiKey],
     datums: &[Datum],
     datums_are_left: bool,
@@ -1388,7 +1388,7 @@ pub(crate) fn equi_keys_equal_row(
 /// `matchJoinKey` on the key columns; doing the same here is
 /// important for wide probe rows, where building a `Vec<Datum>` per row would
 /// decode and allocate columns the equality check never reads.
-pub(crate) fn equi_keys_equal_chunk_rows(
+pub fn equi_keys_equal_chunk_rows(
     keys: &[EquiKey],
     left: Row<'_>,
     left_types: &[FieldType],
@@ -1487,7 +1487,7 @@ pub(crate) fn equi_keys_equal_chunk_rows(
 /// lookup structure: `probe` still answers from memory, and only the
 /// dereference of a pointer becomes a disk read. Spilling the hash table too
 /// is what v2 does, with a completely different partitioned machinery.
-pub(crate) struct BuildTable {
+pub struct BuildTable {
     rows: RowContainer,
     buckets: HashBuckets<ChainHead>,
     exact_int_buckets: Option<ExactIntTable>,
@@ -1515,9 +1515,9 @@ pub(crate) struct BuildTable {
 /// One build row [`BuildTable::na_null_bucket`] holds: where its data lives,
 /// and which of the NA key columns (by position in the join's NA key list)
 /// are NULL for this specific row.
-pub(crate) struct NaNullEntry {
-    pub(crate) ptr: RowPtr,
-    pub(crate) null_bits: Vec<bool>,
+pub struct NaNullEntry {
+    pub ptr: RowPtr,
+    pub null_bits: Vec<bool>,
 }
 
 // Go v1 allocates 320 concurrent-map shards before the first build row. On
@@ -1538,7 +1538,7 @@ impl BuildTable {
     /// An empty container over the build side's types, chunked at
     /// `chunk_size` -- Go `newHashRowContainer`, which passes
     /// `SessionVars.MaxChunkSize`.
-    pub(crate) fn new(
+    pub fn new(
         field_types: &[FieldType],
         chunk_size: usize,
         spill_storage: Arc<SpillStorage>,
@@ -1569,7 +1569,7 @@ impl BuildTable {
     /// # Errors
     /// [`BuildError::Key`] from [`key_part`]; [`BuildError::Disk`] when the
     /// container is spilled and the write fails.
-    pub(crate) fn index_chunk(
+    pub fn index_chunk(
         &mut self,
         chunk: Chunk,
         keys: &[EquiKey],
@@ -1589,7 +1589,7 @@ impl BuildTable {
     /// stays off in this mode: it has no null bucket of its own, so routing
     /// a null-aware row through it would silently drop it exactly the way
     /// an ordinary null key already is.
-    pub(crate) fn index_chunk_selected(
+    pub fn index_chunk_selected(
         &mut self,
         chunk: Chunk,
         keys: &[EquiKey],
@@ -1701,7 +1701,7 @@ impl BuildTable {
     }
 
     /// The build rows that could match `key`, in build order.
-    pub(crate) fn probe(&self, key: u64) -> Chain<'_> {
+    pub fn probe(&self, key: u64) -> Chain<'_> {
         self.chains.chain(self.buckets.get(&key))
     }
 
@@ -1710,7 +1710,7 @@ impl BuildTable {
     /// columns are NULL. Flat because Go's own null bucket is a plain
     /// slice, not hash-indexed -- a NULL cannot narrow which bucket to look
     /// in, so nothing is gained by indexing it.
-    pub(crate) fn na_null_entries(&self) -> &[NaNullEntry] {
+    pub fn na_null_entries(&self) -> &[NaNullEntry] {
         &self.na_null_bucket
     }
 
@@ -1722,11 +1722,11 @@ impl BuildTable {
     /// to call in null-aware mode, where [`Self::index_chunk_selected`]'s
     /// `na_mode` guarantees the exact-int fast path never shares this same
     /// chain slab.
-    pub(crate) fn na_all_hash_bucket_ptrs(&self) -> Vec<RowPtr> {
+    pub fn na_all_hash_bucket_ptrs(&self) -> Vec<RowPtr> {
         self.chains.entries.iter().map(|entry| entry.ptr).collect()
     }
 
-    pub(crate) fn probe_exact_int(&self, key: i128) -> Chain<'_> {
+    pub fn probe_exact_int(&self, key: i128) -> Chain<'_> {
         self.chains.chain(
             self.exact_int_buckets
                 .as_ref()
@@ -1737,7 +1737,7 @@ impl BuildTable {
     /// [`Self::probe_exact_int`] for every key of a probe chunk at once
     /// (`ExactIntTable::find_many`); the caller reads each row's chain back
     /// with [`Self::exact_int_chain`]. Requires [`Self::has_exact_int`].
-    pub(crate) fn probe_exact_int_many(
+    pub fn probe_exact_int_many(
         &self,
         keys: &[Option<i128>],
         home_slots: &mut Vec<(u64, u64)>,
@@ -1752,7 +1752,7 @@ impl BuildTable {
     /// The one build row under the key at `index` in the exact-integer
     /// table, from the key entry alone: `None` when the key chains more than
     /// one row (`Chain::single` without the chain-entry read).
-    pub(crate) fn exact_int_single_at(&self, index: usize) -> Option<RowPtr> {
+    pub fn exact_int_single_at(&self, index: usize) -> Option<RowPtr> {
         let exact = &self
             .exact_int_buckets
             .as_ref()
@@ -1763,7 +1763,7 @@ impl BuildTable {
 
     /// The chain of the key at `index` in the exact-integer table (empty for
     /// `None`, a key the table does not hold).
-    pub(crate) fn exact_int_chain(&self, index: Option<usize>) -> Chain<'_> {
+    pub fn exact_int_chain(&self, index: Option<usize>) -> Chain<'_> {
         let table = self
             .exact_int_buckets
             .as_ref()
@@ -1772,7 +1772,7 @@ impl BuildTable {
             .chain(index.map(|index| &table.keys[index].head))
     }
 
-    pub(crate) fn has_exact_int(&self) -> bool {
+    pub fn has_exact_int(&self) -> bool {
         self.exact_int_buckets.is_some()
     }
 
@@ -1782,7 +1782,7 @@ impl BuildTable {
     /// worker. Restricting that first parallel slice to a unique build key
     /// keeps each worker's output bounded by its input chunk while covering
     /// primary/unique-key dimension joins such as TPC-H q13.
-    pub(crate) fn exact_int_is_unique(&self) -> bool {
+    pub fn exact_int_is_unique(&self) -> bool {
         self.exact_int_buckets.as_ref().is_some_and(|table| {
             table
                 .keys
@@ -1794,13 +1794,13 @@ impl BuildTable {
     /// Marks one preserved build row as matched after every ON conjunct has
     /// succeeded. A hash-key collision or a rejected residual condition must
     /// not set this bit.
-    pub(crate) fn mark_matched(&self, ptr: RowPtr) {
+    pub fn mark_matched(&self, ptr: RowPtr) {
         self.mark_matched_all(std::slice::from_ref(&ptr));
     }
 
     /// [`Self::mark_matched`] for every pointer a probe worker reported,
     /// under one lock.
-    pub(crate) fn mark_matched_all(&self, ptrs: &[RowPtr]) {
+    pub fn mark_matched_all(&self, ptrs: &[RowPtr]) {
         let Some(chunks) = self.matched.as_ref() else {
             return;
         };
@@ -1817,7 +1817,7 @@ impl BuildTable {
     }
 
     /// Whether a preserved build row has produced at least one joined row.
-    pub(crate) fn is_matched(&self, ptr: RowPtr) -> bool {
+    pub fn is_matched(&self, ptr: RowPtr) -> bool {
         let Some(chunks) = self.matched.as_ref() else {
             return false;
         };
@@ -1832,13 +1832,13 @@ impl BuildTable {
     }
 
     /// First build row in input order, for Go's post-probe row-table scan.
-    pub(crate) fn first_ptr(&self) -> Option<RowPtr> {
+    pub fn first_ptr(&self) -> Option<RowPtr> {
         (self.rows.num_chunks() != 0).then_some(RowPtr::new(0, 0))
     }
 
     /// Next build row in input order, including rows whose NULL key kept them
     /// out of every hash bucket.
-    pub(crate) fn next_ptr(&self, ptr: RowPtr) -> Option<RowPtr> {
+    pub fn next_ptr(&self, ptr: RowPtr) -> Option<RowPtr> {
         let chunk_index = ptr.chk_idx as usize;
         let next_row = ptr.row_idx as usize + 1;
         if next_row < self.rows.num_rows_of_chunk(chunk_index) {
@@ -1859,7 +1859,7 @@ impl BuildTable {
     ///
     /// # Errors
     /// [`DiskError`] when the spill file cannot be read.
-    pub(crate) fn row(
+    pub fn row(
         &self,
         ptr: RowPtr,
         buf: &mut Chunk,
@@ -1873,7 +1873,7 @@ impl BuildTable {
     /// Visits a stored row without materializing columns that the caller does
     /// not need. In-memory rows remain shallow views; spilled rows use the
     /// same reusable buffer as [`Self::row`].
-    pub(crate) fn with_row<T>(
+    pub fn with_row<T>(
         &self,
         ptr: RowPtr,
         buf: &mut Chunk,
@@ -1884,7 +1884,7 @@ impl BuildTable {
 
     /// Visits build rows in one lock-held batch, retaining separate disk and
     /// callback error channels for the join worker.
-    pub(crate) fn with_rows<E>(
+    pub fn with_rows<E>(
         &self,
         ptrs: &[RowPtr],
         buf: &mut Chunk,
@@ -1897,7 +1897,7 @@ impl BuildTable {
     /// guard. Batch join output uses this to copy selected rows directly from
     /// the source columns; callers only use the fast path for an unselected,
     /// in-memory chunk and keep the row callback path for spilled data.
-    pub(crate) fn with_chunk<T>(
+    pub fn with_chunk<T>(
         &self,
         chunk_index: usize,
         f: impl FnOnce(&Chunk) -> T,
@@ -1908,28 +1908,28 @@ impl BuildTable {
 
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches
     /// to the join's own tracker under `LabelForBuildSideResult`.
-    pub(crate) fn mem_tracker(&self) -> &Arc<Tracker> {
+    pub fn mem_tracker(&self) -> &Arc<Tracker> {
         self.rows.mem_tracker()
     }
 
     /// Go `hashRowContainer.GetDiskTracker`.
-    pub(crate) fn disk_tracker(&self) -> &Arc<tidb_disk::Tracker> {
+    pub fn disk_tracker(&self) -> &Arc<tidb_disk::Tracker> {
         self.rows.disk_tracker()
     }
 
     /// Go `hashRowContainer.ActionSpill`.
-    pub(crate) fn action_spill(&mut self) -> Arc<SpillDiskAction> {
+    pub fn action_spill(&mut self) -> Arc<SpillDiskAction> {
         self.rows.action_spill()
     }
 
     /// Whether the build side has moved to disk (Go
     /// `AlreadySpilledSafeForTest`).
-    pub(crate) fn already_spilled(&self) -> bool {
+    pub fn already_spilled(&self) -> bool {
         self.rows.already_spilled()
     }
 
     /// Go `hashRowContainer.Close`.
-    pub(crate) fn close(&mut self) {
+    pub fn close(&mut self) {
         self.rows.mem_tracker().consume(-self.bucket_bytes);
         self.bucket_bytes = 0;
         self.buckets = HashBuckets::default();
@@ -1972,7 +1972,7 @@ impl BuildTable {
 
 /// What indexing one build chunk can go wrong with.
 #[derive(Debug)]
-pub(crate) enum BuildError {
+pub enum BuildError {
     /// A datum outside its key column's statically determined class.
     Key,
     /// The spill file rejected the write.

@@ -62,7 +62,7 @@
 //! but the source must still evaluate the full pushed predicate locally on the
 //! merged stream, and a cap may only travel with the request when nothing is
 //! staged. Remote evaluation is thus always a *performance* choice and never a
-//! semantic one -- see [`crate::remote_scan`].
+//! semantic one -- see `tidb_executor::remote_scan`.
 //!
 //! A source that cannot make one of these promises does not implement that
 //! method: the fail-closed default answers `false` and the operator above keeps
@@ -70,7 +70,7 @@
 //!
 //! # How a source is reached
 //!
-//! [`Executor::table_access`](crate::executor::Executor::table_access) returns
+//! [`Executor::table_access`](crate::Executor::table_access) returns
 //! `None` by default, so an operator is offered nothing unless it opts in by
 //! returning itself. That is the same fail-closed shape one level up: a new
 //! operator cannot accidentally inherit a promise it never made. A transparent
@@ -80,7 +80,7 @@
 use crate::predicate_pushdown::PushedScanFilter;
 use tidb_distsql::remote_scan::PushdownTopN;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
-use crate::StmtContext;
+use tidb_sessionctx::StmtContext;
 
 /// A base-table source that can take over work from the operators above it.
 ///
@@ -243,7 +243,7 @@ pub trait TableAccess {
     /// filter it accepted -- `TableFullScan`'s `actRows`, which a pushed
     /// predicate must not change. `None` for anything that is not such a
     /// scan.
-    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
+    fn scanned_rows_counter(&self) -> Option<crate::RowCount> {
         None
     }
 
@@ -261,7 +261,7 @@ pub trait TableAccess {
     /// cannot encode); it must never read less.
     ///
     /// `ranges` is over the single handle column, ascending in
-    /// [`crate::handle_range`]'s form. Ordinary range scans are disjoint, but
+    /// `tidb_executor::handle_range`'s form. Ordinary range scans are disjoint, but
     /// the Go `SetTableHandles` path intentionally permits equal point ranges
     /// when a non-unique index names the same handle more than once. An EMPTY
     /// slice is the contradictory `WHERE` no handle satisfies, and reads
@@ -298,11 +298,11 @@ pub trait TableAccess {
     /// `FROM` scope: from the next `open` on, every row this source emits
     /// must be exactly `keep.len()` wide and hold `keep`'s columns in
     /// `keep`'s order, and
-    /// [`Executor::schema`](crate::executor::Executor::schema) must already
+    /// [`Executor::schema`](crate::Executor::schema) must already
     /// describe that narrow row. A source that cannot promise it leaves the
     /// default `false` and the driver keeps the full-width scope unchanged.
     ///
-    /// See [`crate::column_prune`] for the eligibility gate and the reasoning.
+    /// See `tidb_executor::column_prune` for the eligibility gate and the reasoning.
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
         let _ = keep;
         false
@@ -316,7 +316,7 @@ pub trait TableAccess {
     /// with no consequence at all: it does not license the driver to drop a
     /// `Sort`, and this tier's `ORDER BY` always keeps its `SortExec`. What it
     /// buys is TIE ORDER. Go's unordered double read answers in HANDLE order
-    /// (see [`crate::access_path::IndexRangeSourceExec`]) and its ordered one
+    /// (see `tidb_executor::access_path::IndexRangeSourceExec`) and its ordered one
     /// answers in index order; a source told nothing would give handle order
     /// for both, and rows that tie on the `ORDER BY` key would then leave in
     /// the wrong order under a stable sort.

@@ -32,7 +32,7 @@ use super::{
     index_entry_handle, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
     RowDecodeContext, TableHandle,
 };
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
 use tidb_distsql::remote_scan::PushdownTopN;
@@ -118,7 +118,7 @@ pub trait KvTableReader {
     /// decodes and yields exactly those columns, in `keep`'s order.
     ///
     /// `handle_ranges` narrows which RECORDS are read, as
-    /// [`crate::table_access::TableAccess::accept_handle_ranges`] describes:
+    /// [`tidb_executor_internal_exec::table_access::TableAccess::accept_handle_ranges`] describes:
     /// `None` reads the whole table.
     fn row_cursor_projected_with_context(
         &mut self,
@@ -485,7 +485,7 @@ pub trait KvTableReader {
 
     /// [`KvTable::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
     /// same intervals the read side offers a `TableRangeScan` through
-    /// [`crate::table_access::TableAccess::accept_handle_ranges`]. `None`
+    /// [`tidb_executor_internal_exec::table_access::TableAccess::accept_handle_ranges`]. `None`
     /// reads the whole table.
     ///
     /// This is the WRITE path's form of that narrowing, and it narrows only
@@ -2277,7 +2277,7 @@ impl KvTableReader for KvTable {
             .collect::<Vec<_>>();
         let mut remote_predicates = predicates.to_vec();
         for predicate in &mut remote_predicates {
-            if crate::predicate_pushdown::remap_expression(predicate, &index_keep).is_none() {
+            if tidb_executor_internal_exec::predicate_pushdown::remap_expression(predicate, &index_keep).is_none() {
                 return Ok(None);
             }
         }
@@ -2295,7 +2295,7 @@ impl KvTableReader for KvTable {
                         // answers it through a lookup that reads the row --
                         // so the scan falls back to the local path instead
                         // of failing a statement Go accepts.
-                        if crate::predicate_pushdown::remap_expression(input, &index_keep).is_none()
+                        if tidb_executor_internal_exec::predicate_pushdown::remap_expression(input, &index_keep).is_none()
                         {
                             return Ok(None);
                         }
@@ -2327,7 +2327,7 @@ impl KvTableReader for KvTable {
                 }
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
-                        if crate::predicate_pushdown::remap_expression(input, &index_keep).is_none()
+                        if tidb_executor_internal_exec::predicate_pushdown::remap_expression(input, &index_keep).is_none()
                         {
                             return Ok(None);
                         }
@@ -2640,7 +2640,7 @@ impl KvTableReader for KvTable {
             .iter()
             .map(|predicate| {
                 let mut predicate = predicate.clone();
-                crate::predicate_pushdown::remap_index_expression(
+                tidb_executor_internal_exec::predicate_pushdown::remap_index_expression(
                     &mut predicate,
                     &layout,
                     &null_layout,
@@ -3529,7 +3529,7 @@ impl RemoteRowMaterialization {
             .iter()
             .map(|predicate| {
                 let mut predicate = predicate.clone();
-                crate::predicate_pushdown::remap_expression(&mut predicate, &layout)
+                tidb_executor_internal_exec::predicate_pushdown::remap_expression(&mut predicate, &layout)
                     .map(|()| predicate)
             })
             .collect::<Option<Vec<_>>>()
@@ -4737,12 +4737,12 @@ pub struct TableScanExec {
     /// the table in a matching schema.
     schema_version: u64,
     /// Go's `desc` on the `TableScan`: walk the record ranges BACKWARDS.
-    /// Set by [`crate::table_access::TableAccess::accept_keep_order`], and
+    /// Set by [`tidb_executor_internal_exec::table_access::TableAccess::accept_keep_order`], and
     /// honored on the remote and the local cursor alike -- acceptance is a
     /// guarantee for EVERY path the scan may fall back to.
     descending: bool,
     /// Conjuncts this scan took over from the `Selection` above it.
-    filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
+    filter: Option<tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
     /// them at the region. They are applied locally regardless.
     pushed: Vec<Expression>,
@@ -4762,7 +4762,7 @@ pub struct TableScanExec {
     keep: Vec<usize>,
     /// Rows this scan read before filtering -- what Go's `TableFullScan`
     /// reports as `actRows`, which a filter above it must not change.
-    scanned: crate::executor::RowCount,
+    scanned: tidb_executor_internal_exec::RowCount,
     /// A pushed row cap (`offset + count` of a `LIMIT`): the scan stops once
     /// it has emitted this many qualifying rows. See
     /// [`Executor::accept_scan_limit`].
@@ -4908,7 +4908,7 @@ impl TableScanExec {
     fn filter_fully_pushable(&self) -> bool {
         self.filter
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable)
+            .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable)
     }
 
     /// Builds a scan over `table` with an explicit row-decode context.
@@ -4948,7 +4948,7 @@ impl TableScanExec {
             remote_topn: None,
             keep_order: false,
             keep,
-            scanned: crate::executor::RowCount::default(),
+            scanned: tidb_executor_internal_exec::RowCount::default(),
             limit: None,
             emitted: 0,
             handle_ranges: None,
@@ -4965,7 +4965,7 @@ impl TableScanExec {
 
     /// The live count of rows read from storage, before any pushed filter.
     #[must_use]
-    pub fn scanned_rows(&self) -> crate::executor::RowCount {
+    pub fn scanned_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.scanned.clone()
     }
 
@@ -5857,7 +5857,7 @@ impl Executor for TableScanExec {
         self.meta.init_cap()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
 
@@ -5911,7 +5911,7 @@ fn append_partial_remote_chunk(
     }
 }
 
-impl crate::table_access::TableAccess for TableScanExec {
+impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
         let live = self
             .remote
@@ -5994,7 +5994,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         // Go `CheckAggPushDown` ends with `IsPushDownEnabled(aggFunc.Name,
         // storeType)`, so `mysql.expr_pushdown_blacklist` refuses an
         // aggregate by its own name exactly as it refuses a scalar function.
-        if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
+        if !crate::access_path::aggregate_admits(aggregate, ctx) {
             return false;
         }
         if crate::remote_scan::partial_aggregate_input_offsets(aggregate)
@@ -6044,10 +6044,10 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// (`ClusterTableStorage`) -- and every row of it is tested here, whether
     /// it came from the byte cursor, from the coprocessor's answer, or from
     /// the staged overlay merged in below. That is what makes the promise in
-    /// [`crate::table_access`] hold on both cursors.
+    /// [`tidb_executor_internal_exec::table_access`] hold on both cursors.
     fn accept_scan_filter(
         &mut self,
-        filter: &crate::predicate_pushdown::PushedScanFilter,
+        filter: &tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
         if filter.is_empty() {
@@ -6056,7 +6056,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         match self.filter.as_mut() {
             Some(existing) => existing.conjoin(filter),
             None => {
-                self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                self.filter = Some(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
                     filter.clone(),
                     ctx.clone(),
                     self.meta.new_chunk(),
@@ -6178,7 +6178,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         true
     }
 
-    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
+    fn scanned_rows_counter(&self) -> Option<tidb_executor_internal_exec::RowCount> {
         Some(self.scanned_rows())
     }
 
@@ -6189,7 +6189,7 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// A shape [`crate::handle_range::record_key_ranges`] cannot encode falls
     /// back to the whole record range, which is a SUPERSET of the ranges and
     /// therefore still every row the statement admits -- the weaker half of
-    /// the promise in [`crate::table_access`], and the only one that matters
+    /// the promise in [`tidb_executor_internal_exec::table_access`], and the only one that matters
     /// for correctness.
     fn accept_handle_ranges(&mut self, ranges: &[Range]) -> bool {
         self.handle_ranges = Some(ranges.to_vec());
@@ -6345,7 +6345,7 @@ mod remote_cursor_tests {
 
     #[test]
     fn a_full_width_projection_is_not_necessarily_identity() {
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         let context = crate::StmtContext::for_query();
         let mut table = KvTable::new(
             42,
@@ -6587,7 +6587,7 @@ mod remote_cursor_tests {
             },
             false,
         );
-        let predicate = crate::predicate_pushdown::fixtures::compare(
+        let predicate = crate::tests_predicate_pushdown::fixtures::compare(
             1,
             table.columns()[1].field_type.clone(),
             "gt",
@@ -6665,7 +6665,7 @@ mod remote_cursor_tests {
         } else {
             Datum::Int(7)
         };
-        crate::predicate_pushdown::fixtures::compare(
+        crate::tests_predicate_pushdown::fixtures::compare(
             offset as usize,
             field_type.clone(),
             "eq",
@@ -6779,12 +6779,12 @@ mod remote_cursor_tests {
                 // extra_slot. Neither source nor wire positions are table offsets.
                 let a_slot = usize::from(extra_slot == 0);
                 let predicates = vec![
-                    crate::predicate_pushdown::fixtures::is_null(
+                    crate::tests_predicate_pushdown::fixtures::is_null(
                         extra_slot,
                         FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                         true,
                     ),
-                    crate::predicate_pushdown::fixtures::is_null(
+                    crate::tests_predicate_pushdown::fixtures::is_null(
                         a_slot,
                         table.columns()[1].field_type.clone(),
                         true,
@@ -6984,7 +6984,7 @@ mod remote_cursor_tests {
 
     #[test]
     fn index_selection_allows_null_tests_on_prefixes_but_not_value_consumers() {
-        use crate::predicate_pushdown::fixtures::{call, column as column_at};
+        use crate::tests_predicate_pushdown::fixtures::{call, column as column_at};
         let capture = RequestCapture {
             ..RequestCapture::default()
         };
@@ -7035,7 +7035,7 @@ mod remote_cursor_tests {
         // Null tests can ignore a direct prefix's length, but cannot observe
         // a function of truncated bytes, or sort those bytes as full values.
         let mut wrong = call("isnull", vec![call("char_length", vec![column])]);
-        assert!(crate::predicate_pushdown::remap_index_expression(
+        assert!(tidb_executor_internal_exec::predicate_pushdown::remap_index_expression(
             &mut wrong,
             &[usize::MAX, 0],
             &[1, 0]
@@ -7043,7 +7043,7 @@ mod remote_cursor_tests {
         .is_none());
         let mut nested = nested;
         assert!(
-            crate::predicate_pushdown::remap_expression(&mut nested, &[usize::MAX, 0]).is_none(),
+            tidb_executor_internal_exec::predicate_pushdown::remap_expression(&mut nested, &[usize::MAX, 0]).is_none(),
             "ordinary column pruning does not relax coverage"
         );
         let topn = PushdownTopN {
@@ -7144,7 +7144,7 @@ mod remote_cursor_tests {
     /// over it: the open transaction has written to the table.
     #[test]
     fn the_table_reader_requests_the_handle_only_for_a_dirty_table() {
-        use crate::table_access::TableAccess;
+        use tidb_executor_internal_exec::table_access::TableAccess;
         for dirty in [false, true] {
             let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let mut table = KvTable::with_storage(

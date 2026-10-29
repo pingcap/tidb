@@ -16,7 +16,7 @@
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_executor::hash_agg::{AggFunc, AggKind, BitOp};
 use tidb_executor::mem_table::MemTableSourceExec;

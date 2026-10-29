@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-executor-sortexec = { path = "../tidb-executor-sortexec" }
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-format-textrow = { path = "../tidb-format-textrow" }
 tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }

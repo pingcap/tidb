@@ -38,15 +38,15 @@ use tidb_expr::schema::Schema;
 
 use tidb_exprctx::NoColumns;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::limit::LimitExec;
 use tidb_kv::mem_quota::StatementMemory;
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
-use crate::sort::SortByItem;
+use tidb_executor_sortexec::SortByItem;
 
-use crate::topn::TopNExec;
+use tidb_executor_sortexec::topn::TopNExec;
 
 const MAX_CHUNK_SIZE: usize = 1024;
 
@@ -338,7 +338,7 @@ fn limit_required_rows() {
 /// parent request exactly (`req.IsFull()`), so its case table pins both the
 /// OUTPUT batching ([1,5,3,1]-shaped windows) and the drain batches the child
 /// recorded (`expectedRowsDS` like [10, 0] or [1024, 1, 0]).
-// go-parity-gap: the ported `crate::sort::SortExec::next` appends sorted rows
+// go-parity-gap: the ported `tidb_executor_sortexec::SortExec::next` appends sorted rows
 // up to `max_chunk_size` per call (`append_sorted_rows_into(req, batch)`)
 // without consulting the parent request's required rows, so none of Go's
 // per-request output expectations can be pinned on it.

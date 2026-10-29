@@ -18,7 +18,7 @@
 //! Serial evaluation runs on the caller. Parallel evaluation circulates bounded
 //! input/output chunks through the shared CPU pool and joins work on close.
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
@@ -87,7 +87,7 @@ struct ParallelProjectionShared<C> {
 /// most that far ahead of the parent, as Go's `inputCh`/`outputCh` bound it.
 struct ParallelProjection<C> {
     // Drop the worker owner before the context, result receiver and buffers.
-    workers: crate::worker_pool::TaskGroup,
+    workers: tidb_goruntime::worker_pool::TaskGroup,
     shared: Arc<ParallelProjectionShared<C>>,
     result_tx: Sender<(u64, Result<(Chunk, Chunk), ExecError>)>,
     result_rx: Receiver<(u64, Result<(Chunk, Chunk), ExecError>)>,
@@ -201,7 +201,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         if self.parallel.is_none() {
             let (result_tx, result_rx) = std::sync::mpsc::channel();
             self.parallel = Some(ParallelProjection {
-                workers: crate::worker_pool::TaskGroup::new(),
+                workers: tidb_goruntime::worker_pool::TaskGroup::new(),
                 shared: Arc::new(ParallelProjectionShared {
                     program: Arc::clone(&self.program),
                     ctx: self.ctx.clone(),
@@ -320,7 +320,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         pipeline.workers.submit(move || {
             let mut input = input;
             let mut output = output;
-            let result = crate::sort_util::recover_worker_panic(|| {
+            let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                 let suite = EvaluatorSuite::from_program(Arc::clone(&shared.program));
                 suite
                     .run(&shared.ctx, &mut input, &mut output)

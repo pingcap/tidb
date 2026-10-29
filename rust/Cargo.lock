@@ -4324,12 +4324,14 @@ dependencies = [
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-goruntime",
  "tidb-kv",
  "tidb-mysql",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-table",
  "tidb-terror",
+ "tidb-traceevent",
  "tidb-txnkv",
  "tidb-util",
 ]
@@ -4458,8 +4460,11 @@ dependencies = [
  "tidb-execdetails",
  "tidb-executor-aggfuncs",
  "tidb-executor-internal-applycache",
+ "tidb-executor-internal-exec",
  "tidb-executor-internal-vecgroupchecker",
+ "tidb-executor-join",
  "tidb-executor-join-joinversion",
+ "tidb-executor-sortexec",
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
@@ -4596,6 +4601,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-executor-internal-exec"
+version = "0.0.0"
+dependencies = [
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-distsql",
+ "tidb-driver-error",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-ranger",
+ "tidb-sessionctx",
+]
+
+[[package]]
 name = "tidb-executor-internal-vecgroupchecker"
 version = "0.0.0"
 dependencies = [
@@ -4612,10 +4632,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-executor-join"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-disk",
+ "tidb-driver-error",
+ "tidb-execdetails",
+ "tidb-executor-internal-exec",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-goruntime",
+ "tidb-kv",
+ "tidb-memory",
+ "tidb-mysql",
+ "tidb-serialization",
+ "tidb-spill-storage",
+ "tidb-sqlkiller",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-executor-join-joinversion"
 version = "0.0.0"
 dependencies = [
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-executor-sortexec"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-ast",
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-disk",
+ "tidb-driver-error",
+ "tidb-executor",
+ "tidb-executor-internal-exec",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-goruntime",
+ "tidb-kv",
+ "tidb-memory",
+ "tidb-spill-storage",
+ "tidb-sqlkiller",
+ "tidb-stats",
+ "tidb-tablecodec",
+ "tidb-vardef",
+ "tracing",
 ]
 
 [[package]]
@@ -6143,6 +6214,8 @@ dependencies = [
  "tidb-errmsg",
  "tidb-errno",
  "tidb-executor",
+ "tidb-executor-internal-exec",
+ "tidb-executor-sortexec",
  "tidb-expensivequery",
  "tidb-expr",
  "tidb-exprctx",
@@ -6310,6 +6383,7 @@ dependencies = [
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor",
+ "tidb-executor-internal-exec",
  "tidb-exeerrors",
  "tidb-expensivequery",
  "tidb-expr",

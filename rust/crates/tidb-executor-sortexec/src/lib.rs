@@ -25,11 +25,16 @@
 //! (an unorderable key kind) is captured during the sort and returned from
 //! `Next`, as Go returns it from `Next`.
 
+pub mod topn;
+pub mod topn_chunk_heap;
+pub mod sort_partition;
+pub mod topn_spill;
+
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::compare::ColumnCompareFunc;
@@ -90,7 +95,7 @@ pub fn eval_sort_key<C: Columns>(
 /// Go `SortExec.buildKeyColumns`: only direct child columns and constants are
 /// valid executor sort keys. Planner expressions must be materialized by a
 /// projection before they reach this operator.
-pub(crate) fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
+pub fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
     if by_items
         .iter()
         .any(|item| !matches!(&item.expr, Expression::Column(_) | Expression::Constant(_)))
@@ -156,7 +161,7 @@ fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFun
 }
 
 /// Go `lessRow`: compares two retained chunk rows without allocating keys.
-pub(crate) fn compare_rows<C: Columns>(
+pub fn compare_rows<C: Columns>(
     by_items: &[SortByItem],
     compare_funcs: &[Option<ColumnCompareFunc>],
     ctx: &C,
@@ -1301,5 +1306,34 @@ mod tests {
         assert!(spill_files_in(&dir).is_empty(), "no file may be written");
         drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+pub mod test_temp_storage {
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+
+    /// A fresh scratch directory named after the test.
+    pub fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tidb_rust_exec_spill_test_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch temp dir");
+        dir
+    }
+
+    /// Opens one immutable authority over `path` for the test statement.
+    pub fn storage(path: &Path) -> Arc<SpillStorage> {
+        Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: path.to_owned(),
+                quota_bytes: -1,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .expect("test spill storage"),
+        )
     }
 }

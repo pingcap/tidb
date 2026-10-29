@@ -152,13 +152,13 @@ pub struct HashTableSlots<'a> {
 /// An owned bucket handle for a batch on the shared executor pool. Readers
 /// continue to use the borrowed view; sharing never copies the bucket array.
 #[derive(Clone)]
-pub(crate) struct SharedHashTableSlots {
+pub struct SharedHashTableSlots {
     slots: Arc<Vec<AtomicUsize>>,
     pos_mask: u64,
 }
 
 impl SharedHashTableSlots {
-    pub(crate) fn as_slots(&self) -> HashTableSlots<'_> {
+    pub fn as_slots(&self) -> HashTableSlots<'_> {
         HashTableSlots {
             slots: &self.slots,
             pos_mask: self.pos_mask,
@@ -266,7 +266,7 @@ impl HashTableSlots<'_> {
         self.build_segments_with_mode(segments, tag_helper, true);
     }
 
-    pub(crate) fn build_segments_with_mode(
+    pub fn build_segments_with_mode(
         &self,
         segments: &mut [RowTableSegment],
         tag_helper: &TagPtrHelper,
@@ -362,7 +362,7 @@ impl SubTable {
         }
     }
 
-    pub(crate) fn shared_slots(&self) -> SharedHashTableSlots {
+    pub fn shared_slots(&self) -> SharedHashTableSlots {
         SharedHashTableSlots {
             slots: Arc::clone(&self.hash_table),
             pos_mask: self.pos_mask,
@@ -482,7 +482,7 @@ impl HashTableV2 {
     /// Seal row ownership before building any bucket chains. Go's pointers
     /// access rows directly; safe Rust encodes the owning indices instead.
     /// Only the segment headers change: row bytes and spill records do not.
-    pub(crate) fn bind_row_addresses(&mut self) -> u8 {
+    pub fn bind_row_addresses(&mut self) -> u8 {
         let max_segments = self
             .tables
             .iter()
@@ -523,7 +523,7 @@ impl HashTableV2 {
 
     /// Resolve a nonzero, untagged row handle with no search or allocation.
     #[inline(always)]
-    pub(crate) fn row_location(&self, address: usize) -> (&RowTableSegment, usize) {
+    pub fn row_location(&self, address: usize) -> (&RowTableSegment, usize) {
         let slot = (address >> self.row_offset_bits) - 1;
         let partition = slot >> self.segment_bits;
         let segment = slot & self.segment_mask;
@@ -536,7 +536,7 @@ impl HashTableV2 {
     /// Resolves row bytes from a location decoded during chain traversal.
     /// This is the safe equivalent of reusing Go's row pointer directly.
     #[inline(always)]
-    pub(crate) fn row_bytes_at_location(&self, location: BuildRowLocation) -> &[u8] {
+    pub fn row_bytes_at_location(&self, location: BuildRowLocation) -> &[u8] {
         let table = self.tables[location.partition]
             .as_ref()
             .expect("sub table of a built partition");
@@ -551,7 +551,7 @@ impl HashTableV2 {
     /// address encoding when the coordinates are already available.
     #[must_use]
     #[inline(always)]
-    pub(crate) fn is_build_row_matched_at_location(&self, location: BuildRowLocation) -> bool {
+    pub fn is_build_row_matched_at_location(&self, location: BuildRowLocation) -> bool {
         self.tables[location.partition]
             .as_ref()
             .expect("sub table of a built partition")
@@ -562,7 +562,7 @@ impl HashTableV2 {
 
     /// Marks a row selected by a location retained from a chain walk or scan.
     #[inline(always)]
-    pub(crate) fn mark_build_row_matched_at_location(&self, location: BuildRowLocation) {
+    pub fn mark_build_row_matched_at_location(&self, location: BuildRowLocation) {
         self.tables[location.partition]
             .as_ref()
             .expect("sub table of a built partition")
@@ -573,7 +573,7 @@ impl HashTableV2 {
 
     /// Hot chain-walk form when the probe has already derived its tag.
     #[inline(always)]
-    pub(crate) fn row_bytes_and_next_in_sub_table_with_tag<'a>(
+    pub fn row_bytes_and_next_in_sub_table_with_tag<'a>(
         &self,
         table: &'a SubTable,
         partition: usize,

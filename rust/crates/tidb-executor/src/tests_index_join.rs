@@ -30,7 +30,7 @@ use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
 
 use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use crate::join::{IndexLookupPlan, JoinExec, JoinKind};
 use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::KvIndex;

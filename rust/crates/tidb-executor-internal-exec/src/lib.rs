@@ -15,6 +15,9 @@
 //! `pkg/executor/internal/exec`: the [`Executor`] trait and the [`ExecutorMeta`]
 //! shared base state.
 
+pub mod table_access;
+pub mod predicate_pushdown;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -79,7 +82,7 @@ pub trait Executor: Send {
     /// NO input row, and therefore owes its single output row entirely to the
     /// aggregates' default values.
     ///
-    /// Only [`crate::apply::ApplyExec`] asks, and only of its outer child --
+    /// Only `tidb_executor::apply::ApplyExec` asks, and only of its outer child --
     /// see the rule quoted there. Go's walk recurses through a SINGLE-child
     /// operator, stops at a join (`false`) and needs every branch of a union
     /// to be empty; the default here is Go's leaf answer, so an operator that

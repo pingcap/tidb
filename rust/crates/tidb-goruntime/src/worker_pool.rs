@@ -210,7 +210,7 @@ struct Task {
 /// Go's finish channel and worker wait group for one executor on the shared
 /// CPU pool. Drop cancels queued work and joins evaluations already running.
 /// The result channel is independent: receiving an error does not lose joins.
-pub(crate) struct TaskGroup {
+pub struct TaskGroup {
     pool: Arc<Shared>,
     cancelled: Arc<AtomicBool>,
     completion: Option<std::sync::mpsc::Sender<()>>,
@@ -218,7 +218,7 @@ pub(crate) struct TaskGroup {
 }
 
 impl TaskGroup {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::on_pool(Arc::clone(shared()))
     }
 
@@ -232,7 +232,7 @@ impl TaskGroup {
         }
     }
 
-    pub(crate) fn submit(&self, task: impl FnOnce() + Send + 'static) {
+    pub fn submit(&self, task: impl FnOnce() + Send + 'static) {
         let completion = self.completion.as_ref().expect("live task group").clone();
         let cancelled = Arc::clone(&self.cancelled);
         enqueue_on(
@@ -349,7 +349,7 @@ fn worker_loop(shared: Arc<Shared>) {
     }
 }
 
-/// [`enqueue`] for out-of-crate callers (see `crate::worker_pool_spawn`).
+/// [`enqueue`] for out-of-crate callers.
 pub fn enqueue_public(task: Box<dyn FnOnce() + Send>) {
     enqueue(task);
 }

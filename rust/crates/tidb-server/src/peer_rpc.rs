@@ -413,7 +413,7 @@ fn peer_exprs(
 }
 
 /// The executor schema of a row of `fields`, columns numbered by offset.
-fn peer_meta(fields: &[tidb_datatype::FieldType]) -> tidb_executor::ExecutorMeta {
+fn peer_meta(fields: &[tidb_datatype::FieldType]) -> tidb_executor_internal_exec::ExecutorMeta {
     let schema = tidb_expr::schema::Schema::new(
         fields
             .iter()
@@ -421,7 +421,7 @@ fn peer_meta(fields: &[tidb_datatype::FieldType]) -> tidb_executor::ExecutorMeta
             .map(|(index, field)| tidb_expr::column::Column::new(index as i64, field.clone()))
             .collect(),
     );
-    tidb_executor::ExecutorMeta::new(schema, 0, 32, 1024)
+    tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 32, 1024)
 }
 
 fn peer_context(zone: &SessionTimeZone) -> tidb_sessionctx::StmtContext {
@@ -431,7 +431,7 @@ fn peer_context(zone: &SessionTimeZone) -> tidb_sessionctx::StmtContext {
 /// Opens, drains and closes `executor`, whose rows have `fields`; its
 /// statement warnings become response warnings.
 fn drain_peer_executor(
-    mut executor: Box<dyn tidb_executor::Executor>,
+    mut executor: Box<dyn tidb_executor_internal_exec::Executor>,
     fields: &[tidb_datatype::FieldType],
     ctx: &tidb_sessionctx::StmtContext,
     warnings: &mut Vec<tipb::Error>,
@@ -563,7 +563,7 @@ fn apply_peer_executors(
                     .map(|item| {
                         let expr = item.expr.as_ref().ok_or("missing TopN order item")?;
                         validate_peer_expr(expr, fields.len())?;
-                        Ok(tidb_executor::sort::SortByItem {
+                        Ok(tidb_executor_sortexec::SortByItem {
                             expr: tidb_expr::distsql_builtin::pb_to_expr_in(expr, &fields, zone)?,
                             desc: item.desc.unwrap_or(false),
                         })
@@ -573,7 +573,7 @@ fn apply_peer_executors(
                 let memory = ctx.statement_memory().clone();
                 let meta = peer_meta(&fields);
                 let source = tidb_executor::mem_table::MemTableSourceExec::new(meta.clone(), rows);
-                let exec = tidb_executor::topn::TopNExec::new(
+                let exec = tidb_executor_sortexec::topn::TopNExec::new(
                     meta,
                     by_items,
                     Box::new(source),

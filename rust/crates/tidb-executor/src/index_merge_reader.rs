@@ -49,7 +49,7 @@
 //!   result: a reader over an already-known handle list. Stage 3 builds one
 //!   per task and drains it, exactly as `executeTask` does.
 //! * `tidb_expr::compare_datums_with_collation` is Go
-//!   `chunk.GetCompareFunc(keyType)`, already used by [`crate::sort`]; the
+//!   `chunk.GetCompareFunc(keyType)`, already used by [`tidb_executor_sortexec`]; the
 //!   order-by heap calls it rather than growing a second comparator.
 //! * Range building and key encoding are NOT here at all -- a partial path
 //!   arrives as a [`PartialHandleSource`] that has already done that work
@@ -142,7 +142,7 @@ use tidb_charset::Collation;
 use tidb_expr::schema::Schema;
 
 use crate::access_path::{HandleOutputColumn, HandleSourceExec};
-use crate::executor::{Executor, ExecutorMeta};
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
@@ -465,7 +465,7 @@ pub(crate) struct PartitionedHandleSource {
     sources: Vec<Box<dyn PartialHandleSource>>,
     current: usize,
     opened: Vec<bool>,
-    rows: crate::executor::RowCount,
+    rows: tidb_executor_internal_exec::RowCount,
     by_items: Vec<MergeByItem>,
     key_comparators: MergeKeyComparators,
     batches: Vec<Option<(PartialHandleBatch, usize)>>,
@@ -481,7 +481,7 @@ impl PartitionedHandleSource {
             sources,
             current: 0,
             opened: vec![false; count],
-            rows: crate::executor::RowCount::default(),
+            rows: tidb_executor_internal_exec::RowCount::default(),
             by_items: Vec::new(),
             key_comparators: MergeKeyComparators::default(),
             batches: Vec::new(),
@@ -500,7 +500,7 @@ impl PartitionedHandleSource {
         self
     }
 
-    pub(crate) fn produced_rows(&self) -> crate::executor::RowCount {
+    pub(crate) fn produced_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.rows.clone()
     }
 
@@ -853,7 +853,7 @@ impl PartialHandleSource for ExecutorPartialHandleSource {
 /// `Desc` flag that negates it.
 #[derive(Clone, Copy, Debug)]
 pub struct MergeByItem {
-    /// The key column's derived collation, as [`crate::sort`] uses.
+    /// The key column's derived collation, as [`tidb_executor_sortexec`] uses.
     pub collation: Collation,
     /// Go `ByItems.Desc`.
     pub desc: bool,
