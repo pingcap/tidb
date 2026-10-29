@@ -21,8 +21,6 @@
 //! acquire a TiKV client, or issue RPCs.
 
 use crate::{DistSqlContext, ReadRequestMetadata};
-use tidb_txnkv::KeyRange;
-use tidb_txnkv::PartitionedKeyRanges;
 
 /// Go's `kv.GlobalReplicaScope` / client-go `oracle.GlobalTxnScope` value.
 pub const GLOBAL_REPLICA_SCOPE: &str = "global";

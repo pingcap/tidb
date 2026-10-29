@@ -551,12 +551,6 @@ pub trait Columns {
         false
     }
 
-    /// Go allowCmpArgsRefining4PlanCache rejects sharing a value-dependent
-    /// comparison. The statement owner formats its source expression in the
-    /// skip reason with StringWithCtx.
-    fn skip_plan_cache_for_comparison(&self, _constant: &crate::constant::Constant, _target: &str) {
-    }
-
     /// Go `BuildContext.SetSkipPlanCache` from expression construction; the
     /// statement owner ignores it unless the statement uses the plan cache.
     fn set_skip_plan_cache(&self, _reason: &str) {}

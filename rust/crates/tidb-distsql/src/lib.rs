@@ -71,8 +71,6 @@ use tidb_txnkv::RequestSource;
 use tidb_txnkv::RequestType;
 use tidb_txnkv::StoreLabel;
 use tidb_txnkv::StoreType;
-use tidb_paging::calculate_seek_cnt;
-use tidb_paging::THRESHOLD;
 pub use transport::RegionTaskRequest;
 use tidb_txnkv::TransportRequest;
 use tidb_context::{Warning, WarningCollector};

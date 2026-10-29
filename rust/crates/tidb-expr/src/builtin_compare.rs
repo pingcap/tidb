@@ -641,7 +641,7 @@ pub(crate) fn refine_integer_in_arguments(
             if constant.get_type(ctx)?.eval_type() == EvalType::Int {
                 continue;
             }
-            ctx.skip_plan_cache_for_comparison(constant, "INT");
+            skip_plan_cache_for_comparison(ctx, constant, "INT");
             crate::expr_util::remove_mutable_const(std::slice::from_mut(candidate), ctx)?;
         }
         let Expression::Constant(constant) = candidate else {
@@ -652,6 +652,19 @@ pub(crate) fn refine_integer_in_arguments(
         }
     }
     Ok(())
+}
+
+// Go `allowCmpArgsRefining4PlanCache`'s skip: `ctx.SetSkipPlanCache(
+// fmt.Sprintf("'%v' may be converted to %v", con.StringWithCtx(...), tp))`.
+fn skip_plan_cache_for_comparison(ctx: &dyn Columns, constant: &Constant, target: &str) {
+    let text = crate::explain::physical_expression_text_with_columns(
+        ctx,
+        &Expression::Constant(constant.clone()),
+        &[],
+        crate::explain::ExpressionTextStyle::StringWithCtx,
+    )
+    .unwrap_or_default();
+    ctx.set_skip_plan_cache(&format!("'{text}' may be converted to {target}"));
 }
 
 // Go allowCmpArgsRefining4PlanCache: only the three value-dependent
@@ -694,7 +707,7 @@ fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression]) -> Result
         } else {
             continue;
         };
-        ctx.skip_plan_cache_for_comparison(constant, target);
+        skip_plan_cache_for_comparison(ctx, constant, target);
         return Ok(true);
     }
     Ok(false)

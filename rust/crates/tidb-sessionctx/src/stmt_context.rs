@@ -5770,24 +5770,6 @@ impl Columns for StmtContext {
         }
     }
 
-    fn skip_plan_cache_for_comparison(
-        &self,
-        constant: &tidb_expr::constant::Constant,
-        target: &str,
-    ) {
-        let expression = tidb_expr::expression::Expression::Constant(constant.clone());
-        let text = tidb_expr::explain::physical_expression_text_with_columns(
-            self,
-            &expression,
-            &[],
-            tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
-        )
-        .unwrap_or_default();
-        self.statement_range_fallback()
-            .tracker
-            .set_skip_plan_cache(&format!("'{text}' may be converted to {target}"));
-    }
-
     fn enable_vectorized_expression(&self) -> bool {
         self.enable_vectorized_expression
     }
