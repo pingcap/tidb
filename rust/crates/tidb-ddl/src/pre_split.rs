@@ -21,7 +21,7 @@
 //! Failures are logged and swallowed, as Go's are: TiKV splits the table on
 //! its own later.
 
-use tidb_codec::table_key::{
+use tidb_tablecodec::table_key::{
     encode_row_key_with_handle, encode_table_index_prefix, gen_table_prefix, RecordHandle,
 };
 use tidb_kv::region_map::RegionStore;

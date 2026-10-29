@@ -11,6 +11,7 @@ description = "Go pkg/ddl/placement: placement-rule bundles, rules, and label co
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 base64.workspace = true
 regex.workspace = true
 serde.workspace = true

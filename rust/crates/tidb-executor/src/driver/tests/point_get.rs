@@ -1754,9 +1754,9 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     storage.set(key, value).unwrap();
     storage
         .set(
-            Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+            Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
                 malformed.table_id(),
-                &tidb_codec::table_key::RecordHandle::Int(2),
+                &tidb_tablecodec::table_key::RecordHandle::Int(2),
             )),
             vec![0xff],
         )

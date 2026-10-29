@@ -45,7 +45,7 @@ use tidb_distsql::remote_scan::PushdownAggregateKind;
 use tidb_kv::storage::{StorageError, StorageIterator};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
-use tidb_codec::table_key::{
+use tidb_tablecodec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_table_id, encode_index_seek_key,
     encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
 };
@@ -663,7 +663,7 @@ impl KvTableReader for KvTable {
             let mut handles = Vec::new();
             while iter.valid() && handles.len() < limit {
                 handles.push(TableHandle::Common(
-                    tidb_codec::table_key::cut_row_key_prefix(iter.key().as_bytes()).to_vec(),
+                    tidb_tablecodec::table_key::cut_row_key_prefix(iter.key().as_bytes()).to_vec(),
                 ));
                 if handles.len() < limit {
                     iter.next()?;
@@ -5080,7 +5080,7 @@ impl TableScanExec {
                 remote.next_keyed_row().and_then(|entry| {
                     entry.map(|(key, row)| {
                         let handle = if self.extra_handle_slot.is_some() {
-                            match tidb_codec::table_key::decode_row_key(&key) {
+                            match tidb_tablecodec::table_key::decode_row_key(&key) {
                                 Ok(RecordHandle::Int(handle)) => Some(TableHandle::Int(handle)),
                                 other => return Err(KvTableError::Decode(format!(
                                     "remote extra handle is not an integer record key: {other:?}"

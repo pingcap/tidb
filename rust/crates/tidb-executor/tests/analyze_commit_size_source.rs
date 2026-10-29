@@ -1147,7 +1147,7 @@ fn async_global_stats_loads_each_payload_by_item() {
                 &column_item,
             ),
             tidb_codec::encode_row_key(system_table_id(&catalog, "stats_buckets"), &column_item,),
-            tidb_codec::table_key::encode_index_seek_key(
+            tidb_tablecodec::table_key::encode_index_seek_key(
                 system_table_id(&catalog, "stats_top_n"),
                 1,
                 &column_item,
@@ -1585,7 +1585,7 @@ fn topn_load_uses_the_declared_secondary_index() {
     assert_eq!(loaded.columns[0].topn.as_ref().map(TopN::num), Some(100));
 
     let encoded_prefix = tidb_codec::encode_key(&[Datum::Int(stats.table_id)]).unwrap();
-    let index_prefix = tidb_codec::table_key::encode_index_seek_key(
+    let index_prefix = tidb_tablecodec::table_key::encode_index_seek_key(
         system_table_id(&catalog, "stats_top_n"),
         1,
         &encoded_prefix,
@@ -1645,7 +1645,7 @@ fn one_item_load_uses_only_that_items_key_ranges() {
     );
     let bucket_prefix =
         tidb_codec::encode_row_key(system_table_id(&catalog, "stats_buckets"), &encoded_item);
-    let topn_prefix = tidb_codec::table_key::encode_index_seek_key(
+    let topn_prefix = tidb_tablecodec::table_key::encode_index_seek_key(
         system_table_id(&catalog, "stats_top_n"),
         1,
         &encoded_item,
@@ -1706,7 +1706,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
         system_table_id(&catalog, "stats_histograms"),
         &encoded_item,
     );
-    let topn_prefix = tidb_codec::table_key::encode_index_seek_key(
+    let topn_prefix = tidb_tablecodec::table_key::encode_index_seek_key(
         system_table_id(&catalog, "stats_top_n"),
         1,
         &encoded_item,

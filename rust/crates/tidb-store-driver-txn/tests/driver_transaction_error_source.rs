@@ -3,8 +3,9 @@
 
 //! Source-derived transaction diagnostic and driver-error regressions.
 
-use tidb_txnkv::driver::transaction_error::{pretty_lock_not_found_key, Redaction, WriteConflict};
-use tidb_txnkv::{to_tidb_driver_error, StorageDriverError};
+use tidb_store_driver_txn::txn_error::{extract_key_err, pretty_lock_not_found_key};
+use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict};
+use tidb_txnkv::StorageDriverError;
 
 #[test]
 fn test_lock_not_found_print() {
@@ -30,7 +31,7 @@ fn test_write_conflict_pretty_format() {
         primary: index_key,
         reason: "Unknown".into(),
     };
-    let error = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+    let error = extract_key_err(&StorageDriverError::WriteConflict {
         conflict: Some(conflict),
         redaction: Redaction::Disabled,
     });
@@ -48,17 +49,17 @@ fn test_write_conflict_pretty_format() {
         primary: meta,
         reason: "Optimistic".into(),
     };
-    let visible = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+    let visible = extract_key_err(&StorageDriverError::WriteConflict {
         conflict: Some(conflict.clone()),
         redaction: Redaction::Disabled,
     });
     assert_eq!(visible.to_string(), "[kv:9007]Write conflict, txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, key={metaKey=true, key=DB:56, field=TID:108}, originalKey=6d44423a3536000000fc00000000000000685449443a31303800fe, primary={metaKey=true, key=DB:56, field=TID:108}, originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe, reason=Optimistic [try again later]");
-    let enabled = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+    let enabled = extract_key_err(&StorageDriverError::WriteConflict {
         conflict: Some(conflict.clone()),
         redaction: Redaction::Enabled,
     });
     assert_eq!(enabled.to_string(), "[kv:9007]Write conflict, txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, key=????, reason=Optimistic [try again later]");
-    let marker = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+    let marker = extract_key_err(&StorageDriverError::WriteConflict {
         conflict: Some(conflict),
         redaction: Redaction::Marker,
     });
@@ -68,7 +69,7 @@ fn test_write_conflict_pretty_format() {
 #[test]
 fn retryable_routes_through_lock_key_diagnostics() {
     let message = "TxnLockNotFound key: [116,128,0,0,0,0,0,50,137,95,105,128,0,0,0,0,0,0,1,1,67,49,57,48,57,50,57,48,255,48,48,48,48,48,52,56,54,255,50,53,53,50,51,0,0,0,252]";
-    let error = to_tidb_driver_error(&StorageDriverError::Retryable {
+    let error = extract_key_err(&StorageDriverError::Retryable {
         message: message.into(),
     });
     assert!(error
@@ -101,7 +102,7 @@ fn early_prewrite_conflict_prints_the_nil_primary() {
         primary: Vec::new(),
         reason: "Optimistic".into(),
     };
-    let error = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+    let error = extract_key_err(&StorageDriverError::WriteConflict {
         conflict: Some(conflict),
         redaction: Redaction::Disabled,
     });

@@ -302,7 +302,7 @@ fn no_job_state_outlives_the_bootstrap() {
         ("tidb_mdl_info", 281_474_976_710_651),
         ("tidb_ddl_notifier", 281_474_976_710_648),
     ] {
-        let prefix = tidb_codec::table_key::gen_table_prefix(id);
+        let prefix = tidb_tablecodec::table_key::gen_table_prefix(id);
         assert!(
             store.pairs.keys().all(|key| !key.starts_with(&prefix)),
             "mysql.{name} must be empty"
@@ -422,7 +422,7 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
         let prefix = if table.is_common_handle {
             tidb_codec::gen_table_record_prefix(table.id)
         } else {
-            tidb_codec::table_key::encode_index_seek_key(table.id, primary, &[])
+            tidb_tablecodec::table_key::encode_index_seek_key(table.id, primary, &[])
         };
         assert!(advisory.key("rootlock").unwrap().starts_with(&prefix));
     }

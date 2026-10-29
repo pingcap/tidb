@@ -508,9 +508,10 @@ fn write_conflict_args(
     conflict: &tikv_client::proto::kvrpcpb::WriteConflict,
 ) -> tidb_txnkv::driver::transaction_error::WriteConflictArgs {
     use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
+    use crate::txn_error::new_write_conflict_args;
     let reason = tikv_client::proto::kvrpcpb::write_conflict::Reason::try_from(conflict.reason)
         .map_or_else(|_| conflict.reason.to_string(), |reason| reason.as_str_name().to_owned());
-    WriteConflictArgs::new(
+    new_write_conflict_args(
         &WriteConflict {
             start_ts: conflict.start_ts,
             conflict_ts: conflict.conflict_ts,

@@ -659,7 +659,7 @@ mod source_tests {
                 index.primary.then_some(index.id)
             })
             .expect("advisory-lock primary index");
-        let prefix = tidb_codec::table_key::encode_index_seek_key(info.id, primary_id, &[]);
+        let prefix = tidb_tablecodec::table_key::encode_index_seek_key(info.id, primary_id, &[]);
         let table = tidb_syssession::advisory_locks::AdvisoryLockTable::locate(&mut snapshot).unwrap();
         let key = table.key("rootlock").unwrap();
 

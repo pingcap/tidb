@@ -181,9 +181,9 @@ fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
     )
     .expect("the seeded account row encodes");
     cluster.committed.lock().expect("committed").insert(
-        tidb_codec::table_key::encode_row_key_with_handle(
+        tidb_tablecodec::table_key::encode_row_key_with_handle(
             104,
-            &tidb_codec::table_key::RecordHandle::Int(1),
+            &tidb_tablecodec::table_key::RecordHandle::Int(1),
         ),
         row,
     );

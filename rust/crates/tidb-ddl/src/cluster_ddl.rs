@@ -6799,7 +6799,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             .job
             .fill_finished_args(Some(GoShared::new(tidb_model::DropTableArgs {
                 start_key: tidb_model::GoByteSlice(GoSharedSlice::from_vec(
-                    tidb_codec::table_key::gen_table_prefix(active.job.table_id),
+                    tidb_tablecodec::table_key::gen_table_prefix(active.job.table_id),
                 )),
                 old_partition_ids,
                 old_rule_ids: rule_ids,

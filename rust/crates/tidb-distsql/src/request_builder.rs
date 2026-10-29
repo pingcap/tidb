@@ -21,7 +21,7 @@
 //! outside this crate.
 
 use std::sync::Arc;
-use tidb_codec::table_key::encode_index_seek_key;
+use tidb_tablecodec::table_key::encode_index_seek_key;
 use tidb_codec::{encode_key, encode_row_key};
 use tidb_datatype::Datum;
 use tidb_txnkv::{Handle, Key, ResourceGroupTagBuilder};

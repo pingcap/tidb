@@ -15,7 +15,7 @@
 //! Go `pkg/util/keydecoder/keydecoder_test.go::TestDecodeKey`.
 
 use tidb_ast::CiString;
-use tidb_codec::table_key::{
+use tidb_tablecodec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, RecordHandle,
 };
 use tidb_codec::encode_key;

@@ -24,37 +24,37 @@ use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
     FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
 };
-use tidb_codec::table_key::TABLE_PREFIX;
-use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
-use tidb_codec::table_key::META_PREFIX;
-use tidb_codec::table_key::RecordHandle;
-use tidb_codec::table_key::KeyHead;
-use tidb_codec::table_key::truncate_to_row_key_len;
-use tidb_codec::table_key::get_table_handle_key_range;
-use tidb_codec::table_key::gen_table_record_prefix;
-use tidb_codec::table_key::gen_table_prefix;
-use tidb_codec::table_key::gen_table_index_prefix;
-use tidb_codec::table_key::encode_table_prefix;
-use tidb_codec::table_key::encode_table_index_prefix;
-use tidb_codec::table_key::encode_row_key_with_handle;
-use tidb_codec::table_key::encode_record_key;
-use tidb_codec::table_key::encode_meta_key_prefix;
-use tidb_codec::table_key::encode_index_seek_key;
-use tidb_codec::table_key::encode_row_key;
-use tidb_codec::table_key::decode_row_key;
-use tidb_codec::table_key::decode_record_key;
-use tidb_codec::table_key::encode_meta_key;
-use tidb_codec::table_key::decode_key_head;
-use tidb_codec::table_key::decode_index_key;
-use tidb_codec::table_key::decode_meta_key;
-use tidb_codec::table_key::decode_index_id;
-use tidb_codec::table_key::cut_row_key_prefix;
-use tidb_codec::table_key::cut_index_prefix;
+use tidb_tablecodec::table_key::TABLE_PREFIX;
+use tidb_tablecodec::table_key::RECORD_ROW_KEY_LEN;
+use tidb_tablecodec::table_key::META_PREFIX;
+use tidb_tablecodec::table_key::RecordHandle;
+use tidb_tablecodec::table_key::KeyHead;
+use tidb_tablecodec::table_key::truncate_to_row_key_len;
+use tidb_tablecodec::table_key::get_table_handle_key_range;
+use tidb_tablecodec::table_key::gen_table_record_prefix;
+use tidb_tablecodec::table_key::gen_table_prefix;
+use tidb_tablecodec::table_key::gen_table_index_prefix;
+use tidb_tablecodec::table_key::encode_table_prefix;
+use tidb_tablecodec::table_key::encode_table_index_prefix;
+use tidb_tablecodec::table_key::encode_row_key_with_handle;
+use tidb_tablecodec::table_key::encode_record_key;
+use tidb_tablecodec::table_key::encode_meta_key_prefix;
+use tidb_tablecodec::table_key::encode_index_seek_key;
+use tidb_tablecodec::table_key::encode_row_key;
+use tidb_tablecodec::table_key::decode_row_key;
+use tidb_tablecodec::table_key::decode_record_key;
+use tidb_tablecodec::table_key::encode_meta_key;
+use tidb_tablecodec::table_key::decode_key_head;
+use tidb_tablecodec::table_key::decode_index_key;
+use tidb_tablecodec::table_key::decode_meta_key;
+use tidb_tablecodec::table_key::decode_index_id;
+use tidb_tablecodec::table_key::cut_row_key_prefix;
+use tidb_tablecodec::table_key::cut_index_prefix;
 use tidb_tablecodec::{cut_index_key, cut_index_key_by_ids, cut_table_row, decode_column_value, decode_handle_in_index_value, decode_index_handle, decode_index_kv, decode_table_row_into_map, decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value, encode_old_table_row, encode_table_row, encode_table_value, filter_overwritten_temp_index_values, generate_index_key, generate_index_value, get_table_index_key_range, index_key_to_temp_index_key, index_kv_is_unique, is_record_key, is_table_key, split_index_value, temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value, unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, HandleStatus, IndexColumn, IndexInfo, TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem, COMMON_HANDLE_FLAG, INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG};
-use tidb_codec::table_key::is_index_key;
-use tidb_codec::table_key::is_temp_index_key;
-use tidb_codec::table_key::is_untouched_index_kv;
-use tidb_codec::table_key::UNCOMMITTED_INDEX_KV_FLAG;
+use tidb_tablecodec::table_key::is_index_key;
+use tidb_tablecodec::table_key::is_temp_index_key;
+use tidb_tablecodec::table_key::is_untouched_index_kv;
+use tidb_tablecodec::table_key::UNCOMMITTED_INDEX_KV_FLAG;
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 fn int_handle(value: i64) -> Handle {
@@ -548,7 +548,7 @@ fn test_decode_auto_id_meta() {
 /// Source: `tablecodec_test.go::TestError`.
 #[test]
 fn test_error() {
-    use tidb_codec::table_key::TableKeyError;
+    use tidb_tablecodec::table_key::TableKeyError;
 
     assert_eq!(TableKeyError::InvalidKey.mysql_error_code(), 8221);
     assert_eq!(TableKeyError::InvalidRecordKey.mysql_error_code(), 8045);
@@ -1352,9 +1352,9 @@ fn flatten_rejects_truncated_binary_literals() {
 
 #[test]
 fn non_unique_int_index_key_matches_go_gen_index_key() {
-    use tidb_codec::table_key::non_unique_index_value;
-    use tidb_codec::table_key::hex;
-    use tidb_codec::table_key::encode_non_unique_index_key;
+    use tidb_tablecodec::table_key::non_unique_index_value;
+    use tidb_tablecodec::table_key::hex;
+    use tidb_tablecodec::table_key::encode_non_unique_index_key;
 
     // Byte fixtures from Go `tablecodec.GenIndexKey`'s non-unique int-handle
     // composition (`EncodeIndexSeekKey(tableID, idxID, EncodeKey(values...) +

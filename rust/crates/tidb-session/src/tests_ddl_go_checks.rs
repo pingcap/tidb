@@ -542,7 +542,7 @@ fn attributes_label_rules_follow_go() {
     fn key_range(id: i64) -> String {
         let prefix = |id: i64| {
             let mut encoded = Vec::new();
-            tidb_codec::encode_bytes(&mut encoded, &tidb_codec::table_key::gen_table_prefix(id));
+            tidb_codec::encode_bytes(&mut encoded, &tidb_tablecodec::table_key::gen_table_prefix(id));
             encoded
                 .iter()
                 .map(|byte| format!("{byte:02x}"))

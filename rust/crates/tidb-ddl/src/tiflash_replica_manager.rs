@@ -666,7 +666,7 @@ fn table_region_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
     tidb_codec::encode_bytes(&mut start, &tidb_codec::gen_table_record_prefix(table_id));
     tidb_codec::encode_bytes(
         &mut end,
-        &tidb_codec::table_key::encode_table_prefix(table_id + 1),
+        &tidb_tablecodec::table_key::encode_table_prefix(table_id + 1),
     );
     (start, end)
 }
@@ -687,7 +687,7 @@ pub fn make_new_rule(id: i64, count: u64, location_labels: &[String]) -> pd_http
         index: tidb_placement::RULE_INDEX_TIFLASH,
         r#override: false,
         start_key: tidb_codec::gen_table_record_prefix(id),
-        end_key: tidb_codec::table_key::encode_table_prefix(id + 1),
+        end_key: tidb_tablecodec::table_key::encode_table_prefix(id + 1),
         role: pd_http::LEARNER,
         count: count as i64,
         label_constraints: vec![pd_http::LabelConstraint {

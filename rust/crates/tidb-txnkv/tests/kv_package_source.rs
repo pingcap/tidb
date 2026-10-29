@@ -550,7 +550,7 @@ fn TestResourceGroupTagEncoding() {
 /// tag's table ID and label follow the request's first key.
 #[test]
 fn resource_group_tag_builder_tags_client_rust_requests() {
-    use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+    use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
     use tikv_client::proto::{coprocessor, kvrpcpb};
     let row_key = encode_row_key_with_handle(7, &RecordHandle::Int(1));
     let mut builder = ResourceGroupTagBuilder::new(None);

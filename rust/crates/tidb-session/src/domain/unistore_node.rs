@@ -179,9 +179,9 @@ mod transaction_buffer_tests {
         let buffer = MutationBuffer::new();
         transaction.bind_mutation_buffer(&buffer);
         let table_key = |id| {
-            tidb_codec::table_key::encode_row_key_with_handle(
+            tidb_tablecodec::table_key::encode_row_key_with_handle(
                 id,
-                &tidb_codec::table_key::RecordHandle::Int(1),
+                &tidb_tablecodec::table_key::RecordHandle::Int(1),
             )
         };
         buffer

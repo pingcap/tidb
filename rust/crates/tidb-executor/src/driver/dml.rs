@@ -4191,11 +4191,11 @@ pub(crate) fn row_chunk(
 /// A common handle has no rowid at all, and the leaf never offers the column
 /// for such a table.
 fn extra_handle_value(handle: &tidb_table::kv_table::TableHandle) -> Option<i64> {
-    fn integer(handle: &tidb_codec::table_key::RecordHandle) -> Option<i64> {
+    fn integer(handle: &tidb_tablecodec::table_key::RecordHandle) -> Option<i64> {
         match handle {
-            tidb_codec::table_key::RecordHandle::Int(value) => Some(*value),
-            tidb_codec::table_key::RecordHandle::Partition { handle, .. } => integer(handle),
-            tidb_codec::table_key::RecordHandle::Common(_) => None,
+            tidb_tablecodec::table_key::RecordHandle::Int(value) => Some(*value),
+            tidb_tablecodec::table_key::RecordHandle::Partition { handle, .. } => integer(handle),
+            tidb_tablecodec::table_key::RecordHandle::Common(_) => None,
         }
     }
     integer(&handle.record_handle())

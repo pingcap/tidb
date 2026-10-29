@@ -29,7 +29,7 @@ use tidb_table::kv_table::row_decoder::fill_handle_columns;
 #[allow(unused_imports)]
 use std::collections::HashSet;
 #[allow(unused_imports)]
-use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
+use tidb_tablecodec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 #[allow(unused_imports)]
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 #[allow(unused_imports)]

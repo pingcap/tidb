@@ -63,7 +63,7 @@ use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::{parse_simple_expr, BuildOptions};
 use tidb_expr::{eval_expression_once, ZonedNoColumns};
 use tidb_model::{ColumnInfo, GoShared, IndexInfo, PartitionDefinition, SchemaState, TableInfo};
-use tidb_codec::table_key;
+use tidb_tablecodec::table_key;
 use tidb_txnkv::Key;
 
 use super::{error, Result};

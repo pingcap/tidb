@@ -23,7 +23,7 @@
 
 use tidb_executor::TableEntry;
 use tidb_tablecodec::is_record_key;
-use tidb_codec::table_key::is_index_key;
+use tidb_tablecodec::table_key::is_index_key;
 
 use crate::tests_support::row_text;
 use crate::{Session, StmtResult};

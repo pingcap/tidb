@@ -17,6 +17,7 @@ pub mod cluster_http;
 pub mod cluster_table_storage;
 pub mod driver;
 pub mod transaction;
+pub mod txn_error;
 pub mod session_commit_protocol;
 pub mod meta_txn;
 

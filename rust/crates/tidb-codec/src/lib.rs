@@ -28,7 +28,6 @@ mod json;
 mod number;
 mod package;
 mod row_index;
-pub mod table_key;
 mod temporal;
 mod value;
 

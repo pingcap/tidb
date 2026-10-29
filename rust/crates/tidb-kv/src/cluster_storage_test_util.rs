@@ -39,7 +39,7 @@ pub struct MockSnapshot {
 
 impl ClusterSnapshot for MockSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        if tidb_codec::table_key::is_index_key(key.as_bytes()) {
+        if tidb_tablecodec::table_key::is_index_key(key.as_bytes()) {
             self.index_gets += 1;
             if self
                 .fail_index_get

@@ -134,9 +134,9 @@ use tidb_txnkv::Key;
             .update_row_with_old_context(&TableHandle::Int(1), Some(&old), &new, &ctx)
             .unwrap();
         assert!(snapshot.lock().unwrap().gets.is_empty());
-        let key = Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+        let key = Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
             42,
-            &tidb_codec::table_key::RecordHandle::Int(2),
+            &tidb_tablecodec::table_key::RecordHandle::Int(2),
         ));
         assert!(buffer.get_flags(key.as_bytes()).unwrap().has_presume_key_not_exists());
         assert_eq!(
@@ -203,9 +203,9 @@ use tidb_txnkv::Key;
                 .unwrap();
         }
         let key = |id, handle| {
-            Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+            Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
                 id,
-                &tidb_codec::table_key::RecordHandle::Int(handle),
+                &tidb_tablecodec::table_key::RecordHandle::Int(handle),
             ))
         };
         let original_first = buffer.get(&key(43, 1));
@@ -422,7 +422,7 @@ use tidb_txnkv::Key;
         use tidb_table::kv_table::KvTable;
         use tidb_table::kv_table::KvIndex;
         use tidb_table::kv_table::KvColumn;
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
         let record_key = Key::from_bytes(encode_row_key_with_handle(42, &RecordHandle::Int(1)));
@@ -496,7 +496,7 @@ use tidb_txnkv::Key;
         );
         let index_key = marks
             .iter()
-            .find(|key| tidb_codec::table_key::is_index_key(key.as_bytes()))
+            .find(|key| tidb_tablecodec::table_key::is_index_key(key.as_bytes()))
             .unwrap()
             .clone();
 

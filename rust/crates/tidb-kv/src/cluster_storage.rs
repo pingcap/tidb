@@ -475,9 +475,9 @@ pub fn key_needs_pessimistic_lock(
     flags: tikv_client::kv::KeyFlags,
 ) -> bool {
     use tidb_tablecodec::{index_kv_is_unique, is_record_key};
-    use tidb_codec::table_key::is_index_key;
-    use tidb_codec::table_key::is_temp_index_key;
-    use tidb_codec::table_key::is_untouched_index_kv;
+    use tidb_tablecodec::table_key::is_index_key;
+    use tidb_tablecodec::table_key::is_temp_index_key;
+    use tidb_tablecodec::table_key::is_untouched_index_kv;
     if !key.starts_with(b"t") {
         return true;
     }
@@ -1792,7 +1792,7 @@ mod tests {
     #[test]
     fn statement_lock_selection_preserves_native_flags() {
         use tikv_client::kv::{apply_flags_ops, FlagsOp, KeyFlags};
-        let key = tidb_codec::table_key::encode_index_seek_key(1, 1, b"index-value");
+        let key = tidb_tablecodec::table_key::encode_index_seek_key(1, 1, b"index-value");
         let plain = KeyFlags::default();
         let forced = apply_flags_ops(plain, &[FlagsOp::SetNeedLocked]);
         let presumed = apply_flags_ops(plain, &[FlagsOp::SetPresumeKeyNotExists]);

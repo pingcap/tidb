@@ -253,7 +253,7 @@ fn table_regions(
 ) -> Result<(), DriverError> {
     let decoder = |index_prefix: Vec<u8>, index_id: i64| KeyDecoder {
         physical_id,
-        table_prefix: tidb_codec::table_key::gen_table_prefix(physical_id),
+        table_prefix: tidb_tablecodec::table_key::gen_table_prefix(physical_id),
         record_prefix: tidb_codec::gen_table_record_prefix(physical_id),
         index_prefix,
         index_id,
@@ -261,7 +261,7 @@ fn table_regions(
     };
     collect(
         store,
-        tidb_codec::table_key::get_table_handle_key_range(physical_id),
+        tidb_tablecodec::table_key::get_table_handle_key_range(physical_id),
         &decoder(Vec::new(), 0),
         seen,
         rows,
@@ -271,7 +271,7 @@ fn table_regions(
             store,
             tidb_tablecodec::get_table_index_key_range(physical_id, index.id),
             &decoder(
-                tidb_codec::table_key::encode_table_index_prefix(physical_id, index.id),
+                tidb_tablecodec::table_key::encode_table_index_prefix(physical_id, index.id),
                 index.id,
             ),
             seen,
@@ -289,10 +289,10 @@ fn index_regions(
     seen: &mut HashSet<u64>,
     rows: &mut Vec<Row>,
 ) -> Result<(), DriverError> {
-    let index_prefix = tidb_codec::table_key::encode_table_index_prefix(physical_id, index_id);
+    let index_prefix = tidb_tablecodec::table_key::encode_table_index_prefix(physical_id, index_id);
     let decoder = KeyDecoder {
         physical_id,
-        table_prefix: tidb_codec::table_key::gen_table_prefix(physical_id),
+        table_prefix: tidb_tablecodec::table_key::gen_table_prefix(physical_id),
         record_prefix: tidb_codec::gen_table_record_prefix(physical_id),
         index_prefix,
         index_id,

@@ -16,7 +16,7 @@
 //! transaction. [`TxStructure`] owns the operations; the free functions keep
 //! the catalog's `m`-prefixed key codec, since the catalog lives entirely in
 //! the `m` namespace and starts every key with
-//! [`tidb_codec::table_key::META_PREFIX`].
+//! [`tidb_tablecodec::table_key::META_PREFIX`].
 //!
 //! Layout (Go `pkg/structure/type.go`), under the structure's own prefix:
 //!
@@ -32,7 +32,7 @@
 //! `encode_meta_key` / `decode_meta_key` / `encode_meta_key_prefix`,
 //! re-exported under their Go names.
 
-use tidb_codec::table_key::META_PREFIX;
+use tidb_tablecodec::table_key::META_PREFIX;
 use tidb_codec::{decode_bytes, decode_int, decode_uint, encode_bytes, encode_int, encode_uint};
 
 use crate::error::{MetaError, Result};
@@ -52,7 +52,7 @@ pub const LIST_META: u8 = b'L';
 /// Go `structure.ListData`.
 pub const LIST_DATA: u8 = b'l';
 
-pub use tidb_codec::table_key::{
+pub use tidb_tablecodec::table_key::{
     decode_meta_key as decode_hash_data_key, encode_meta_key as encode_hash_data_key,
     encode_meta_key_prefix as encode_hash_data_key_prefix,
 };

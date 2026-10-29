@@ -16,7 +16,7 @@
 //! that reads it back -- the storage-backed leg of the deployment ladder.
 //!
 //! Rows are written with the transcreated codecs: record keys through
-//! `tidb_codec::table_key::encode_row_key_with_handle` (`t{tid}_r{handle}`)
+//! `tidb_tablecodec::table_key::encode_row_key_with_handle` (`t{tid}_r{handle}`)
 //! and row values through `tidb_tablecodec::encode_table_row` (the v2 row
 //! format). [`TableScanExec`] iterates the table's record-key range and
 //! decodes each pair back into chunk rows -- the same
@@ -75,7 +75,7 @@ use row_decoder::fill_handle_columns;
 pub use row_decoder::row_checksum;
 use std::collections::HashSet;
 pub use table_meta::NOT_NULL_FLAG;
-use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
+use tidb_tablecodec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_expr::expression::Expression;
 
@@ -3507,8 +3507,8 @@ impl KvTable {
         physical_ids.dedup();
         let mut keys = Vec::new();
         for id in physical_ids {
-            let start = Key::from_bytes(tidb_codec::table_key::gen_table_prefix(id));
-            let end = Key::from_bytes(tidb_codec::table_key::gen_table_prefix(id.saturating_add(1)));
+            let start = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(id));
+            let end = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(id.saturating_add(1)));
             let mut iterator = self
                 .store
                 .iter(Some(&start), Some(&end))

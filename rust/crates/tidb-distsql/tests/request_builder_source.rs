@@ -569,7 +569,7 @@ fn test_build_table_range_common_handle() {
 // table and is only read for a partitioned table.
 #[test]
 fn build_table_ranges_reads_indexes_over_gos_full_range() {
-    use tidb_codec::table_key::encode_index_seek_key;
+    use tidb_tablecodec::table_key::encode_index_seek_key;
     use tidb_distsql::TableIndexRangeSpec;
 
     let null_low = encode_key(&[Datum::Null]).expect("NULL datum");

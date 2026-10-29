@@ -11,6 +11,7 @@ description = "Go br/pkg/streamhelper/spans, br/pkg/rtree, br/pkg/restore/utils 
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-redact = { path = "../tidb-redact" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-log = { path = "../tidb-log" }

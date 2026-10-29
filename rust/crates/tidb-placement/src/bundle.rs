@@ -23,7 +23,7 @@ use tidb_codec::encode_bytes;
 use tidb_model::{
     GoShared, PartitionDefinition, PlacementSettings, PolicyInfo, PolicyRefInfo, TableInfo,
 };
-use tidb_codec::table_key::gen_table_prefix;
+use tidb_tablecodec::table_key::gen_table_prefix;
 
 use crate::common::{
     group_id, BUNDLE_ID_PREFIX, KEY_RANGE_GLOBAL, KEY_RANGE_META, META_PREFIX,

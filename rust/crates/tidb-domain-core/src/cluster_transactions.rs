@@ -1869,19 +1869,18 @@ where
 
 #[cfg(test)]
 mod write_conflict_rewrite_tests {
-    use tidb_codec::table_key::{
+    use tidb_tablecodec::table_key::{
         encode_index_seek_key, encode_row_key_with_handle, hex, RecordHandle,
     };
-    use tidb_txnkv::driver::transaction_error::{
-        pretty_write_key, RedactArg, Redaction, WriteConflict, WriteConflictArgs,
-    };
+    use tidb_store_driver_txn::txn_error::{new_write_conflict_args, pretty_write_key};
+    use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction, WriteConflict};
 
     use super::try_replace_write_conflict_error;
     use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
     /// The commit error `sql_error` hands the session for one conflict.
     fn commit_error(key: &[u8], primary: &[u8], redaction: Redaction) -> SqlQueryError {
-        let args = WriteConflictArgs::new(
+        let args = new_write_conflict_args(
             &WriteConflict {
                 start_ts: 10,
                 conflict_ts: 11,

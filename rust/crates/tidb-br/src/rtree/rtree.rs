@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use tidb_codec::table_key::{decode_key_head, KeyHead};
+use tidb_tablecodec::table_key::{decode_key_head, KeyHead};
 use tidb_proto::{backup::File, kvrpcpb};
 
 /// Go `rtree.KeyRange`: an origin key range.
@@ -820,7 +820,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use tidb_codec::table_key::{encode_index_seek_key, encode_record_key, RecordHandle};
+    use tidb_tablecodec::table_key::{encode_index_seek_key, encode_record_key, RecordHandle};
     use tidb_codec::{encode_int, gen_table_record_prefix};
 
     use super::*;

@@ -76,7 +76,7 @@ impl tikv_client::KvFilter for TiDBKVFilter {
         value: &[u8],
         flags: tikv_client::MutationFlags,
     ) -> tikv_client::Result<bool> {
-        let untouched = tidb_codec::table_key::is_untouched_index_kv(key, value);
+        let untouched = tidb_tablecodec::table_key::is_untouched_index_kv(key, value);
         if untouched && flags.presumes_key_not_exists() {
             // Go `kv.Key.String`: lower-case hex.
             let hex = |bytes: &[u8]| {

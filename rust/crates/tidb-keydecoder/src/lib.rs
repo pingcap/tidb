@@ -25,7 +25,7 @@ mod cluster_catalog;
 use std::fmt::Write as _;
 
 use serde::Serialize;
-use tidb_codec::table_key::{
+use tidb_tablecodec::table_key::{
     decode_index_key, decode_key_head, decode_record_key, KeyHead, TableKeyError,
 };
 

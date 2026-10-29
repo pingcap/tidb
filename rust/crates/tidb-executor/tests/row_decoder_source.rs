@@ -106,14 +106,14 @@ fn assert_point_chunks(
     let mut storage = MemTableStorage::new();
     for (handle, bytes, _) in rows {
         let handle = match handle {
-            TableHandle::Int(value) => tidb_codec::table_key::RecordHandle::Int(*value),
+            TableHandle::Int(value) => tidb_tablecodec::table_key::RecordHandle::Int(*value),
             TableHandle::Common(bytes) => {
-                tidb_codec::table_key::RecordHandle::Common(bytes.clone())
+                tidb_tablecodec::table_key::RecordHandle::Common(bytes.clone())
             }
         };
         storage
             .set(
-                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+                tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
                     table.table_id(),
                     &handle,
                 )),

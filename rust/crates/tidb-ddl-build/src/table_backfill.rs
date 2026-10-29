@@ -573,12 +573,12 @@ impl KvTableBackfill for KvTable {
 
     fn record_key_of(&self, physical_id: i64, handle: &TableHandle) -> Vec<u8> {
         let handle = match handle {
-            TableHandle::Int(value) => tidb_codec::table_key::RecordHandle::Int(*value),
+            TableHandle::Int(value) => tidb_tablecodec::table_key::RecordHandle::Int(*value),
             TableHandle::Common(bytes) => {
-                tidb_codec::table_key::RecordHandle::Common(bytes.clone())
+                tidb_tablecodec::table_key::RecordHandle::Common(bytes.clone())
             }
         };
-        tidb_codec::table_key::encode_row_key_with_handle(physical_id, &handle)
+        tidb_tablecodec::table_key::encode_row_key_with_handle(physical_id, &handle)
     }
 
     fn duplicate_text_of_key(&self, index: &KvIndex, key: &[u8]) -> String {

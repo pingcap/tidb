@@ -180,7 +180,7 @@ use tidb_datatype::{Collation, Datum, FieldType, FieldTypeFlags};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_codec::table_key::encode_row_key_with_handle;
+use tidb_tablecodec::table_key::encode_row_key_with_handle;
 use tidb_txnkv::Key;
 
 use crate::bad_null::zero_value;

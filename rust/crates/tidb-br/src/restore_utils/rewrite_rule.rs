@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_codec::table_key::{encode_table_index_prefix, encode_table_prefix};
+use tidb_tablecodec::table_key::{encode_table_index_prefix, encode_table_prefix};
 use tidb_codec::{decode_bytes, decode_table_id, encode_bytes, gen_table_record_prefix};
 use tidb_model::TableInfo;
 use tidb_redact as redact;
@@ -728,8 +728,8 @@ pub fn rewrite_range(
 #[cfg(test)]
 mod tests {
     use tidb_ast::CiString;
-    use tidb_codec::table_key::{encode_index_seek_key, gen_table_index_prefix, gen_table_prefix};
-    use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+    use tidb_tablecodec::table_key::{encode_index_seek_key, gen_table_index_prefix, gen_table_prefix};
+    use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
     use tidb_model::{IndexInfo, PartitionDefinition, PartitionInfo};
 
     use super::*;

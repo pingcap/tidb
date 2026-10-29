@@ -21,7 +21,7 @@
 //! (encode ours, decode ours), which cannot detect a symmetric encoder/decoder
 //! divergence from TiDB.
 
-use tidb_codec::table_key::{encode_index_seek_key, encode_row_key_with_handle, RecordHandle};
+use tidb_tablecodec::table_key::{encode_index_seek_key, encode_row_key_with_handle, RecordHandle};
 use tidb_codec::{encode_hash_datum, encode_key};
 use tidb_rowcodec::{decode_row_to_datums, encode_row, ColumnInfo, DecodeRowOptions, RawRowValue, RowDecoder, ROW_FLAG_LARGE};
 use tidb_datatype::{

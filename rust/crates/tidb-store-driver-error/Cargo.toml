@@ -11,6 +11,7 @@ description = "Go `pkg/store/driver/error` (`ToTiDBErr`) and the client-visible 
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
@@ -22,4 +23,5 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [dev-dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tikv-client.workspace = true

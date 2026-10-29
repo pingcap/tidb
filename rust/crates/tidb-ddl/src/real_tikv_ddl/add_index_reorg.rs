@@ -268,7 +268,7 @@ where
 
 /// Go `tablecodec.TempIndexPrefix | id`'s seek key in `physical_id`.
 fn temp_index_seek_key(physical_id: i64, index_id: i64) -> Vec<u8> {
-    tidb_codec::table_key::encode_index_seek_key(physical_id, TEMP_INDEX_PREFIX | index_id, &[])
+    tidb_tablecodec::table_key::encode_index_seek_key(physical_id, TEMP_INDEX_PREFIX | index_id, &[])
 }
 
 /// Go `tablecodec.GetTableIndexKeyRange` of an index's temporary entries.

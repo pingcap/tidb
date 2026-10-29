@@ -27,7 +27,7 @@
 //! `TIMESTAMP` key part to UTC before encoding it, so the entry a Shanghai
 //! session files is the entry a UTC session seeks.
 
-use tidb_codec::table_key::encode_index_seek_key;
+use tidb_tablecodec::table_key::encode_index_seek_key;
 use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
 use tidb_tablecodec::{
@@ -1396,7 +1396,7 @@ pub fn duplicate_value_text(values: &[Datum]) -> String {
 /// check's need; every other reader of an index has datum bounds.
 #[must_use]
 pub fn index_key_bounds(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
-    let low = tidb_codec::table_key::encode_index_seek_key(table_id, index_id, &[]);
+    let low = tidb_tablecodec::table_key::encode_index_seek_key(table_id, index_id, &[]);
     let high = tidb_txnkv::Key::from_bytes(low.clone())
         .prefix_next()
         .as_bytes()

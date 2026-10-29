@@ -52,7 +52,7 @@ fn table_prefix_hex(id: i64) -> String {
     let mut buffer = Vec::new();
     tidb_codec::encode_bytes(
         &mut buffer,
-        &tidb_codec::table_key::gen_table_prefix(id),
+        &tidb_tablecodec::table_key::gen_table_prefix(id),
     );
     hex_encode(&buffer)
 }

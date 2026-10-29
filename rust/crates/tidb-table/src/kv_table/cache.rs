@@ -84,7 +84,7 @@ impl KvTable {
     }
 
     fn cache_storage_size_exceeds(&mut self, limit: usize) -> Result<bool, KvTableError> {
-        let prefix = Key::from_bytes(tidb_codec::table_key::gen_table_prefix(self.table_id));
+        let prefix = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(self.table_id));
         let upper_bound = prefix.prefix_next();
         let mut iterator = self
             .store

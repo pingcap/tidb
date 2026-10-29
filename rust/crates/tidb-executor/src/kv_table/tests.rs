@@ -15,7 +15,7 @@
 use tidb_kv::staged_writes::{StagedKey, StagedWrites};
 use super::*;
 use crate::executor::{Executor, ExecutorMeta};
-use tidb_codec::table_key::{get_table_handle_key_range, RecordHandle};
+use tidb_tablecodec::table_key::{get_table_handle_key_range, RecordHandle};
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
@@ -364,10 +364,10 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
         },
         false,
     );
-    let retired = Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+    let retired = Key::from_bytes(tidb_tablecodec::table_key::encode_index_seek_key(
         42, 1, b"orphan",
     ));
-    let retained = Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+    let retained = Key::from_bytes(tidb_tablecodec::table_key::encode_index_seek_key(
         42,
         2,
         b"neighbor",
@@ -425,7 +425,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
         let keys: Vec<_> = [42, 43, 44, 45]
             .into_iter()
             .map(|id| {
-                Key::from_bytes(tidb_codec::table_key::encode_index_seek_key(
+                Key::from_bytes(tidb_tablecodec::table_key::encode_index_seek_key(
                     id, 1, b"orphan",
                 ))
             })

@@ -4966,7 +4966,7 @@ fn analyze_samples_the_go_handle_ranges() {
             .expect("table id");
         sent.lock().unwrap().clear();
         rows(&mut session, &format!("ANALYZE TABLE {table}"));
-        let prefix = tidb_codec::table_key::gen_table_record_prefix(table_id);
+        let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(table_id);
         let expected = expected
             .into_iter()
             .map(|(low, high)| {
@@ -11286,7 +11286,7 @@ fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
     // Only this table's row reads and locks count: the session's own system
     // reads (statistics, catalog) share the store.
     fn is_row_of(table_id: i64, key: &[u8]) -> bool {
-        tidb_codec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
+        tidb_tablecodec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
     }
     let sent: Arc<std::sync::Mutex<Vec<&'static str>>> = Arc::default();
     let recorded = Arc::clone(&sent);
@@ -21669,8 +21669,8 @@ fn delete_ranges_are_recorded_and_worked_off_like_go() {
         key.extend_from_slice(&((value as u64) ^ (1 << 63)).to_be_bytes());
         key
     }
-    let table = |id: i64| tidb_codec::table_key::encode_table_prefix(id);
-    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    let table = |id: i64| tidb_tablecodec::table_key::encode_table_prefix(id);
+    let index = |id: i64, index: i64| tidb_tablecodec::table_key::encode_table_index_prefix(id, index);
     const TEMP: i64 = 0x7fff_0000_0000_0000;
 
     let (stack, _users) = cop_backed_stack();
@@ -21748,9 +21748,9 @@ fn delete_ranges_are_recorded_and_worked_off_like_go() {
     drop_k_start.extend(int_key(1));
     drop_k_start.extend(int_key(1));
     drop_k_start.push(0);
-    let mut truncate_start = tidb_codec::table_key::encode_row_key_with_handle(
+    let mut truncate_start = tidb_tablecodec::table_key::encode_row_key_with_handle(
         t1,
-        &tidb_codec::table_key::RecordHandle::Int(1),
+        &tidb_tablecodec::table_key::RecordHandle::Int(1),
     );
     truncate_start.push(0);
     let expected = vec![
@@ -21883,7 +21883,7 @@ fn add_and_drop_column_run_as_persisted_jobs_like_go() {
         key.extend_from_slice(&((value as u64) ^ (1 << 63)).to_be_bytes());
         key
     }
-    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    let index = |id: i64, index: i64| tidb_tablecodec::table_key::encode_table_index_prefix(id, index);
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1941)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
@@ -23731,7 +23731,7 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
-    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    let index = |id: i64, index: i64| tidb_tablecodec::table_key::encode_table_index_prefix(id, index);
     const TEMP: i64 = 0x7fff_0000_0000_0000;
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1944)).unwrap();

@@ -38,7 +38,7 @@ use tidb_unistore_cophandler::{handle_cop_request, REQ_TYPE_DAG};
 use tidb_unistore_tikv::mvcc_store::{MvccStore, PessimisticLockReq, PrewriteReq};
 use tidb_unistore_kverrors::KvError;
 use prost::Message;
-use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::Datum;
 use tidb_proto::{coprocessor, tipb};
 

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use serde_json::{Map, Number, Value};
-use tidb_codec::table_key::{decode_index_key, decode_key_head, decode_record_key, KeyHead};
+use tidb_tablecodec::table_key::{decode_index_key, decode_key_head, decode_record_key, KeyHead};
 use tidb_rowcodec::ColumnInfo;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_hack::GoToLower;
@@ -95,14 +95,14 @@ impl TidbDecodeKeySnapshot {
         if let Ok((_, decoded)) = tidb_codec::decode_bytes(&key) {
             key = decoded;
         }
-        let physical_table_id = tidb_codec::table_key::decode_table_id(&key);
+        let physical_table_id = tidb_tablecodec::table_key::decode_table_id(&key);
         if physical_table_id <= 0 {
             return Err(invalid_key(&key));
         }
         let table = self.tables.get(&physical_table_id);
         let output = if tidb_tablecodec::is_record_key(&key) {
             decode_record(&key, physical_table_id, table, zone)?
-        } else if tidb_codec::table_key::is_index_key(&key) {
+        } else if tidb_tablecodec::table_key::is_index_key(&key) {
             decode_index(&key, physical_table_id, table, zone)?
         } else if tidb_tablecodec::is_table_key(&key) {
             decode_table(physical_table_id, table)

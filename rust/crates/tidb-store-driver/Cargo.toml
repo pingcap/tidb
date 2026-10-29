@@ -19,3 +19,6 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }

@@ -697,7 +697,7 @@ mod tests {
         // A history row carries the process-wide history sequence number, which
         // the second plan continues from: compare those rows by count only.
         let history_prefix =
-            tidb_codec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLHISTORY_TABLE_ID);
+            tidb_tablecodec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLHISTORY_TABLE_ID);
         let is_history = |raw_key: &[u8]| {
             raw_key.starts_with(&history_prefix)
                 || tidb_meta::structure::decode_hash_data_key(raw_key)

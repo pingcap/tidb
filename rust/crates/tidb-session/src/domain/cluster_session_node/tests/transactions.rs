@@ -999,8 +999,8 @@ fn staged_handles(session: &Session, table_id: i64) -> Vec<i64> {
         .snapshot()
         .into_iter()
         .filter_map(|(key, _)| {
-            match tidb_codec::table_key::decode_record_key(key.as_bytes()) {
-                Ok((id, tidb_codec::table_key::RecordHandle::Int(handle)))
+            match tidb_tablecodec::table_key::decode_record_key(key.as_bytes()) {
+                Ok((id, tidb_tablecodec::table_key::RecordHandle::Int(handle)))
                     if id == table_id =>
                 {
                     Some(handle)

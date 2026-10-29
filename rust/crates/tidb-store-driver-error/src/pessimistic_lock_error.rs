@@ -311,7 +311,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
                 prototype.message_template(),
                 prototype.redact_arg_positions(),
                 &[
-                    tidb_codec::table_key::hex(key).into(),
+                    tidb_tablecodec::table_key::hex(key).into(),
                     direction.into(),
                     (*start_ts).into(),
                     (*existing_start_ts).into(),
@@ -376,7 +376,7 @@ fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> Lock
         ConvertedDriverError::Passthrough(source) => {
             LockSqlError::from(tidb_terror::MysqlError::unknown(source.to_string()))
         }
-        ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
+        ConvertedDriverError::Kv(_) => {
             unreachable!("backoff source table has no kv or transaction conversion rows")
         }
     }
@@ -784,11 +784,11 @@ mod tests {
     /// for the session's table-name rewrite, and its message is `GetMsg()`.
     #[test]
     fn a_commit_write_conflict_carries_its_arguments_without_the_kv_prefix() {
-        use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
+        use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict};
 
         // Table 28, handle 20.
         let key = b"t\x80\x00\x00\x00\x00\x00\x00\x1c_r\x80\x00\x00\x00\x00\x00\x00\x14".to_vec();
-        let args = WriteConflictArgs::new(
+        let args = tidb_store_driver_txn::txn_error::new_write_conflict_args(
             &WriteConflict {
                 start_ts: 10,
                 conflict_ts: 11,

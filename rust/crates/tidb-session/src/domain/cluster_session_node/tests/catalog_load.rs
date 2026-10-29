@@ -550,9 +550,9 @@ fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
     assert!(skipped.is_empty());
     // A stored generated value is decoded, not recomputed by the reader.
     node.committed.lock().unwrap().insert(
-        tidb_codec::table_key::encode_row_key_with_handle(
+        tidb_tablecodec::table_key::encode_row_key_with_handle(
             101,
-            &tidb_codec::table_key::RecordHandle::Int(9),
+            &tidb_tablecodec::table_key::RecordHandle::Int(9),
         ),
         tidb_tablecodec::encode_table_row(None, &[Datum::Int(999)], &[3], true, None).unwrap(),
     );

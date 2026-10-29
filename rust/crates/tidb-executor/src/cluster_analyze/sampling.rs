@@ -700,9 +700,9 @@ where
     use prost::Message;
     let error = |e: String| AnalyzeError::unsupported(e);
     let prefix = if common_handle {
-        tidb_codec::table_key::gen_table_record_prefix(physical_id)
+        tidb_tablecodec::table_key::gen_table_record_prefix(physical_id)
     } else {
-        tidb_codec::table_key::encode_index_seek_key(physical_id, index.id, &[])
+        tidb_tablecodec::table_key::encode_index_seek_key(physical_id, index.id, &[])
     };
     let ranges = index_ndv_key_ranges(&prefix, index.column_positions.len() == 1);
     let request = tipb::AnalyzeReq {

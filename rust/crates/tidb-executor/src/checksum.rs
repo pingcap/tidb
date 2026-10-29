@@ -516,7 +516,7 @@ mod tests {
             .collect::<Vec<_>>()
         );
         // `FullRange()`: from the NULL datum, so NULL index entries count.
-        let mut null_start = tidb_codec::table_key::encode_index_seek_key(100, 3, &[]);
+        let mut null_start = tidb_tablecodec::table_key::encode_index_seek_key(100, 3, &[]);
         null_start.push(0);
         assert_eq!(key_ranges(&index.request)[0].0, null_start);
     }

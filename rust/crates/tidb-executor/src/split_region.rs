@@ -26,7 +26,7 @@ use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::KvIndex;
 use crate::{DriverError, ExecError, MysqlError, StmtContext};
-use tidb_codec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
+use tidb_tablecodec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_errno::errcode;
 use tidb_hack::GoCaseCompare;

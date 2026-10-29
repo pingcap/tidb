@@ -18,14 +18,14 @@ use std::fmt;
 
 use tidb_datatype::Datum;
 
-use crate::bytes::decode_bytes;
-use crate::datum::{decode_one, encode_key, INT_FLAG};
-use crate::number::{decode_int, decode_uint, encode_int};
-use crate::CodecError;
+use tidb_codec::decode_bytes;
+use tidb_codec::{decode_one, encode_key, INT_FLAG};
+use tidb_codec::{decode_int, decode_uint, encode_int};
+use tidb_codec::CodecError;
 
 // Preserve the already-connected DistSQL/resource-group authority as the
 // implementation of the three table-row primitives instead of cloning it.
-pub use crate::row_index::{decode_table_id, encode_row_key, gen_table_record_prefix};
+pub use tidb_codec::{decode_table_id, encode_row_key, gen_table_record_prefix};
 
 /// Leading byte of every encoded table record or index key.
 pub const TABLE_PREFIX: &[u8] = b"t";
@@ -56,7 +56,7 @@ pub const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
 /// Reports whether the key contains a temporary index ID.
 pub fn is_temp_index_key(key: &[u8]) -> bool {
     let bytes: [u8; 8] = key[PREFIX_LEN..PREFIX_LEN + ID_LEN].try_into().unwrap();
-    let index_id = crate::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
+    let index_id = tidb_codec::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
     TEMP_INDEX_PREFIX | index_id == index_id
 }
 
@@ -253,7 +253,7 @@ impl RecordHandle {
                         break;
                     }
                     let (column, tail) =
-                        crate::cut_one(remaining).map_err(|_| TableKeyError::InvalidRecordKey)?;
+                        tidb_codec::cut_one(remaining).map_err(|_| TableKeyError::InvalidRecordKey)?;
                     columns.push(column.to_vec());
                     remaining = tail;
                 }
@@ -484,24 +484,24 @@ pub fn decode_meta_key(key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TableKeyError> 
 pub fn encode_meta_key(key: &[u8], field: &[u8]) -> Vec<u8> {
     let mut encoded = Vec::with_capacity(
         META_PREFIX.len()
-            + crate::encoded_bytes_len(key.len())
+            + tidb_codec::encoded_bytes_len(key.len())
             + ID_LEN
-            + crate::encoded_bytes_len(field.len()),
+            + tidb_codec::encoded_bytes_len(field.len()),
     );
     encoded.extend_from_slice(META_PREFIX);
-    crate::encode_bytes(&mut encoded, key);
-    crate::encode_uint(&mut encoded, HASH_DATA_FLAG);
-    crate::encode_bytes(&mut encoded, field);
+    tidb_codec::encode_bytes(&mut encoded, key);
+    tidb_codec::encode_uint(&mut encoded, HASH_DATA_FLAG);
+    tidb_codec::encode_bytes(&mut encoded, field);
     encoded
 }
 
 /// Encodes the prefix shared by every field of one structure hash-data key.
 pub fn encode_meta_key_prefix(key: &[u8]) -> Vec<u8> {
     let mut encoded =
-        Vec::with_capacity(META_PREFIX.len() + crate::encoded_bytes_len(key.len()) + ID_LEN);
+        Vec::with_capacity(META_PREFIX.len() + tidb_codec::encoded_bytes_len(key.len()) + ID_LEN);
     encoded.extend_from_slice(META_PREFIX);
-    crate::encode_bytes(&mut encoded, key);
-    crate::encode_uint(&mut encoded, HASH_DATA_FLAG);
+    tidb_codec::encode_bytes(&mut encoded, key);
+    tidb_codec::encode_uint(&mut encoded, HASH_DATA_FLAG);
     encoded
 }
 

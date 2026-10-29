@@ -29,7 +29,7 @@
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use std::cmp::Ordering;
 use std::fmt;
-use tidb_codec::table_key::RecordHandle;
+use tidb_tablecodec::table_key::RecordHandle;
 use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, SessionTimeZone};
 
 /// The statement-owned facts needed while stored row bytes become Datums.

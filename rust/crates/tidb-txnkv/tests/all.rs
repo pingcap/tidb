@@ -17,7 +17,6 @@
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod batch_getter_source;
 mod driver_error_source;
-mod driver_transaction_error_source;
 mod gc_safe_point_realtikv_source;
 mod gc_safe_point_source;
 mod interface_source;

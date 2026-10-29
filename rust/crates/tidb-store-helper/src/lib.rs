@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use tidb_codec::table_key::{
+use tidb_tablecodec::table_key::{
     decode_key_head, decode_record_key, encode_index_seek_key, encode_table_prefix,
     get_table_handle_key_range, KeyHead, RecordHandle, TABLE_PREFIX, TABLE_SPLIT_KEY_LEN,
 };

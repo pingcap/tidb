@@ -405,8 +405,8 @@ mod playground_tests {
                 tikv_client::proto::pdpb::Timestamp::from_version(timestamp.version()),
                 tikv_client::TransactionOptions::new_optimistic().read_only(),
             );
-            let start = tidb_codec::table_key::encode_table_prefix(table_id);
-            let end = tidb_codec::table_key::encode_table_prefix(table_id + 1);
+            let start = tidb_tablecodec::table_key::encode_table_prefix(table_id);
+            let end = tidb_tablecodec::table_key::encode_table_prefix(table_id + 1);
             snapshot
                 .scan(start..end, 10_000)
                 .await

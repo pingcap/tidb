@@ -11,6 +11,7 @@ description = "Go pkg/util/keydecoder: the key information shown in lock diagnos
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-model = { path = "../tidb-model" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-table = { path = "../tidb-table" }

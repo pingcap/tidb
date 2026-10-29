@@ -4993,7 +4993,7 @@ fn select_lock_executor(
                 if physical_id == 0 {
                     return Ok(None);
                 }
-                Ok(Some(tidb_codec::table_key::encode_row_key_with_handle(
+                Ok(Some(tidb_tablecodec::table_key::encode_row_key_with_handle(
                     physical_id,
                     &handle.record_handle(),
                 )))
@@ -7465,8 +7465,8 @@ fn build_union_scan(
         .iter()
         .map(|id| {
             (
-                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_table_prefix(*id)),
-                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_table_prefix(
+                tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::encode_table_prefix(*id)),
+                tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::encode_table_prefix(
                     id.saturating_add(1),
                 )),
             )

@@ -203,7 +203,7 @@ impl MockCluster {
                 // TiKV's conflict fields, rendered as Go's
                 // `newWriteConflictError` renders them; the first staged key
                 // stands in for the primary.
-                let args = tidb_txnkv::driver::transaction_error::WriteConflictArgs::new(
+                let args = tidb_store_driver_txn::txn_error::new_write_conflict_args(
                     &tidb_txnkv::driver::transaction_error::WriteConflict {
                         start_ts,
                         conflict_ts: 0,

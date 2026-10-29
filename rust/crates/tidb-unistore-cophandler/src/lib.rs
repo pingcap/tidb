@@ -45,7 +45,7 @@ use prost::Message;
 use tidb_proto::coprocessor;
 use tidb_proto::tipb;
 
-use tidb_codec::table_key::RecordHandle;
+use tidb_tablecodec::table_key::RecordHandle;
 
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
@@ -1138,7 +1138,7 @@ fn exec_table_scan(
             }
             // Go `tablecodec.DecodeRowKey`: an int handle answers directly,
             // a common handle carries the clustered primary key's datums.
-            let (handle, common_handle) = match tidb_codec::table_key::decode_row_key(&pair.key) {
+            let (handle, common_handle) = match tidb_tablecodec::table_key::decode_row_key(&pair.key) {
                 Ok(RecordHandle::Int(handle)) => (handle, None),
                 Ok(RecordHandle::Common(encoded)) => {
                     let count = tbl_scan.primary_column_ids.len();
@@ -2279,7 +2279,7 @@ mod tests {
         // in-process. The row value is the OLD row format (per-column
         // `EncodeInt(colID) ++ EncodeDatum(value)`), which
         // `decode_table_row_to_map` handles exactly as Go's decoder does.
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
@@ -2334,7 +2334,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2372,7 +2372,7 @@ mod tests {
     /// outright, and then to answer NULL for every primary-key column.
     #[test]
     fn a_clustered_primary_key_is_read_back_out_of_the_row_key() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
@@ -2423,7 +2423,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2463,7 +2463,7 @@ mod tests {
     /// rebuilt a handle that no index entry had requested.
     #[test]
     fn a_clustered_key_column_reads_its_value_before_the_row_key() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
@@ -2527,7 +2527,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2618,7 +2618,7 @@ mod tests {
 
     #[test]
     fn a_lock_in_the_scanned_range_answers_locked() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let mut store = MvccStore::new();
         let key = encode_row_key_with_handle(7, &RecordHandle::Int(1));
@@ -2645,7 +2645,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(7);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(7);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2666,7 +2666,7 @@ mod tests {
     #[test]
     fn a_limit_above_the_scan_breaks_at_the_count() {
         // Go `ce.limit`: nothing but a break during the scan.
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let mut store = MvccStore::new();
@@ -2718,7 +2718,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(9);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(9);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2747,7 +2747,7 @@ mod tests {
     fn a_selection_filters_rows_with_mysql_three_valued_logic() {
         // `SELECT id, b FROM t WHERE b = 88` over three rows — only the
         // matching row survives; a condition over NULL drops the row.
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let mut store = MvccStore::new();
@@ -2835,7 +2835,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(11);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(11);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2866,7 +2866,7 @@ mod tests {
     /// wire path cannot replay verbatim.
     #[test]
     fn a_grouped_partial_aggregation_answers_per_group_rows() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
@@ -2950,7 +2950,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -2987,7 +2987,7 @@ mod tests {
     /// order, and COUNT(1) includes a row whose column is NULL.
     #[test]
     fn a_streamed_partial_aggregation_reuses_groups_in_first_seen_order() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
@@ -3074,7 +3074,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         let resp = handle_cop_request(
             &mut store,
             &coprocessor::Request {
@@ -3105,7 +3105,7 @@ mod tests {
     ///
     /// `b` values 30/10/20 across handles 1/2/3.
     fn seed_three_rows(store: &mut MvccStore, table_id: i64) {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         for (handle, b_value) in [(1_i64, 30_i64), (2, 10), (3, 20)] {
@@ -3181,7 +3181,7 @@ mod tests {
         };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
-        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         coprocessor::Request {
             tp: REQ_TYPE_DAG,
             data,
@@ -3243,7 +3243,7 @@ mod tests {
     /// `[5, 1, 3]` -- the order Go's `ORDER BY a LIMIT 3` answers.
     #[test]
     fn top_n_ties_never_evict_and_keep_go_heap_array_order() {
-        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let mut store = MvccStore::new();

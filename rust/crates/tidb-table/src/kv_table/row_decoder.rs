@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
+use tidb_tablecodec::table_key::RECORD_ROW_KEY_LEN;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::CommonHandle;

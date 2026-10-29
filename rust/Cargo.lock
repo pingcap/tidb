@@ -3508,6 +3508,7 @@ dependencies = [
  "tidb-model",
  "tidb-proto",
  "tidb-redact",
+ "tidb-tablecodec",
 ]
 
 [[package]]
@@ -3623,6 +3624,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-datatype",
  "tidb-rowcodec",
+ "tidb-tablecodec",
 ]
 
 [[package]]
@@ -3948,6 +3950,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-goruntime",
  "tidb-model",
+ "tidb-tablecodec",
  "tikv-client",
 ]
 
@@ -4076,6 +4079,7 @@ dependencies = [
  "tidb-proto",
  "tidb-ristretto",
  "tidb-store-driver-txn",
+ "tidb-tablecodec",
  "tidb-tiflash",
  "tidb-topsql-stmtstats",
  "tidb-tracing",
@@ -4212,6 +4216,7 @@ dependencies = [
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-test-isolation",
  "tidb-txnkv",
@@ -4679,6 +4684,7 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-unistore-tikv",
@@ -4857,6 +4863,7 @@ dependencies = [
  "tidb-infoschema",
  "tidb-model",
  "tidb-table",
+ "tidb-tablecodec",
 ]
 
 [[package]]
@@ -5073,6 +5080,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-partialjson",
+ "tidb-tablecodec",
  "tidb-terror",
 ]
 
@@ -5278,6 +5286,7 @@ dependencies = [
  "tidb-codec",
  "tidb-hack",
  "tidb-model",
+ "tidb-tablecodec",
 ]
 
 [[package]]
@@ -5834,6 +5843,7 @@ dependencies = [
  "tidb-systimemon",
  "tidb-sysutil",
  "tidb-table",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-tiflashcompute",
  "tidb-timeutil",
@@ -6624,6 +6634,7 @@ dependencies = [
  "tidb-distsql",
  "tidb-pd-client",
  "tidb-store-driver-txn",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tikv-client",
 ]
@@ -6639,6 +6650,8 @@ dependencies = [
  "tidb-kv",
  "tidb-mysql",
  "tidb-proto",
+ "tidb-store-driver-txn",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",
  "tikv-client",
@@ -6663,6 +6676,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tidb-store-driver-error",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-tracing",
  "tidb-txnkv",
@@ -6683,6 +6697,7 @@ dependencies = [
  "tidb-logutil",
  "tidb-metadef",
  "tidb-mysql",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tikv-client",
 ]
@@ -7080,6 +7095,7 @@ dependencies = [
  "tidb-parser-format",
  "tidb-sqlescape",
  "tidb-sqlkiller",
+ "tidb-tablecodec",
  "tidb-timeutil",
  "tidb-txnkv",
 ]
@@ -7121,6 +7137,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tidb-resourcegrouptag",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-tiflash",
  "tidb-tiflashcompute",

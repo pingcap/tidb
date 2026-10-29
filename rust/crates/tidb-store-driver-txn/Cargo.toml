@@ -12,6 +12,7 @@ description = "Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a ses
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 futures.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 serde_json.workspace = true

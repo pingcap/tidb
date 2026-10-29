@@ -606,9 +606,9 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                     let entries = table.index_entries_for_check(index.id).expect("entries");
                     Ok(entries[0].0.clone())
                 } else {
-                    Ok(tidb_codec::table_key::encode_row_key_with_handle(
+                    Ok(tidb_tablecodec::table_key::encode_row_key_with_handle(
                         table.table_id(),
-                        &tidb_codec::table_key::RecordHandle::Int(2),
+                        &tidb_tablecodec::table_key::RecordHandle::Int(2),
                     ))
                 }
             })

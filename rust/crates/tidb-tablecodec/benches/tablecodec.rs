@@ -18,7 +18,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use tidb_datatype::{BinaryLiteral, Datum, Decimal};
-use tidb_codec::table_key::{decode_row_key, encode_row_key_with_handle, RecordHandle};
+use tidb_tablecodec::table_key::{decode_row_key, encode_row_key_with_handle, RecordHandle};
 use tidb_tablecodec::{
     decode_handle_in_index_value, encode_handle_in_unique_index_value, encode_table_value,
     is_record_key, COMMON_HANDLE_FLAG, INDEX_VERSION_FLAG,

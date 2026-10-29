@@ -354,7 +354,7 @@ pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot
     let topn_count = usize::try_from(options.num_topn)
         .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE TopN count".to_owned()))?;
     let column_count = index.columns.len();
-    let prefix = tidb_codec::table_key::encode_index_seek_key(physical_id, index.id, &[]);
+    let prefix = tidb_tablecodec::table_key::encode_index_seek_key(physical_id, index.id, &[]);
     let range_end = finite_successor(&prefix)?;
     let regions = snapshot
         .scan_regions(&prefix, &range_end)
@@ -554,7 +554,7 @@ mod tests {
         ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot, RegionPagedMetaSnapshot,
     };
     use tidb_ast::CiString;
-    use tidb_codec::table_key::encode_index_seek_key;
+    use tidb_tablecodec::table_key::encode_index_seek_key;
     use tidb_codec::Encoder;
     use tidb_datatype::UNSPECIFIED_LENGTH;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};

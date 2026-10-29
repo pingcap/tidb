@@ -15,6 +15,7 @@
 //! All topology-independent `tidb-store-driver-txn` integration tests in one process.
 
 mod async_commit_one_pc_realtikv_source;
+mod driver_transaction_error_source;
 mod optimistic_2pc_realtikv_source;
 mod pessimistic_lock_realtikv_source;
 mod pessimistic_prewrite_recovery_realtikv_source;

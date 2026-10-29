@@ -12,6 +12,7 @@ autotests = false
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }

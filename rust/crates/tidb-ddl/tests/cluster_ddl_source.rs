@@ -666,7 +666,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                     .unwrap();
                 assert_eq!(
                     finished.read().start_key.0.snapshot(),
-                    tidb_codec::table_key::encode_table_prefix(job.table_id)
+                    tidb_tablecodec::table_key::encode_table_prefix(job.table_id)
                 );
             } else {
                 assert!(tidb_model::get_finished_drop_schema_args(&mut completed)
@@ -3124,8 +3124,8 @@ pub(crate) fn delete_ranges(store: &mut MetaStore) -> Vec<(i64, Vec<u8>, Vec<u8>
 /// The range `[start, end)` of one index's entries.
 pub(crate) fn index_range(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
     (
-        tidb_codec::table_key::encode_table_index_prefix(table_id, index_id),
-        tidb_codec::table_key::encode_table_index_prefix(table_id, index_id + 1),
+        tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id),
+        tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id + 1),
     )
 }
 
@@ -3642,7 +3642,7 @@ fn system_database_ddl_stages_no_notifier_event() {
         7,
     );
     let notifier_prefix =
-        tidb_codec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
+        tidb_tablecodec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
     assert!(write
         .mutations
         .iter()

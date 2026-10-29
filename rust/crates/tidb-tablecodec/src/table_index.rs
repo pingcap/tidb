@@ -23,8 +23,8 @@ use tidb_datatype::{
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 use crate::table_row::{decode_column_value, TableRowError};
-use tidb_codec::table_key::encode_index_seek_key;
-use tidb_codec::table_key::{
+use crate::table_key::encode_index_seek_key;
+use crate::table_key::{
     is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_value, CodecError, Encoder, BYTES_FLAG, INT_FLAG};

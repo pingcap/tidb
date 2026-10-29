@@ -95,7 +95,7 @@ fn execute(
                         error => other_error(&format!("scan error: {error:?}")),
                     });
                 }
-                let handle = tidb_codec::table_key::decode_row_key(&pair.key)
+                let handle = tidb_tablecodec::table_key::decode_row_key(&pair.key)
                     .map_err(|e| other_error(&e.to_string()))?;
                 let common = match &handle {
                     RecordHandle::Common(bytes) => {
@@ -330,7 +330,7 @@ fn execute_index_ndv(
                 }
                 let key = if request.tp() == tipb::AnalyzeType::TypeCommonHandle {
                     let RecordHandle::Common(bytes) =
-                        tidb_codec::table_key::decode_row_key(&pair.key)
+                        tidb_tablecodec::table_key::decode_row_key(&pair.key)
                             .map_err(|e| other_error(&e.to_string()))?
                     else {
                         return Err(other_error("invalid common handle"));
@@ -406,9 +406,9 @@ mod tests {
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let mut store = MvccStore::new();
         let prefix = if common {
-            tidb_codec::table_key::gen_table_record_prefix(42)
+            tidb_tablecodec::table_key::gen_table_record_prefix(42)
         } else {
-            tidb_codec::table_key::encode_index_seek_key(42, 3, &[])
+            tidb_tablecodec::table_key::encode_index_seek_key(42, 3, &[])
         };
         for (id, value) in [(1, "aa"), (2, "aa"), (3, "bb")] {
             let mut key = prefix.clone();

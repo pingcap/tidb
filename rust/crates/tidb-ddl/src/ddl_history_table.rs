@@ -175,9 +175,9 @@ impl DdlHistoryTable {
         // Go's `INSERT IGNORE` checks the `job_id` primary key: a point
         // read of the row when it is the handle, not a walk of the history.
         let already_exists = if self.table.pk_is_handle {
-            let record = tidb_codec::table_key::encode_row_key_with_handle(
+            let record = tidb_tablecodec::table_key::encode_row_key_with_handle(
                 self.table.id,
-                &tidb_codec::table_key::RecordHandle::Int(job.id),
+                &tidb_tablecodec::table_key::RecordHandle::Int(job.id),
             );
             snapshot
                 .get(&record)

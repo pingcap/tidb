@@ -2097,11 +2097,11 @@ pub fn get_gc_rules(
     let mut old_ranges = HashSet::new();
     for &id in ids {
         let mut start_key = Vec::new();
-        tidb_codec::encode_bytes(&mut start_key, &tidb_codec::table_key::gen_table_prefix(id));
+        tidb_codec::encode_bytes(&mut start_key, &tidb_tablecodec::table_key::gen_table_prefix(id));
         let mut end_key = Vec::new();
         tidb_codec::encode_bytes(
             &mut end_key,
-            &tidb_codec::table_key::gen_table_prefix(id + 1),
+            &tidb_tablecodec::table_key::gen_table_prefix(id + 1),
         );
         old_ranges.insert(format!(
             "{}{}",

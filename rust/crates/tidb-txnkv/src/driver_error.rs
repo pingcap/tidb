@@ -22,7 +22,7 @@ use tidb_terror::{TerrorClass, TerrorCode, TerrorError, ERR_RESULT_UNDETERMINED}
 use tidb_errno as tidb;
 use tidb_mysql::errors::ErrMessage;
 
-use crate::driver::transaction_error::{Redaction, TransactionError, WriteConflict};
+use crate::driver::transaction_error::{Redaction, WriteConflict};
 
 use crate::{
     gen_entry_too_large_err, gen_key_too_large_err, gen_shared_lock_lost_err,
@@ -316,8 +316,6 @@ pub enum ConvertedDriverError {
     Kv(KvError),
     /// Shared `pkg/parser/terror` class/code/RFC identity.
     Terror(TerrorError),
-    /// Transaction-specific error after source-exact key diagnostics.
-    Transaction(TransactionError),
     /// Unrecognized errors retain their complete typed identity and chain.
     Passthrough(StorageDriverError),
 }
@@ -327,7 +325,6 @@ impl fmt::Display for ConvertedDriverError {
         match self {
             Self::Kv(error) => error.fmt(formatter),
             Self::Terror(error) => error.fmt(formatter),
-            Self::Transaction(error) => error.fmt(formatter),
             Self::Passthrough(error) => error.fmt(formatter),
         }
     }
@@ -528,15 +525,10 @@ pub fn to_tidb_driver_error(error: &StorageDriverError) -> ConvertedDriverError 
         StorageDriverError::WriteConflict { conflict: None, .. } => {
             ConvertedDriverError::Kv(ERR_WRITE_CONFLICT.clone())
         }
-        StorageDriverError::WriteConflict {
-            conflict,
-            redaction,
-        } => ConvertedDriverError::Transaction(TransactionError::WriteConflict {
-            conflict: conflict.clone(),
-            redaction: *redaction,
-        }),
-        StorageDriverError::Retryable { message } => {
-            ConvertedDriverError::Transaction(TransactionError::Retryable(message.clone()))
+        // Go `ToTiDBErr` keeps client-go's write conflict and retryable errors
+        // as they are; `extractKeyErr` in the transaction driver decodes them.
+        StorageDriverError::WriteConflict { .. } | StorageDriverError::Retryable { .. } => {
+            ConvertedDriverError::Passthrough(error.clone())
         }
         StorageDriverError::Other(_) => ConvertedDriverError::Passthrough(error.clone()),
         StorageDriverError::Context { .. } => unreachable!("root_cause removes all context"),

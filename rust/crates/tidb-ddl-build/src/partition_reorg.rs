@@ -157,7 +157,7 @@ impl KvTablePartitionReorg for KvTable {
             }
             // The copy's indexes are built by the next phase, or by any DML
             // that touches the row.
-            let key = Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+            let key = Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
                 target,
                 &handle.record_handle(),
             ));

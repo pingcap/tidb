@@ -32,7 +32,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol;

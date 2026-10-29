@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use tidb_codec::table_key::gen_table_prefix;
+use tidb_tablecodec::table_key::gen_table_prefix;
 use tidb_codec::{encode_bytes, encoded_bytes_len};
 use tidb_goruntime::go_runtime::{GoSharedSlice, GoSliceElementLayout};
 use tidb_model::go_runtime::GoShared;

@@ -351,8 +351,8 @@ fn batch_delete_indices_range(
         ranges.push(DelRangeTask {
             job_id,
             element_id,
-            start_key: tidb_codec::table_key::encode_table_index_prefix(table_id, *index_id),
-            end_key: tidb_codec::table_key::encode_table_index_prefix(table_id, index_id + 1),
+            start_key: tidb_tablecodec::table_key::encode_table_index_prefix(table_id, *index_id),
+            end_key: tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id + 1),
         });
     }
 }
@@ -369,8 +369,8 @@ fn batch_delete_tables_range(
         ranges.push(DelRangeTask {
             job_id,
             element_id,
-            start_key: tidb_codec::table_key::encode_table_prefix(*table_id),
-            end_key: tidb_codec::table_key::encode_table_prefix(table_id + 1),
+            start_key: tidb_tablecodec::table_key::encode_table_prefix(*table_id),
+            end_key: tidb_tablecodec::table_key::encode_table_prefix(table_id + 1),
         });
     }
 }

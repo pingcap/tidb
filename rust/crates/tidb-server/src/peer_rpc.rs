@@ -1840,9 +1840,9 @@ mod tests {
                 all_sql_digests: Vec::new(),
                 try_lock_txn: 10,
                 txn_holding_lock: 20,
-                key: tidb_codec::table_key::encode_row_key_with_handle(
+                key: tidb_tablecodec::table_key::encode_row_key_with_handle(
                     table_id,
-                    &tidb_codec::table_key::RecordHandle::Int(9),
+                    &tidb_tablecodec::table_key::RecordHandle::Int(9),
                 ),
             }],
         });

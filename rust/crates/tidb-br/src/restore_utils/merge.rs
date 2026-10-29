@@ -181,8 +181,8 @@ pub fn merge_and_rewrite_file_ranges(
 mod tests {
     use std::sync::Arc;
 
-    use tidb_codec::table_key::encode_index_seek_key;
-    use tidb_codec::table_key::RecordHandle;
+    use tidb_tablecodec::table_key::encode_index_seek_key;
+    use tidb_tablecodec::table_key::RecordHandle;
     use tidb_codec::{encode_int, encode_row_key, INT_FLAG};
 
     use super::*;
@@ -578,7 +578,7 @@ mod tests {
         let handle = RecordHandle::Int(7);
         assert_eq!(
             encode_row_key(1, &handle.encoded()),
-            tidb_codec::table_key::encode_row_key_with_handle(1, &handle)
+            tidb_tablecodec::table_key::encode_row_key_with_handle(1, &handle)
         );
     }
 }

@@ -63,7 +63,7 @@ use tidb_table::origin_default::{
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tidb_codec::table_key::encode_row_key_with_handle;
+use tidb_tablecodec::table_key::encode_row_key_with_handle;
 #[cfg(test)]
 use tidb_datatype::{FieldTypeCode, GoString};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone, Time};
@@ -822,7 +822,7 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+    use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 
     /// Go `GetColOriginDefaultValueWithoutStrictSQLMode` casts the stored text
     /// to the column's type. A DATE origin default reached the coprocessor as
@@ -898,7 +898,7 @@ mod tests {
     /// The one index entry among a row's mutations (Go writes it before the
     /// record).
     fn index_write(mutations: &[BufferMutation]) -> &BufferMutation {
-        let prefix = tidb_codec::table_key::encode_table_index_prefix(42, 2);
+        let prefix = tidb_tablecodec::table_key::encode_table_index_prefix(42, 2);
         let [entry] = mutations
             .iter()
             .filter(|mutation| mutation.key().starts_with(&prefix))
@@ -956,7 +956,7 @@ mod tests {
         // Go's optimistic `UPDATE` checks the moved entry in place
         // (`optimizeDupKeyCheckForUpdate`): no lazy check, and the destination
         // is asserted absent.
-        let prefix = tidb_codec::table_key::encode_table_index_prefix(42, 2);
+        let prefix = tidb_tablecodec::table_key::encode_table_index_prefix(42, 2);
         let entry = |kind: BufferMutationOp| {
             moved
                 .iter()
@@ -1061,7 +1061,7 @@ mod tests {
                     .any(|mutation| mutation.key() == record_key.as_slice()),
                 "{mutations:?}"
             );
-            let primary_prefix = tidb_codec::table_key::encode_table_index_prefix(42, 1);
+            let primary_prefix = tidb_tablecodec::table_key::encode_table_index_prefix(42, 1);
             assert!(
                 mutations
                     .iter()

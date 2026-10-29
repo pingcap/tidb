@@ -427,7 +427,7 @@ pub(crate) fn exact_physical_row_count(
     physical_id: i64,
 ) -> Result<i64, String> {
     const PAGE_SIZE: usize = 1_024;
-    let prefix = tidb_txnkv::Key::from_bytes(tidb_codec::table_key::gen_table_record_prefix(
+    let prefix = tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::gen_table_record_prefix(
         physical_id,
     ));
     let end = prefix.prefix_next();

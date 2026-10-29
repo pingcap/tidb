@@ -174,7 +174,7 @@ fn test_unique_index_multiple_null_entries() {
 /// `pkg/table/tables/tables_test.go:271::TestRowKeyCodec`.
 #[test]
 fn test_row_key_codec() {
-    use tidb_codec::table_key::{
+    use tidb_tablecodec::table_key::{
         decode_record_key, decode_row_key, encode_row_key_with_handle, RecordHandle,
     };
 

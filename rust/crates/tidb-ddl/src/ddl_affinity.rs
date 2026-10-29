@@ -39,11 +39,11 @@ fn build_affinity_group_key_range(physical_id: i64) -> AffinityGroupKeyRange {
     let mut end_key = Vec::new();
     tidb_codec::encode_bytes(
         &mut start_key,
-        &tidb_codec::table_key::encode_table_prefix(physical_id),
+        &tidb_tablecodec::table_key::encode_table_prefix(physical_id),
     );
     tidb_codec::encode_bytes(
         &mut end_key,
-        &tidb_codec::table_key::encode_table_prefix(physical_id + 1),
+        &tidb_tablecodec::table_key::encode_table_prefix(physical_id + 1),
     );
     AffinityGroupKeyRange { start_key, end_key }
 }
