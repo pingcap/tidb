@@ -96,6 +96,7 @@ pub const UNSPECIFIED_LENGTH: i64 = -1;
 
 use tidb_context::WarnErr;
 use tidb_vardef::modes::ClusteredIndexDefMode;
+use tidb_expr::EvalErrorSql;
 
 /// Go `errCheckConstraintIsOff` (`pkg/ddl/executor.go`): a plain
 /// `errors.NewNoStackError`, so it carries no error class and reaches

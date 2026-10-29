@@ -15,6 +15,7 @@
 //! family's `mod.rs` purely for file size; every assertion, Go citation, and
 //! doc comment is unchanged from its prior home inside `mod tests` there.
 
+use crate::ToTerror;
 use super::dispatch;
 use super::modify::parse_json_path as parse_path;
 use crate::Datum;

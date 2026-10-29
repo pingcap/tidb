@@ -26,6 +26,7 @@ use tidb_expr::EvalError;
 
 use super::{DriverError, MysqlError};
 use crate::ExecError;
+use tidb_expr::EvalErrorSql;
 
 /// The MySQL error an execution failure reaches the client as.
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {

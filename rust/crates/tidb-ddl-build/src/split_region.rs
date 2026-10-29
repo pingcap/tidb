@@ -22,6 +22,7 @@ use tidb_terror::MysqlError;
 
 use tidb_hack::GoToLower;
 use tidb_model::RegionSplitPolicy;
+use tidb_expr::EvalErrorSql;
 
 /// Which keyspace a split clause names.
 #[derive(Clone, Copy, Debug)]

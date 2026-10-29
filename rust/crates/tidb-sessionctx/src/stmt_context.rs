@@ -5565,6 +5565,7 @@ impl Drop for CopEvalGuard<'_> {
 }
 
 use tidb_tblctx::resolve_statement_clock;
+use tidb_expr::EvalErrorSql;
 
 /// The executor's statement context behind a table-layer context the
 /// executor built (Go asserts its own context type back the same way).

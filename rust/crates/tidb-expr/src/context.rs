@@ -254,28 +254,6 @@ pub enum SequenceEvalError {
     },
 }
 
-impl SequenceEvalError {
-    /// The Go error this raises, as Go raises it.
-    #[must_use]
-    pub fn to_terror(&self) -> tidb_terror::TerrorError {
-        use crate::expression_errors as expression;
-        match self {
-            SequenceEvalError::Raised(error) => error.clone(),
-            SequenceEvalError::AccessDenied {
-                privilege,
-                user,
-                host,
-                sequence,
-            } => expression::ERR_SEQUENCE_ACCESS_DENIED.generate_with_stack_by_args(&[
-                (*privilege).into(),
-                user.as_str().into(),
-                host.as_str().into(),
-                sequence.as_str().into(),
-            ]),
-        }
-    }
-}
-
 /// The `json`-class errors the JSON builtins raise, each paired with the
 /// `pkg/errno` code and `pkg/errno/errname.go` message TiDB reports for it.
 ///
@@ -360,70 +338,6 @@ pub enum JsonError {
     /// `ErrJSONDocumentTooDeep` (3157): a built document nests past Go's
     /// `maxJSONDepth` (100), which `CreateBinaryJSONWithCheck` refuses.
     DocumentTooDeep,
-}
-
-impl JsonError {
-    /// The Go error this raises, as Go raises it: the `json` document / path
-    /// errors in `types`, the argument errors in `expression`.
-    #[must_use]
-    pub fn to_terror(&self) -> tidb_terror::TerrorError {
-        use crate::expression_errors as expression;
-        use tidb_datatype::types_errors as types;
-        match self {
-            JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
-                "The document root must not be followed by other values.".into(),
-            ]),
-            JsonError::EmptyText => types::ERR_INVALID_JSON_TEXT
-                .generate_with_stack_by_args(&["The document is empty".into()]),
-            JsonError::InvalidCharset => {
-                types::ERR_INVALID_JSON_CHARSET.generate_with_stack_by_args(&["binary".into()])
-            }
-            JsonError::InvalidTextInParam {
-                argument,
-                function,
-                reason,
-                position,
-            } => types::ERR_INVALID_JSON_TEXT_IN_PARAM.generate_with_stack_by_args(&[
-                (*argument).into(),
-                (*function).into(),
-                (*reason).into(),
-                (*position).into(),
-            ]),
-            JsonError::InvalidPath(position) => {
-                types::ERR_INVALID_JSON_PATH.generate_with_stack_by_args(&[(*position).into()])
-            }
-            JsonError::InvalidPathMultipleSelection => {
-                types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.generate_with_stack_by_args(&[])
-            }
-            JsonError::InvalidTypeForJson { argument, function } => {
-                expression::ERR_INVALID_TYPE_FOR_JSON
-                    .generate_with_stack_by_args(&[(*argument).into(), (*function).into()])
-            }
-            JsonError::InvalidJsonType {
-                argument,
-                function,
-                required,
-            } => types::ERR_INVALID_JSON_TYPE.generate_with_stack_by_args(&[
-                (*argument).into(),
-                (*function).into(),
-                required.as_str().into(),
-            ]),
-            JsonError::IncorrectType { argument, function } => expression::ERR_INCORRECT_TYPE
-                .generate_with_stack_by_args(&[argument.to_string().into(), (*function).into()]),
-            JsonError::NullMemberName => {
-                types::ERR_JSON_DOCUMENT_NULL_KEY.generate_with_stack_by_args(&[])
-            }
-            JsonError::VacuousPath => types::ERR_JSON_VACUOUS_PATH.generate_with_stack_by_args(&[]),
-            JsonError::InvalidPathArrayCell => {
-                types::ERR_INVALID_JSON_PATH_ARRAY_CELL.generate_with_stack_by_args(&[])
-            }
-            JsonError::BadOneOrAllArg { function } => types::ERR_JSON_BAD_ONE_OR_ALL_ARG
-                .generate_with_stack_by_args(&[(*function).into()]),
-            JsonError::DocumentTooDeep => {
-                types::ERR_JSON_DOCUMENT_TOO_DEEP.generate_with_stack_by_args(&[])
-            }
-        }
-    }
 }
 
 /// Go `errctx.Level`: what a statement does with an error group it can also
@@ -598,7 +512,7 @@ pub trait Columns {
     /// evaluation context prevents a cast built for one session from silently
     /// using the process default in another.
     fn connection_charset_info(&self) -> (&str, &str) {
-        crate::collation_derive::connection_charset_info()
+        ("utf8mb4", "utf8mb4_bin")
     }
 
     /// Whether the statement's SQL mode forces integer subtraction to use a

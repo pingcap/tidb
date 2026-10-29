@@ -17,6 +17,7 @@
 
 use tidb_kv::storage::StorageError;
 use tidb_terror::MysqlError;
+use tidb_expr::EvalErrorSql;
 
 /// A failure while encoding or decoding table bytes.
 #[derive(Debug)]

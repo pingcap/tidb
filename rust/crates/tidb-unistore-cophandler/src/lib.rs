@@ -46,6 +46,7 @@ use tidb_proto::coprocessor;
 use tidb_proto::tipb;
 
 use tidb_tablecodec::table_key::RecordHandle;
+use tidb_expr::EvalErrorSql;
 
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`

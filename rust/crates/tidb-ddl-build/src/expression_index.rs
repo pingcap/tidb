@@ -175,6 +175,7 @@ use tidb_table::generated_column::TableColumnResolver;
 use tidb_table::generated_column::GeneratedColumn;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
+use tidb_expr::EvalErrorSql;
 
 /// Go `pkg/ddl/executor.go`'s `expressionIndexPrefix`.
 const HIDDEN_COLUMN_PREFIX: &str = "_V$";

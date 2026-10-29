@@ -27,18 +27,117 @@ use tidb_mysql::errors::SqlError;
 use tidb_terror::TerrorError;
 use tidb_hack::GoToLower;
 
-use crate::EvalError;
+use crate::{EvalError, JsonError, SequenceEvalError};
 
-impl EvalError {
+/// An evaluation failure as the client sees it. The codes are Go
+/// `expression`'s (and `types`') error prototypes, which is why this lives in
+/// the expression crate rather than beside `EvalError`.
+pub trait EvalErrorSql {
     /// Go `terror.ToSQLError` for an evaluation failure: the MySQL code and
     /// message it reaches a client as, wherever it is raised -- TiDB's
     /// executor, or a coprocessor answering it in `SelectResponse.error`
     /// (`toPBError`).
-    ///
+    fn to_sql_error(&self) -> SqlError;
+
+    /// The same error as the session layer's MySQL error.
+    fn to_mysql_error(&self) -> MysqlError;
+}
+
+/// The Go error a JSON or sequence evaluation failure raises: `types`' and
+/// `expression`'s error prototypes.
+pub trait ToTerror {
+    /// The Go error, as Go raises it.
+    fn to_terror(&self) -> tidb_terror::TerrorError;
+}
+
+impl ToTerror for SequenceEvalError {
+    /// The Go error this raises, as Go raises it.
+    fn to_terror(&self) -> tidb_terror::TerrorError {
+        use crate::expression_errors as expression;
+        match self {
+            SequenceEvalError::Raised(error) => error.clone(),
+            SequenceEvalError::AccessDenied {
+                privilege,
+                user,
+                host,
+                sequence,
+            } => expression::ERR_SEQUENCE_ACCESS_DENIED.generate_with_stack_by_args(&[
+                (*privilege).into(),
+                user.as_str().into(),
+                host.as_str().into(),
+                sequence.as_str().into(),
+            ]),
+        }
+    }
+}
+
+impl ToTerror for JsonError {
+    /// The Go error this raises, as Go raises it: the `json` document / path
+    /// errors in `types`, the argument errors in `expression`.
+    fn to_terror(&self) -> tidb_terror::TerrorError {
+        use crate::expression_errors as expression;
+        use tidb_datatype::types_errors as types;
+        match self {
+            JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
+                "The document root must not be followed by other values.".into(),
+            ]),
+            JsonError::EmptyText => types::ERR_INVALID_JSON_TEXT
+                .generate_with_stack_by_args(&["The document is empty".into()]),
+            JsonError::InvalidCharset => {
+                types::ERR_INVALID_JSON_CHARSET.generate_with_stack_by_args(&["binary".into()])
+            }
+            JsonError::InvalidTextInParam {
+                argument,
+                function,
+                reason,
+                position,
+            } => types::ERR_INVALID_JSON_TEXT_IN_PARAM.generate_with_stack_by_args(&[
+                (*argument).into(),
+                (*function).into(),
+                (*reason).into(),
+                (*position).into(),
+            ]),
+            JsonError::InvalidPath(position) => {
+                types::ERR_INVALID_JSON_PATH.generate_with_stack_by_args(&[(*position).into()])
+            }
+            JsonError::InvalidPathMultipleSelection => {
+                types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.generate_with_stack_by_args(&[])
+            }
+            JsonError::InvalidTypeForJson { argument, function } => {
+                expression::ERR_INVALID_TYPE_FOR_JSON
+                    .generate_with_stack_by_args(&[(*argument).into(), (*function).into()])
+            }
+            JsonError::InvalidJsonType {
+                argument,
+                function,
+                required,
+            } => types::ERR_INVALID_JSON_TYPE.generate_with_stack_by_args(&[
+                (*argument).into(),
+                (*function).into(),
+                required.as_str().into(),
+            ]),
+            JsonError::IncorrectType { argument, function } => expression::ERR_INCORRECT_TYPE
+                .generate_with_stack_by_args(&[argument.to_string().into(), (*function).into()]),
+            JsonError::NullMemberName => {
+                types::ERR_JSON_DOCUMENT_NULL_KEY.generate_with_stack_by_args(&[])
+            }
+            JsonError::VacuousPath => types::ERR_JSON_VACUOUS_PATH.generate_with_stack_by_args(&[]),
+            JsonError::InvalidPathArrayCell => {
+                types::ERR_INVALID_JSON_PATH_ARRAY_CELL.generate_with_stack_by_args(&[])
+            }
+            JsonError::BadOneOrAllArg { function } => types::ERR_JSON_BAD_ONE_OR_ALL_ARG
+                .generate_with_stack_by_args(&[(*function).into()]),
+            JsonError::DocumentTooDeep => {
+                types::ERR_JSON_DOCUMENT_TOO_DEEP.generate_with_stack_by_args(&[])
+            }
+        }
+    }
+}
+
+impl EvalErrorSql for EvalError {
     /// Every arm names its code and its message TOGETHER, so a code never
     /// arrives with an empty message.
-    #[must_use]
-    pub fn to_sql_error(&self) -> SqlError {
+    fn to_sql_error(&self) -> SqlError {
         match self.clone() {
             // The `json` and sequence classes carry TiDB's own code (3140
             // malformed document, 3143 malformed path, 4135 exhausted sequence,
@@ -198,8 +297,7 @@ impl EvalError {
     /// records its 1105 row beside the argument casts' truncation warnings
     /// (oracle: `CHAR('中文测试', 'ünïcödé')`). Every json-class error is
     /// evaluation-origin whatever its text.
-    #[must_use]
-    pub fn to_mysql_error(&self) -> MysqlError {
+    fn to_mysql_error(&self) -> MysqlError {
         let error = MysqlError::from_sql_error(self.to_sql_error());
         if !matches!(self, EvalError::Json(_)) && error.message.starts_with("Unknown charset ") {
             error

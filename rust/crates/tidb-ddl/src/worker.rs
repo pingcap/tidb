@@ -2872,6 +2872,7 @@ struct DdlTransactionAutoIds {
 }
 
 use tidb_table::kv_table::TableAutoId;
+use tidb_expr::EvalErrorSql;
 
 impl tidb_table::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {

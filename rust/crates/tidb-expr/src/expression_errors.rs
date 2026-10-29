@@ -27,6 +27,7 @@ use tidb_terror::TerrorError;
 use tidb_errno::errcode;
 
 use crate::{Columns, ErrorLevel, EvalError};
+use crate::EvalErrorSql;
 
 /// Source `expression.errCannotConvertString` (`pkg/expression/builtin_convert_charset.go:43`).
 pub static ERR_CANNOT_CONVERT_STRING: LazyLock<TerrorError> =

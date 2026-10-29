@@ -29,6 +29,7 @@ use crate::KvTableReader;
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_hack::GoCaseCompare;
 use tidb_password_validation::{self as password_validation, GlobalVarAccessor, PasswordUser, PwdError};
+use tidb_expr::ToTerror;
 
 struct SessionPasswordGlobals<'a>(&'a SessionVars);
 

@@ -22,6 +22,7 @@
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_terror::MysqlError;
+use tidb_expr::EvalErrorSql;
 
 /// Go `table.CastValue`'s returned `error`: a cast-family `terror` already
 /// rendered with its identity, or the evaluation error Go returns unchanged
