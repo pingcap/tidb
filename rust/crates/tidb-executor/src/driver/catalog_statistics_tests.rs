@@ -17,7 +17,8 @@
     
     use std::sync::Arc;
     use tidb_infoschema::*;
-    use tidb_stats_handle::{StatisticsLoadWorkers, StatsHandle};
+    use tidb_stats_handle::StatsHandle;
+    use tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers;
     use crate::driver::CatalogStatisticsLoad;
     use tidb_stats_handle::catalog_statistics::CatalogStatistics;
     
@@ -32,7 +33,7 @@
         failure: Option<String>,
     }
 
-    impl tidb_stats_handle::StatisticsItemLoader for RecordingLoader {
+    impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for RecordingLoader {
         fn load_items(
             &self,
             items: &[tidb_model::StatsLoadItem],
@@ -237,7 +238,7 @@
             };
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             sender
-                .send(tidb_stats_handle::sync_load::SyncLoadOutcome::TransportError(
+                .send(tidb_stats_handle_syncload::sync_load::SyncLoadOutcome::TransportError(
                     "sync load took too long to return".to_owned(),
                 ))
                 .unwrap();
@@ -296,7 +297,7 @@
         let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1000);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender
-            .send(tidb_stats_handle::sync_load::SyncLoadOutcome::Item {
+            .send(tidb_stats_handle_syncload::sync_load::SyncLoadOutcome::Item {
                 item: requested.table_item_id,
                 error: Some("storage read failed after retry".to_owned()),
             })

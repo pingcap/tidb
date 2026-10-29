@@ -16,5 +16,6 @@
 //! node's shared statistics image and its loaders (`stats_watch`), and the
 //! initial, refresh and on-demand loads over real TiKV (`real_tikv_stats`).
 
+pub mod sync_load;
 pub mod stats_watch;
 pub mod real_tikv_stats;

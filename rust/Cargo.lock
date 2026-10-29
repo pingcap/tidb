@@ -6865,6 +6865,7 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-syncload",
+ "tidb-stats-handle-types",
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
@@ -7115,7 +7116,11 @@ dependencies = [
 name = "tidb-stats-handle-syncload"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
+ "serde_json",
  "tidb-ast",
+ "tidb-config",
+ "tidb-config-configtypes",
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
@@ -7125,7 +7130,9 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-asyncload",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
+ "tidb-stats-handle-types",
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-vardef",
@@ -7134,6 +7141,9 @@ dependencies = [
 [[package]]
 name = "tidb-stats-handle-types"
 version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+]
 
 [[package]]
 name = "tidb-stats-handle-usage"

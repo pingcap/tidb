@@ -113,10 +113,10 @@ impl CatalogStatisticsLoad for Catalog {
             let result = receiver.recv_timeout(remaining);
             SYNC_LOAD_TOTAL.inc();
             match result {
-                Ok(tidb_stats_handle::sync_load::SyncLoadOutcome::TransportError(error)) => {
+                Ok(tidb_stats_handle_syncload::sync_load::SyncLoadOutcome::TransportError(error)) => {
                     tracing::warn!(error = %error, "synchronous statistics load request failed");
                 }
-                Ok(tidb_stats_handle::sync_load::SyncLoadOutcome::Item { item, error }) => {
+                Ok(tidb_stats_handle_syncload::sync_load::SyncLoadOutcome::Item { item, error }) => {
                     if let Some(error) = error {
                         tracing::warn!(error = %error, "synchronous statistics item load failed");
                     }

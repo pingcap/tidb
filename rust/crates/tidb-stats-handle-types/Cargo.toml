@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics handle types: Go pkg/statistics/handle/types (Rust rewrite)."
 
 [dependencies]
+tidb-stats = { path = "../tidb-stats" }
 
 [lints]
 workspace = true

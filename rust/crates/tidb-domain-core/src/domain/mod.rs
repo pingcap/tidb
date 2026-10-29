@@ -76,7 +76,7 @@ pub struct ClusterStatisticsItemLoader {
 /// The domain loading resources outlive each connection's schema catalog.
 pub struct ClusterStatisticsLoading {
     pub loader: Arc<ClusterStatisticsItemLoader>,
-    pub workers: Arc<tidb_stats_handle::StatisticsLoadWorkers>,
+    pub workers: Arc<tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers>,
     pub view: Arc<tidb_stats_handle::StatisticsView>,
 }
 
@@ -476,7 +476,7 @@ impl tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnSt
     }
 }
 
-impl tidb_stats_handle::StatisticsItemLoader for ClusterStatisticsItemLoader {
+impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStatisticsItemLoader {
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
@@ -700,7 +700,7 @@ pub struct Domain {
     /// One live planner view over the domain's canonical statistics.
     pub statistics_view: Arc<tidb_stats_handle::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
-    pub stats_load_workers: std::sync::OnceLock<Arc<tidb_stats_handle::StatisticsLoadWorkers>>,
+    pub stats_load_workers: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers>>,
     /// Fully built tables of one schema version, shared by every session
     /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
     /// shared `infoschema`. A session clones its table and swaps in its own

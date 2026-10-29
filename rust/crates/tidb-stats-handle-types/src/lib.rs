@@ -15,6 +15,7 @@
 //! Go `pkg/statistics/handle/types`: the values the statistics handle's
 //! interfaces pass between its packages.
 
+pub mod stats_cache;
 pub mod stats_lock_table;
 
 pub use stats_lock_table::StatsLockTable;

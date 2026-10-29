@@ -17,29 +17,17 @@
 //! synchronous-load workers. It is NOT part of the schema image
 //! (`tidb-infoschema`); a statement reads it through its context.
 
+use tidb_stats_handle_syncload::sync_load::{StatisticsItemLoader, StatisticsLoadWorkers};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod bootstrap;
 pub mod catalog_statistics;
 pub mod source;
-pub mod sync_load;
 pub mod table_size_stats;
 
 pub use source::{StatisticsSource, StatisticsView};
-pub use sync_load::StatisticsLoadWorkers;
 
-/// Storage half of Go's statistics sync/async load worker.
-pub trait StatisticsItemLoader: Send + Sync {
-    /// Loads the requested items and returns refreshed planner tables for
-    /// publication into the in-process cache. Cluster loaders publish directly
-    /// to the domain source read by `StatisticsView` and return no copies.
-    fn load_items(
-        &self,
-        items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String>;
-}
 
 #[derive(Default)]
 pub struct StatsHandle {
@@ -48,7 +36,7 @@ pub struct StatsHandle {
     pub view: std::sync::RwLock<Option<Arc<StatisticsView>>>,
     pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_stats::table_statistics::TableStatistics>>>,
     pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
-    pub sync_load: std::sync::OnceLock<Arc<sync_load::SyncLoadService>>,
+    pub sync_load: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>>,
 }
 
 impl std::fmt::Debug for StatsHandle {
@@ -123,13 +111,17 @@ impl StatsHandle {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
         self.sync_load.get_or_init(|| {
-            sync_load::SyncLoadService::with_pool(service_loader, Arc::downgrade(self), workers)
+            tidb_stats_handle_syncload::sync_load::SyncLoadService::with_pool(
+                service_loader,
+                Arc::downgrade(self) as std::sync::Weak<dyn tidb_stats_handle_types::stats_cache::StatsCache>,
+                workers,
+            )
         });
     }
 
     /// The synchronous-load worker service, once the domain started it.
     #[must_use]
-    pub fn sync_load_service(&self) -> Option<&Arc<sync_load::SyncLoadService>> {
+    pub fn sync_load_service(&self) -> Option<&Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>> {
         self.sync_load.get()
     }
 
@@ -164,4 +156,63 @@ impl StatsHandle {
             .get(&table_id)
             .cloned()
     }
+}
+
+impl tidb_stats_handle_types::stats_cache::StatsCache for StatsHandle {
+    fn update_stats_cache(&self, tables: Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>) {
+        let mut values = self
+            .values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (table_id, statistics) in tables {
+            values.insert(table_id, statistics);
+        }
+    }
+}
+
+#[cfg(test)]
+mod sync_load_tests {
+    use std::sync::Arc;
+
+    use tidb_stats_handle_syncload::sync_load::{StatisticsItemLoader, StatisticsLoadWorkers};
+
+    use super::StatsHandle;
+
+    struct NoLoader;
+
+    impl StatisticsItemLoader for NoLoader {
+        fn load_items(
+            &self,
+            _items: &[tidb_model::StatsLoadItem],
+            _resource_group: &str,
+        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn domain_catalogs_share_statistics_load_workers() {
+        // Go Domain.StartLoadStatsSubWorkers owns one pool for every session
+        // using its StatsHandle; opening catalogs does not start more workers.
+        let loader: Arc<dyn StatisticsItemLoader> = Arc::new(NoLoader);
+        let workers = StatisticsLoadWorkers::new();
+        let weak_workers = Arc::downgrade(&workers);
+        let first = Arc::new(StatsHandle::default());
+        let second = Arc::new(StatsHandle::default());
+        first.set_item_loader(Arc::clone(&loader), Arc::clone(&workers));
+        second.set_item_loader(loader, workers);
+        assert!(Arc::ptr_eq(
+            first.sync_load.get().unwrap().pool(),
+            second.sync_load.get().unwrap().pool(),
+        ));
+        // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
+        // closed session must not retain its workers after its last view.
+        drop(first);
+        drop(second);
+        assert!(
+            weak_workers.upgrade().is_none(),
+            "closed handle retains workers"
+        );
+    }
+
 }

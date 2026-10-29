@@ -20,7 +20,19 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, LazyLock, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::{StatisticsItemLoader, StatsHandle};
+use tidb_stats_handle_types::stats_cache::StatsCache;
+
+/// Storage half of Go's statistics sync/async load worker.
+pub trait StatisticsItemLoader: Send + Sync {
+    /// Loads the requested items and returns refreshed planner tables for
+    /// publication into the in-process cache. Cluster loaders publish directly
+    /// to the domain source read by `StatisticsView` and return no copies.
+    fn load_items(
+        &self,
+        items: &[tidb_model::StatsLoadItem],
+        resource_group: &str,
+    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String>;
+}
 
 const RETRY_COUNT: usize = 1;
 
@@ -57,7 +69,7 @@ struct NeededItemTask {
     to_timeout: Instant,
     result: mpsc::SyncSender<SyncLoadOutcome>,
     loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatsHandle>,
+    cache: Weak<dyn StatsCache>,
 }
 
 type Listener = mpsc::SyncSender<SyncLoadOutcome>;
@@ -139,14 +151,20 @@ impl Drop for StatisticsLoadWorkers {
 pub struct SyncLoadService {
     pool: Arc<StatisticsLoadWorkers>,
     loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatsHandle>,
+    cache: Weak<dyn StatsCache>,
 }
 
 impl SyncLoadService {
+    /// The worker pool this service runs on.
+    #[must_use]
+    pub fn pool(&self) -> &Arc<StatisticsLoadWorkers> {
+        &self.pool
+    }
+
     #[cfg(test)]
     fn with_settings(
         loader: Arc<dyn StatisticsItemLoader>,
-        cache: Weak<StatsHandle>,
+        cache: Weak<dyn StatsCache>,
         concurrency: usize,
         queue_size: usize,
         retry_backoff: Duration,
@@ -160,7 +178,7 @@ impl SyncLoadService {
 
     pub fn with_pool(
         loader: Arc<dyn StatisticsItemLoader>,
-        cache: Weak<StatsHandle>,
+        cache: Weak<dyn StatsCache>,
         pool: Arc<StatisticsLoadWorkers>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -343,13 +361,7 @@ fn handle_task(task: NeededItemTask, retry_backoff: Duration) {
         match loaded {
             Ok(tables) => {
                 if let Some(cache) = task.cache.upgrade() {
-                    let mut values = cache
-                        .values
-                        .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    for (table_id, statistics) in tables {
-                        values.insert(table_id, statistics);
-                    }
+                    cache.update_stats_cache(tables);
                 }
                 error = None;
                 break;
@@ -464,40 +476,23 @@ mod tests {
             to_timeout,
             result,
             loader: Arc::new(TestLoader::default()),
-            cache: Weak::new(),
+            cache: Weak::<TestCache>::new(),
         }
     }
 
-    fn service(loader: Arc<TestLoader>) -> (Arc<StatsHandle>, Arc<SyncLoadService>) {
-        let cache = Arc::new(StatsHandle::default());
-        let service =
-            SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
-        (cache, service)
+    /// A cache that only has to outlive the service under test.
+    #[derive(Default)]
+    struct TestCache;
+
+    impl StatsCache for TestCache {
+        fn update_stats_cache(&self, _tables: Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>) {}
     }
 
-    #[test]
-    fn domain_catalogs_share_statistics_load_workers() {
-        // Go Domain.StartLoadStatsSubWorkers owns one pool for every session
-        // using its StatsHandle; opening catalogs does not start more workers.
-        let loader: Arc<dyn StatisticsItemLoader> = Arc::new(TestLoader::default());
-        let workers = StatisticsLoadWorkers::new();
-        let weak_workers = Arc::downgrade(&workers);
-        let first = Arc::new(StatsHandle::default());
-        let second = Arc::new(StatsHandle::default());
-        first.set_item_loader(Arc::clone(&loader), Arc::clone(&workers));
-        second.set_item_loader(loader, workers);
-        assert!(Arc::ptr_eq(
-            &first.sync_load.get().unwrap().pool,
-            &second.sync_load.get().unwrap().pool,
-        ));
-        // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
-        // closed session must not retain its workers after its last view.
-        drop(first);
-        drop(second);
-        assert!(
-            weak_workers.upgrade().is_none(),
-            "closed handle retains workers"
-        );
+    fn service(loader: Arc<TestLoader>) -> (Arc<TestCache>, Arc<SyncLoadService>) {
+        let cache = Arc::new(TestCache::default());
+        let service =
+            SyncLoadService::with_settings(loader, Arc::downgrade(&cache) as Weak<dyn StatsCache>, 1, 8, Duration::ZERO);
+        (cache, service)
     }
 
     #[test]
@@ -519,7 +514,7 @@ mod tests {
                 to_timeout: Instant::now() + Duration::from_secs(1),
                 result,
                 loader,
-                cache: Weak::new(),
+                cache: Weak::<TestCache>::new(),
             })
             .expect("queue task");
         started_rx
@@ -551,9 +546,9 @@ mod tests {
             release: Mutex::new(release_rx),
             finished: Arc::new(AtomicBool::new(false)),
         });
-        let cache = Arc::new(StatsHandle::default());
+        let cache = Arc::new(TestCache::default());
         let service =
-            SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
+            SyncLoadService::with_settings(loader, Arc::downgrade(&cache) as Weak<dyn StatsCache>, 1, 8, Duration::ZERO);
         let first = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
         started_rx
             .recv_timeout(Duration::from_secs(1))
@@ -615,9 +610,9 @@ mod tests {
     #[test]
     fn full_needed_queue_times_out_admission() {
         let loader = Arc::new(TestLoader::default());
-        let cache = Arc::new(StatsHandle::default());
+        let cache = Arc::new(TestCache::default());
         let service =
-            SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 0, 1, Duration::ZERO);
+            SyncLoadService::with_settings(loader, Arc::downgrade(&cache) as Weak<dyn StatsCache>, 0, 1, Duration::ZERO);
         service
             .pool
             .needed_items

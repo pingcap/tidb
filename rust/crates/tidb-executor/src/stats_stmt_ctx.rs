@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use tidb_sessionctx::{StmtContext, StmtContextData};
 use tidb_stats::table_statistics::TableStatistics;
-use tidb_stats_handle::sync_load::SyncLoadOutcome;
+use tidb_stats_handle_syncload::sync_load::SyncLoadOutcome;
 use tidb_stats_handle::StatsHandle;
 
 /// Go `StmtCtx.StatsLoad`: the synchronous statistics loads one statement
