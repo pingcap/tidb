@@ -572,7 +572,7 @@ fn push_zap_duration_field(fields: &mut Vec<Field>, key: &str, duration: Duratio
 /// `strconv.FormatFloat(d.Seconds(), 'f', -1, 64)`.
 #[must_use]
 pub fn format_seconds(d: Duration) -> String {
-    tidb_datatype::go_strconv::format_float(d.as_secs_f64(), b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(d.as_secs_f64(), b'f', -1, 64)
 }
 
 /// Renders a duration's seconds the way Go spells
@@ -990,7 +990,7 @@ impl TaskTimeStats {
         addr_str: &str,
     ) -> String {
         let seconds =
-            |d: Duration| tidb_datatype::go_strconv::format_float(d.as_secs_f64(), b'g', -1, 64);
+            |d: Duration| tidb_goruntime::go_strconv::format_float(d.as_secs_f64(), b'g', -1, 64);
         if num_cop_tasks == 1 {
             return format!(
                 "{avg_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",

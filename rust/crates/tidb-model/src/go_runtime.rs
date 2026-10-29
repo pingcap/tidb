@@ -21,10 +21,10 @@
 
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub(crate) use tidb_datatype::go_runtime::{
+pub(crate) use tidb_goruntime::go_runtime::{
     go_64_next_slice_capacity_for_element, go_64_slice_decode_capacity,
 };
-pub use tidb_datatype::go_runtime::{GoSharedSlice, GoSliceElementLayout};
+pub use tidb_goruntime::go_runtime::{GoSharedSlice, GoSliceElementLayout};
 
 fn go_64_next_slice_capacity(new_len: usize, old_capacity: usize) -> usize {
     go_64_next_slice_capacity_for_element(

@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_planner::fix_control::{
+use tidb_fixcontrol::{
     parse_to_map, OptimizerFixControl, ParseError, FIX_33031, FIX_43817, FIX_44262,
     FIX_44389, FIX_44823, FIX_44830, FIX_44855, FIX_45132, FIX_45798, FIX_45822,
     FIX_46177, FIX_47400, FIX_49736, FIX_52592, FIX_52869, FIX_54337, FIX_56318,

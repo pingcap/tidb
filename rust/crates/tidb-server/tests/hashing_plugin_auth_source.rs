@@ -37,7 +37,7 @@ use tidb_server::{
     ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory,
     SessionContext, SqlQueryError,
 };
-use tidb_session::privilege::{encode_password_for_plugin, PluginCredential, PrivilegeRegistry};
+use tidb_privilege::{encode_password_for_plugin, PluginCredential, PrivilegeRegistry};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -278,7 +278,7 @@ fn an_arbitrary_byte_password_authenticates_without_utf8_narrowing() {
 /// the digest choice distinguishes them.
 #[test]
 fn the_two_hashing_plugins_do_not_accept_each_other_s_hashes() {
-    use tidb_session::privilege::check_hashing_password;
+    use tidb_privilege::check_hashing_password;
     let sha2 = encode_password_for_plugin(CACHING_SHA2, &PluginCredential::By("shared")).unwrap();
     let sm3 = encode_password_for_plugin(TIDB_SM3, &PluginCredential::By("shared")).unwrap();
     assert!(check_hashing_password(&sha2, b"shared", CACHING_SHA2));

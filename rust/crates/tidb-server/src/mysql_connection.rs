@@ -1572,7 +1572,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 response_sequence,
                 ER_MUST_CHANGE_PASSWORD_LOGIN,
                 *b"HY000",
-                tidb_session::privilege::PasswordExpiredLogin.message(),
+                tidb_privilege::PasswordExpiredLogin.message(),
                 protocol_41,
                 connection_id,
                 *commands,
@@ -3450,7 +3450,7 @@ mod connection_alive_tests {
 #[cfg(test)]
 mod check_auth_plugin_tests {
     use tidb_session::domain::peer_address::PeerAddress;
-    use tidb_session::privilege::{
+    use tidb_privilege::{
         encode_password_for_plugin, PluginCredential, PrivilegeRegistry,
     };
 

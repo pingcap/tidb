@@ -2357,7 +2357,7 @@ impl SysVarDef {
         }
         // Go `strconv.ParseFloat`: its own syntax (hex floats included), and
         // an overflowing literal is `ErrRange`, a type error -- not a clamp.
-        let parsed = tidb_datatype::go_strconv::parse_float64(value)
+        let parsed = tidb_goruntime::go_strconv::parse_float64(value)
             .map_err(|_| ValidationError::WrongType)?;
         if parsed < self.min_value as f64 {
             return Ok(Validated {

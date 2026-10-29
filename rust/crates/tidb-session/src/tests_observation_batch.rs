@@ -920,7 +920,7 @@ fn kv_exec_counter_batch_admission_and_request_enable_windows() {
 /// summarized by their secure text.
 #[test]
 fn sensitive_statements_reach_the_summary_redacted() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = tests_support::bootstrap_session(&registry);
     session.set_user("root@%".into(), "root@localhost".into());
     session
@@ -958,7 +958,7 @@ fn sensitive_statements_reach_the_summary_redacted() {
 /// build time as in Go, so even a call over no rows refuses.
 #[test]
 fn tidb_decode_sql_digests_reads_the_statement_summaries() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = tests_support::authenticated_session(&registry, "root", "%");
     session
         .run("create table test_func_decode_sql_digests(id int primary key, v int)")

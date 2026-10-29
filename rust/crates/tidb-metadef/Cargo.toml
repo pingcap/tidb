@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB meta/metadef: system database/table identifiers and DDL (Rust rewrite)."
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-model = { path = "../tidb-model" }

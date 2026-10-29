@@ -574,7 +574,7 @@ mod tests {
         .expect("base config");
         config.schema_lease = Duration::from_secs(120);
         let users = ConfiguredUserStore::from_accounts(
-            crate::privilege::PrivilegeRegistry::bootstrapped_from([]),
+            tidb_privilege::PrivilegeRegistry::bootstrapped_from([]),
         );
         let reads = Arc::new(AtomicUsize::new(0));
         let reload_reads = Arc::clone(&reads);

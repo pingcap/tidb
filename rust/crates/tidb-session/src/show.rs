@@ -20,7 +20,7 @@
 //! `tidb_executor`.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use crate::*;
 use tidb_executor::show::exec::ShowExec;
 
@@ -136,7 +136,7 @@ impl Session {
                 "SHOW VIEW",
             )
         } else {
-            let mut mask = crate::privilege::any_priv_mask();
+            let mut mask = tidb_privilege::any_priv_mask();
             if !self.is_local_temporary_table(database, table_name) {
                 mask &= !tidb_mysql::CreateTMPTablePriv.bit();
             }
@@ -182,7 +182,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
         self.current_tso().value()
     }
 
-    fn privilege_context(&self) -> Option<(&privilege::PrivilegeRegistry, &str, &str)> {
+    fn privilege_context(&self) -> Option<(&tidb_privilege::PrivilegeRegistry, &str, &str)> {
         Session::privilege_context(self)
     }
 

@@ -305,11 +305,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 fix_44389: self
                     .session_vars()
                     .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_44389, false),
+                    .get_bool_with_default(tidb_fixcontrol::FIX_44389, false),
                 fix_54337: self
                     .session_vars()
                     .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_54337, false),
+                    .get_bool_with_default(tidb_fixcontrol::FIX_54337, false),
             };
         env.session.correlation_options =
             tidb_planner::cardinality::cross_estimation::CorrelationOptions {

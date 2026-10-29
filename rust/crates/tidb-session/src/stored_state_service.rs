@@ -32,7 +32,7 @@ use crate::*;
 pub trait AccountService {
     /// The stored accounts as of now, which the statement validates against
     /// and applies its meaning to before its rows are written.
-    fn load_accounts(&self) -> Result<crate::privilege::PrivilegeRegistry, DriverError>;
+    fn load_accounts(&self) -> Result<tidb_privilege::PrivilegeRegistry, DriverError>;
     /// Go `GetSysSession` from the domain's pool: the session the statement's
     /// `BEGIN PESSIMISTIC` .. `COMMIT` and row writes run on.
     fn system_session(&self) -> Result<Box<dyn crate::user_table::AccountSqlSession>, DriverError>;

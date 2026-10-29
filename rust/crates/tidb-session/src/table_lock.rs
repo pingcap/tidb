@@ -32,7 +32,7 @@ use tidb_executor::{Catalog, DriverError, KvTable, TableEntry};
 use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_util::stringutil::go_to_lower;
 
-use crate::privilege::PrivilegeType;
+use tidb_privilege::PrivilegeType;
 use tidb_executor::table_privilege::TablePrivilegeRequest;
 use crate::Session;
 

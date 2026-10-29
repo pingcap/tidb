@@ -27,8 +27,8 @@ use crate::*;
 /// leaks no table name either. All three facts measured against Go:
 /// with only this grant, `USE test` succeeds, `SELECT * FROM t` is still
 /// `1142 SELECT command denied`, and `SHOW TABLES` is empty.
-fn scoped() -> (privilege::PrivilegeRegistry, Session, Session) {
-    let privs = privilege::PrivilegeRegistry::default();
+fn scoped() -> (tidb_privilege::PrivilegeRegistry, Session, Session) {
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'bob'@'%'").unwrap();
     boot.run("GRANT CREATE TEMPORARY TABLES ON test.* TO 'bob'@'%'")
@@ -436,7 +436,7 @@ fn database_ddl_demands_create_and_drop_before_catalog_mutation() {
 /// working.
 #[test]
 fn a_session_with_no_identity_is_unrestricted() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE TABLE t (a INT)").unwrap();
     boot.run("INSERT INTO t VALUES (1)").unwrap();

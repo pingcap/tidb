@@ -17,7 +17,8 @@
 
 #[test]
 fn admission_policy_batch_tls_json_matches_go_order_omission_and_escaping() {
-    use crate::{privilege::PrivilegeRegistry, Session};
+    use crate::Session;
+    use tidb_privilege::PrivilegeRegistry;
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("../../tidb-privilege/src/testdata/tls-policy-json-oracle.json")).unwrap();
     for (index, case) in cases.as_array().unwrap().iter().enumerate() {

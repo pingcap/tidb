@@ -17,7 +17,8 @@ use prost::Message;
 use std::{pin::Pin, sync::Arc};
 use tidb_datatype::SessionTimeZone;
 use tidb_proto::{coprocessor, tikvpb, tipb};
-use tidb_session::{privilege::PrivilegeRegistry, Session};
+use tidb_session::{Session};
+use tidb_privilege::PrivilegeRegistry;
 use tidb_executor::process::ProcessRegistry;
 
 type ReplyStream<T> = Pin<Box<dyn futures::Stream<Item = Result<T, tonic::Status>> + Send>>;
@@ -939,7 +940,7 @@ mod tests {
 
     // Go infoschema_reader.go uses SQLDigestTextRetriever for all three readers.
     fn digest_reader_persistent_case(table: &str, history: bool, lazy: bool) {
-        use tidb_executor::deadlock_history::{
+        use tidb_deadlockhistory::{
             DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
         };
         use tidb_stmtsummary::v2::stmtsummary::{
@@ -1515,7 +1516,7 @@ mod tests {
         }
         // Text-only receiving scans retain global lookup without metadata.
         {
-            use tidb_executor::deadlock_history::{
+            use tidb_deadlockhistory::{
                 DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
             };
             struct ClearHistory;
@@ -1742,7 +1743,7 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_live_registry_catalog_and_collector() {
-        use tidb_executor::deadlock_history::{
+        use tidb_deadlockhistory::{
             DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
         };
         let processes = ProcessRegistry::default();

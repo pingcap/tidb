@@ -1417,7 +1417,7 @@ impl ScalarFunction {
                 tidb_datatype::FieldType::decimal,
             );
             let prec = i32::try_from(decimal).unwrap_or(-1);
-            amount = Datum::new_string(tidb_datatype::go_strconv::format_float(
+            amount = Datum::new_string(tidb_goruntime::go_strconv::format_float(
                 *value, b'f', prec, 64,
             ));
         }

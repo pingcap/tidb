@@ -78,7 +78,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
 use tidb_executor::process::{ProcessKillTarget, ProcessRegistry};
-use tidb_session::{privilege::PrivilegeRegistry, Session};
+use tidb_session::{Session};
+use tidb_privilege::PrivilegeRegistry;
 use tidb_util::sqlkiller::KillSignal;
 
 /// The connection every script starts on, and the name `connection default`

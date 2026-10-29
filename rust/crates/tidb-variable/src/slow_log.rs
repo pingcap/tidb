@@ -421,12 +421,12 @@ fn write_slow_log_item(buf: &mut String, key: &str, value: &str) {
 
 /// Go `strconv.FormatFloat(v, 'f', -1, 64)`.
 fn format_float(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 /// Go `fmt`'s `%v` of a float64.
 fn format_float_v(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
 }
 
 const ZERO_STR: &str = "0";

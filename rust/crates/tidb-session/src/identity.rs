@@ -23,12 +23,12 @@
 //! "unrestricted" rather than "denied".
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use std::sync::Arc;
 
 use tidb_ast::{SessionStmt, Stmt};
 
-use crate::{privilege, process, DriverError, Session};
+use crate::{process, DriverError, Session};
 use tidb_util::stringutil::go_to_lower;
 
 /// Distinct prepared texts whose privilege requests one session keeps.
@@ -39,7 +39,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        privilege: privilege::PrivilegeType,
+        privilege: tidb_privilege::PrivilegeType,
     ) -> Result<(), DriverError> {
         let granted =
             match tidb_privilege::verification::mem_db_verdict_mask(database, privilege.bit()) {
@@ -89,7 +89,7 @@ impl Session {
     /// manager as "miss privilege checker" and refuse; this tier's in-process
     /// sessions legitimately have none, so they pass instead -- the rule
     /// every check here already followed, now stated once.
-    pub(crate) fn privilege_context(&self) -> Option<(&privilege::PrivilegeRegistry, &str, &str)> {
+    pub(crate) fn privilege_context(&self) -> Option<(&tidb_privilege::PrivilegeRegistry, &str, &str)> {
         if self.privilege_bypassed {
             return None;
         }
@@ -112,7 +112,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: privilege::PrivilegeType,
+        global_priv: tidb_privilege::PrivilegeType,
     ) -> bool {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
@@ -187,7 +187,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: privilege::PrivilegeType,
+        global_priv: tidb_privilege::PrivilegeType,
     ) -> bool {
         self.has_scoped_privilege(database, table, global_priv)
     }
@@ -303,7 +303,7 @@ impl Session {
 
     fn sem_table_verdict(
         &self,
-        registry: &privilege::PrivilegeRegistry,
+        registry: &tidb_privilege::PrivilegeRegistry,
         user: &str,
         host: &str,
         database: &str,
@@ -1076,11 +1076,11 @@ impl Session {
     /// Go `privilege.GetPrivilegeManager(sctx)`: the privilege cache this
     /// session checks against -- its domain's, for a session on a store.
     #[must_use]
-    pub fn privilege_manager(&self) -> Option<privilege::PrivilegeRegistry> {
+    pub fn privilege_manager(&self) -> Option<tidb_privilege::PrivilegeRegistry> {
         self.privileges.clone()
     }
 
-    pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
+    pub fn attach_privileges(&mut self, registry: tidb_privilege::PrivilegeRegistry) {
         // A session on the store reads its domain's privilege cache, as a Go
         // session does; a private registry would hide every account
         // statement the node persists from this session.
@@ -1171,8 +1171,8 @@ impl Session {
     /// table back without a `SET ROLE` silently reverting to the defaults.
     pub fn swap_privileges(
         &mut self,
-        registry: privilege::PrivilegeRegistry,
-    ) -> Option<privilege::PrivilegeRegistry> {
+        registry: tidb_privilege::PrivilegeRegistry,
+    ) -> Option<tidb_privilege::PrivilegeRegistry> {
         self.privileges.replace(registry)
     }
 
@@ -1207,7 +1207,7 @@ impl Session {
 
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
     /// `CURRENT_ROLE()` builtin.
-    pub(crate) fn active_roles(&self) -> &[privilege::Account] {
+    pub(crate) fn active_roles(&self) -> &[tidb_privilege::Account] {
         self.vars.active_roles.as_slice()
     }
 
@@ -1350,13 +1350,13 @@ fn view_no_explain() -> DriverError {
 /// identity: the SEM table verdict, the virtual schemas, then the grants
 /// (own or through `roles`).
 fn scoped_privilege(
-    registry: &privilege::PrivilegeRegistry,
+    registry: &tidb_privilege::PrivilegeRegistry,
     user: &str,
     host: &str,
-    roles: &[privilege::Account],
+    roles: &[tidb_privilege::Account],
     database: &str,
     table: &str,
-    global_priv: privilege::PrivilegeType,
+    global_priv: tidb_privilege::PrivilegeType,
 ) -> bool {
     if tidb_util::sem_compat::is_enabled() {
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(

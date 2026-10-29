@@ -884,7 +884,7 @@ impl Session {
             let name = name.to_ascii_lowercase();
             let is_fix_control = name == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL;
             if is_fix_control {
-                match tidb_planner::fix_control::OptimizerFixControl::parse(&value) {
+                match tidb_fixcontrol::OptimizerFixControl::parse(&value) {
                     Ok((_parsed, warnings)) => {
                         for warning in warnings {
                             self.append_warning(
@@ -1100,15 +1100,15 @@ pub(crate) fn parse_statement_hints_without_catalog(
 /// outside this helper and belong to `pkg/bindinfo`.
 pub(crate) fn effective_fix_52592(
     stmt: &Stmt,
-    persistent: &tidb_planner::fix_control::OptimizerFixControl,
+    persistent: &tidb_fixcontrol::OptimizerFixControl,
 ) -> bool {
-    let persistent = persistent.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
+    let persistent = persistent.get_bool_with_default(tidb_fixcontrol::FIX_52592, false);
     parse_statement_hints_without_catalog(stmt, "")
         .set_vars
         .get(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
-        .and_then(|value| tidb_planner::fix_control::OptimizerFixControl::parse(value).ok())
+        .and_then(|value| tidb_fixcontrol::OptimizerFixControl::parse(value).ok())
         .map_or(persistent, |(overlay, _warnings)| {
-            overlay.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            overlay.get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         })
 }
 

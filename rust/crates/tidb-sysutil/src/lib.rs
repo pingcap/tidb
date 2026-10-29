@@ -168,5 +168,5 @@ fn item(tp: &str, name: &str, pairs: Vec<(&str, String)>) -> pb::ServerInfoItem 
 
 /// Go `fmt.Sprintf("%.2f", v)`.
 fn fmt2(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'f', 2, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'f', 2, 64)
 }

@@ -41,10 +41,8 @@
 use tidb_chunk::column::{
     get_fixed_len, ESTIMATED_ELEM_LEN, MY_DECIMAL_STRUCT_SIZE, SIZE_TIME, VAR_ELEM_LEN,
 };
-use tidb_datatype::{
-    go_runtime::{go_64_next_slice_capacity_for_element, GoSliceElementLayout},
-    Datum, FieldType,
-};
+use tidb_datatype::{Datum, FieldType};
+use tidb_goruntime::go_runtime::{go_64_next_slice_capacity_for_element, GoSliceElementLayout};
 
 /// Go `EmptyHistogramSize = unsafe.Sizeof(Histogram{})` on 64-bit: the `Tp`
 /// and `Bounds` pointers (16), the `Buckets` and `Scalars` slice headers

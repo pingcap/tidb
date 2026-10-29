@@ -1023,7 +1023,7 @@ pub fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Fiel
 
 /// Go `strconv.FormatFloat(v, 'f', -1, 64)`.
 fn format_go_float(v: f64) -> String {
-    tidb_datatype::go_strconv::format_float(v, b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(v, b'f', -1, 64)
 }
 
 #[cfg(test)]

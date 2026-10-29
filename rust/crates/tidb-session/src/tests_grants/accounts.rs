@@ -14,12 +14,12 @@ use crate::*;
 #[test]
 fn account_authentication_strings_follow_go_encode_password() {
     assert_eq!(
-        privilege::encode_password("bobpw"),
+        tidb_privilege::encode_password("bobpw"),
         "*6793F32F5FAF66A40EFA6B5E9887765E983829BC"
     );
-    assert_eq!(privilege::encode_password(""), "");
+    assert_eq!(tidb_privilege::encode_password(""), "");
 
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
 
@@ -73,7 +73,7 @@ fn account_authentication_strings_follow_go_encode_password() {
 /// malformed `AS` hash is Go's `ErrPasswordFormat` (1827).
 #[test]
 fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
 
@@ -148,7 +148,7 @@ fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
 /// grant row at all, and reports Go's two distinct reason clauses.
 #[test]
 fn rename_user_moves_the_whole_account_row() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.run("CREATE TABLE test.t (a int)").unwrap();
     session
@@ -197,7 +197,7 @@ fn rename_user_moves_the_whole_account_row() {
 /// succeeded (`TestRenameUser`'s swap through a temporary name).
 #[test]
 fn rename_user_is_one_transaction() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.run("CREATE USER ru3, ru4, ru6@localhost").unwrap();
 
@@ -226,7 +226,7 @@ fn rename_user_is_one_transaction() {
 /// Go `RevokeExec.Next` names the session's own account for `CURRENT_USER`.
 #[test]
 fn revoke_from_current_user_names_the_session_account() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.run("CREATE USER u4").unwrap();
     session
@@ -613,7 +613,7 @@ fn alter_user_is_atomic_and_refuses_anonymous_expiry() {
 /// render as Go renders them (oracle-captured).
 #[test]
 fn show_create_user_renders_the_mysql_user_row() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password'")
         .unwrap();
@@ -657,7 +657,7 @@ fn show_create_user_renders_the_mysql_user_row() {
 /// Captured from Go TiDB.
 #[test]
 fn account_statements_write_the_privilege_tables_like_go() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut session = bootstrap_session(&privs);
     session.set_user("root@%".into(), "root@%".into());
     let rows = |session: &mut Session, sql: &str| row_text(session.run(sql));

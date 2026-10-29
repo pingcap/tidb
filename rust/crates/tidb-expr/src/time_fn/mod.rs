@@ -1048,7 +1048,7 @@ fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         cols.handle_truncate_error(
             tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
                 "Truncated incorrect time value: '{}'",
-                tidb_datatype::go_strconv::format_float(magnitude, b'f', -1, 64)
+                tidb_goruntime::go_strconv::format_float(magnitude, b'f', -1, 64)
             )),
         )?;
     }

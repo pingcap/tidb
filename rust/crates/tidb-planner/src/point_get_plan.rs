@@ -240,7 +240,7 @@ fn build_fast_point_physical_plan(
     if ctx.stable_result_mode()
         || ctx
             .optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_52592, false)
+            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         || select.into_outfile.is_some()
         // Go `tryPointGetPlan` accepts a locking read and `getLockWaitTime`
         // sets `Lock` only when `PessimisticLockEligible` (autocommit off, or

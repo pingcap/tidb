@@ -3,7 +3,7 @@
 //! that runs -- the node's immediately, the connection's at its next
 //! statement, and never inside an explicit transaction.
 
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use super::super::*;
 use super::node_fixture::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;

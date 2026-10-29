@@ -16,7 +16,7 @@
 //! provisioning plus the login path that verifies against it.
 //!
 //! The account rows themselves live in the shared
-//! [`PrivilegeRegistry`][crate::privilege::PrivilegeRegistry] -- the
+//! [`PrivilegeRegistry`][tidb_privilege::PrivilegeRegistry] -- the
 //! same one `CREATE USER`/`GRANT`/`DROP USER` write and `SHOW GRANTS` reads,
 //! exactly as Go has ONE `mysql.user` holding both the
 //! `authentication_string` and the privilege columns. This file's strict TSV
@@ -33,7 +33,7 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::privilege::{check_password_for_plugin, AccountLockout, PrivilegeRegistry};
+use tidb_privilege::{check_password_for_plugin, AccountLockout, PrivilegeRegistry};
 use crate::GlobalSysvars;
 use tidb_mysql::consts::{
     AuthCachingSha2Password, AuthLDAPSASL, AuthLDAPSimple, AuthNativePassword, AuthSocket,
@@ -70,7 +70,7 @@ pub struct AuthenticatedIdentity {
 pub struct TransportAdmission {
     secure_for_account_policy: bool,
     verified_client_certificate: bool,
-    tls_peer: Option<crate::privilege::TlsPeerIdentity>,
+    tls_peer: Option<tidb_privilege::TlsPeerIdentity>,
 }
 
 impl TransportAdmission {
@@ -80,7 +80,7 @@ impl TransportAdmission {
     }
     pub fn with_tls_peer(
         mut self,
-        peer: Option<crate::privilege::TlsPeerIdentity>,
+        peer: Option<tidb_privilege::TlsPeerIdentity>,
     ) -> Self {
         self.tls_peer = if self.verified_client_certificate {
             peer
@@ -215,7 +215,7 @@ pub trait LoginPolicyStorage: Send + Sync {
         &self,
         user: &str,
         host: &str,
-        action: crate::privilege::LoginPolicyAction,
+        action: tidb_privilege::LoginPolicyAction,
     ) -> Result<(), AuthenticationFailure>;
 }
 
@@ -231,9 +231,9 @@ impl ConfiguredUserStore {
         &self,
         user: &str,
         host: &str,
-        action: crate::privilege::LoginPolicyAction,
+        action: tidb_privilege::LoginPolicyAction,
     ) -> Result<(), AuthenticationFailure> {
-        use crate::privilege::LoginPolicyAction;
+        use tidb_privilege::LoginPolicyAction;
         let Some(mut cached) = self
             .accounts
             .password_locking(user, host)
@@ -463,7 +463,7 @@ impl ConfiguredUserStore {
             .accounts
             .login_credentials(identity.username(), identity.host())?;
         Some(
-            crate::privilege::auth_plugin_for_connection(&plugin, &authentication_string)
+            tidb_privilege::auth_plugin_for_connection(&plugin, &authentication_string)
                 .to_owned(),
         )
     }
@@ -627,7 +627,7 @@ impl ConfiguredUserStore {
         // even when the password that arrived was correct -- and what
         // auto-unlocks an account whose `PASSWORD_LOCK_TIME` has run out, so
         // the very next correct password works.
-        self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Verify)?;
+        self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Verify)?;
         // Go `ConnectionVerification` from here. `checkSSL` runs on the
         // matched account's `mysql.global_priv` row before the password is
         // compared, and reports the generic access-denied on failure.
@@ -646,7 +646,7 @@ impl ConfiguredUserStore {
             .expect("a matched identity has its account row");
         // A stored string that is not its plugin's hash shape is refused
         // before any password.
-        if !crate::privilege::is_valid_hash(&plugin, &primary) {
+        if !tidb_privilege::is_valid_hash(&plugin, &primary) {
             return Err(AuthenticationFailure::AccessDenied);
         }
         if session_token {
@@ -705,7 +705,7 @@ impl ConfiguredUserStore {
             if !verified {
                 // Go's `FailedDueToWrongPassword`: the only failure that
                 // counts toward `FAILED_LOGIN_ATTEMPTS`.
-                self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Failure)?;
+                self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Failure)?;
                 return Err(AuthenticationFailure::AccessDenied);
             }
         }
@@ -733,7 +733,7 @@ impl ConfiguredUserStore {
                 .accounts
                 .check_password_expired(user, host, default_password_lifetime)
                 .map_err(|_| AuthenticationFailure::PasswordExpired)?;
-        self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Success)?;
+        self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Success)?;
         Ok(AuthenticatedIdentity {
             identity,
             in_sandbox_mode,
@@ -830,11 +830,11 @@ impl std::error::Error for ConfiguredUserStoreError {
 
 #[cfg(test)]
 mod account_tls_batch_admission_controls {
-    use crate::privilege::PrivilegeRegistry;
+    use tidb_privilege::PrivilegeRegistry;
     use crate::domain::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
     use crate::domain::secure_transport::TransportKind;
     use tidb_privilege::cluster_privilege_load::LoadedGlobalPriv;
-    use crate::privilege::SslType;
+    use tidb_privilege::SslType;
 
     #[test]
     fn account_tls_batch_authentication_uses_go_canonical_account_host() {

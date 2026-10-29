@@ -289,7 +289,7 @@ fn a_scan_has_at_most_one_retriever() {
 /// and not by a statement whose plan never reads it.
 #[test]
 fn a_scan_that_is_never_read_checks_no_privilege() {
-    let registry = crate::privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut admin = bootstrap_session(&registry);
     admin.run("create user 'reader'@'%'").unwrap();
     let mut reader = authenticated_session(&registry, "reader", "%");

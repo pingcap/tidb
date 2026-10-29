@@ -518,7 +518,7 @@ fn a_role_confers_process_only_while_it_is_active() {
 /// `DROP ROLE` were refused for an account that legitimately held them.
 #[test]
 fn create_role_and_drop_role_are_privileges_of_their_own() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     for sql in [
         "CREATE USER 'rc'@'%'",

@@ -28,7 +28,7 @@
 //!
 //! Auth store and privilege registry are ONE table (this used to be a
 //! documented ordering constraint, and no longer is): `ConfiguredUserStore`
-//! now holds the shared `tidb_session::privilege::PrivilegeRegistry` rather
+//! now holds the shared `tidb_privilege::PrivilegeRegistry` rather
 //! than an immutable file snapshot, so its strict TSV is only the operator's
 //! INITIAL provisioning and `CREATE USER ... IDENTIFIED BY` / `DROP USER`
 //! write the very rows a login is verified against -- exactly as Go has one

@@ -14,7 +14,7 @@ use crate::*;
 /// every privilege on both, so a `SET GLOBAL` is not itself blocked by the
 /// privilege gate under test elsewhere in this file.
 fn two_sessions_sharing_globals() -> (Session, Session, tidb_domain::global_sysvars::GlobalSysvars) {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let first = authenticated_session(&registry, "root", "%");
     let second = session_as(&registry, first.shared_catalog(), "root", "%");
     let globals = node_globals(&first);
@@ -679,7 +679,7 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
 #[test]
 fn show_global_and_session_variables_diverge() {
     let mut session = Session::new();
-    session.attach_privileges(privilege::PrivilegeRegistry::default());
+    session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
 
     session.run("SET autocommit = OFF").unwrap();
     assert_eq!(
@@ -735,7 +735,7 @@ fn reading_at_global_scope_on_a_session_only_variable_is_rejected() {
 /// with neither is refused; granting `SYSTEM_VARIABLES_ADMIN` admits it.
 #[test]
 fn set_global_requires_super_or_system_variables_admin() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut root = authenticated_session(&registry, "root", "%");
     let catalog = root.shared_catalog();
     root.run("CREATE USER 'plain'@'%'").unwrap();

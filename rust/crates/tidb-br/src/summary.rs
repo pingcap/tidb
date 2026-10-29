@@ -385,7 +385,7 @@ pub fn human_size(size: f64) -> String {
 
 /// Go's `fmt` verb `%.4g`, i.e. `strconv.FormatFloat(v, 'g', 4, 64)`.
 fn format_g4(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'g', 4, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'g', 4, 64)
 }
 
 /// The process-wide collector, Go's package-level `collector` var.

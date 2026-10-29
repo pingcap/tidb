@@ -43,7 +43,7 @@ mod explain_format;
 mod field_name;
 mod field_type;
 mod fsp;
-pub use tidb_goruntime::{go_runtime, go_strconv};
+use tidb_goruntime::go_strconv;
 mod json_path;
 pub mod json_scanner;
 mod mydecimal;
@@ -98,7 +98,6 @@ pub use binary_literal::{
     BinaryLiteralWidth, BitLiteral, HexLiteral, InvalidBinaryLiteralWidth,
 };
 pub(crate) use tidb_charset::{charset, encoding_base};
-pub use tidb_charset::{ascii_encoding, utf8_encoding};
 pub use tidb_charset::{
     add_charset, add_collation, add_supported_collation, charset_known, get_charset_info,
     get_charset_info_by_id, get_collation_by_id, get_collation_by_name,

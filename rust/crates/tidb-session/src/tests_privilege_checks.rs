@@ -16,10 +16,10 @@
 //! them on this branch's Go.
 
 use crate::tests_support::{authenticated_session, row_text, session_as};
-use crate::{privilege, Session};
+use crate::Session;
 
-fn setup() -> (privilege::PrivilegeRegistry, Session) {
-    let registry = privilege::PrivilegeRegistry::default();
+fn setup() -> (tidb_privilege::PrivilegeRegistry, Session) {
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let root = authenticated_session(&registry, "root", "%");
     (registry, root)
 }

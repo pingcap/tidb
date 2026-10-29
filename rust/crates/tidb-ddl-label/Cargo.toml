@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/ddl/label (placement label rules) for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

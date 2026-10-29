@@ -517,7 +517,7 @@ fn sequence_metadata_tracks_alter_drop_and_joined_catalog_queries() {
 
 #[test]
 fn sequence_metadata_uses_any_table_privilege_and_active_roles() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE DATABASE meta_db").unwrap();
     bootstrap.run("CREATE SEQUENCE meta_db.allowed").unwrap();
@@ -544,7 +544,7 @@ fn sequence_metadata_uses_any_table_privilege_and_active_roles() {
 /// a column DEFAULT NEXTVAL is no exception (1142).
 #[test]
 fn sequence_functions_check_the_sequence_privilege() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut root = authenticated_session(&registry, "root", "%");
     let catalog = root.shared_catalog();
     root.run("create sequence seq").unwrap();

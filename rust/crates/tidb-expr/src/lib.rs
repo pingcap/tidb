@@ -264,7 +264,7 @@
 //! scientific-notation literal (`Expr::Float`, e.g. `1.5e2`) — uses
 //! NATIVE `f64` arithmetic throughout: unlike `Decimal`, no custom
 //! digit-string math is needed. Its text is Go's `strconv.FormatFloat`
-//! (`tidb_datatype::go_strconv`), whose shortest digits differ from Rust's
+//! (`tidb_goruntime::go_strconv`), whose shortest digits differ from Rust's
 //! own `Display` on an exact tie between two candidates. An
 //! `Int` or `Decimal` operand promotes to `f64` — `Float` DOMINATES
 //! `Decimal` in MySQL's promotion hierarchy, the OPPOSITE direction from

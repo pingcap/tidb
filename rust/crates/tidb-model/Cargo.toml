@@ -13,6 +13,7 @@ name = "all"
 path = "tests/all.rs"
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }

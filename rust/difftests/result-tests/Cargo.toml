@@ -19,6 +19,7 @@ tidb-parser = { path = "../../crates/tidb-parser" }
 tidb-expr = { path = "../../crates/tidb-expr" }
 tidb-datatype = { path = "../../crates/tidb-datatype" }
 tidb-executor = { path = "../../crates/tidb-executor" }
+tidb-privilege = { path = "../../crates/tidb-privilege" }
 tidb-session = { path = "../../crates/tidb-session" }
 tidb-expensivequery = { path = "../../crates/tidb-expensivequery" }
 tidb-util = { path = "../../crates/tidb-util" }

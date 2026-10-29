@@ -58,7 +58,7 @@ pub(crate) fn parse_int(s: &str) -> Result<i64, String> {
 
 /// Go `strconv.ParseFloat(s, 64)`.
 pub(crate) fn parse_float(s: &str) -> Result<f64, String> {
-    tidb_datatype::go_strconv::parse_float64(s)
+    tidb_goruntime::go_strconv::parse_float64(s)
         .map_err(|_| format!("strconv.ParseFloat: parsing {s:?}: invalid syntax"))
 }
 

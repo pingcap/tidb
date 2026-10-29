@@ -19,7 +19,7 @@
 //! A fresh store has resource control ON (Go's default, published by the
 //! sysvar-cache rebuild at bootstrap) without any `SET GLOBAL`.
 
-use crate::privilege;
+use tidb_privilege;
 use crate::tests_support::{bootstrap_session, row_text, session_as};
 use crate::Session;
 
@@ -36,7 +36,7 @@ fn run(session: &mut Session, sql: &str) {
 
 #[test]
 fn resource_groups_follow_go() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut session = bootstrap_session(&privs);
     session.set_user("root@%".into(), "root@%".into());
     let groups = "select * from information_schema.resource_groups order by name";

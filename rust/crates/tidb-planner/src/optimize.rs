@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
-use crate::fix_control::OptimizerFixControl;
+use tidb_fixcontrol::OptimizerFixControl;
 use crate::logical::rule::{
     flags, logical_optimize, CteOptimizer, DisabledLogicalRules, HintWarningSink, PlanCacheMarker,
     RuleContext, UsedStatsRecorder,
@@ -244,7 +244,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
         allow_eliminate_apply: ctx
             .optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_45822, true),
+            .get_bool_with_default(tidb_fixcontrol::FIX_45822, true),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
@@ -435,7 +435,7 @@ pub fn optimize_physical<C: OptimizeContext>(
         tidb_expr::Columns::use_plan_cache(ctx),
         ctx,
         ctx.optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_44830, false),
+            .get_bool_with_default(tidb_fixcontrol::FIX_44830, false),
     )
     .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
     .with_selectivity_factor(ctx.selectivity_factor())
@@ -444,7 +444,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     .with_projection_push_down(ctx.allow_projection_push_down())
     .with_heavy_function_optimize(
         ctx.optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_56318, true),
+            .get_bool_with_default(tidb_fixcontrol::FIX_56318, true),
     )
     .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
     .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
@@ -455,11 +455,11 @@ pub fn optimize_physical<C: OptimizeContext>(
     .with_apply_cache_capacity(ctx.apply_cache_capacity())
     .with_point_get_conversion(
         !ctx.optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_52592, false),
+            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false),
     )
     .with_index_join_row_count_upper_bound(
         ctx.optimizer_fix_control()
-            .get_bool_with_default(crate::fix_control::FIX_44855, false),
+            .get_bool_with_default(tidb_fixcontrol::FIX_44855, false),
     )
     .with_column_ids(column_ids);
     dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();

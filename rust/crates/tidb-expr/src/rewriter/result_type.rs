@@ -488,7 +488,7 @@ pub(super) fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType 
 /// `DOUBLE` as wide as the shortest printed form and of unspecified scale.
 pub(super) fn float_literal_type(value: f64) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::Double);
-    ft.set_flen(tidb_datatype::go_strconv::format_float(value, b'f', -1, 64).len() as i64);
+    ft.set_flen(tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64).len() as i64);
     ft.set_decimal(-1);
     set_binary_charset(&mut ft);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);

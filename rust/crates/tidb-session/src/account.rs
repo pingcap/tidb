@@ -59,7 +59,7 @@ impl Session {
             )
             .map_err(|error| DriverError::unsupported(format!("FLUSH PRIVILEGES: {error}")))
         })?;
-        registry.replace_from(&privilege::load::registry_from_cluster(&loaded).registry);
+        registry.replace_from(&tidb_privilege::load::registry_from_cluster(&loaded).registry);
         Ok(())
     }
 }

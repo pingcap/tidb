@@ -761,7 +761,7 @@ fn test_refine_args_with_nullable_column() {
 /// arguments unchanged.
 #[test]
 fn test_refine_args_with_cast_enum() {
-    use tidb_datatype::go_runtime::GoSharedSlice;
+    use tidb_goruntime::go_runtime::GoSharedSlice;
 
     struct EnumColA;
     impl ColumnResolver for EnumColA {

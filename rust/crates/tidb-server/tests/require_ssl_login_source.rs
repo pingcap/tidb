@@ -41,7 +41,7 @@ use tidb_server::{
     ConnectionTracker, MysqlServerTls, QueryResult, QuerySession, QuerySessionFactory,
     SessionContext, SqlQueryError,
 };
-use tidb_session::privilege::{encode_password, PrivilegeRegistry, SslType};
+use tidb_privilege::{encode_password, PrivilegeRegistry, SslType};
 use tidb_session::GlobalSysvars;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

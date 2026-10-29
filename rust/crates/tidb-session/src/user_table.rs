@@ -144,11 +144,11 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         Session::current_identity(self)
     }
 
-    fn privilege_registry(&self) -> Option<&privilege::PrivilegeRegistry> {
+    fn privilege_registry(&self) -> Option<&tidb_privilege::PrivilegeRegistry> {
         self.privileges.as_ref()
     }
 
-    fn account_statement_privilege_cache(&self) -> Option<&privilege::PrivilegeRegistry> {
+    fn account_statement_privilege_cache(&self) -> Option<&tidb_privilege::PrivilegeRegistry> {
         self.account_statement_privilege_cache.as_ref()
     }
 
@@ -160,7 +160,7 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: privilege::PrivilegeType,
+        global_priv: tidb_privilege::PrivilegeType,
     ) -> bool {
         Session::has_scoped_privilege(self, database, table, global_priv)
     }

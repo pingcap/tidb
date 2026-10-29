@@ -697,7 +697,7 @@ impl ClientStream {
 
     /// Leaf properties are usable only after the configured verifier accepted
     /// the handshake. Certificate parsing never substitutes for chain verification.
-    pub(crate) fn verified_tls_peer(&self) -> Option<tidb_session::privilege::TlsPeerIdentity> {
+    pub(crate) fn verified_tls_peer(&self) -> Option<tidb_privilege::TlsPeerIdentity> {
         use x509_parser::extensions::GeneralName;
         let guard = self.inner.lock().expect("client stream lock");
         let ClientStreamInner::Tls(stream, true) = &*guard else {
@@ -737,7 +737,7 @@ impl ClientStream {
             for value in &extension.value.general_names {
                 let (kind, value) = match value {
                     GeneralName::URI(value) => {
-                        ("URI", tidb_session::privilege::certificate_uri(value)?)
+                        ("URI", tidb_privilege::certificate_uri(value)?)
                     }
                     GeneralName::DNSName(value) => ("DNS", (*value).to_owned()),
                     GeneralName::IPAddress(value) if value.len() == 4 => (
@@ -755,7 +755,7 @@ impl ClientStream {
                 sans.entry(kind.into()).or_default().push(value);
             }
         }
-        Some(tidb_session::privilege::TlsPeerIdentity {
+        Some(tidb_privilege::TlsPeerIdentity {
             cipher: tidb_util::tls::cipher_suite_name(u16::from(
                 stream.conn.negotiated_cipher_suite()?.suite(),
             ))
@@ -1112,7 +1112,7 @@ mod account_tls_batch_tests {
         fs::remove_file(&ca).unwrap();
         assert!(session.run("ALTER INSTANCE RELOAD TLS").is_err());
         assert_eq!(manager.current().unwrap().certificates[0], reloaded);
-        session.attach_privileges(tidb_session::privilege::PrivilegeRegistry::default());
+        session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
         session.set_user("limited@%".into(), "limited@localhost".into());
         let error = session
             .run("ALTER INSTANCE RELOAD TLS")
@@ -1180,7 +1180,7 @@ mod account_tls_batch_handshake_tests {
     use crate::configured_user_store::ConfiguredUserStore;
     use crate::secure_transport::TransportKind;
     use std::net::TcpListener;
-    use tidb_session::privilege::{PrivilegeRegistry, SslType};
+    use tidb_privilege::{PrivilegeRegistry, SslType};
 
     // Real TLS plus the exact transport-to-account handoff used by wire auth.
     fn handshake(client_kind: u8, tls12_only: bool, minimum: &str) -> (bool, bool, bool) {

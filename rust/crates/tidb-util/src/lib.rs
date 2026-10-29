@@ -70,7 +70,6 @@ pub mod memoryusagealarm;
 pub mod misc;
 pub mod monotime;
 pub mod mvmap;
-pub use tidb_naming as naming;
 pub mod nocopy;
 pub mod paging;
 pub mod partialjson;
@@ -105,7 +104,6 @@ pub mod table_filter;
 pub mod table_router;
 pub mod table_rule_selector;
 pub mod texttree;
-pub use tidb_tikvutil as tikvutil;
 /// Go `pkg/util/tiflashcompute`.
 pub mod tiflashcompute;
 pub mod timeutil;

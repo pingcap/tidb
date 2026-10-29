@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/sessionctx/variable for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-config = { path = "../tidb-config" }

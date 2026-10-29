@@ -130,7 +130,6 @@ mod tests_cluster_storage;
 pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_sequence;
-pub use tidb_deadlockhistory as deadlock_history;
 pub mod cop_reader;
 pub mod mpp_coordinator;
 #[cfg(test)]
@@ -156,7 +155,6 @@ pub mod index_merge_reader;
 pub mod join;
 pub mod joiner;
 pub mod import_into_options;
-pub use tidb_keydecoder as keydecoder;
 pub mod kv_table;
 pub mod limit;
 pub mod load_data;

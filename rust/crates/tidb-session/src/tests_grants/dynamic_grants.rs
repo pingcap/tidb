@@ -158,7 +158,7 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
     session.run("GRANT SUPER ON *.* TO 'su'@'%'").unwrap();
     let registry = session.privileges.clone().unwrap();
 
-    for name in privilege::DYNAMIC_PRIVS {
+    for name in tidb_privilege::DYNAMIC_PRIVS {
         assert!(
             registry.has_dynamic_priv("su", "%", name, false),
             "SUPER satisfies {name}"
@@ -366,7 +366,7 @@ fn revoke_from_a_restricted_user_checks_restricted_user_admin_before_grant_optio
     ) {
         return;
     }
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privileges);
     for sql in [
         "CREATE USER revoker",

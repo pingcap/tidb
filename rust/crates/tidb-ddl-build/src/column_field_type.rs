@@ -61,7 +61,7 @@
 
 use tidb_datatype::RuntimeCollator;
 use tidb_ast::{ColumnType, ColumnTypeArg};
-use tidb_datatype::go_runtime::GoSharedSlice;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_datatype::{
     enum_set_display_length_from_lengths, get_charset_info, FieldType, FieldTypeCode,
     FieldTypeFlags, GoString, UNSPECIFIED_LENGTH,

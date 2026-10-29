@@ -35,7 +35,7 @@
 //!   `fixcontrol.GetBoolWithDefault(..., fixcontrol.Fix45822, true)`, which
 //!   needs the session's fix-control map. The gate is a PARAMETER of
 //!   [`LogicalApply::can_eliminate_apply`]; this crate's
-//!   [`crate::fix_control`] carries the fix id but not the session map.
+//!   [`tidb_fixcontrol`] carries the fix id but not the session map.
 //! * `PruneColumns` also calls
 //!   `coreusage.ExtractCorColumnsBySchema4LogicalPlan(inner, outerSchema)`,
 //!   which walks the whole inner subtree; that walk is the driver's, and the

@@ -648,7 +648,7 @@ impl ViewerState {
             waits
                 .iter()
                 .map(|wait| {
-                    crate::keydecoder::decode_key(&wait.key, catalog)
+                    tidb_keydecoder::decode_key(&wait.key, catalog)
                         .ok()
                         .and_then(|decoded| serde_json::to_vec(&decoded).ok())
                         .map(Datum::Bytes)
@@ -789,7 +789,7 @@ impl ViewerState {
         needs_key_info: bool,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_datatype::{Collation, StringDatum};
-        use crate::deadlock_history::{
+        use tidb_deadlockhistory::{
             COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
             COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
         };
@@ -820,7 +820,7 @@ impl ViewerState {
                             let key_info = if item.key.is_empty() || !needs_key_info {
                                 Datum::Null
                             } else {
-                                crate::keydecoder::decode_key(
+                                tidb_keydecoder::decode_key(
                                     &item.key,
                                     catalog.expect("requested key metadata"),
                                 )

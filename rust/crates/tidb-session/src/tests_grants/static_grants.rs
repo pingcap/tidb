@@ -24,7 +24,7 @@ use crate::*;
 #[test]
 fn infoschema_privileges_tables_are_header_only() {
     let mut session = Session::new();
-    session.attach_privileges(privilege::PrivilegeRegistry::default());
+    session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
     session.run("CREATE DATABASE db1").unwrap();
     session.run("CREATE TABLE db1.t1 (a INT)").unwrap();
     session.run("CREATE USER 'u1'@'%'").unwrap();
@@ -485,7 +485,7 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
 /// every scope, preserving policy when omitted and rolling back all grantees.
 #[test]
 fn tls_owner_grant_require_shares_account_policy_at_every_scope() {
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.run("CREATE DATABASE tls_grant").unwrap();
     session.run("CREATE TABLE tls_grant.t(a INT)").unwrap();

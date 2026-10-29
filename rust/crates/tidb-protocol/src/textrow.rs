@@ -185,7 +185,7 @@ impl std::error::Error for TextFormatError {}
 /// representation to `buffer`: `strconv.AppendFloat` in `'f'` form, or in
 /// `'e'` form outside `[1e-15, 1e15)` with the exponent's `+` and the
 /// mantissa's trailing zeros removed. The digits are Go's own
-/// ([`tidb_datatype::go_strconv`]).
+/// ([`tidb_goruntime::go_strconv`]).
 pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit_size: u8) {
     let abs_value = value.abs();
     if value.is_nan() || abs_value > f64::MAX {
@@ -199,7 +199,7 @@ pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit
         abs_value >= 1e15 || (abs_value != 0.0 && abs_value < 1e-15)
     };
     if !exponential {
-        tidb_datatype::go_strconv::append_float(
+        tidb_goruntime::go_strconv::append_float(
             buffer,
             value,
             b'f',
@@ -211,7 +211,7 @@ pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit
     // Go `defaultMySQLPrec` for a FLOAT; then the `+` of the exponent and
     // the mantissa's trailing zeros (and a bare point) are removed.
     let precision = if bit_size == 32 { 5 } else { precision };
-    let text = tidb_datatype::go_strconv::format_float(value, b'e', precision, u32::from(bit_size));
+    let text = tidb_goruntime::go_strconv::format_float(value, b'e', precision, u32::from(bit_size));
     append_normalized_float(buffer, &text);
 }
 

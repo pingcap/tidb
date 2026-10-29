@@ -112,7 +112,7 @@ fn process_admin_batch_connection_id_expression_bypasses_numeric_parser() {
 #[test]
 fn process_admin_batch_authorization_precedes_numeric_parser() {
     let registry = process::ProcessRegistry::default();
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privileges);
     boot.run("CREATE USER bob").unwrap();
     let mut bob = authenticated_session(&privileges, "bob", "%");
@@ -138,7 +138,7 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
         return;
     }
     let registry = process::ProcessRegistry::default();
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privileges);
     for sql in [
         "CREATE USER bob",
@@ -557,7 +557,7 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
 #[test]
 fn kill_of_another_users_connection_requires_super() {
     let registry = process::ProcessRegistry::default();
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     // bob cannot create his own account or grant himself SUPER -- that is
     // the escalation the account gates refuse -- so the server provisions
     // both, as a real deployment does before anybody logs in.
@@ -613,7 +613,7 @@ fn kill_of_another_users_connection_requires_super() {
 #[test]
 fn kill_of_another_users_connection_accepts_connection_admin() {
     let registry = process::ProcessRegistry::default();
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'bob'@'%'").unwrap();
 
@@ -679,7 +679,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
 #[test]
 fn grant_process_gates_processlist_visibility() {
     let registry = process::ProcessRegistry::default();
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'bob'@'%'").unwrap();
     let mut session = authenticated_session(&privs, "bob", "%");
@@ -710,7 +710,7 @@ fn grant_process_gates_processlist_visibility() {
 fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
     use tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST;
     let registry = process::ProcessRegistry::default();
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privileges);
     boot.run("CREATE USER bob").unwrap();
     let mut bob = authenticated_session(&privileges, "bob", "%");

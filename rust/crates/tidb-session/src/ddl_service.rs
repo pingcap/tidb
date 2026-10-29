@@ -188,7 +188,7 @@ impl Session {
             return Ok(());
         }
         if let Some((_, user, host)) = self.privilege_context() {
-            if !self.has_any_scoped_privilege(&database, &name, crate::privilege::any_priv_mask()) {
+            if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::any_priv_mask()) {
                 return Err(DriverError::from(
                     tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
                         &[

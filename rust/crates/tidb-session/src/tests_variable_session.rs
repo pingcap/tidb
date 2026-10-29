@@ -136,7 +136,7 @@ fn sem_enable_and_disable_change_new_session_defaults() {
 
     let mut recovery = crate::Session::new();
     recovery.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
-    recovery.attach_privileges(crate::privilege::PrivilegeRegistry::default());
+    recovery.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
     assert!(recovery.sem_hides_status_var("tidb_gc_leader_desc"));
     recovery.enable_privilege_bypass();
     assert!(

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_datatype::{Collation, CoreTime, Datum, FieldTypeCode, StringDatum, Time, TimeType};
-use tidb_executor::deadlock_history::{DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY};
+use tidb_deadlockhistory::{DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY};
 use tidb_executor::TableEntry;
 use tidb_stmtsummary::statement_summary::{
     EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
@@ -292,7 +292,7 @@ fn skip_grant_bypasses_process_for_deadlocks_table() {
     let mut session = Session::new();
     session.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
     session.enable_privilege_bypass();
-    session.attach_privileges(crate::privilege::PrivilegeRegistry::default());
+    session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
 
     let StmtOutput::Rows { columns, .. } = session
         .run_with_columns("SELECT DEADLOCK_ID FROM information_schema.DEADLOCKS")

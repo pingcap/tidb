@@ -6,7 +6,7 @@
 //! seam" and "refused before the seam" two different sentences a test can
 //! tell apart.
 
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use super::super::*;
 use super::mock_cluster::*;
 use super::mock_seams::*;

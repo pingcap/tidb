@@ -62,7 +62,7 @@ fn configured_sem_v2_policy_child() {
     };
     tidb_util::sem_v2::enable_by(&config).unwrap();
 
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&privileges);
     bootstrap.run("CREATE USER 'nobody'@'%'").unwrap();
     bootstrap.run("CREATE USER 'recipient'@'%'").unwrap();

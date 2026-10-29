@@ -196,7 +196,7 @@
 //!   there even when TiDB's own planner would have rewritten the expression.
 
 #[allow(unused_imports)]
-pub use tidb_ddl_build::{ttl_info_from_options};
+pub use tidb_ddl_build::ttl_info_from_options;
 
 pub use tidb_ddl_build::modify_column_type::check_modify_types;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.

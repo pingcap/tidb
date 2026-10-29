@@ -92,7 +92,7 @@ impl Threshold {
             Self::Uint(value) => value.to_string(),
             Self::Int(value) => value.to_string(),
             // `%v` of a float64 is `%g` with the shortest representation.
-            Self::Float(value) => tidb_datatype::go_strconv::format_float(*value, b'g', -1, 64),
+            Self::Float(value) => tidb_goruntime::go_strconv::format_float(*value, b'g', -1, 64),
             Self::Bool(value) => value.to_string(),
             Self::Text(value) => value.clone(),
         }
@@ -145,13 +145,13 @@ fn parse_float(text: &str) -> Result<Threshold, String> {
     if value.is_nan() || value.is_infinite() {
         return Err(format!(
             "threshold value must be finite, got {}",
-            tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+            tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
         ));
     }
     if value < 0.0 {
         return Err(format!(
             "threshold value must be non-negative, got {}",
-            tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+            tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
         ));
     }
     Ok(Threshold::Float(value))

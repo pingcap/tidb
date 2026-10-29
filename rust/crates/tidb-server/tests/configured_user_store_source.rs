@@ -144,7 +144,7 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
 fn persisted_secure_transport_is_effective_immediately_in_skip_grant_mode() {
     let _restore_transport = RestoreRequireSecureTransport::snapshot();
     let store = ConfiguredUserStore::from_accounts(
-        tidb_session::privilege::PrivilegeRegistry::bootstrapped_from([]),
+        tidb_privilege::PrivilegeRegistry::bootstrapped_from([]),
     )
     .with_skip_grant_table(true);
     store
@@ -463,7 +463,7 @@ fn a_successful_login_clears_the_failure_counter() {
 /// elapsed changes nothing.
 #[test]
 fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
-    use tidb_session::privilege::PasswordExpireSetting;
+    use tidb_privilege::PasswordExpireSetting;
 
     let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
     let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
@@ -510,7 +510,7 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
 /// executor would do to this store's next login.
 #[test]
 fn default_password_lifetime_ages_out_a_password_expire_default_account() {
-    use tidb_session::privilege::PasswordExpireSetting;
+    use tidb_privilege::PasswordExpireSetting;
 
     let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
     let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
@@ -661,11 +661,11 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
 
 #[test]
 fn admission_policy_batch_secondary_native_password_is_verified() {
-    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     registry.create_user(
         "rotation",
         "%",
-        &tidb_session::privilege::encode_password("new"),
+        &tidb_privilege::encode_password("new"),
     );
     registry.merge_user_attributes(
         "rotation",
@@ -686,15 +686,15 @@ fn admission_policy_batch_secondary_native_password_is_verified() {
 
 #[test]
 fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
-    let registry = tidb_session::privilege::PrivilegeRegistry::default();
-    let primary = tidb_session::privilege::encode_password_for_plugin(
+    let registry = tidb_privilege::PrivilegeRegistry::default();
+    let primary = tidb_privilege::encode_password_for_plugin(
         "caching_sha2_password",
-        &tidb_session::privilege::PluginCredential::By("new"),
+        &tidb_privilege::PluginCredential::By("new"),
     )
     .unwrap();
-    let secondary = tidb_session::privilege::encode_password_for_plugin(
+    let secondary = tidb_privilege::encode_password_for_plugin(
         "caching_sha2_password",
-        &tidb_session::privilege::PluginCredential::By("old"),
+        &tidb_privilege::PluginCredential::By("old"),
     )
     .unwrap();
     registry.create_user_with_plugin("rotation", "%", &primary, "caching_sha2_password");
@@ -718,11 +718,11 @@ fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
 
 #[test]
 fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
-    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     registry.create_user(
         "rotation",
         "%",
-        &tidb_session::privilege::encode_password("new"),
+        &tidb_privilege::encode_password("new"),
     );
     registry.merge_user_attributes(
         "rotation",
@@ -779,8 +779,8 @@ fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
 
 #[test]
 fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
-    use tidb_session::privilege::{encode_password_for_plugin, PluginCredential};
-    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    use tidb_privilege::{encode_password_for_plugin, PluginCredential};
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let primary =
         encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("new")).unwrap();
     let secondary =

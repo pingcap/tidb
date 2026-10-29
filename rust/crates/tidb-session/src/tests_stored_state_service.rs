@@ -72,7 +72,7 @@ impl DdlService for Unreached {
 }
 
 impl AccountService for Unreached {
-    fn load_accounts(&self) -> Result<crate::privilege::PrivilegeRegistry, DriverError> {
+    fn load_accounts(&self) -> Result<tidb_privilege::PrivilegeRegistry, DriverError> {
         unreachable!("a SET reads no account")
     }
 

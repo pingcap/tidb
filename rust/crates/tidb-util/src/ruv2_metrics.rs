@@ -1489,7 +1489,7 @@ impl RuRuntimeStats {
     /// Go `RURuntimeStats.String`.
     #[must_use]
     pub fn string(&self) -> String {
-        let format = |value: f64| tidb_datatype::go_strconv::format_float(value, b'f', 2, 64);
+        let format = |value: f64| tidb_goruntime::go_strconv::format_float(value, b'f', 2, 64);
         if self.ru_version == crate::topsql_stmtstats::RuVersion::V2 {
             let (tikv_ru, tiflash_ru) = self.ru_details.as_ref().map_or((0.0, 0.0), |details| {
                 (details.tikv_ru_v2(), details.tiflash_ru())

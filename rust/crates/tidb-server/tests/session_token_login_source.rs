@@ -29,7 +29,7 @@ use tidb_server::{
     ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
     SqlQueryError,
 };
-use tidb_session::privilege::{PasswordExpireSetting, PrivilegeRegistry};
+use tidb_privilege::{PasswordExpireSetting, PrivilegeRegistry};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

@@ -478,7 +478,7 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
         // Go `%v` of a MyDecimal prints its decimal text.
         Datum::Decimal(d) => d.to_string(),
         Datum::Float32(v) => {
-            tidb_datatype::go_strconv::format_float(f64::from(*v as f32), b'g', -1, 32)
+            tidb_goruntime::go_strconv::format_float(f64::from(*v as f32), b'g', -1, 32)
         }
         // Go `"\"%v\""`: the value's String() between quotes, unescaped.
         Datum::Enum(value, _) => format!("\"{}\"", value.name()),
@@ -623,7 +623,7 @@ fn datum_equals(a: &Datum, b: &Datum) -> bool {
 
 /// Go `strconv.FormatFloat(v, 'g', -1, 64)`, `fmt`'s `%v` for a float64.
 pub(super) fn go_g_float(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
 }
 
 /// Go `kv.Key.PrefixNext`: the next prefix key — increment the last

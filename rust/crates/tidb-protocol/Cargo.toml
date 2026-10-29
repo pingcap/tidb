@@ -9,6 +9,7 @@ description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 flate2.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }

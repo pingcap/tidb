@@ -220,11 +220,11 @@ pub fn escape_string(value: impl AsRef<[u8]>) -> Vec<u8> {
 }
 
 fn format_go_float64(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
 }
 
 fn format_go_float32(value: f32) -> String {
-    tidb_datatype::go_strconv::format_float(f64::from(value), b'g', -1, 32)
+    tidb_goruntime::go_strconv::format_float(f64::from(value), b'g', -1, 32)
 }
 
 fn append_time(buffer: &mut Vec<u8>, value: Option<NaiveDateTime>) {

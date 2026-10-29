@@ -2133,7 +2133,7 @@ impl SessionVars {
 
 /// Go `strconv.FormatFloat(value, 'f', -1, 64)`.
 fn format_double(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 

@@ -31,7 +31,7 @@ use tidb_server::{
     SessionContext, SqlQueryError,
 };
 use tidb_session::domain::peer_address::PeerAddress;
-use tidb_session::privilege::PrivilegeRegistry;
+use tidb_privilege::PrivilegeRegistry;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

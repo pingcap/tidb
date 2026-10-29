@@ -224,7 +224,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                         .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
                     self.session_vars()
                         .optimizer_fix_control()
-                        .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
+                        .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
                 )
                 .with_cache_switches(
                     self.session_vars().system_bool(
@@ -457,7 +457,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         if self
             .session_vars()
             .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
             || self.prepared_plan_cache_environment().is_none()
         {
             return false;
@@ -516,7 +516,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             || self
                 .session_vars()
                 .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+                .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         {
             return None;
         }
@@ -602,7 +602,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             || self
                 .session_vars()
                 .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+                .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         {
             return None;
         }

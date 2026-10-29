@@ -750,7 +750,7 @@ fn save_analyze_options_sql(
             format!(
                 "({physical_id},{},{},{},{},'{choice}','{ids}')",
                 options.raw.num_samples.map_or(0, |value| value as i64),
-                tidb_datatype::go_strconv::format_float(
+                tidb_goruntime::go_strconv::format_float(
                     options.raw.sample_rate.unwrap_or(0.0),
                     b'g',
                     -1,

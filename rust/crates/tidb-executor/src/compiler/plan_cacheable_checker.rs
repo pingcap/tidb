@@ -345,7 +345,7 @@ pub trait PlanCacheableChecker: super::CompilerSession {
         let configured_max = self
             .session_vars()
             .optimizer_fix_control()
-            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_NUM_PARAM as i64);
+            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_NUM_PARAM as i64);
         let max_num_param = match configured_max {
             0 => usize::MAX,
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
@@ -371,11 +371,11 @@ pub trait PlanCacheableChecker: super::CompilerSession {
                 disable_partition_cache: self
                     .session_vars()
                     .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_33031, false),
+                    .get_bool_with_default(tidb_fixcontrol::FIX_33031, false),
                 enable_generated_columns: self
                     .session_vars()
                     .optimizer_fix_control()
-                    .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
+                    .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
                 max_num_param,
             },
         );
@@ -383,7 +383,7 @@ pub trait PlanCacheableChecker: super::CompilerSession {
             && self
                 .session_vars()
                 .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false)
+                .get_bool_with_default(tidb_fixcontrol::FIX_49736, false)
         {
             Ok(())
         } else {

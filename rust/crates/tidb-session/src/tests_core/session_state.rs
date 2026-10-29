@@ -90,7 +90,7 @@ fn resource_group_hint_is_ignored_when_resource_control_is_disabled() {
 /// group and receives the ordinary 1227 warning.
 #[test]
 fn strict_resource_group_hint_requires_resource_group_authority() {
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut session = authenticated_session(&privileges, "ordinary", "%");
 
     session
@@ -1434,7 +1434,7 @@ fn session_migration_batch_grant_accounts_print_raw_in_single_quotes() {
     // Go `showGrants` prints the account as `'%s'@'%s'` whatever the SQL
     // mode; only schema and table names follow it.
     let mut session = Session::new();
-    session.attach_privileges(privilege::PrivilegeRegistry::default());
+    session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
     session.run("CREATE USER 'quote`\"user'@'%'").unwrap();
     for sql_mode in ["''", "'ANSI_QUOTES'"] {
         session.run(&format!("SET sql_mode={sql_mode}")).unwrap();
@@ -1581,7 +1581,7 @@ fn show_session_states_signs_a_token_for_the_logged_in_user_like_go() {
     tidb_sessionstates::set_key_path(key_path.to_str().unwrap());
     tidb_sessionstates::reload_signing_cert();
 
-    let privileges = privilege::PrivilegeRegistry::default();
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut session = authenticated_session(&privileges, "migrated", "%");
     let StmtOutput::Rows { rows, .. } = session.run_with_columns("SHOW SESSION_STATES").unwrap()
     else {

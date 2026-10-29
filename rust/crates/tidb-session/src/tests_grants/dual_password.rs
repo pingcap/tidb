@@ -20,8 +20,8 @@
 use crate::tests_support::*;
 use crate::*;
 
-fn root_session() -> (privilege::PrivilegeRegistry, Session) {
-    let registry = privilege::PrivilegeRegistry::default();
+fn root_session() -> (tidb_privilege::PrivilegeRegistry, Session) {
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
     (registry, session)
@@ -58,7 +58,7 @@ fn retain_and_discard_maintain_the_additional_password_attribute() {
     // The primary moved to the new password in the same statement.
     assert_eq!(
         registry.auth_string("dpu1", "%").as_deref(),
-        Some(privilege::encode_password("new").as_str())
+        Some(tidb_privilege::encode_password("new").as_str())
     );
 
     session.run("alter user dpu1 discard old password").unwrap();
@@ -167,7 +167,7 @@ fn set_password_retain_and_per_spec_dual_clauses() {
     );
     assert_eq!(
         registry.auth_string("dpu1", "%").as_deref(),
-        Some(privilege::encode_password("p2").as_str())
+        Some(tidb_privilege::encode_password("p2").as_str())
     );
 
     session
@@ -267,7 +267,7 @@ fn account_statements_keep_the_user_table_rows_written() {
         )),
         [[
             "mysql_native_password",
-            privilege::encode_password("pw").as_str(),
+            tidb_privilege::encode_password("pw").as_str(),
             "{}",
             "N",
             "N"

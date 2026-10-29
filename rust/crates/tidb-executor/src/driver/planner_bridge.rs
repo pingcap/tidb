@@ -85,7 +85,7 @@ fn static_global_index_point_lookup(
         || ctx.select_limit() != u64::MAX
         || ctx
             .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
     {
         return false;
     }
@@ -1839,7 +1839,7 @@ fn dynamic_prune_fallback<'a>(
         let global_stats_ready = crate::access_cost::table_statistics(ctx, catalog, table_id)
             .is_some_and(|statistics| statistics.last_analyze_version > 0);
         let allow_dynamic_without_stats = ctx.optimizer_fix_control().get_bool_with_default(
-            tidb_planner::fix_control::FIX_44262,
+            tidb_fixcontrol::FIX_44262,
             ctx.skip_missing_partition_stats(),
         );
         if global_stats_ready || allow_dynamic_without_stats {
@@ -2231,10 +2231,10 @@ impl QueryBuilderParts<'_> {
         builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
         builder.prefer_index_merge_by_fix_control = ctx
             .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false);
         builder.index_merge_skip_range_scan_check = ctx
             .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, true);
         build(&mut builder)
     }
 }
@@ -2630,10 +2630,10 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
     builder.prefer_index_merge_by_fix_control = ctx
         .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+        .get_bool_with_default(tidb_fixcontrol::FIX_52869, false);
     builder.index_merge_skip_range_scan_check = ctx
         .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
+        .get_bool_with_default(tidb_fixcontrol::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     builder.delete_prune_has_fk = delete_prune_has_fk;
     builder.delete_multi = delete_multi;

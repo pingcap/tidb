@@ -178,7 +178,7 @@ use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 
 use crate::domain::resultset_source::ResultSetSource;
 use crate::identity::CompiledExecutor;
-use crate::privilege::PrivilegeRegistry;
+use tidb_privilege::PrivilegeRegistry;
 use crate::{GlobalSysvars, Session, StmtKind, StmtOutput};
 use tidb_ast::Stmt;
 use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;

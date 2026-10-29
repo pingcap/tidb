@@ -568,8 +568,8 @@ pub(crate) fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
         value: "DOUBLE",
         expression: format!(
             "pow({}, {})",
-            tidb_datatype::go_strconv::format_float(b, b'f', -1, 64),
-            tidb_datatype::go_strconv::format_float(e, b'f', -1, 64)
+            tidb_goruntime::go_strconv::format_float(b, b'f', -1, 64),
+            tidb_goruntime::go_strconv::format_float(e, b'f', -1, 64)
         ),
     })
 }
@@ -651,7 +651,7 @@ pub(crate) fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
         value: "DOUBLE",
         expression: format!(
             "cot({})",
-            tidb_datatype::go_strconv::format_float(x, b'f', -1, 64)
+            tidb_goruntime::go_strconv::format_float(x, b'f', -1, 64)
         ),
     })
 }

@@ -116,7 +116,7 @@ pub fn gen_label_condition_values(values: &BTreeSet<String>) -> String {
 
 /// Go `strconv.FormatFloat(v, 'f', -1, 64)`.
 fn format_float(value: f64) -> String {
-    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 /// Go `infoschema.MetricTableMap`, sorted by table name.

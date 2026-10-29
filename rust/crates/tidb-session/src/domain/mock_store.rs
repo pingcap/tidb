@@ -64,7 +64,7 @@ impl MockStoreDomain {
     /// store bootstraps with that table's rows and every account change on
     /// it lands back in that table.
     pub fn create_with_accounts(
-        accounts: Option<crate::privilege::PrivilegeRegistry>,
+        accounts: Option<tidb_privilege::PrivilegeRegistry>,
     ) -> Result<Arc<Self>, String> {
         let config = testkit_config()?;
         let users = Arc::new(match accounts {
@@ -251,7 +251,7 @@ fn remember_accounts_domain(domain: &Arc<MockStoreDomain>) {
 /// The live domain whose node keeps its accounts in `accounts`.
 #[cfg(test)]
 pub(crate) fn domain_of_accounts(
-    accounts: &crate::privilege::PrivilegeRegistry,
+    accounts: &tidb_privilege::PrivilegeRegistry,
 ) -> Option<Arc<MockStoreDomain>> {
     let domains = ACCOUNT_DOMAINS
         .lock()

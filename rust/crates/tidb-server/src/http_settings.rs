@@ -88,7 +88,7 @@ impl Settings {
             update_global(|config| {
                 config.pessimistic_txn.deadlock_history_capacity = capacity as usize
             });
-            tidb_executor::deadlock_history::GLOBAL_DEADLOCK_HISTORY.resize(capacity as usize);
+            tidb_deadlockhistory::GLOBAL_DEADLOCK_HISTORY.resize(capacity as usize);
         }
         if let Some(value) = get("deadlock_history_collect_retryable") {
             let value = match value.as_str() {

@@ -499,7 +499,7 @@ pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
 pub fn go_json_float(value: f64) -> String {
     let abs = value.abs();
     if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
-        let formatted = tidb_datatype::go_strconv::format_float(value, b'e', -1, 64);
+        let formatted = tidb_goruntime::go_strconv::format_float(value, b'e', -1, 64);
         // Go cleans `e-07` to `e-7`.
         if let Some(index) = formatted.find("e-0") {
             let mut cleaned = formatted.clone();
@@ -508,7 +508,7 @@ pub fn go_json_float(value: f64) -> String {
         }
         return formatted;
     }
-    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+    tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64)
 }
 
 /// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the

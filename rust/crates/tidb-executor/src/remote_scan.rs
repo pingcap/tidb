@@ -2586,9 +2586,9 @@ mod tests {
                 "{sql}"
             );
             let (fix, _) =
-                tidb_planner::fix_control::OptimizerFixControl::parse("52592:ON").unwrap();
+                tidb_fixcontrol::OptimizerFixControl::parse("52592:ON").unwrap();
             assert_eq!(
-                fix.get_bool(tidb_planner::fix_control::FIX_52592),
+                fix.get_bool(tidb_fixcontrol::FIX_52592),
                 Some(true)
             );
             let disabled = ctx.clone().with_optimizer_fix_control(fix);

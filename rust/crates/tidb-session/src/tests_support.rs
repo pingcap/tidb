@@ -387,7 +387,7 @@ pub(crate) fn interval_session() -> Session {
 /// fresh store. Root is bootstrapped with every privilege, as a Go
 /// testkit store's root is.
 pub(crate) fn session_with_privileges() -> Session {
-    Session::on_accounts(&privilege::PrivilegeRegistry::default())
+    Session::on_accounts(&tidb_privilege::PrivilegeRegistry::default())
 }
 
 /// A session on `registry` with NO authenticated identity, and therefore
@@ -398,14 +398,14 @@ pub(crate) fn session_with_privileges() -> Session {
 /// rows to exist provisions them from here rather than from the session
 /// under test, exactly as a real deployment provisions them before anybody
 /// logs in.
-pub(crate) fn bootstrap_session(registry: &privilege::PrivilegeRegistry) -> Session {
+pub(crate) fn bootstrap_session(registry: &tidb_privilege::PrivilegeRegistry) -> Session {
     Session::on_accounts(registry)
 }
 
 /// A connection to `registry` authenticated as `user`@`host`, over a fresh
 /// catalog. [`session_as`] is the same thing on a catalog the caller owns.
 pub(crate) fn authenticated_session(
-    registry: &privilege::PrivilegeRegistry,
+    registry: &tidb_privilege::PrivilegeRegistry,
     user: &str,
     host: &str,
 ) -> Session {
@@ -421,7 +421,7 @@ pub(crate) fn authenticated_session(
 /// makes the account's DEFAULT roles activate -- exactly as Go's `Auth`
 /// does at login.
 pub(crate) fn session_as(
-    registry: &privilege::PrivilegeRegistry,
+    registry: &tidb_privilege::PrivilegeRegistry,
     catalog: SharedCatalog,
     user: &str,
     host: &str,

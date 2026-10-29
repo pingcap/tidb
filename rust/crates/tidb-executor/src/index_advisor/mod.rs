@@ -541,7 +541,7 @@ fn go_json_string(value: &str) -> String {
 fn go_json_float(value: f64) -> String {
     let magnitude = value.abs();
     let exponent_form = magnitude != 0.0 && (magnitude < 1e-6 || magnitude >= 1e21);
-    let mut text = tidb_datatype::go_strconv::format_float(
+    let mut text = tidb_goruntime::go_strconv::format_float(
         value,
         if exponent_form { b'e' } else { b'f' },
         -1,

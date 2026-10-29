@@ -362,7 +362,7 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     sandbox.run("SELECT 1").unwrap();
     assert_eq!(
         registry.auth_string("sandboxed", "%"),
-        Some(privilege::encode_password("fixed"))
+        Some(tidb_privilege::encode_password("fixed"))
     );
 
     // `ALTER USER ... IDENTIFIED BY` is the other way out.
@@ -537,7 +537,7 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
 /// reached, and refused it.
 #[test]
 fn password_history_checks_the_stored_rows() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut session = bootstrap_session(&privs);
     session
         .run("set global password_reuse_interval = 1")

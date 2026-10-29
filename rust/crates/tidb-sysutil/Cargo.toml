@@ -18,6 +18,7 @@ unsafe_code = "allow"
 all = "warn"
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 flate2.workspace = true
 futures.workspace = true
 nix = { workspace = true, features = ["feature", "fs", "net", "sched"] }

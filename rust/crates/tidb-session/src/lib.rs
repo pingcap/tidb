@@ -373,7 +373,7 @@ pub struct Session {
     /// The live privilege cache while an account statement runs against a
     /// scratch registry read from `mysql.*`: Go's privilege manager, which
     /// `FindEdge` consults, is the cache, not the tables.
-    account_statement_privilege_cache: Option<privilege::PrivilegeRegistry>,
+    account_statement_privilege_cache: Option<tidb_privilege::PrivilegeRegistry>,
     /// The statement its node compiled ahead of the executor that runs it
     /// ([`Session::compile_statement`]), which that executor's own compile
     /// takes instead of building and checking the plan again.
@@ -742,15 +742,15 @@ pub struct Session {
     /// see (Go `hasPriv(ctx, mysql.ProcessPriv)`).
     ///
     /// This is a direct test/front-end override. Normal SQL authorization
-    /// reads the shared [`privilege::PrivilegeRegistry`] below, whose
+    /// reads the shared [`tidb_privilege::PrivilegeRegistry`] below, whose
     /// `GRANT PROCESS ON *.*` path is shared by every session.
     has_process_priv: bool,
     /// The server's account/global-privilege registry, shared by every
-    /// session a front end opens (see [`privilege::PrivilegeRegistry`]).
+    /// session a front end opens (see [`tidb_privilege::PrivilegeRegistry`]).
     /// `None` for a session with no front end (unit tests, internal use),
     /// which is why every check through it falls back to the pre-existing
     /// bit above rather than treating an absent registry as "no privilege".
-    privileges: Option<privilege::PrivilegeRegistry>,
+    privileges: Option<tidb_privilege::PrivilegeRegistry>,
     /// Go's process-wide `privileges.SkipWithGrant` admission copied onto
     /// this connection by the front end. The registry remains attached for
     /// account/role storage, while authorization readers treat the session
@@ -1160,7 +1160,6 @@ pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
 #[cfg(test)]
 mod tests_expensivequery;
-pub use tidb_privilege as privilege;
 mod privilege_tables;
 #[cfg(test)]
 mod tests_privilege_tls;
@@ -1746,7 +1745,7 @@ impl Session {
     /// attached: Go testkit's session on the store whose privilege tables a
     /// test provisioned.
     #[cfg(test)]
-    pub(crate) fn on_accounts(accounts: &privilege::PrivilegeRegistry) -> Self {
+    pub(crate) fn on_accounts(accounts: &tidb_privilege::PrivilegeRegistry) -> Self {
         let domain = match crate::domain::mock_store::domain_of_accounts(accounts) {
             Some(domain) => domain,
             None => crate::domain::mock_store::MockStoreDomain::create_with_accounts(Some(

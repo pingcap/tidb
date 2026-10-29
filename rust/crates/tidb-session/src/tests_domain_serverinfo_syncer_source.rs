@@ -624,7 +624,7 @@ fn cluster_metadata_sem_child() {
     use crate::{tests_support::*, *};
     tidb_util::sem::disable();
     tidb_util::sem_v2::disable();
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE USER 'metadata_reader'@'%'").unwrap();
     bootstrap.run("CREATE ROLE 'metadata_admin'@'%'").unwrap();
@@ -715,7 +715,7 @@ fn cluster_metadata_sem_child() {
 #[test]
 fn cluster_config_checks_config_privilege_before_discovery() {
     use crate::{tests_support::*, *};
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE USER 'config_reader'@'%'").unwrap();
     let mut reader = authenticated_session(&registry, "config_reader", "%");
@@ -833,7 +833,7 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
     session.run("DEALLOCATE PREPARE cfg").unwrap();
     assert_eq!(row_text(session.run("SELECT c.value FROM information_schema.cluster_config c JOIN information_schema.cluster_info i ON c.instance=i.instance WHERE c.`key`='key'")), [["live-4"]]);
 
-    let registry = privilege::PrivilegeRegistry::default();
+    let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE USER 'http_reader'@'%'").unwrap();
     bootstrap.run("CREATE ROLE 'config_role'@'%'").unwrap();

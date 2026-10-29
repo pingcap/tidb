@@ -994,7 +994,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         let configured_max = self
             .session_vars()
             .optimizer_fix_control()
-            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
+            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_PARAM_NUM as i64);
         let max_num_param = match configured_max {
             0 => usize::MAX,
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
@@ -1048,7 +1048,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         let configured_max = self
             .session_vars()
             .optimizer_fix_control()
-            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
+            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_PARAM_NUM as i64);
         let max_num_param = match configured_max {
             0 => usize::MAX,
             value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),

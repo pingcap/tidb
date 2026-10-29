@@ -19,24 +19,24 @@
 //! `Next`); what they read of the viewing session is snapshotted when a scan
 //! first asks for one of them.
 
-use crate::privilege::PrivilegeTypeExt;
+use tidb_privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
 use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
 use tidb_executor::{Catalog, DriverError};
 use tidb_hack::GoCaseCompare;
 
-use crate::privilege;
+use tidb_privilege;
 use tidb_variable::sysvar;
 use tidb_variable::vars::SessionVars;
 
 /// What the account tables read of the viewing session.
 #[derive(Clone)]
 pub(crate) struct AccountState {
-    pub(crate) privileges: Option<privilege::PrivilegeRegistry>,
+    pub(crate) privileges: Option<tidb_privilege::PrivilegeRegistry>,
     pub(crate) privilege_bypassed: bool,
     pub(crate) login_user: Option<String>,
     pub(crate) current_user: Option<String>,
-    pub(crate) active_roles: Vec<privilege::Account>,
+    pub(crate) active_roles: Vec<tidb_privilege::Account>,
     /// Go `GetRestrictedSQLExecutor` for the `mysql.user` read.
     pub(crate) restricted_sql: crate::restricted_sql::RestrictedSql,
 }
@@ -47,7 +47,7 @@ impl AccountState {
         self.current_user.as_deref()?.split_once('@')
     }
 
-    fn active_roles(&self) -> &[privilege::Account] {
+    fn active_roles(&self) -> &[tidb_privilege::Account] {
         self.active_roles.as_slice()
     }
 
@@ -128,7 +128,7 @@ impl AccountState {
                 continue;
             }
             let grantable = flag(privs & tidb_mysql::GrantPriv.bit() != 0);
-            let named: Vec<&privilege::PrivilegeType> = tidb_mysql::ALL_GLOBAL_PRIVS
+            let named: Vec<&tidb_privilege::PrivilegeType> = tidb_mysql::ALL_GLOBAL_PRIVS
                 .iter()
                 .filter(|priv_| privs & priv_.bit() != 0)
                 .collect();

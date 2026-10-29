@@ -22,8 +22,8 @@ use crate::*;
 
 /// Three schemas, tables in two of them, and an unrestricted session to
 /// grant through.
-fn world() -> (privilege::PrivilegeRegistry, Session) {
-    let privs = privilege::PrivilegeRegistry::default();
+fn world() -> (tidb_privilege::PrivilegeRegistry, Session) {
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     for sql in [
         "CREATE DATABASE d1",
@@ -374,7 +374,7 @@ fn create_temporary_tables_shows_the_schema_and_no_table() {
 /// `CREATE USER ... ATTRIBUTE` stores there.
 #[test]
 fn user_attributes_rows_follow_go_visibility_rules() {
-    let privs = privilege::PrivilegeRegistry::default();
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run(
         "CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, \

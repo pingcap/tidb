@@ -102,7 +102,7 @@ pub(super) fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                     Datum::Duration(duration) => duration.to_string(),
                     Datum::Json(json) => json.to_string(),
                     Datum::Float32(v) => {
-                        tidb_datatype::go_strconv::format_float(f64::from(v), b'f', -1, 32)
+                        tidb_goruntime::go_strconv::format_float(f64::from(v), b'f', -1, 32)
                     }
                     Datum::Null => "NULL".to_owned(),
                     other => format!("{other:?}"),

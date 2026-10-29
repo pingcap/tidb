@@ -17,8 +17,8 @@ use crate::*;
 
 /// The account table a real deployment provisions before anybody logs in,
 /// plus an unrestricted bootstrap session on it.
-fn provisioned() -> (privilege::PrivilegeRegistry, Session) {
-    let privs = privilege::PrivilegeRegistry::default();
+fn provisioned() -> (tidb_privilege::PrivilegeRegistry, Session) {
+    let privs = tidb_privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'bob'@'%'").unwrap();
     boot.run("CREATE USER 'admin'@'%'").unwrap();
@@ -274,7 +274,7 @@ fn changing_another_accounts_password_is_privileged_but_ones_own_is_not() {
         .unwrap();
     assert_eq!(
         privs.auth_string("bob", "%"),
-        Some(privilege::encode_password("mine3"))
+        Some(tidb_privilege::encode_password("mine3"))
     );
 
     // POSITIVE CONTROL: SUPER opens the cross-account form.
@@ -282,7 +282,7 @@ fn changing_another_accounts_password_is_privileged_but_ones_own_is_not() {
     bob.run("SET PASSWORD FOR 'victim'@'%' = 'reset'").unwrap();
     assert_eq!(
         privs.auth_string("victim", "%"),
-        Some(privilege::encode_password("reset"))
+        Some(tidb_privilege::encode_password("reset"))
     );
 }
 
@@ -323,7 +323,7 @@ fn reading_another_accounts_credentials_and_grants_is_privileged() {
     let mut admin = session_as(&privs, boot.catalog.clone(), "admin", "%");
     let shown = row_text(admin.run("SHOW CREATE USER 'victim'@'%'"));
     assert!(
-        shown[0][0].contains(&privilege::encode_password("secret")),
+        shown[0][0].contains(&tidb_privilege::encode_password("secret")),
         "{shown:?}"
     );
 }

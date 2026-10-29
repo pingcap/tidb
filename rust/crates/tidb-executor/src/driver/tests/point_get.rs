@@ -34,7 +34,7 @@ fn fix52592_disables_unique_index_point_conversion() {
     ] {
         let sql = format!("SELECT v FROM t WHERE {predicate}");
         for enabled in [false, true, false] {
-            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse(if enabled {
+            let (fix, _) = tidb_fixcontrol::OptimizerFixControl::parse(if enabled {
                 "52592:ON"
             } else {
                 "52592:OFF"
