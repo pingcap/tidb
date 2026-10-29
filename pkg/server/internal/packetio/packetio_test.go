@@ -829,6 +829,26 @@ func TestCompressedReaderZlibReadsOnePayload(t *testing.T) {
 	require.Zero(t, in.Len())
 }
 
+func TestUint24(t *testing.T) {
+	cases := []struct {
+		value int
+		bytes []byte
+	}{
+		{0, []byte{0x00, 0x00, 0x00}},
+		{1, []byte{0x01, 0x00, 0x00}},
+		{0xfffe, []byte{0xfe, 0xff, 0x00}},
+		{0x10000, []byte{0x00, 0x00, 0x01}},
+		{0xabcdef, []byte{0xef, 0xcd, 0xab}},
+		{0xffffff, []byte{0xff, 0xff, 0xff}},
+	}
+	for _, c := range cases {
+		got := make([]byte, 3)
+		putUint24(got, c.value)
+		require.Equal(t, c.bytes, got, "putUint24(%#x)", c.value)
+		require.Equal(t, c.value, uint24(c.bytes), "uint24(% x)", c.bytes)
+	}
+}
+
 func BenchmarkCompressedReaderZstd(b *testing.B) {
 	row := []byte("\x05\x00\x00\x01\x011\x0e2025-01-01 00:00:00\x03123\x0bsome-string")
 	encoder, err := zstd.NewWriter(nil)

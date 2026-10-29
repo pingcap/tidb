@@ -429,10 +429,12 @@ func zstdInto(dst *bytes.Buffer, data []byte, level zstd.EncoderLevel) error {
 var compressedHeaderPlaceholder [7]byte
 
 func putUint24(b []byte, v int) {
+	_ = b[2] // bounds check hint to compiler; see golang.org/issue/14808
 	b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16)
 }
 
 func uint24(b []byte) int {
+	_ = b[2] // bounds check hint to compiler; see golang.org/issue/14808
 	return int(b[0]) | int(b[1])<<8 | int(b[2])<<16
 }
 
