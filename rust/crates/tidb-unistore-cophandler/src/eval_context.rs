@@ -47,7 +47,7 @@ impl RequestEvalContext {
                 Datum::Bytes(value) => std::str::from_utf8(value).map_err(|err| err.to_string())?,
                 _ => return Err("unsupported condition conversion event".to_owned().into()),
             };
-            self.handle_truncate(&format!(
+            tidb_expr::expression_errors::handle_truncate(self, &format!(
                 "Truncated incorrect DOUBLE value: '{}'",
                 tidb_datatype::float_warning_input(text)
             ))?;

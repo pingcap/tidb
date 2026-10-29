@@ -49,7 +49,7 @@ pub(crate) fn concat_with_context(
         match coerce_str_bytes(v)? {
             Some(s) => {
                 if out.len().saturating_add(s.len()) as u64 > ctx.max_allowed_packet() {
-                    ctx.handle_allowed_packet_overflowed("concat")?;
+                    crate::expression_errors::handle_allowed_packet_overflowed(ctx, "concat")?;
                     return Ok(Datum::Null);
                 }
                 out.extend_from_slice(&s);
@@ -1175,7 +1175,7 @@ pub(crate) fn concat_ws_with_context(
             target_len = target_len.saturating_add(sep.len() as u64);
         }
         if target_len > ctx.max_allowed_packet() {
-            ctx.handle_allowed_packet_overflowed("concat_ws")?;
+            crate::expression_errors::handle_allowed_packet_overflowed(ctx, "concat_ws")?;
             return Ok(Datum::Null);
         }
         if have_part {
@@ -1411,7 +1411,7 @@ pub(crate) fn from_base64_with_packet_limit(
         }
         let estimated_len = input.len() * 3 / 4;
         if estimated_len as u64 > ctx.max_allowed_packet() {
-            ctx.handle_allowed_packet_overflowed("from_base64")?;
+            crate::expression_errors::handle_allowed_packet_overflowed(ctx, "from_base64")?;
             return Ok(Datum::Null);
         }
     }

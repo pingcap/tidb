@@ -104,9 +104,12 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
                     "unbound prepared parameter",
                 ))
         }
-        fn handle_division_by_zero(&self) -> Result<(), tidb_expr::EvalError> {
-            self.warnings.set(self.warnings.get() + 1);
-            Ok(())
+        fn append_warning(&self, code: u16, _message: &str) {
+            // ER_DIVISION_BY_ZERO, which Go's `handleDivisionByZeroError`
+            // appends for a query.
+            if code == 1365 {
+                self.warnings.set(self.warnings.get() + 1);
+            }
         }
     }
     impl ColumnResolver for Context {

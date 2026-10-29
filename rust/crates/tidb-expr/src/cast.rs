@@ -71,7 +71,7 @@ pub(crate) fn eval_string_cast_with_type(
         && target.flen() > bytes.len() as i64
     {
         if target.flen() as u64 > ctx.max_allowed_packet() {
-            ctx.handle_allowed_packet_overflowed("cast_as_binary")?;
+            crate::expression_errors::handle_allowed_packet_overflowed(ctx, "cast_as_binary")?;
             return Ok(Datum::Null);
         }
         let mut padded = bytes.to_vec();
@@ -876,14 +876,14 @@ fn cast_to_duration(
                     Ok(parsed) => parsed.value,
                     Err(_) => tidb_datatype::MySqlDuration::from_raw_parts(0, 0),
                 };
-                ctx.handle_truncate(&format!(
+                crate::expression_errors::handle_truncate(ctx, &format!(
                     "Truncated incorrect time value: '{}'",
                     tidb_datatype::warning_subject_byte_cap(&text)
                 ))?;
                 return Ok(Datum::Duration(value));
             }
             _ => {
-                ctx.handle_truncate(&format!(
+                crate::expression_errors::handle_truncate(ctx, &format!(
                     "Truncated incorrect TIME value: '{}'",
                     tidb_datatype::warning_subject_byte_cap(&input)
                 ))?;
@@ -925,7 +925,7 @@ fn cast_to_duration(
     match converted {
         Ok((value, None | Some(ScalarConversionEvent::RoundedToScale))) => Ok(value),
         Ok((value, Some(_))) => {
-            ctx.handle_truncate(&format!(
+            crate::expression_errors::handle_truncate(ctx, &format!(
                 "Truncated incorrect time value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(&input)
             ))?;
@@ -935,7 +935,7 @@ fn cast_to_duration(
             Err(EvalError::Unsupported("CAST AS TIME source datum"))
         }
         Err(_) => {
-            ctx.handle_truncate(&format!(
+            crate::expression_errors::handle_truncate(ctx, &format!(
                 "Truncated incorrect time value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(&input)
             ))?;
@@ -1398,7 +1398,7 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
         Some(text)
             if !int_prefix_consumed_all(text) || signed_string_integer_parse_overflows(text) =>
         {
-            ctx.handle_truncate(&format!(
+            crate::expression_errors::handle_truncate(ctx, &format!(
                 "Truncated incorrect INTEGER value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(text.trim())
             ))
@@ -1629,7 +1629,7 @@ fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, Eval
     };
     let converted = tidb_datatype::str_to_float(&text, true);
     if converted.event.is_some() {
-        ctx.handle_truncate(&format!(
+        crate::expression_errors::handle_truncate(ctx, &format!(
             "Truncated incorrect {} value: '{}'",
             type_word,
             tidb_datatype::float_warning_input(&text)
@@ -1761,7 +1761,7 @@ fn cast_to_time_value(
                     tidb_datatype::TimeType::DateTime => "datetime",
                     tidb_datatype::TimeType::Timestamp => "timestamp",
                 };
-                ctx.handle_truncate(&format!("Truncated incorrect {label} value: '{value}'"))?;
+                crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect {label} value: '{value}'"))?;
                 return Ok(None);
             }
         }
@@ -1779,7 +1779,7 @@ fn cast_to_time_value(
         ) {
             Ok(value) => value,
             Err(_) => {
-                ctx.handle_truncate(&format!("Incorrect time value: '{:?}'", value.core_time()))?;
+                crate::expression_errors::handle_truncate(ctx, &format!("Incorrect time value: '{:?}'", value.core_time()))?;
                 return Ok(None);
             }
         };
@@ -1960,7 +1960,7 @@ fn cast_to_time_value(
     {
         // Only the string signature performs this SQL-mode check, using
         // the parsed target's own type and precision in its diagnostic.
-        ctx.handle_truncate(&format!("Incorrect datetime value: '{time}'"))?;
+        crate::expression_errors::handle_truncate(ctx, &format!("Incorrect datetime value: '{time}'"))?;
         return Ok(None);
     }
     Ok(Some(truncate_clock_for_date(time, kind)))

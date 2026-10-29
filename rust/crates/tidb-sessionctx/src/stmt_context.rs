@@ -6378,8 +6378,7 @@ mod tests {
         use tidb_expr::Columns;
         // `for_dml(error_for_division_by_zero, strict, ignore_err)`.
         let strict = StmtContext::for_dml(true, true, false).with_max_allowed_packet(1024);
-        let error = strict
-            .handle_allowed_packet_overflowed("space")
+        let error = tidb_expr::expression_errors::handle_allowed_packet_overflowed(&strict, "space")
             .expect_err("a strict write must fail rather than warn");
         let wire =
             tidb_driver_error::DriverError::Exec(tidb_driver_error::ExecError::Eval(error)).to_mysql_error();
@@ -6396,8 +6395,7 @@ mod tests {
         // Non-strict, and every read: the warning spelling, and the caller's
         // NULL stands.
         let lenient = StmtContext::for_dml(true, false, false).with_max_allowed_packet(1024);
-        lenient
-            .handle_allowed_packet_overflowed("space")
+        tidb_expr::expression_errors::handle_allowed_packet_overflowed(&lenient, "space")
             .expect("a non-strict write warns");
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);

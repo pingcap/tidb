@@ -149,7 +149,7 @@ fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, E
     // lower-bound read timestamp.
     for value in [left, right] {
         if value.invalid_zero() {
-            cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+            crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{value}'"))?;
             return Ok(Datum::Null);
         }
     }
@@ -190,7 +190,7 @@ pub(crate) fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
     if (value.is_zero() && modes.no_zero_date)
         || (!value.is_zero() && value.invalid_zero() && modes.no_zero_in_date)
     {
-        cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+        crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{value}'"))?;
         return Ok(Datum::Null);
     }
 
@@ -346,7 +346,7 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         .ok()
         .map(|parsed| parsed.value.to_string())
     };
-    cols.handle_truncate(&format!(
+    crate::expression_errors::handle_truncate(cols, &format!(
         "Truncated incorrect time value: '{}'",
         tidb_datatype::warning_subject_byte_cap(&value)
     ))?;
@@ -495,7 +495,7 @@ pub(crate) fn checked_date_arg(
     match value {
         Datum::Null => Ok(None),
         Datum::Time(time) if rejects(*time) => {
-            cols.handle_truncate(&format!("Incorrect datetime value: '{time}'"))?;
+            crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{time}'"))?;
             Ok(None)
         }
         Datum::Time(time) => Ok(Some(*time)),

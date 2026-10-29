@@ -26,6 +26,8 @@ use tidb_terror::catalog_support::{plain_err, std_err, Class};
 use tidb_terror::TerrorError;
 use tidb_errno::errcode;
 
+use crate::{Columns, ErrorLevel, EvalError};
+
 /// Source `expression.errCannotConvertString` (`pkg/expression/builtin_convert_charset.go:43`).
 pub static ERR_CANNOT_CONVERT_STRING: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Expression, errcode::ErrCannotConvertString));
@@ -552,5 +554,89 @@ mod go_class_code_tests {
             errcode::ErrNotSupportedYet as isize,
             "expression::ERR_UNSUPPORTED_JSON_COMPARISON"
         );
+    }
+}
+
+// Go `pkg/expression`'s error-level helpers over an `EvalContext`
+// (`errors.go`'s `handleDivisionByZeroError` / `handleAllowedPacketOverflowed`,
+// and the `TypeCtx().HandleTruncate` sites), free functions as in Go.
+
+/// Go `types.Context.HandleTruncate`: applies this statement's level to a
+/// value that lost information during conversion. The best-effort value
+/// the caller already computed stands either way -- Go returns the
+/// scanned prefix from `getValidIntPrefix` before this is consulted -- so
+/// only whether the statement survives, and whether the client is told,
+/// differ.
+pub fn handle_truncate<C: Columns + ?Sized>(ctx: &C, message: &str) -> Result<(), EvalError> {
+    let error = EvalError::TruncatedWrongValue(message.to_owned());
+    match ctx.truncate_level() {
+        ErrorLevel::Ignore => Ok(()),
+        ErrorLevel::Warn => {
+            ctx.append_error_warning(&error.to_sql_error());
+            Ok(())
+        }
+        ErrorLevel::Error => Err(error),
+    }
+}
+
+/// Applies this statement's truncate policy to a `GROUP_CONCAT` value
+/// that exceeded `group_concat_max_len`.
+pub fn handle_group_concat_cut<C: Columns + ?Sized>(ctx: &C, message: &str) -> Result<(), EvalError> {
+    match ctx.truncate_level() {
+        ErrorLevel::Ignore => Ok(()),
+        ErrorLevel::Warn => {
+            ctx.append_error_warning(&EvalError::GroupConcatCut(message.to_owned()).to_sql_error());
+            Ok(())
+        }
+        ErrorLevel::Error => Err(EvalError::GroupConcatCut(message.to_owned())),
+    }
+}
+
+/// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go:88-96`):
+/// a string builtin whose result would exceed `max_allowed_packet` warns
+/// 1301 and yields NULL -- unless the statement has neither
+/// `TruncateAsWarning` nor `IgnoreTruncateErr`, in which case the same
+/// condition is returned as a statement ERROR.
+///
+/// ```text
+/// if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
+///     tc.AppendWarning(err)
+///     return nil
+/// }
+/// return errors.Trace(err)
+/// ```
+///
+/// That is the SAME pair of flags [`Columns::truncate_level`] already
+/// reduces, so a strict `INSERT` errors and every read and non-strict
+/// write warns. The caller's `NULL` stands on the warning arm.
+pub fn handle_allowed_packet_overflowed<C: Columns + ?Sized>(ctx: &C, expr_name: &str) -> Result<(), EvalError> {
+    let message = format!(
+        "Result of {expr_name}() was larger than max_allowed_packet ({}) - truncated",
+        ctx.max_allowed_packet()
+    );
+    match ctx.truncate_level() {
+        // `IgnoreTruncateErr` is Go's first disjunct, which warns as well
+        // -- the source appends unconditionally on that arm.
+        ErrorLevel::Ignore | ErrorLevel::Warn => {
+            ctx.append_error_warning(
+                &EvalError::AllowedPacketOverflowed(message.clone()).to_sql_error(),
+            );
+            Ok(())
+        }
+        ErrorLevel::Error => Err(EvalError::AllowedPacketOverflowed(message)),
+    }
+}
+
+/// Go `handleDivisionByZeroError`: applies this statement's level to a
+/// zero divisor. The value the caller returns is `NULL` either way; only
+/// whether the statement survives differs.
+pub fn handle_division_by_zero<C: Columns + ?Sized>(ctx: &C) -> Result<(), EvalError> {
+    match ctx.division_by_zero_level() {
+        ErrorLevel::Ignore => Ok(()),
+        ErrorLevel::Warn => {
+            ctx.append_error_warning(&EvalError::DivisionByZero.to_sql_error());
+            Ok(())
+        }
+        ErrorLevel::Error => Err(EvalError::DivisionByZero),
     }
 }

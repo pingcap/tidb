@@ -66,7 +66,7 @@ pub(crate) fn constant_to_bool(context: &dyn Columns, value: &Datum) -> Option<i
             ),
             _ => return None,
         };
-        context.handle_truncate(&message).ok()?;
+        tidb_expr::expression_errors::handle_truncate(context, &message).ok()?;
     }
     Some(converted.value)
 }

@@ -142,7 +142,7 @@ fn note_string_truncation(ctx: &dyn Columns, datum: &Datum) -> Result<(), ()> {
     if tidb_datatype::str_to_float(text, false).event.is_none() {
         return Ok(());
     }
-    ctx.handle_truncate(&format!("Truncated incorrect DOUBLE value: '{text}'"))
+    crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DOUBLE value: '{text}'"))
         .map_err(|_| ())
 }
 

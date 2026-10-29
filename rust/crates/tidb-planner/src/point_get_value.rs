@@ -242,7 +242,7 @@ fn compares_equal(
         Some(tidb_datatype::DatumValueError::Comparison(message))
             if message.starts_with("Truncated incorrect ") =>
         {
-            if ctx.handle_truncate(&message).is_err() {
+            if tidb_expr::expression_errors::handle_truncate(ctx, &message).is_err() {
                 return false;
             }
         }

@@ -639,7 +639,7 @@ pub(crate) fn to_days(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
         u32::from(core.day()),
     );
     if days == 0 {
-        cols.handle_truncate(&format!("Incorrect datetime value: '{time}'"))?;
+        crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{time}'"))?;
         return Ok(Datum::Null);
     }
     Ok(Datum::Int(days))
@@ -667,7 +667,7 @@ pub(crate) fn to_seconds(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Ev
         + i64::from(core.minute()) * 60
         + i64::from(core.second());
     if seconds == 0 {
-        cols.handle_truncate(&format!("Incorrect datetime value: '{time}'"))?;
+        crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{time}'"))?;
         return Ok(Datum::Null);
     }
     Ok(Datum::Int(seconds))
@@ -1107,7 +1107,7 @@ pub(super) fn whole_interval_amount(
         Datum::UInt(value) => match i64::try_from(*value) {
             Ok(value) => value,
             Err(_) => {
-                cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+                crate::expression_errors::handle_truncate(cols, &format!("Incorrect datetime value: '{value}'"))?;
                 i64::MAX
             }
         },
@@ -1116,7 +1116,7 @@ pub(super) fn whole_interval_amount(
         Datum::Decimal(value) => match value.round_to_i64() {
             Some(rounded) => rounded,
             None => {
-                cols.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
+                crate::expression_errors::handle_truncate(cols, &format!("Truncated incorrect DECIMAL value: '{value}'"))?;
                 value.round_to_i64_saturating()
             }
         },
@@ -1137,7 +1137,7 @@ pub(super) fn whole_interval_amount(
                     .trim_start_matches(|c: char| c.is_ascii_digit())
                     .len();
             if digits == 0 || digits < after_sign.len() {
-                cols.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
+                crate::expression_errors::handle_truncate(cols, &format!("Truncated incorrect DECIMAL value: '{value}'"))?;
             }
             n
         }

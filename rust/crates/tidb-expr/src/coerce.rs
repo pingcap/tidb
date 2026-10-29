@@ -177,7 +177,7 @@ pub fn truthy_in(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<bool>
         // empty string is a truncated DOUBLE.
         let text = String::from_utf8_lossy(bytes);
         if tidb_datatype::str_to_float(&text, false).event.is_some() {
-            ctx.handle_truncate(&format!(
+            crate::expression_errors::handle_truncate(ctx, &format!(
                 "Truncated incorrect DOUBLE value: '{}'",
                 tidb_datatype::float_warning_input(&text)
             ))?;

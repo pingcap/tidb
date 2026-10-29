@@ -650,7 +650,7 @@ pub(crate) fn eval_binary_full(
                         .to_decimal()
                         .map_err(|_| EvalError::Unsupported("string operand"))?;
                     if converted.event.is_some() {
-                        ctx.handle_truncate(&format!(
+                        crate::expression_errors::handle_truncate(ctx, &format!(
                             "Truncated incorrect DECIMAL value: '{}'",
                             string_operand_text(&d)
                         ))?;
@@ -734,7 +734,7 @@ pub(crate) fn eval_binary_full(
                         // `StrToDecimal`'s truncation through
                         // `Context.HandleTruncate`, and the message names
                         // DECIMAL rather than the DOUBLE the real cast names.
-                        ctx.handle_truncate(&format!(
+                        crate::expression_errors::handle_truncate(ctx, &format!(
                             "Truncated incorrect DECIMAL value: '{}'",
                             string_operand_text(&d)
                         ))?;
@@ -795,7 +795,7 @@ pub(crate) fn eval_binary_full(
         let a = to_decimal(l);
         let b = to_decimal(r);
         if b.is_zero() {
-            ctx.handle_division_by_zero()?;
+            crate::expression_errors::handle_division_by_zero(ctx)?;
             return Ok(Datum::Null);
         }
         let target_scale = a.scale() + effective_div_precision_increment(div_precision_increment);
@@ -972,7 +972,7 @@ pub(crate) fn decimal_integer_division(
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     if b.is_zero() {
-        ctx.handle_division_by_zero()?;
+        crate::expression_errors::handle_division_by_zero(ctx)?;
         return Ok(Datum::Null);
     }
     // With matching scales <= 3 and i128 coefficients, the quotient has at
@@ -1100,7 +1100,7 @@ fn decimal_binary(
         Mod => match a.rem_mysql(&b) {
             Some(r) => Datum::Decimal(r),
             None => {
-                ctx.handle_division_by_zero()?;
+                crate::expression_errors::handle_division_by_zero(ctx)?;
                 Datum::Null
             }
         },
@@ -1154,7 +1154,7 @@ fn decimal_bit_operand(
     if let Some(exact) = value.round_to_i64() {
         return Ok(exact);
     }
-    ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
+    crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DECIMAL value: '{value}'"))?;
     Ok(value.round_to_i64_saturating())
 }
 

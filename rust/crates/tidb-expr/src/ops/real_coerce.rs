@@ -61,7 +61,7 @@ pub(super) fn float_binary(
         Mul => finite_float(a * b)?,
         Div => {
             if b == 0.0 {
-                ctx.handle_division_by_zero()?;
+                crate::expression_errors::handle_division_by_zero(ctx)?;
                 Datum::Null
             } else {
                 finite_float(a / b)?
@@ -70,7 +70,7 @@ pub(super) fn float_binary(
         IntDiv => unreachable!("DIV evaluates decimal operands before real dispatch"),
         Mod => {
             if b == 0.0 {
-                ctx.handle_division_by_zero()?;
+                crate::expression_errors::handle_division_by_zero(ctx)?;
                 Datum::Null
             } else {
                 finite_float(a % b)?
@@ -279,7 +279,7 @@ pub(crate) fn raise_truncated_double(
     ctx: &dyn crate::context::Columns,
     text: &str,
 ) -> Result<(), EvalError> {
-    ctx.handle_truncate(&format!("Truncated incorrect DOUBLE value: '{text}'"))
+    crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DOUBLE value: '{text}'"))
 }
 
 pub(super) fn real_compare(op: BinaryOp, a: f64, b: f64) -> Result<Datum, EvalError> {

@@ -797,23 +797,6 @@ pub trait Columns {
         true
     }
 
-    /// Go `types.Context.HandleTruncate`: applies this statement's level to a
-    /// value that lost information during conversion. The best-effort value
-    /// the caller already computed stands either way -- Go returns the
-    /// scanned prefix from `getValidIntPrefix` before this is consulted -- so
-    /// only whether the statement survives, and whether the client is told,
-    /// differ.
-    fn handle_truncate(&self, message: &str) -> Result<(), EvalError> {
-        let error = EvalError::TruncatedWrongValue(message.to_owned());
-        match self.truncate_level() {
-            ErrorLevel::Ignore => Ok(()),
-            ErrorLevel::Warn => {
-                self.append_error_warning(&error.to_sql_error());
-                Ok(())
-            }
-            ErrorLevel::Error => Err(error),
-        }
-    }
 
     /// Go `tc.HandleTruncate(err)` of an error other than
     /// `types.ErrTruncatedWrongVal`, which keeps its own class at either
@@ -829,18 +812,6 @@ pub trait Columns {
         }
     }
 
-    /// Applies this statement's truncate policy to a `GROUP_CONCAT` value
-    /// that exceeded `group_concat_max_len`.
-    fn handle_group_concat_cut(&self, message: &str) -> Result<(), EvalError> {
-        match self.truncate_level() {
-            ErrorLevel::Ignore => Ok(()),
-            ErrorLevel::Warn => {
-                self.append_error_warning(&EvalError::GroupConcatCut(message.to_owned()).to_sql_error());
-                Ok(())
-            }
-            ErrorLevel::Error => Err(EvalError::GroupConcatCut(message.to_owned())),
-        }
-    }
 
     /// Applies `ErrGroupBadNull` to `SLEEP(NULL)` and negative durations.
     fn handle_sleep_incorrect_argument(&self) -> Result<(), EvalError> {
@@ -937,40 +908,6 @@ pub trait Columns {
         64 << 20
     }
 
-    /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go:88-96`):
-    /// a string builtin whose result would exceed `max_allowed_packet` warns
-    /// 1301 and yields NULL -- unless the statement has neither
-    /// `TruncateAsWarning` nor `IgnoreTruncateErr`, in which case the same
-    /// condition is returned as a statement ERROR.
-    ///
-    /// ```text
-    /// if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
-    ///     tc.AppendWarning(err)
-    ///     return nil
-    /// }
-    /// return errors.Trace(err)
-    /// ```
-    ///
-    /// That is the SAME pair of flags [`Columns::truncate_level`] already
-    /// reduces, so a strict `INSERT` errors and every read and non-strict
-    /// write warns. The caller's `NULL` stands on the warning arm.
-    fn handle_allowed_packet_overflowed(&self, expr_name: &str) -> Result<(), EvalError> {
-        let message = format!(
-            "Result of {expr_name}() was larger than max_allowed_packet ({}) - truncated",
-            self.max_allowed_packet()
-        );
-        match self.truncate_level() {
-            // `IgnoreTruncateErr` is Go's first disjunct, which warns as well
-            // -- the source appends unconditionally on that arm.
-            ErrorLevel::Ignore | ErrorLevel::Warn => {
-                self.append_error_warning(
-                    &EvalError::AllowedPacketOverflowed(message.clone()).to_sql_error(),
-                );
-                Ok(())
-            }
-            ErrorLevel::Error => Err(EvalError::AllowedPacketOverflowed(message)),
-        }
-    }
 
     /// Go `SessionVars.SQLMode`'s three temporal bits, shared with the write
     /// path (`tidb_table::zero_date`) so one table decides what a zero,
@@ -982,19 +919,6 @@ pub trait Columns {
         tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE
     }
 
-    /// Go `handleDivisionByZeroError`: applies this statement's level to a
-    /// zero divisor. The value the caller returns is `NULL` either way; only
-    /// whether the statement survives differs.
-    fn handle_division_by_zero(&self) -> Result<(), EvalError> {
-        match self.division_by_zero_level() {
-            ErrorLevel::Ignore => Ok(()),
-            ErrorLevel::Warn => {
-                self.append_error_warning(&EvalError::DivisionByZero.to_sql_error());
-                Ok(())
-            }
-            ErrorLevel::Error => Err(EvalError::DivisionByZero),
-        }
-    }
 
     /// Shared session owner used by the plan-aware user-variable rewriter.
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {

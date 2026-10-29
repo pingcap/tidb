@@ -117,7 +117,7 @@ fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usi
                 // `HandleTruncate`: a wholly non-numeric string warns
                 // "Truncated incorrect DECIMAL value: 'a'" on its way to the
                 // epoch answer (captured on the oracle).
-                cols.handle_truncate(&format!(
+                crate::expression_errors::handle_truncate(cols, &format!(
                     "Truncated incorrect DECIMAL value: '{}'",
                     tidb_datatype::warning_subject_byte_cap(trimmed)
                 ))?;

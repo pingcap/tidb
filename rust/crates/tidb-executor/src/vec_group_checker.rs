@@ -554,7 +554,7 @@ fn encode_boundary_key(
     {
         Ok(encoded) => Ok(encoded),
         Err(tidb_codec::CodecError::InvalidMysqlTimestamp(value)) => {
-            ctx.handle_truncate(&format!("Incorrect time value: '{}'", value.core_time()))?;
+            tidb_expr::expression_errors::handle_truncate(ctx, &format!("Incorrect time value: '{}'", value.core_time()))?;
             // EncodeMySQLTime returns nil on conversion failure, discarding
             // even an already encoded prefix. ErrCtx may keep the statement.
             Ok(Vec::new())

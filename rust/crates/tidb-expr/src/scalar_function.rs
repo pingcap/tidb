@@ -2298,7 +2298,7 @@ impl ScalarFunction {
                 };
                 let next_len = output.len().saturating_add(bytes.len()) as u64;
                 if next_len > ctx.max_allowed_packet() {
-                    ctx.handle_allowed_packet_overflowed("concat")?;
+                    crate::expression_errors::handle_allowed_packet_overflowed(ctx, "concat")?;
                     return Ok(Datum::Null);
                 }
                 output.extend_from_slice(&bytes);
@@ -2322,7 +2322,7 @@ impl ScalarFunction {
                     target_len = target_len.saturating_add(separator.len() as u64);
                 }
                 if target_len > ctx.max_allowed_packet() {
-                    ctx.handle_allowed_packet_overflowed("concat_ws")?;
+                    crate::expression_errors::handle_allowed_packet_overflowed(ctx, "concat_ws")?;
                     return Ok(Datum::Null);
                 }
                 parts.push(bytes);
@@ -4153,7 +4153,7 @@ fn cast_numeric_argument_in_mode(
                 if ctx.truncate_level() == crate::context::ErrorLevel::Error {
                     return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()));
                 }
-                ctx.handle_truncate(&format!(
+                crate::expression_errors::handle_truncate(ctx, &format!(
                     "Truncated incorrect DECIMAL value: '{}'",
                     numeric_expression_text(expression, true, ctx)
                         .unwrap_or_else(|| tidb_datatype::format_float_g_shortest(*real))
@@ -4203,7 +4203,7 @@ fn cast_string_numeric_argument(
         if error == DecimalError::TruncatedWrongValue
             || (error == DecimalError::Truncated && !vectorized)
         {
-            ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{text}'"))?;
+            crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DECIMAL value: '{text}'"))?;
         } else {
             let error = match error {
                 DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),

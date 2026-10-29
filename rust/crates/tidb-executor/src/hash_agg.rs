@@ -2713,7 +2713,7 @@ fn finish_agg_value_claiming<C: Columns>(
                 joined.truncate(max_len as usize);
                 if claim_truncation() {
                     let text = group_concat_arg_text(func);
-                    ctx.handle_group_concat_cut(&format!(
+                    tidb_expr::expression_errors::handle_group_concat_cut(ctx, &format!(
                         "Some rows were cut by GROUPCONCAT({text})"
                     ))?;
                 }

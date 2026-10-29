@@ -803,7 +803,7 @@ pub(crate) fn eval_func_values(
                 _ => return Err(EvalError::Unsupported("INSERT result type")),
             };
             if result_len as u64 > ctx.max_allowed_packet() {
-                ctx.handle_allowed_packet_overflowed("insert")?;
+                crate::expression_errors::handle_allowed_packet_overflowed(ctx, "insert")?;
                 Ok(Datum::Null)
             } else {
                 Ok(result)

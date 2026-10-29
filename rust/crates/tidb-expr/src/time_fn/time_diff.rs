@@ -220,7 +220,7 @@ fn convert_string_to_duration(
 }
 
 fn truncated_time(text: &str, cols: &dyn Columns) -> Result<(), EvalError> {
-    cols.handle_truncate(&format!("Truncated incorrect time value: '{text}'"))
+    crate::expression_errors::handle_truncate(cols, &format!("Truncated incorrect time value: '{text}'"))
 }
 
 /// The tail of `calculateTimeDiff` / `calculateDurationTimeDiff`:
@@ -232,7 +232,7 @@ fn truncate_overflow(
 ) -> Result<MySqlDuration, EvalError> {
     let clamped = tidb_datatype::truncate_overflow_mysql_time(difference.nanoseconds());
     if clamped.overflow().is_some() {
-        cols.handle_truncate(&format!(
+        crate::expression_errors::handle_truncate(cols, &format!(
             "Truncated incorrect time value: '{}'",
             tidb_model::go_duration::format_go_duration(difference.nanoseconds())
         ))?;

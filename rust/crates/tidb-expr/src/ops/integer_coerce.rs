@@ -148,7 +148,7 @@ pub(crate) fn integer_binary(
         // `DIV`/`MOD` by zero yield NULL in MySQL. `DIV` truncates toward zero.
         IntDiv => {
             if bits_b == 0 {
-                ctx.handle_division_by_zero()?;
+                crate::expression_errors::handle_division_by_zero(ctx)?;
                 Datum::Null
             } else {
                 // Go selects a different checked helper for every signedness
@@ -174,7 +174,7 @@ pub(crate) fn integer_binary(
         }
         Mod => {
             if bits_b == 0 {
-                ctx.handle_division_by_zero()?;
+                crate::expression_errors::handle_division_by_zero(ctx)?;
                 Datum::Null
             } else {
                 // MOD's result flag follows the left operand only.  Go's
