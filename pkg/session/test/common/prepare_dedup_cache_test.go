@@ -23,6 +23,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPrepareStmtDedupCacheClientCharset(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("set tidb_enable_cache_prepare_stmt=on")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=off")
+	tk.MustExec("set character_set_connection=utf8mb4")
+	tk.MustExec("set collation_connection=utf8mb4_bin")
+	raw := string([]byte{0xd6, 0xd0})
+	query := "select length('" + raw + "'), '" + raw + "' as value"
+	run := func() (int64, string, int) {
+		id, _, fields, err := tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), id, nil)
+		require.NoError(t, err)
+		defer rs.Close()
+		chk := rs.NewChunk(nil)
+		require.NoError(t, rs.Next(context.Background(), chk))
+		require.Equal(t, 1, chk.NumRows())
+		return chk.GetRow(0).GetInt64(0), chk.GetRow(0).GetString(1), fields[1].Column.GetFlen()
+	}
+	tk.MustExec("set character_set_client=gbk")
+	for range 2 {
+		length, value, _ := run()
+		require.Equal(t, int64(3), length)
+		require.Equal(t, "中", value)
+	}
+	// The same bytes decode differently after changing only the client charset.
+	// Cached result metadata must match a fresh prepare in the new charset too.
+	tk.MustExec("set character_set_client=latin1")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt=off")
+	wantLength, wantValue, wantFlen := run()
+	tk.MustExec("set tidb_enable_cache_prepare_stmt=on")
+	for range 2 {
+		length, value, flen := run()
+		require.Equal(t, wantLength, length)
+		require.Equal(t, wantValue, value)
+		require.Equal(t, wantFlen, flen)
+	}
+}
+
 // TestPrepareStmtDedupCacheBasic verifies that preparing the same SQL twice in
 // the same session reuses the cached PlanCacheStmt: both stmtIDs are distinct,
 // but paramCount and column metadata match.
