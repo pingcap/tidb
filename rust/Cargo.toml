@@ -42,6 +42,7 @@ members = [
     "crates/tidb-infoschema-isvalidator",
     "crates/tidb-infoschema-issyncer",
     "crates/tidb-stats-handle",
+    "crates/tidb-stats-handle-types",
     "crates/tidb-stats-handle-syncload",
     "crates/tidb-stats-handle-lockstats",
     "crates/tidb-stats-handle-storage",

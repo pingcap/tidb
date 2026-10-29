@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::{Datum, Time};
 use tidb_model::table_info::TableInfo;
-use tidb_stats::{StatsLockTable, StatsLockTransaction};
+use crate::lock_stats::StatsLockTransaction;
+use tidb_stats_handle_types::StatsLockTable;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
@@ -204,10 +205,10 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
             format!("{}.{}", target.schema, target.table)
         };
         if statement.lock {
-            tidb_stats::add_locked_partitions(transaction, table.id, &displayed, &partitions)
+            crate::lock_stats::add_locked_partitions(transaction, table.id, &displayed, &partitions)
                 .map_err(ClusterStatsLockApplyError::Transaction)
         } else {
-            tidb_stats::remove_locked_partitions(transaction, table.id, &displayed, &partitions)
+            crate::lock_stats::remove_locked_partitions(transaction, table.id, &displayed, &partitions)
                 .map_err(ClusterStatsLockApplyError::Transaction)
         }
     } else {
@@ -246,10 +247,10 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
             );
         }
         if statement.lock {
-            tidb_stats::add_locked_tables(transaction, &tables)
+            crate::lock_stats::add_locked_tables(transaction, &tables)
                 .map_err(ClusterStatsLockApplyError::Transaction)
         } else {
-            tidb_stats::remove_locked_tables(transaction, &tables)
+            crate::lock_stats::remove_locked_tables(transaction, &tables)
                 .map_err(ClusterStatsLockApplyError::Transaction)
         }
     }

@@ -50,7 +50,6 @@ pub mod independent_index_analyze;
 pub mod index;
 pub mod index_query;
 pub mod json_metadata;
-pub mod lock_stats;
 pub mod memory_usage;
 pub mod overlap_geometry;
 pub mod row_estimate;
@@ -60,7 +59,6 @@ pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod table_statistics;
 pub mod sorted_builder;
-pub mod stats_lock_table;
 pub mod stats_version;
 pub mod status;
 pub mod table;
@@ -126,10 +124,6 @@ pub use json_metadata::{
     JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch,
     JsonHistogram, JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS,
 };
-pub use lock_stats::{
-    add_locked_partitions, add_locked_tables, get_locked_tables, remove_locked_partitions,
-    remove_locked_tables, StatsLockTransaction,
-};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
@@ -146,7 +140,6 @@ pub use scalar_geometry::{
     convert_datum_to_scalar,
 };
 pub use sorted_builder::SortedHistogramBuilder;
-pub use stats_lock_table::StatsLockTable;
 pub use stats_version::{
     is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
 };

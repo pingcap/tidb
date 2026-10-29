@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }

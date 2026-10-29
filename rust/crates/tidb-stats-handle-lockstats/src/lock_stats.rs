@@ -23,7 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::StatsLockTable;
+use tidb_stats_handle_types::StatsLockTable;
 
 /// The storage operations Go performs inside one `FlagWrapTxn` transaction.
 pub trait StatsLockTransaction {

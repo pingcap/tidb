@@ -22,7 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::Datum;
-use tidb_stats::StatsLockTransaction;
+use tidb_stats_handle_lockstats::lock_stats::StatsLockTransaction;
 
 use crate::{Catalog, DriverError, StmtContext, TableEntry};
 use tidb_hack::GoToLower;
@@ -83,14 +83,14 @@ pub fn execute_catalog_stats_lock(
         };
         let mut transaction = CatalogStatsLockTransaction::new(catalog, context, start_ts);
         return if lock {
-            tidb_stats::add_locked_partitions(
+            tidb_stats_handle_lockstats::lock_stats::add_locked_partitions(
                 &mut transaction,
                 table_id,
                 &displayed_table,
                 &partition_names,
             )
         } else {
-            tidb_stats::remove_locked_partitions(
+            tidb_stats_handle_lockstats::lock_stats::remove_locked_partitions(
                 &mut transaction,
                 table_id,
                 &displayed_table,
@@ -123,7 +123,7 @@ pub fn execute_catalog_stats_lock(
         });
         tables.insert(
             table.table_id(),
-            tidb_stats::StatsLockTable {
+            tidb_stats_handle_types::StatsLockTable {
                 partition_info,
                 full_name: format!("{}.{}", database.go_to_lower(), table_name.go_to_lower()),
             },
@@ -131,9 +131,9 @@ pub fn execute_catalog_stats_lock(
     }
     let mut transaction = CatalogStatsLockTransaction::new(catalog, context, start_ts);
     if lock {
-        tidb_stats::add_locked_tables(&mut transaction, &tables)
+        tidb_stats_handle_lockstats::lock_stats::add_locked_tables(&mut transaction, &tables)
     } else {
-        tidb_stats::remove_locked_tables(&mut transaction, &tables)
+        tidb_stats_handle_lockstats::lock_stats::remove_locked_tables(&mut transaction, &tables)
     }
 }
 
@@ -282,7 +282,8 @@ fn required_i64(value: Option<&Datum>, column: &str) -> Result<i64, DriverError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_stats::{add_locked_tables, remove_locked_tables, StatsLockTable};
+    use tidb_stats_handle_lockstats::lock_stats::{add_locked_tables, remove_locked_tables};
+    use tidb_stats_handle_types::StatsLockTable;
 
     #[test]
     fn catalog_adapter_persists_lock_rows_and_merges_deltas() {

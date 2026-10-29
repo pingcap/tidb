@@ -1,0 +1,13 @@
+[package]
+name = "tidb-stats-handle-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle types: Go pkg/statistics/handle/types (Rust rewrite)."
+
+[dependencies]
+
+[lints]
+workspace = true
