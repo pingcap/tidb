@@ -128,14 +128,21 @@ func (*BaseHandler) PreRun() error {
 
 // Run implements Handler interface.
 func (h *BaseHandler) Run(ctx context.Context, pairCh chan *simplesst.KVPair) error {
-	for kvPair := range pairCh {
-		if err := h.Handle(ctx, kvPair); err != nil {
-			return errors.Trace(err)
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case kvPair, ok := <-pairCh:
+			if !ok {
+				return nil
+			}
+			if err := h.Handle(ctx, kvPair); err != nil {
+				return errors.Trace(err)
+			}
+			// Each item in pairCh is one conflict KV pair.
+			h.collector.Processed(1, 0)
 		}
-		// Each item in pairCh is one conflict KV pair.
-		h.collector.Processed(1, 0)
 	}
-	return nil
 }
 
 // Close implements Handler interface.
