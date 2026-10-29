@@ -263,11 +263,11 @@ func (*Manager) createSessionManager(
 				svrInfoSyncer.RevokeSession()
 			}
 			cancel()
-			autoidClient.ResetConn(nil)
 			err2 := etcdCli.Close()
 			if err2 != nil {
 				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
 			}
+			autoidClient.ResetConn(nil)
 		}
 	}()
 
@@ -540,10 +540,12 @@ func (m *SessionManager) close() {
 		m.svrInfoSyncer.RevokeSession()
 	}
 	m.schemaVerSyncer.Close()
-	m.autoidClient.ResetConn(nil)
+	// Close etcd first, so an auto-ID allocation that looks up the leader fails
+	// instead of holding the client while it is reset, or connecting again.
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
+	m.autoidClient.ResetConn(nil)
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
 	failpoint.InjectCall("skipCloseStore", &needCloseStore)
