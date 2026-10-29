@@ -598,7 +598,9 @@ where
     let (read_ts, isolation) = read_policy(snapshot_enabled, snapshot);
     let mut builder = tidb_distsql::RequestBuilder::new();
     builder
-        .set_handle_ranges(physical_id, schema.common_handle, &schema.ranges)
+        // Go passes the session's `DistSQLContext`; ANALYZE's full handle
+        // ranges hold no temporal bound, so its location cannot change them.
+        .set_handle_ranges(None, physical_id, schema.common_handle, &schema.ranges)
         .set_analyze_request(request.encode_to_vec(), isolation)
         .set_paging(false)
         .set_start_ts(read_ts)

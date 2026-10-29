@@ -190,6 +190,7 @@ impl RequestBuilder {
     /// common-handle one (`CommonHandleRangesToKVRanges`).
     pub fn set_handle_ranges(
         &mut self,
+        location: Option<&tidb_datatype::SessionTimeZone>,
         table_id: i64,
         is_common_handle: bool,
         ranges: &[Range],
@@ -200,7 +201,7 @@ impl RequestBuilder {
         if self.error.is_some() {
             return self;
         }
-        match common_handle_ranges_to_kv_ranges(table_id, ranges) {
+        match common_handle_ranges_to_kv_ranges(location, table_id, ranges) {
             Ok(ranges) => self.set_non_partitioned_key_ranges(ranges),
             Err(error) => {
                 self.remember_error(error);
@@ -212,6 +213,7 @@ impl RequestBuilder {
     /// Converts mem-comparable index tuples into one non-partitioned group.
     pub fn set_index_ranges(
         &mut self,
+        location: Option<&tidb_datatype::SessionTimeZone>,
         table_id: i64,
         index_id: i64,
         ranges: &[Range],
@@ -219,7 +221,7 @@ impl RequestBuilder {
         if self.error.is_some() {
             return self;
         }
-        match index_ranges_to_kv_ranges(&[table_id], index_id, ranges) {
+        match index_ranges_to_kv_ranges(location, &[table_id], index_id, ranges) {
             Ok(mut ranges) => self.set_non_partitioned_key_ranges(ranges.remove(0)),
             Err(error) => {
                 self.remember_error(error);
@@ -560,13 +562,14 @@ pub fn table_ranges_to_kv_ranges(
 
 /// Encodes index ranges for every physical table without flattening groups.
 pub fn index_ranges_to_kv_ranges(
+    location: Option<&tidb_datatype::SessionTimeZone>,
     table_ids: &[i64],
     index_id: i64,
     ranges: &[Range],
 ) -> Result<Vec<Vec<KeyRange>>, KvRequestBuildError> {
     let encoded = ranges
         .iter()
-        .map(encode_index_key)
+        .map(|range| encode_index_key(location, range))
         .collect::<Result<Vec<_>, KvRequestBuildError>>()?;
 
     Ok(table_ids
@@ -583,14 +586,23 @@ pub fn index_ranges_to_kv_ranges(
         .collect())
 }
 
-/// Go `EncodeIndexKey`: the mem-comparable bounds of one range, with the
-/// exclusion adjustments applied.
-fn encode_index_key(range: &Range) -> Result<(Vec<u8>, Vec<u8>), KvRequestBuildError> {
-    let mut low = encode_key(&range.low_val).map_err(|_| KvRequestBuildError::RangeEncoding)?;
+/// Go `EncodeIndexKey(dctx, ran)`: the mem-comparable bounds of one range,
+/// with the exclusion adjustments applied, encoded in the DistSQL context's
+/// location (`dctx.Location`; UTC for a nil `dctx`, which `location: None`
+/// stands for) and the process's collation mode.
+fn encode_index_key(
+    location: Option<&tidb_datatype::SessionTimeZone>,
+    range: &Range,
+) -> Result<(Vec<u8>, Vec<u8>), KvRequestBuildError> {
+    let encode = |values: &[tidb_datatype::Datum]| match location {
+        Some(zone) => tidb_codec::encode_key_in_timezone(zone, values),
+        None => encode_key(values),
+    };
+    let mut low = encode(&range.low_val).map_err(|_| KvRequestBuildError::RangeEncoding)?;
     if range.low_exclude {
         low = Key::from_bytes(low).prefix_next().into_bytes();
     }
-    let mut high = encode_key(&range.high_val).map_err(|_| KvRequestBuildError::RangeEncoding)?;
+    let mut high = encode(&range.high_val).map_err(|_| KvRequestBuildError::RangeEncoding)?;
     if !range.high_exclude {
         high = Key::from_bytes(high).prefix_next().into_bytes();
     }
@@ -600,13 +612,14 @@ fn encode_index_key(range: &Range) -> Result<(Vec<u8>, Vec<u8>), KvRequestBuildE
 /// Go `CommonHandleRangesToKVRanges` for one physical table: each range's
 /// `EncodeIndexKey` bounds under the table's record prefix.
 pub fn common_handle_ranges_to_kv_ranges(
+    location: Option<&tidb_datatype::SessionTimeZone>,
     table_id: i64,
     ranges: &[Range],
 ) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     ranges
         .iter()
         .map(|range| {
-            let (low, high) = encode_index_key(range)?;
+            let (low, high) = encode_index_key(location, range)?;
             Ok(KeyRange {
                 start_key: encode_row_key(table_id, &low).into(),
                 end_key: encode_row_key(table_id, &high).into(),
@@ -632,7 +645,7 @@ pub fn build_table_ranges(
         .filter(|index| index.public && index.global)
     {
         output.extend(
-            index_ranges_to_kv_ranges(&[table.table_id], index.id, &full_range())?
+            index_ranges_to_kv_ranges(None, &[table.table_id], index.id, &full_range())?
                 .into_iter()
                 .flatten(),
         );
@@ -651,7 +664,7 @@ fn append_ranges(
     table_id: i64,
 ) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     let mut output = if table.common_handle {
-        common_handle_ranges_to_kv_ranges(table_id, &full_not_null_range())?
+        common_handle_ranges_to_kv_ranges(None, table_id, &full_not_null_range())?
     } else {
         table_ranges_to_kv_ranges(table_id, &full_int_range(false))?
     };
@@ -661,7 +674,7 @@ fn append_ranges(
         .filter(|index| index.public && !index.global)
     {
         output.extend(
-            index_ranges_to_kv_ranges(&[table_id], index.id, &full_range())?
+            index_ranges_to_kv_ranges(None, &[table_id], index.id, &full_range())?
                 .into_iter()
                 .flatten(),
         );

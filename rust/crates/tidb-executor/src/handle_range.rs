@@ -219,7 +219,7 @@ pub fn record_key_ranges(
     ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
-) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError>
+) -> Result<Option<Vec<(Key, Key)>>, tidb_distsql::KvRequestBuildError>
 {
     match record_key_range_value_halves(table, ranges, zone)? {
         Some([signed_half, unsigned_half]) => {
@@ -251,35 +251,19 @@ pub fn record_key_ranges(
 /// range list an ordered coprocessor request could carry. An UNORDERED reader
 /// never calls this: its single request carries Go's merged wire order,
 /// which only [`record_key_ranges] assembles.
-/// Go `CommonHandleRangesToKVRanges`: the ranger's encoded tuple bounds
-/// prefixed by each physical table's record namespace.
+/// Go `TableHandleRangesToKVRanges` for a common handle
+/// (`CommonHandleRangesToKVRanges(dctx, tids, ranges)`): every physical
+/// table's record keys, encoded as Go's read path encodes them -- the session
+/// location and the process's collation mode.
 fn common_handle_record_key_ranges(
     table: &KvTable,
     ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Vec<(Key, Key)>, tidb_codec::CodecError> {
-    let ids = table.record_physical_ids();
-    let mut key_ranges = Vec::with_capacity(ranges.len() * ids.len());
-    for id in ids {
-        for range in ranges {
-            let low = tidb_codec::Encoder::new(table.use_new_collation())
-                .encode_key_in_timezone(zone, &range.low_val)?;
-            let low = if range.low_exclude {
-                Key::from_bytes(low).prefix_next().into_bytes()
-            } else {
-                low
-            };
-            let high = tidb_codec::Encoder::new(table.use_new_collation())
-                .encode_key_in_timezone(zone, &range.high_val)?;
-            let high = if range.high_exclude {
-                high
-            } else {
-                Key::from_bytes(high).prefix_next().into_bytes()
-            };
-            key_ranges.push((
-                Key::from_bytes(tidb_tablecodec::table_key::encode_row_key(id, &low)),
-                Key::from_bytes(tidb_tablecodec::table_key::encode_row_key(id, &high)),
-            ));
+) -> Result<Vec<(Key, Key)>, tidb_distsql::KvRequestBuildError> {
+    let mut key_ranges = Vec::new();
+    for id in table.record_physical_ids() {
+        for range in tidb_distsql::common_handle_ranges_to_kv_ranges(Some(zone), id, ranges)? {
+            key_ranges.push((range.start_key, range.end_key));
         }
     }
     Ok(key_ranges)
@@ -291,7 +275,7 @@ pub fn record_key_range_value_halves(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<
     Option<[Vec<(Key, Key)>; 2]>,
-    tidb_codec::CodecError,
+    tidb_distsql::KvRequestBuildError,
 > {
     // DDL does not materialize the clustered PRIMARY as a secondary index.
     // The table path still carries the common-handle column offsets, and Go's

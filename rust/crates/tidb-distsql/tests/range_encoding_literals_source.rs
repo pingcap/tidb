@@ -128,7 +128,7 @@ fn master_index_range(low_tail: u8, high_tail: u8) -> (Vec<u8>, Vec<u8>) {
 /// prefix `0x03` the Go source keeps inside every encoded boundary.
 #[test]
 fn index_ranges_to_kv_ranges_matches_master_byte_literals() {
-    let actual = index_ranges_to_kv_ranges(&[12], 15, &source_ranges()).expect("index ranges");
+    let actual = index_ranges_to_kv_ranges(None, &[12], 15, &source_ranges()).expect("index ranges");
     let expected = [
         master_index_range(0x01, 0x03),
         master_index_range(0x03, 0x04),

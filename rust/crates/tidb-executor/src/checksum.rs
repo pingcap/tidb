@@ -167,7 +167,9 @@ impl ChecksumContext {
             tidb_ranger::points::full_int_range(false)
         };
         let mut builder = RequestBuilder::new();
-        builder.set_handle_ranges(physical_table_id, self.is_common_handle, &ranges);
+        // Go passes the session's `DistSQLContext`; full ranges hold no
+        // temporal bound, so its location cannot change their keys.
+        builder.set_handle_ranges(None, physical_table_id, self.is_common_handle, &ranges);
         finish_request(builder, &checksum, settings)
     }
 
@@ -191,6 +193,7 @@ fn build_index_request(
     };
     let mut builder = RequestBuilder::new();
     builder.set_index_ranges(
+        None,
         physical_table_id,
         index_id,
         &tidb_ranger::points::full_range(),

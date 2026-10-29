@@ -74,7 +74,7 @@ fn table_and_index_ranges_match_source_exclusion_vectors() {
         assert_eq!(range.end_key, encode_row_key(13, &encoded_int(high)));
     }
 
-    let index = index_ranges_to_kv_ranges(&[12], 15, &source_ranges())
+    let index = index_ranges_to_kv_ranges(None, &[12], 15, &source_ranges())
         .expect("index ranges")
         .remove(0);
     for (range, (low, high)) in index.iter().zip(expected) {
@@ -103,7 +103,7 @@ fn test_table_ranges_to_kv_ranges_with_fbs() {
 #[test]
 fn test_index_ranges_to_kv_ranges_with_fbs() {
     let fbs = range(vec![Datum::Int(1)], vec![Datum::Int(4)], false, false);
-    let index = index_ranges_to_kv_ranges(&[0], 0, &[fbs]).expect("index FBS");
+    let index = index_ranges_to_kv_ranges(None, &[0], 0, &[fbs]).expect("index FBS");
     let low = encode_key(&[Datum::Int(1)]).expect("low");
     let high = encode_key(&[Datum::Int(5)]).expect("high");
     assert_eq!(index.len(), 1);
@@ -148,9 +148,9 @@ fn test_request_builder_1() {
 // Go pkg/distsql/request_builder_test.go::TestRequestBuilder2.
 #[test]
 fn test_request_builder_2() {
-    let expected = index_ranges_to_kv_ranges(&[12], 15, &source_ranges()).unwrap();
+    let expected = index_ranges_to_kv_ranges(None, &[12], 15, &source_ranges()).unwrap();
     let mut builder = RequestBuilder::new();
-    builder.set_index_ranges(12, 15, &source_ranges());
+    builder.set_index_ranges(None, 12, 15, &source_ranges());
     let request = finish_default_dag_request(&mut builder);
     assert_eq!(
         request.key_ranges.as_ref().unwrap().partitions(),
