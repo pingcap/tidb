@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -1783,6 +1784,10 @@ max-allowed-packet = %d`, packetSize)), 0644))
 }
 
 func TestDiagnosticSkipGrantTableConfig(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+	}
+
 	tests := []struct {
 		name       string
 		diagnostic bool
