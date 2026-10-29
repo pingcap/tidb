@@ -2711,7 +2711,7 @@ fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
 /// process tracker, releases the allocated process ID, and publishes the
 /// ordinary version-2 statistics result.
 struct ObservedSystemAnalyze {
-    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    inner: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
     processes: tidb_executor::process::ProcessRegistry,
     kill: Option<bool>,
     process_id: u64,
@@ -2720,7 +2720,7 @@ struct ObservedSystemAnalyze {
     interrupted: Arc<AtomicBool>,
 }
 
-impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
+impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -2773,13 +2773,13 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAn
 /// Kills the running auto-analyze through SQL `KILL QUERY`, by the process ID
 /// the shared process list shows for it, and records that ID.
 struct KillingSystemAnalyze {
-    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    inner: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
     processes: tidb_executor::process::ProcessRegistry,
     factory: std::sync::Weak<Domain>,
     process_id: Arc<AtomicU64>,
 }
 
-impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
+impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -17546,11 +17546,11 @@ fn failed_select_for_update_lock_finishes_the_statement() {
 
 /// Delegates the analysis and fails the statement's closing cache update.
 struct FailingStatsCacheUpdate {
-    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    inner: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
     updated: Arc<std::sync::Mutex<Vec<i64>>>,
 }
 
-impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
+impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -20437,7 +20437,7 @@ fn binding_gc_commits_on_the_maintenance_thread() {
     );
     let bindings = Arc::clone(stack.factory.bindings.as_ref().expect("binding cache"));
     let long = Duration::from_secs(3600);
-    let worker = tidb_domain_core::cluster_binding_seam::BindingReloader::spawn(
+    let worker = tidb_bindinfo::cluster_binding_seam::BindingReloader::spawn(
         bindings,
         [long, Duration::from_millis(1), long],
         move || long,

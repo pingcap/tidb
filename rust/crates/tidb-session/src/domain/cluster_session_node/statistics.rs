@@ -3,7 +3,7 @@
 //!
 //! The statement is not answered by the session driver at all -- statistics
 //! are stored cluster state, so it is routed to
-//! [`ClusterAnalyze`](tidb_domain_core::cluster_analyze_seam::ClusterAnalyze), one
+//! [`ClusterAnalyze`](tidb_executor::cluster_analyze_seam::ClusterAnalyze), one
 //! transaction per named table. Mirrors Go's split across
 //! `pkg/planner/core/planbuilder.go` (`requireInsertAndSelectPriv`, the
 //! privilege gate below) and `pkg/executor/analyze.go` with
@@ -344,7 +344,7 @@ pub(super) fn analyze_service(
 /// [`analyze_service`] over `analyze`, the domain's analyzer.
 pub(super) fn analyze_service_over(
     domain: &super::Domain,
-    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
 ) -> crate::domain_services::StatementService<dyn tidb_executor::analyze::exec::AnalyzeService> {
     let stats_usage = Arc::clone(&domain.stats_usage);
     let transactions = Arc::clone(&domain.transactions);
@@ -419,7 +419,7 @@ struct ClusterAnalyzeService {
     catalog: Arc<super::SharedClusterCatalog>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
-    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
     approximate_table_counts: Arc<super::ClusterApproximateTableCountProvider>,
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
@@ -527,8 +527,8 @@ struct ClusterStatsStatementService {
     catalog: Arc<super::SharedClusterCatalog>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
-    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 

@@ -20,3 +20,4 @@
 pub mod binding;
 pub mod binding_cache;
 pub mod binding_utils;
+pub mod cluster_binding_seam;

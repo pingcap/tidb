@@ -49,7 +49,7 @@ impl BindingSessions {
         Ok(BindingRunner { session })
     }
 }
-impl tidb_domain_core::cluster_binding_seam::BindingSessionPool for BindingSessions {
+impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions {
     fn load(&self, boundary: Option<&str>) -> Result<Vec<Vec<Datum>>, String> {
         let mut runner = self.open()?;
         let (condition, args) = match boundary {
@@ -137,7 +137,7 @@ impl InternalSqlRunner for BindingRunner {
 /// maintenance on sessions the session package opens over `domain`.
 pub fn attach_binding_sessions(
     domain: &Arc<Domain>,
-    bindings: &dyn tidb_domain_core::cluster_binding_seam::ClusterBindings,
+    bindings: &dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings,
 ) {
     bindings.attach_session_pool(Arc::new(BindingSessions::new(domain)));
 }

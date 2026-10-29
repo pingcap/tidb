@@ -23,7 +23,7 @@ use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatal
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_kv::cluster_storage::MutationBuffer;
-use tidb_bindinfo::binding_cache::SharedBindingCache;
+use crate::binding_cache::SharedBindingCache;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
@@ -51,7 +51,7 @@ pub trait BindingSessionPool: Send + Sync {
     /// Go's serialized tombstone GC transaction.
     fn gc(&self) -> Result<(), String>;
     /// Persist usage in bounded transactions and acknowledge committed batches.
-    fn write_usage(&self, bindings: &[Arc<tidb_bindinfo::binding::Binding>]) -> Result<(), String>;
+    fn write_usage(&self, bindings: &[Arc<crate::binding::Binding>]) -> Result<(), String>;
 }
 
 /// The node's committed binding image and its storage refresh authority.
@@ -102,7 +102,7 @@ impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
         // Go readBindingsFromStorage runs SELECT through an internal session.
         // bind_info's create_time/update_time are TIMESTAMP(6), so decoding
         // needs that session's timezone rather than the no-TIMESTAMP shortcut.
-        let timezone = crate::session_time_zone::RealTiKvSessionTimeZone::parse(
+        let timezone = tidb_store_driver::session_time_zone::RealTiKvSessionTimeZone::parse(
             &self
                 .globals
                 .get("time_zone")
@@ -362,7 +362,7 @@ mod tests {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn write_usage(&self, _: &[Arc<tidb_bindinfo::binding::Binding>]) -> Result<(), String> {
+            fn write_usage(&self, _: &[Arc<crate::binding::Binding>]) -> Result<(), String> {
                 unreachable!()
             }
         }

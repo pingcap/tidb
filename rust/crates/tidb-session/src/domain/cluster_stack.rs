@@ -29,11 +29,12 @@ use tidb_ddl::ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 
-use tidb_domain_core::cluster_account_seam::RealClusterAccountWriter;
-use tidb_domain_core::cluster_analyze_seam::RealClusterAnalyze;
+use tidb_executor::cluster_account_seam::RealClusterAccountWriter;
+use tidb_executor::cluster_analyze_seam::RealClusterAnalyze;
 use tidb_domain_core::cluster_session::SkippedTable;
-use tidb_domain_core::cluster_stats_lock_seam::RealClusterStatsLock;
-use tidb_domain_core::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
+use tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock;
+use crate::cluster_sysvar_writer::RealClusterSysvarWriter;
+use tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence;
 use tidb_domain_core::node_config::NodeConfig;
 use crate::domain::real_tikv_node::{
     node_accounts, spawn_catalog_reloader, spawn_privilege_watch, RunConfiguredNodeError,
@@ -403,7 +404,7 @@ pub fn cluster_session_stack(
             crate::domain::cluster_session_node::STATS_OWNER_KEY,
         )),
     };
-    let (bindings, binding_reloader) = tidb_domain_core::cluster_binding_seam::start_binding_cache(
+    let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
         authority.transaction_opener(),
         Arc::clone(&catalog),
         users.global_vars(),

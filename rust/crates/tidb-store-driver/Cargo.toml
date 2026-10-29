@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB's TiKV store: Go pkg/store/driver (Rust rewrite)."
 
 [dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }

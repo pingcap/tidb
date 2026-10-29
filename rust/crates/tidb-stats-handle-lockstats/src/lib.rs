@@ -20,3 +20,4 @@ pub mod cluster_stats_lock;
 pub mod real_tikv_stats_lock;
 pub mod lock_stats;
 pub mod lock_target;
+pub mod cluster_stats_lock_seam;

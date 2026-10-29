@@ -47,8 +47,8 @@ impl RealTiKvSessionTimeZone {
 #[cfg(test)]
 pub fn time_zone_sql_error(
     error: tidb_error::terror::TerrorError,
-) -> tidb_store_driver::sql_query_error::SqlQueryError {
-    tidb_store_driver::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
+) -> crate::sql_query_error::SqlQueryError {
+    crate::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
         &error,
     ))
 }

@@ -17,7 +17,10 @@
 //! read out of `mysql.*`.
 
 use crate::PrivilegeTypeExt;
-use crate::loaded::{ClusterPrivileges, LoadedUser};
+use crate::loaded::{
+    ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
+    LoadedRoleEdge, LoadedTableGrant, LoadedUser,
+};
 
 use super::{is_dynamic_privilege, Account, PrivilegeType, PrivilegeRegistry};
 
@@ -257,3 +260,149 @@ fn priv_mask(global: PrivilegeType) -> u64 {
 fn account(user: &str, host: &str) -> Account {
     (user.to_owned(), host.to_owned())
 }
+
+/// Turns a live account table back into the `mysql.*` rows that hold it --
+/// the exact inverse of [`registry_from_cluster`].
+///
+/// Two normalisations are deliberate, because they are what the registry
+/// itself stores rather than what any statement asked for:
+///
+/// * a row whose `plugin` was empty comes back as
+///   [`DEFAULT_AUTH_PLUGIN`], which is the plugin TiDB already treats such a
+///   row as using;
+/// * a `SET`-valued privilege comes back in the element spelling
+///   `mysql.tables_priv` declares, so it round-trips through the loader.
+///
+/// Everything else is the registry's own state, spelled as the loader reads
+/// it. [`unwritable_account_rows`] is the guard that keeps this from being
+/// asked to write a table it could not have loaded faithfully.
+#[must_use]
+pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivileges {
+    let exported = registry.export();
+    ClusterPrivileges {
+        global_priv: registry.global_priv_rows(),
+        password_history: exported.password_history,
+        users: exported
+            .users
+            .into_iter()
+            .map(|user| LoadedUser {
+                host: user.host,
+                user: user.user,
+                authentication_string: user.auth_string,
+                plugin: if user.plugin.is_empty() {
+                    DEFAULT_AUTH_PLUGIN.to_owned()
+                } else {
+                    user.plugin
+                },
+                account_locked: user.account_locked,
+                password_expired: user.password_expired,
+                password_lifetime: user.password_lifetime,
+                max_user_connections: user.max_user_connections,
+                password_last_changed: user
+                    .password_last_changed
+                    .map(tidb_datatype::Time::from_go_raw_like_go),
+                password_reuse_history: user.password_reuse_history,
+                password_reuse_time: user.password_reuse_time,
+                password_locking: crate::account_policy::PasswordLocking::from_attributes(
+                    user.user_attributes.as_deref(),
+                )
+                .expect("registry produces valid policy"),
+                user_attributes: user.user_attributes,
+                privileges: user.privileges,
+            })
+            .collect(),
+        db_grants: exported
+            .db_grants
+            .into_iter()
+            .map(|grant| LoadedDbGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                privileges: grant.privileges,
+            })
+            .collect(),
+        table_grants: exported
+            .table_grants
+            .into_iter()
+            .map(|grant| LoadedTableGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                table: grant.table,
+                privileges: grant
+                    .privileges
+                    .iter()
+                    .map(|name| set_element(name))
+                    .collect(),
+            })
+            .collect(),
+        column_grants: exported
+            .column_grants
+            .into_iter()
+            .map(|grant| LoadedColumnGrant {
+                host: grant.host,
+                user: grant.user,
+                database: grant.database,
+                table: grant.table,
+                column: grant.column,
+                privileges: grant
+                    .privileges
+                    .iter()
+                    .map(|name| set_element(name))
+                    .collect(),
+            })
+            .collect(),
+        dynamic_grants: exported
+            .dynamic_grants
+            .into_iter()
+            .map(|grant| LoadedDynamicGrant {
+                host: grant.host,
+                user: grant.user,
+                privilege: grant.privilege,
+                with_grant_option: grant.with_grant_option,
+            })
+            .collect(),
+        role_edges: exported
+            .role_edges
+            .into_iter()
+            .map(|(role, grantee)| LoadedRoleEdge {
+                role_user: role.0,
+                role_host: role.1,
+                grantee_user: grantee.0,
+                grantee_host: grantee.1,
+            })
+            .collect(),
+        default_roles: exported
+            .default_roles
+            .into_iter()
+            .map(|(owner, role)| LoadedDefaultRole {
+                user: owner.0,
+                host: owner.1,
+                role_user: role.0,
+                role_host: role.1,
+            })
+            .collect(),
+    }
+}
+
+/// The `SET` element spelling one printed privilege takes in
+/// `mysql.tables_priv`/`mysql.columns_priv` -- the inverse of
+/// [`set_element_grant_name`], and the only spelling the loader reads back.
+fn set_element(printed: &str) -> String {
+    if printed == "GRANT OPTION" {
+        return "Grant".to_owned();
+    }
+    let mut element = String::with_capacity(printed.len());
+    for (position, word) in printed.split(' ').enumerate() {
+        if position > 0 {
+            element.push(' ');
+        }
+        let mut characters = word.chars();
+        if let Some(first) = characters.next() {
+            element.push(first);
+            element.extend(characters.map(|character| character.to_ascii_lowercase()));
+        }
+    }
+    element
+}
+

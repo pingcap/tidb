@@ -38,6 +38,19 @@ use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, T
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 
 /// Go `errno.ErrLockWaitTimeout`.
+
+/// A commit outcome as the session-visible error it is, if it is one.
+/// Returns the client error for a cluster state change that did not commit,
+/// preserving the ambiguous outcome instead of reporting a false failure.
+pub fn cluster_commit_error(
+    outcome: &OptimisticCommitOutcome,
+    _subject: &str,
+) -> Option<crate::sql_query_error::SqlQueryError> {
+    commit_outcome_to_sql_error(outcome)
+        .err()
+        .map(|error| crate::sql_query_error::lock_sql_error(&error))
+}
+
 #[cfg(test)]
 const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
 /// Go `errno.ErrLockDeadlock`.

@@ -237,3 +237,17 @@ fn commit_error(error: LockSqlError) -> ClusterStatsLockCommitError {
         ClusterStatsLockCommitError::Commit(error)
     }
 }
+
+/// The session-visible error of a cluster LOCK / UNLOCK STATS.
+pub fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> tidb_store_driver::sql_query_error::SqlQueryError {
+    match error {
+        ClusterStatsLockCommitError::Undetermined(_) => tidb_store_driver::sql_query_error::SqlQueryError::result_undetermined(),
+        ClusterStatsLockCommitError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterStatsLockCommitError::Plan(crate::cluster_stats_lock::ClusterStatsLockError::Mysql(error)) => {
+            tidb_store_driver::sql_query_error::SqlQueryError::from(error)
+        }
+        ClusterStatsLockCommitError::Plan(error) => tidb_store_driver::sql_query_error::SqlQueryError::unknown(error.to_string()),
+        ClusterStatsLockCommitError::Other(detail) => tidb_store_driver::sql_query_error::SqlQueryError::unknown(detail),
+    }
+}
+

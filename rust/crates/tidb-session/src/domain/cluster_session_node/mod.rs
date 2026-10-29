@@ -141,7 +141,7 @@
 //! is not re-derived from the AST at all; the session driver runs it against a
 //! scratch account table read from the cluster inside the change's own
 //! transaction, and the seam writes back whatever that table now says.
-//! [`tidb_domain_core::cluster_account_seam`] states why, and what a failure leaves
+//! [`tidb_executor::cluster_account_seam`] states why, and what a failure leaves
 //! behind.
 //!
 //! # What this mode refuses, and why
@@ -205,9 +205,9 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_stats_handle_cache::StatsTableRowCache;
 
-use tidb_domain_core::cluster_account_seam::ClusterAccountWriter;
+use tidb_executor::cluster_account_seam::ClusterAccountWriter;
 #[cfg(test)]
-use tidb_domain_core::cluster_analyze_seam::ClusterAnalyze;
+use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use tidb_domain_core::cluster_session::{cluster_session_catalog_with_templates, SkippedTable};
 use tidb_table::table_from_meta::TableAutoIds;
 use tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter;
@@ -539,7 +539,7 @@ impl crate::txn_manager::SchemaPins for NodeSchemaPins {
 /// What a commit reads off this node: the schema lease checker, the binding
 /// cache and the catalog a write-conflict message is rewritten against.
 struct NodeCommitHooks {
-    bindings: Option<Arc<dyn tidb_domain_core::cluster_binding_seam::ClusterBindings>>,
+    bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
     schema_validator: Option<Arc<SchemaValidator>>,
     schema_version: i64,
     catalog: crate::SharedCatalog,
@@ -1158,7 +1158,7 @@ impl<'s> ClusterServerSession<'s> {
                     Ok(_) => Err(SqlQueryError::unknown(
                         "this node runs ANALYZE TABLE for a named table only",
                     )),
-                    Err(error) => Err(tidb_domain_core::errors::cluster_analyze_error(
+                    Err(error) => Err(tidb_executor::real_tikv_analyze::cluster_analyze_error(
                         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
                     )),
                 }
@@ -1172,7 +1172,7 @@ impl<'s> ClusterServerSession<'s> {
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node could not lower the statistics lock statement",
                     )),
-                    Err(refusal) => Err(tidb_domain_core::errors::cluster_stats_lock_error(
+                    Err(refusal) => Err(tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
                         ClusterStatsLockCommitError::Plan(refusal),
                     )),
                 }

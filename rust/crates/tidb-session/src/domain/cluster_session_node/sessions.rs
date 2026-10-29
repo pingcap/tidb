@@ -977,7 +977,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
 pub(crate) struct InternalBindingWriter {
     pub(crate) factory: Weak<Domain>,
-    pub(crate) bindings: Arc<dyn tidb_domain_core::cluster_binding_seam::ClusterBindings>,
+    pub(crate) bindings: Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>,
     pub(crate) connection_id: u64,
 }
 

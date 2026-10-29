@@ -35,7 +35,7 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
-        Err(tidb_domain_core::errors::cluster_analyze_error(
+        Err(tidb_executor::real_tikv_analyze::cluster_analyze_error(
             tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
                 "commit response lost".to_owned(),
             ),
@@ -148,7 +148,7 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
     assert_eq!(*events.lock().unwrap(), ["stopped", "flush"]);
 }
 
-impl tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
+impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
         statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
@@ -173,7 +173,7 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
     let stats_lock = Arc::new(WarningStatsLock::default());
     let mut session = open_session_on_with_stats_lock(
         &node,
-        Arc::clone(&stats_lock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::clone(&stats_lock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     );
 
     session.node_conn().execute_write("BEGIN").expect("begin");
@@ -208,7 +208,7 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
     let mut session = open_session_as_with_stats_lock(
         &node,
         "low",
-        Arc::clone(&stats_lock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::clone(&stats_lock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     );
 
     let error = session
@@ -259,7 +259,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
     ];
     for (error, code, state, message) in cases {
         let error =
-            tidb_domain_core::errors::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
+            tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
         assert_eq!((error.code, error.state), (code, state));
         assert_eq!(error.message, message);
     }
@@ -322,7 +322,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     });
     let lock_error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
-    let query_error = tidb_domain_core::errors::cluster_analyze_error(
+    let query_error = tidb_executor::real_tikv_analyze::cluster_analyze_error(
         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
     );
     assert_eq!(
@@ -344,7 +344,7 @@ fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
         .handle_signal()
         .expect("the query-interrupted signal has an error")
         .to_sql_error();
-    let query_error = tidb_domain_core::errors::cluster_analyze_error(
+    let query_error = tidb_executor::real_tikv_analyze::cluster_analyze_error(
         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
     );
     assert_eq!((query_error.code, query_error.state), (1317, *b"70100"));
@@ -442,14 +442,14 @@ fn open_session_as(node: &MockNode, user: &str) -> Session {
     open_session_as_with_stats_lock(
         node,
         user,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
 fn open_session_as_with_stats_lock(
     node: &MockNode,
     user: &str,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     let cluster = Arc::clone(&node.cluster);
     let factory = Domain::new(

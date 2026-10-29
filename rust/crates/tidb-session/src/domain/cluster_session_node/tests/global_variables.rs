@@ -74,7 +74,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
             },
         });
         Err(
-            tidb_domain_core::errors::cluster_commit_error(&outcome, "sysvar change")
+            tidb_store_driver::pessimistic_lock_error::cluster_commit_error(&outcome, "sysvar change")
                 .expect("an exhausted max-ts backoff cannot answer success"),
         )
     }
@@ -88,7 +88,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
         Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         Arc::new(super::mock_seams::MockStatsLock)
-            as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+            as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         globals,

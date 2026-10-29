@@ -3231,6 +3231,7 @@ mod tests_zero_date;
 pub mod mysql_bootstrap;
 pub mod bootstrap_publish;
 pub mod ddl_session_pool;
+pub mod cluster_sysvar_writer;
 use tidb_variable::sysvar;
 
 

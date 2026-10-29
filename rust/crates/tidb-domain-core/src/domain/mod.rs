@@ -50,12 +50,12 @@ use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 
 use crate::bdr_role_store;
-use crate::cluster_account_seam::ClusterAccountWriter;
-use crate::cluster_analyze_seam::ClusterAnalyze;
+use tidb_executor::cluster_account_seam::ClusterAccountWriter;
+use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
     cluster_session_catalog, detached_storage, KvTableTemplates, SkippedTable,
 };
-use crate::cluster_stats_lock_seam::ClusterStatsLock;
+use tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::cluster_transactions::ClusterTransactions;
 use crate::ddl_job_history_store;
@@ -619,7 +619,7 @@ pub struct Domain {
     /// The session package's opener of this domain's internal sessions.
     pub(crate) sys_session_opener: SysSessionOpener,
     pub global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
-    pub bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
+    pub bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
     pub binding_session_factory: Weak<Domain>,
     /// The `SHOW STATUS` providers this domain registered as it started its
     /// DDL and binding handle, unregistered when it closes.
@@ -632,13 +632,13 @@ pub struct Domain {
     /// The route a stored-schema change this node can express takes.
     pub ddl: Arc<dyn ClusterDdl>,
     /// The route a stored-account change takes; see
-    /// [`crate::cluster_account_seam`].
+    /// [`tidb_executor::cluster_account_seam`].
     pub accounts: Arc<dyn ClusterAccountWriter>,
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     pub sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The route an `ANALYZE TABLE` takes; see
-    /// [`crate::cluster_analyze_seam`].
+    /// [`tidb_executor::cluster_analyze_seam`].
     analyze: std::sync::RwLock<Arc<dyn ClusterAnalyze>>,
     /// The route a persisted statistics-lock operation takes.
     pub stats_lock: Arc<dyn ClusterStatsLock>,
@@ -856,7 +856,7 @@ impl Domain {
     /// Install the node-owned global-binding authority before opening sessions.
     pub fn with_bindings(
         mut self,
-        bindings: Arc<dyn crate::cluster_binding_seam::ClusterBindings>,
+        bindings: Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>,
     ) -> Arc<Self> {
         self.bindings = Some(Arc::clone(&bindings));
         // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.

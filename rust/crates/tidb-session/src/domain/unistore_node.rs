@@ -246,7 +246,7 @@ pub struct UnistoreClusterStack {
     pub _reloader: tidb_infoschema_issyncer::catalog_watch::CatalogReloader,
     pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
-    pub _binding_reloader: tidb_domain_core::cluster_binding_seam::BindingReloader,
+    pub _binding_reloader: tidb_bindinfo::cluster_binding_seam::BindingReloader,
     pub _async_stats_loader: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
@@ -581,7 +581,7 @@ pub fn unistore_cluster_session_stack_from(
     // `cluster_account_seam::seed_cluster_accounts` for what happened when it
     // did not.
     // Go's root INSERT in `doDMLWorks` logs nothing.
-    tidb_domain_core::cluster_account_seam::seed_cluster_accounts(
+    tidb_executor::cluster_account_seam::seed_cluster_accounts(
         &opener,
         &users.accounts(),
         IN_PROCESS_TIMEOUT,
@@ -655,7 +655,7 @@ pub fn unistore_cluster_session_stack_from(
     let kv_client: Arc<dyn tidb_txnkv::Client> = Arc::new(
         tidb_copr::cop_client::CopClient::new(transport_factory),
     );
-    let (bindings, binding_reloader) = tidb_domain_core::cluster_binding_seam::start_binding_cache(
+    let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
         opener.clone(),
         Arc::clone(&catalog),
         users.global_vars(),
@@ -702,13 +702,13 @@ pub fn unistore_cluster_session_stack_from(
             IN_PROCESS_TIMEOUT,
         )),
         cluster_ddl,
-        Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
+        Arc::new(tidb_executor::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),
             users.accounts(),
             IN_PROCESS_TIMEOUT,
             None,
         )),
-        Arc::new(tidb_domain_core::cluster_sysvar_seam::RealClusterSysvarWriter::new(
+        Arc::new(crate::cluster_sysvar_writer::RealClusterSysvarWriter::new(
             Arc::new(opener.clone()),
             users.global_vars(),
             IN_PROCESS_TIMEOUT,
@@ -716,7 +716,7 @@ pub fn unistore_cluster_session_stack_from(
             sysvar_publication_fence,
         )),
         Arc::new(
-            tidb_domain_core::cluster_analyze_seam::RealClusterAnalyze::new(
+            tidb_executor::cluster_analyze_seam::RealClusterAnalyze::new(
                 Arc::new(opener.clone()),
                 Arc::clone(&stats),
                 IN_PROCESS_TIMEOUT,
@@ -724,7 +724,7 @@ pub fn unistore_cluster_session_stack_from(
                 Arc::clone(&node_auto_ids),
             ),
         ),
-        Arc::new(tidb_domain_core::cluster_stats_lock_seam::RealClusterStatsLock::new(
+        Arc::new(tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
         )),

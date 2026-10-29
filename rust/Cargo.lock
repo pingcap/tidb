@@ -3439,18 +3439,28 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "prometheus 0.14.0",
+ "rand 0.10.2",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-ddl",
+ "tidb-domain",
  "tidb-driver-error",
  "tidb-error",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
+ "tidb-kv",
  "tidb-lexer",
  "tidb-metrics",
  "tidb-mysql",
+ "tidb-owner",
  "tidb-parser",
  "tidb-planner",
  "tidb-ristretto",
+ "tidb-store-driver",
+ "tidb-syssession",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
 ]
@@ -5176,6 +5186,7 @@ dependencies = [
  "tidb-syssession",
  "tidb-table",
  "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]
@@ -5343,6 +5354,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-codec",
  "tidb-config",
+ "tidb-datatype",
  "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-error",

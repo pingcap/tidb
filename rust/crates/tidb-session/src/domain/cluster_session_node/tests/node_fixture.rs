@@ -14,7 +14,7 @@ use super::mock_seams::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::session_api::{ConnectionCancellation, ConnectionClose};
-use tidb_domain_core::errors::cluster_commit_error;
+use tidb_store_driver::pessimistic_lock_error::cluster_commit_error;
 use tidb_store_driver::sql_query_error::SqlQueryError;
 use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
@@ -283,7 +283,7 @@ impl MockNode {
 /// A detached copy of one registry's rows, since
 /// [`PrivilegeRegistry::replace_from`] empties its source.
 pub(super) fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
-    let image = tidb_domain_core::cluster_privileges::cluster_image_from_registry(source);
+    let image = tidb_privilege::load::cluster_image_from_registry(source);
     tidb_privilege::load::registry_from_cluster(&image).registry
 }
 
@@ -336,7 +336,7 @@ pub(super) fn open_session_on(node: &MockNode) -> Session {
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -351,7 +351,7 @@ pub(super) fn open_session_on_with_context(node: &MockNode, context: SessionCont
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
         context,
     )
 }
@@ -365,7 +365,7 @@ pub(super) fn open_session_on_with_ddl(node: &MockNode, ddl: Arc<dyn ClusterDdl>
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -379,7 +379,7 @@ pub(super) fn open_session_on_with_sysvars(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         sysvars,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -393,13 +393,13 @@ pub(super) fn open_session_on_with_analyze(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         analyze,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
 pub(super) fn open_session_on_with_stats_lock(
     node: &MockNode,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     open_session_on_with_seams(
         node,
@@ -417,7 +417,7 @@ fn open_session_on_with_seams(
     accounts: Arc<dyn ClusterAccountWriter>,
     sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     let mut session = open_session_on_with_context_and_seams(
         node,
@@ -443,7 +443,7 @@ fn open_session_on_with_context_and_seams(
     accounts: Arc<dyn ClusterAccountWriter>,
     sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> Session {
     open_session_on_with_context_and_seams_and_usage(
@@ -461,7 +461,7 @@ pub(super) fn open_session_on_with_usage(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
         session_context(1),
     );
     session
@@ -477,7 +477,7 @@ fn open_session_on_with_context_and_seams_and_usage(
     accounts: Arc<dyn ClusterAccountWriter>,
     sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> (Session, Arc<tidb_stats_handle_usage::StatsUsageHandle>) {
     let cluster = Arc::clone(&node.cluster);

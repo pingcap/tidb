@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics locks: Go pkg/statistics/handle/lockstats (Rust rewrite)."
 
 [dependencies]
+tikv-client.workspace = true
 tidb-table = { path = "../tidb-table" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-ast = { path = "../tidb-ast" }

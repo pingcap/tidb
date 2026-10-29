@@ -21,7 +21,7 @@
 //! registry, because the driver is what knows that `GRANT SELECT ON *.*`
 //! means. Nothing in the driver knows what `ANALYZE TABLE` means -- the
 //! statement's whole meaning is reading rows and building histograms, which
-//! is [`tidb_executor::cluster_analyze`]'s -- so the seam is one method that runs
+//! is [`crate::cluster_analyze`]'s -- so the seam is one method that runs
 //! it, exactly as the DDL seam is one method that applies a catalog change.
 //!
 //! # The order, and what a failure leaves behind
@@ -49,10 +49,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_executor::cluster_analyze::AnalyzeStatement;
+use crate::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
-use tidb_executor::real_tikv_analyze::{
+use crate::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
     ClusterAnalyzeReport,
@@ -66,7 +66,7 @@ use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_util::sqlkiller::SqlKiller;
 
-use crate::errors::cluster_analyze_error;
+use crate::real_tikv_analyze::cluster_analyze_error;
 use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored statistics.

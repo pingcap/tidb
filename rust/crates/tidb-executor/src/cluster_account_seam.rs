@@ -58,9 +58,9 @@ use tidb_privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use crate::cluster_privileges::cluster_image_from_registry;
+use tidb_privilege::load::cluster_image_from_registry;
 use tidb_privilege::load::registry_from_cluster;
-use crate::errors::cluster_commit_error;
+use tidb_store_driver::pessimistic_lock_error::cluster_commit_error;
 use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
@@ -317,7 +317,7 @@ mod seed_tests {
             "%".to_owned(),
             "*61CAB5BD10C9AE60B985E8821DCBCBA0125FE290".to_owned(),
         )]);
-        let image = super::cluster_image_from_registry(&registry);
+        let image = tidb_privilege::load::cluster_image_from_registry(&registry);
         let root = image
             .users
             .iter()

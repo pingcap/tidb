@@ -3,8 +3,8 @@
 //!
 //! Each replaces the 2PC of its production counterpart
 //! ([`crate::domain::cluster_session_node::RealClusterDdl`],
-//! [`tidb_domain_core::cluster_account_seam`], [`tidb_domain_core::cluster_sysvar_seam`],
-//! [`tidb_domain_core::cluster_analyze_seam`]) with a switch a test can flip, keeping the
+//! [`tidb_executor::cluster_account_seam`], [`tidb_domain_core::cluster_sysvar_seam`],
+//! [`tidb_executor::cluster_analyze_seam`]) with a switch a test can flip, keeping the
 //! part this node owns: the routing contract, the published catalog moving to
 //! a new schema version, and the scratch-then-publish ordering that decides
 //! what a failed statement leaves behind.
@@ -715,7 +715,7 @@ impl ClusterAnalyze for MockAnalyze {
 /// this seam to prove routing and statement-state behavior.
 pub(super) struct MockStatsLock;
 
-impl tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
+impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
     fn execute(
         &self,
         _: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,

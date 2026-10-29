@@ -22,3 +22,4 @@ pub mod pessimistic_lock_error;
 pub mod cluster_table_storage;
 pub mod sql_query_error;
 pub mod meta_txn;
+pub mod session_time_zone;

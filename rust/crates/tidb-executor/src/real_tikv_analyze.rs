@@ -3007,6 +3007,23 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
     Ok(plan)
 }
 
+/// The session-visible error of a cluster ANALYZE.
+pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver::sql_query_error::SqlQueryError {
+    match error {
+        ClusterAnalyzeError::Analyze(error) => {
+            let error = crate::DriverError::from(error).to_mysql_error();
+            tidb_store_driver::sql_query_error::SqlQueryError::from(error)
+        }
+        ClusterAnalyzeError::Undetermined(_) => tidb_store_driver::sql_query_error::SqlQueryError::result_undetermined(),
+        ClusterAnalyzeError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterAnalyzeError::Killed(error) => {
+            tidb_store_driver::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
+        }
+        ClusterAnalyzeError::Other(detail) => tidb_store_driver::sql_query_error::SqlQueryError::unknown(detail),
+        ClusterAnalyzeError::Mysql(error) => tidb_store_driver::sql_query_error::SqlQueryError::from(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
