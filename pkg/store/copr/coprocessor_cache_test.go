@@ -227,9 +227,8 @@ func TestGetSet(t *testing.T) {
 	})
 	require.True(t, v2)
 
-	// See https://github.com/dgraph-io/ristretto/blob/83508260cb49a2c3261c2774c991870fd18b5a1b/cache_test.go#L13
-	// Changed from 10ms to 50ms to resist from unstable CI environment.
-	time.Sleep(time.Millisecond * 50)
+	// Wait for the asynchronous cache insertion to finish before reading it.
+	cache.cache.Wait()
 
 	v = cache.Get([]byte("foo"))
 	require.NotNil(t, v)
