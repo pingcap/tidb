@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE SEQUENCE` metadata and its allocator: Go `model.SequenceInfo`
-//! (`pkg/meta/model`), `sequenceCommon` (`pkg/table/tables/tables.go`) and the
-//! sequence half of `pkg/meta/autoid/autoid.go`.
+//! A sequence table's value cache: Go `sequenceCommon`
+//! (`pkg/table/tables/tables.go`), over `model.SequenceInfo` (tidb-model) and
+//! the sequence half of `pkg/meta/autoid/autoid.go` (`tidb_autoid::sequence`).
 //!
 //! A sequence is NOT an auto-increment column with different option names, and
 //! the differences are behavioural, each captured from real TiDB rather than
