@@ -14,6 +14,10 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
+tidb-executor-internal-applycache = { path = "../tidb-executor-internal-applycache" }
+tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
+tidb-executor-join-joinversion = { path = "../tidb-executor-join-joinversion" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-planner-rule = { path = "../tidb-planner-rule" }

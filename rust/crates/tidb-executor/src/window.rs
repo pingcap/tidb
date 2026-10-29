@@ -43,7 +43,7 @@ use tidb_exprctx::Columns;
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::hash_agg::{AggFunc, WindowAggState};
-use crate::vec_group_checker::VecGroupChecker;
+use tidb_executor_internal_vecgroupchecker::VecGroupChecker;
 
 /// One window function's runtime form.
 pub struct WindowFuncSpec {

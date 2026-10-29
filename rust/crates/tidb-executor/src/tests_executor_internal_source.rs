@@ -25,8 +25,8 @@ use tidb_charset::Collation;
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_exprctx::NoColumns;
 
-use crate::apply_cache::{apply_cache_kv_mem, ApplyCache};
-use crate::vec_group_checker::VecGroupChecker;
+use tidb_executor_internal_applycache::{apply_cache_kv_mem, ApplyCache};
+use tidb_executor_internal_vecgroupchecker::VecGroupChecker;
 use tidb_chunk::chunk::Chunk;
 
 fn grouping_column(index: usize, field_type: FieldType) -> Expression {

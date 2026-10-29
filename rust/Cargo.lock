@@ -4434,6 +4434,10 @@ dependencies = [
  "tidb-driver-error",
  "tidb-errno",
  "tidb-execdetails",
+ "tidb-executor-aggfuncs",
+ "tidb-executor-internal-applycache",
+ "tidb-executor-internal-vecgroupchecker",
+ "tidb-executor-join-joinversion",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-filter",
@@ -4541,6 +4545,46 @@ dependencies = [
  "tonic",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "tidb-executor-aggfuncs"
+version = "0.0.0"
+dependencies = [
+ "tidb-charset",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+]
+
+[[package]]
+name = "tidb-executor-internal-applycache"
+version = "0.0.0"
+dependencies = [
+ "tidb-kvcache",
+]
+
+[[package]]
+name = "tidb-executor-internal-vecgroupchecker"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-sessionctx",
+ "tidb-terror",
+]
+
+[[package]]
+name = "tidb-executor-join-joinversion"
+version = "0.0.0"
+dependencies = [
+ "tidb-vardef",
 ]
 
 [[package]]

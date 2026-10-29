@@ -18,12 +18,13 @@
 //! sessionless context and hands the warnings over through this per-thread
 //! buffer, which the statement drains (`StmtContext::drain_fold_warnings`).
 
-/// Warnings the constant-fold evaluation raised, stashed for the caller that
-/// owns the statement's warning buffer. The fold evaluates column-free
-/// expressions against a sessionless context whose `append_warning` would
-/// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
-/// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
 thread_local! {
+    /// Warnings the constant-fold evaluation raised, stashed for the caller
+    /// that owns the statement's warning buffer. The fold evaluates
+    /// column-free expressions against a sessionless context whose
+    /// `append_warning` would otherwise drop go's per-statement warnings
+    /// (`ADDDATE('abc', INTERVAL 1 DAY)` warns `Incorrect datetime value:
+    /// 'abc'` on an empty table).
     static FOLD_WARNINGS: std::cell::RefCell<Vec<crate::SqlWarn>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }

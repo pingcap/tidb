@@ -21,9 +21,9 @@
 
 use super::native::{ApplyRuntimeSink, ApplyRuntimeSnapshot, InnerRows, NestedLoopApplyExec};
 use crate::{
-    apply_cache::ApplyCache, worker_pool::LanePool, ExecError, Executor, ExecutorMeta,
-    StatementMemory, StmtContext,
+    worker_pool::LanePool, ExecError, Executor, ExecutorMeta, StatementMemory, StmtContext,
 };
+use tidb_executor_internal_applycache::ApplyCache;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Condvar, Mutex,

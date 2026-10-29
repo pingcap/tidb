@@ -410,7 +410,7 @@ struct MergeSide {
     chunk: Chunk,
     /// The exact live capacity charge for `chunk`.
     chunk_bytes: i64,
-    group_checker: crate::vec_group_checker::VecGroupChecker,
+    group_checker: tidb_executor_internal_vecgroupchecker::VecGroupChecker,
     /// Whether the child has returned its final (empty) chunk.
     done: bool,
     /// The first row in the current OUTER equal-key range.
@@ -438,7 +438,7 @@ impl MergeSide {
         MergeSide {
             chunk,
             chunk_bytes,
-            group_checker: crate::vec_group_checker::VecGroupChecker::new(group_by),
+            group_checker: tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(group_by),
             done: false,
             group_start: 0,
             group_end: 0,

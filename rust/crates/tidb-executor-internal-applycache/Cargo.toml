@@ -1,0 +1,14 @@
+[package]
+name = "tidb-executor-internal-applycache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/internal/applycache (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-kvcache = { path = "../tidb-kvcache" }

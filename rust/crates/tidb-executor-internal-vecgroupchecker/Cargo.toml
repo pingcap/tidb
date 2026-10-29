@@ -1,0 +1,23 @@
+[package]
+name = "tidb-executor-internal-vecgroupchecker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/internal/vecgroupchecker (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-context = { path = "../tidb-context" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

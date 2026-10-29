@@ -14,9 +14,13 @@
 
 //! Go NestedLoopApplyExec: reopen a built inner executor after rebinding
 //! correlated datum cells; tuple semantics belong to the shared Joiner.
-use crate::apply_cache::ApplyCache;
+use tidb_executor_internal_applycache::ApplyCache;
 use crate::joiner::{Joiner, NAAJType};
-use crate::{ExecError, Executor, ExecutorMeta, StatementMemory, StmtContext};
+use crate::ExecError;
+use crate::Executor;
+use crate::ExecutorMeta;
+use crate::StatementMemory;
+use crate::StmtContext;
 use std::sync::{Arc, Mutex};
 use tidb_chunk::{
     chunk::Chunk,

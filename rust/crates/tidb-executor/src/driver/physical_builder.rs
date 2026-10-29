@@ -4044,7 +4044,7 @@ fn can_use_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool
                 | LogicalJoinType::RightOuter
                 | LogicalJoinType::Semi
                 | LogicalJoinType::AntiSemi
-        ) || crate::hash_join_version::use_hash_join_v2_for_non_ga_join())
+        ) || tidb_executor_join_joinversion::use_hash_join_v2_for_non_ga_join())
 }
 
 /// Go `physicalop.IsGAForHashJoinV2`.
@@ -7014,7 +7014,7 @@ fn build_with_state(
         PhysicalPlan::Window(window) => build_window(plan, window, catalog, ctx, state),
         PhysicalPlan::HashJoin(join) => {
             if ctx.optimizer_cost_env().session.use_hash_join_v2
-                && crate::hash_join_version::is_hash_join_v2_supported()
+                && tidb_executor_join_joinversion::is_hash_join_v2_supported()
                 && can_use_hash_join_v2(join)
             {
                 return build_hash_join_v2(plan, join, catalog, ctx, state).map(|executor| {

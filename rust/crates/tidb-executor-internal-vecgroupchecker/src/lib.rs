@@ -32,7 +32,7 @@ use tidb_exprctx::EvalError;
 
 /// Splits sorted chunks into adjacent equal-key groups.
 #[derive(Clone, Debug)]
-pub(crate) struct VecGroupChecker {
+pub struct VecGroupChecker {
     group_by_items: Vec<Expression>,
     collations: Vec<Collation>,
     previous_last_key: Option<Vec<u8>>,
@@ -44,7 +44,7 @@ pub(crate) struct VecGroupChecker {
 impl VecGroupChecker {
     /// Creates a checker for `group_by_items`.
     #[must_use]
-    pub(crate) fn new(group_by_items: Vec<Expression>) -> Self {
+    pub fn new(group_by_items: Vec<Expression>) -> Self {
         let collations = group_by_items
             .iter()
             .map(|item| {
@@ -75,7 +75,7 @@ impl VecGroupChecker {
     ///
     /// The caller, like the upstream stream/window/merge executors, must not
     /// pass an empty chunk.
-    pub(crate) fn split_into_groups(
+    pub fn split_into_groups(
         &mut self,
         ctx: &impl Columns,
         chunk: &Chunk,
@@ -207,7 +207,7 @@ impl VecGroupChecker {
 
     /// Splits already-evaluated adjacent keys for source-contract fixtures.
     #[cfg(test)]
-    pub(crate) fn split_evaluated(
+    pub fn split_evaluated(
         &mut self,
         keys: &[Vec<Datum>],
         collations: &[Collation],
@@ -278,7 +278,7 @@ impl VecGroupChecker {
     ///
     /// As in the upstream internal API, callers must check [`Self::is_exhausted`]
     /// before calling this method.
-    pub(crate) fn get_next_group(&mut self) -> (usize, usize) {
+    pub fn get_next_group(&mut self) -> (usize, usize) {
         let begin = if self.next_group_id == 0 {
             0
         } else {
@@ -291,12 +291,12 @@ impl VecGroupChecker {
 
     /// Whether every group in the current chunk has been consumed.
     #[must_use]
-    pub(crate) fn is_exhausted(&self) -> bool {
+    pub fn is_exhausted(&self) -> bool {
         self.next_group_id >= self.group_offsets.len()
     }
 
     /// Clears current-chunk state while retaining the previous chunk's key.
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.group_offsets.clear();
         self.same_group.clear();
         self.next_group_id = 0;
@@ -304,7 +304,7 @@ impl VecGroupChecker {
 
     /// Number of groups in the current chunk.
     #[must_use]
-    pub(crate) fn group_count(&self) -> usize {
+    pub fn group_count(&self) -> usize {
         self.group_offsets.len()
     }
 }

@@ -24,7 +24,7 @@
 //! section. `applyCacheKey` and its `Hash()` method are not a distinct type:
 //! they exist in Go only to satisfy `kvcache.Key`, whose `Hash()` returns the
 //! key bytes unchanged, so the byte slice *is* the key here. Both upstream
-//! tests are ported in `crate::tests_executor_internal_source`
+//! tests are ported in `tidb_executor::tests_executor_internal_source`
 //! (`apply_cache_admits_values_and_evicts_oldest_entries`,
 //! `apply_cache_concurrent_get_and_set_is_safe`), and the live ApplyExec cache
 //! reuse is covered by `apply::tests`. This module's separate external test
@@ -61,7 +61,7 @@ use tidb_kvcache::SimpleLruCache;
 
 /// Computes the source apply-cache memory charge for one key/value pair.
 #[must_use]
-pub(crate) fn apply_cache_kv_mem(key: &[u8], value_memory: i64) -> i64 {
+pub fn apply_cache_kv_mem(key: &[u8], value_memory: i64) -> i64 {
     key.len() as i64 + value_memory
 }
 
@@ -78,7 +78,7 @@ struct CacheState<V> {
 
 /// Thread-safe bounded LRU cache whose admission and eviction are driven by
 /// retained bytes.
-pub(crate) struct ApplyCache<V> {
+pub struct ApplyCache<V> {
     memory_capacity: i64,
     state: Mutex<CacheState<V>>,
 }
@@ -86,7 +86,7 @@ pub(crate) struct ApplyCache<V> {
 impl<V> ApplyCache<V> {
     /// Creates an empty apply cache with the source memory quota.
     #[must_use]
-    pub(crate) fn new(memory_capacity: i64) -> Self {
+    pub fn new(memory_capacity: i64) -> Self {
         Self {
             memory_capacity,
             state: Mutex::new(CacheState {
@@ -98,7 +98,7 @@ impl<V> ApplyCache<V> {
     }
 
     /// Looks up a shared immutable value and marks it most recently used.
-    pub(crate) fn get(&self, key: &[u8]) -> Option<Arc<V>> {
+    pub fn get(&self, key: &[u8]) -> Option<Arc<V>> {
         let mut state = self.lock();
         state.entries.get(key).map(|entry| Arc::clone(&entry.value))
     }
@@ -108,7 +108,7 @@ impl<V> ApplyCache<V> {
     /// Returns `false` without mutation when the item itself exceeds the
     /// quota. Otherwise, oldest entries are removed until the item fits;
     /// `true` means the value is retained.
-    pub(crate) fn set(&self, key: impl Into<Vec<u8>>, value: V, value_memory: i64) -> bool {
+    pub fn set(&self, key: impl Into<Vec<u8>>, value: V, value_memory: i64) -> bool {
         self.set_shared(key, Arc::new(value), value_memory)
     }
 
@@ -117,7 +117,7 @@ impl<V> ApplyCache<V> {
     /// Apply executors keep iterating a newly computed inner relation while
     /// the cache begins owning it. Sharing that one allocation avoids a
     /// second full relation copy without exposing mutable cached state.
-    pub(crate) fn set_shared(
+    pub fn set_shared(
         &self,
         key: impl Into<Vec<u8>>,
         value: Arc<V>,
@@ -148,12 +148,12 @@ impl<V> ApplyCache<V> {
 
     /// Returns the current memory charge.
     #[must_use]
-    pub(crate) fn memory_consumed(&self) -> i64 {
+    pub fn memory_consumed(&self) -> i64 {
         self.lock().memory_consumed
     }
 
     /// Actual retained key bytes, when immutable values own separate trackers.
-    pub(crate) fn key_memory_consumed(&self) -> i64 {
+    pub fn key_memory_consumed(&self) -> i64 {
         self.lock().key_memory_consumed
     }
 

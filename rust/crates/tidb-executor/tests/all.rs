@@ -22,7 +22,6 @@ mod ddl_job_queue_executor_source;
 mod ddl_ttl_info_options_source;
 mod default_on_update_source;
 mod hash_join_v2_source;
-mod hash_join_version_source;
 mod hash_table_v2_source;
 mod index_entry_go_bytes;
 mod index_nokit_disk_full_pause_source;

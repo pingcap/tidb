@@ -32,7 +32,9 @@ use std::sync::Mutex;
 use tidb_datatype::Datum;
 
 use tidb_variable::hypo_index::HypoIndexes;
-use crate::{DriverError, MysqlRng, StmtOutput};
+use crate::DriverError;
+use crate::MysqlRng;
+use crate::StmtOutput;
 
 use tidb_hack::GoToLower;
 
@@ -357,8 +359,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_HASH_JOIN_VERSION)
             .ok()
-            .is_none_or(|value| crate::hash_join_version::is_optimized_version(&value))
-            && crate::hash_join_version::is_hash_join_v2_supported();
+            .is_none_or(|value| tidb_executor_join_joinversion::is_optimized_version(&value))
+            && tidb_executor_join_joinversion::is_hash_join_v2_supported();
         env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
         env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
         env.session.enable_chunk_rpc = enabled("tidb_enable_chunk_rpc", true);

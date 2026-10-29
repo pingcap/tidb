@@ -83,7 +83,6 @@ pub mod simple;
 pub mod join_stats;
 pub mod index_lookup_stats;
 pub mod hash_join_v2;
-pub mod hash_join_version;
 pub mod hash_table_v2;
 pub mod join_row_table;
 pub mod join_table_meta;
@@ -112,12 +111,10 @@ pub fn worker_pool_available() -> bool {
     worker_pool::available()
 }
 pub mod agg_spill;
-pub mod aggfuncs;
 pub mod analyze;
 pub mod cluster_analyze;
 pub mod real_tikv_analyze;
 pub mod apply;
-pub(crate) mod apply_cache;
 mod approx_count_distinct;
 pub(crate) use tidb_table::bad_null;
 #[cfg(test)]
@@ -239,7 +236,6 @@ pub mod topn;
 pub mod topn_chunk_heap;
 pub mod topn_spill;
 pub mod union_scan;
-pub(crate) mod vec_group_checker;
 pub mod view;
 pub mod window;
 

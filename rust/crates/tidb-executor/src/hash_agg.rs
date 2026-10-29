@@ -2152,7 +2152,7 @@ impl Partial {
                     // `utf8mb4_general_ci` column holding 'a','B','A' the
                     // answers are max=B, min=a -- NOT the binary a/A
                     // (captured from TiDB).
-                    let ordering = crate::aggfuncs::compare_extreme(&input, current, collation)?;
+                    let ordering = tidb_executor_aggfuncs::compare_extreme(&input, current, collation)?;
                     if (*is_max && ordering == Ordering::Greater)
                         || (!*is_max && ordering == Ordering::Less)
                     {
@@ -2963,7 +2963,7 @@ pub struct GroupedStreamAggExec<C: Columns> {
     child_at: usize,
     states: Vec<AggState>,
     truncated: Vec<bool>,
-    group_checker: crate::vec_group_checker::VecGroupChecker,
+    group_checker: tidb_executor_internal_vecgroupchecker::VecGroupChecker,
     group_end: usize,
     /// A group's rows have been folded and its result is still owed.
     group_open: bool,
@@ -3001,7 +3001,7 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         let output_group_keys = meta.schema().len() > agg_funcs.len();
         Self {
             meta,
-            group_checker: crate::vec_group_checker::VecGroupChecker::new(group_by.clone()),
+            group_checker: tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(group_by.clone()),
             group_by,
             agg_funcs,
             input_modes,
@@ -3076,7 +3076,7 @@ impl<C: Columns + Send> Executor for GroupedStreamAggExec<C> {
         self.child_at = 0;
         self.states = self.agg_funcs.iter().map(AggState::new).collect();
         self.truncated.fill(false);
-        self.group_checker = crate::vec_group_checker::VecGroupChecker::new(self.group_by.clone());
+        self.group_checker = tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(self.group_by.clone());
         self.group_end = 0;
         self.group_open = false;
         self.current_group_values.clear();
@@ -3138,7 +3138,7 @@ impl<C: Columns + Send> Executor for GroupedStreamAggExec<C> {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.states.clear();
-        self.group_checker = crate::vec_group_checker::VecGroupChecker::new(self.group_by.clone());
+        self.group_checker = tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(self.group_by.clone());
         self.group_open = false;
         self.current_group_values.clear();
         self.child.close()

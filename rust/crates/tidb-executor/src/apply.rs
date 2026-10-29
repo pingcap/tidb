@@ -48,7 +48,7 @@
 //! `@@tidb_mem_quota_apply_cache`. The sequential executor needs no worker
 //! choreography; the cache itself remains thread-safe.
 
-use crate::apply_cache::ApplyCache;
+use tidb_executor_internal_applycache::ApplyCache;
 pub mod native;
 pub(crate) mod parallel;
 use crate::executor::{Executor, ExecutorMeta};

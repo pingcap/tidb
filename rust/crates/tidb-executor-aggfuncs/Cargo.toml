@@ -1,0 +1,17 @@
+[package]
+name = "tidb-executor-aggfuncs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/aggfuncs (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

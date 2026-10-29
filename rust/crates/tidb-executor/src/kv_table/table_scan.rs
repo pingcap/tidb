@@ -5185,14 +5185,14 @@ impl TableScanExec {
                         PushdownAggregateKind::Min => PartialValue::Extreme {
                             value: None,
                             is_max: false,
-                            collation: crate::aggfuncs::extreme_collation(
+                            collation: tidb_executor_aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
                         PushdownAggregateKind::Max => PartialValue::Extreme {
                             value: None,
                             is_max: true,
-                            collation: crate::aggfuncs::extreme_collation(
+                            collation: tidb_executor_aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -5200,7 +5200,7 @@ impl TableScanExec {
                             value: None,
                             count: 0,
                             is_max: false,
-                            collation: crate::aggfuncs::extreme_collation(
+                            collation: tidb_executor_aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -5208,7 +5208,7 @@ impl TableScanExec {
                             value: None,
                             count: 0,
                             is_max: true,
-                            collation: crate::aggfuncs::extreme_collation(
+                            collation: tidb_executor_aggfuncs::extreme_collation(
                                 function.input.as_ref(),
                             ),
                         },
@@ -5284,7 +5284,7 @@ impl TableScanExec {
                                 Some(candidate),
                             ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
-                                    crate::aggfuncs::extreme_replaces(
+                                    tidb_executor_aggfuncs::extreme_replaces(
                                         &candidate, current, *is_max, *collation,
                                     )
                                 });
@@ -5377,14 +5377,14 @@ impl TableScanExec {
                             PushdownAggregateKind::Min => PartialValue::Extreme {
                                 value: None,
                                 is_max: false,
-                                collation: crate::aggfuncs::extreme_collation(
+                                collation: tidb_executor_aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
                             PushdownAggregateKind::Max => PartialValue::Extreme {
                                 value: None,
                                 is_max: true,
-                                collation: crate::aggfuncs::extreme_collation(
+                                collation: tidb_executor_aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -5392,7 +5392,7 @@ impl TableScanExec {
                                 value: None,
                                 count: 0,
                                 is_max: false,
-                                collation: crate::aggfuncs::extreme_collation(
+                                collation: tidb_executor_aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -5400,7 +5400,7 @@ impl TableScanExec {
                                 value: None,
                                 count: 0,
                                 is_max: true,
-                                collation: crate::aggfuncs::extreme_collation(
+                                collation: tidb_executor_aggfuncs::extreme_collation(
                                     function.input.as_ref(),
                                 ),
                             },
@@ -5480,7 +5480,7 @@ impl TableScanExec {
                                     Some(candidate),
                                 ) => {
                                     let replace = value.as_ref().is_none_or(|current| {
-                                        crate::aggfuncs::extreme_replaces(
+                                        tidb_executor_aggfuncs::extreme_replaces(
                                             &candidate, current, *is_max, *collation,
                                         )
                                     });
