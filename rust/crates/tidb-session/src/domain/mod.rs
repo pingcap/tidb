@@ -42,7 +42,6 @@ pub mod cluster_topology;
 pub mod serverinfo_etcd;
 pub mod real_tikv_node;
 pub mod unistore_node;
-pub(crate) mod embedded_resource_groups;
 pub mod mock_store;
 
 #[cfg(test)]

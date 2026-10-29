@@ -20,7 +20,6 @@
 pub mod ddl_notifier;
 mod ru_stats_writer;
 pub mod schema_lease;
-mod stat;
 pub mod stats_maintenance;
 
 use std::cell::RefCell;
@@ -845,7 +844,7 @@ impl Domain {
     ) -> Arc<Self> {
         self.bindings = Some(Arc::clone(&bindings));
         // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.
-        self.register_statistics(Arc::new(stat::BindingStatistics(bindings.cache())));
+        self.register_statistics(Arc::new(tidb_bindinfo::binding_stat::BindingStatistics(bindings.cache())));
         // The session package attaches the binding sessions (Go
         // `NewBindingHandle`'s `sPool`), `attach_binding_sessions`.
         self.shared()
@@ -1818,7 +1817,7 @@ impl Domain {
         ));
         // Go `ddl.Start`: `variable.RegisterStatistics(d)`, whose id is this
         // server's.
-        self.register_statistics(Arc::new(stat::DdlStatistics {
+        self.register_statistics(Arc::new(tidb_ddl::stat::DdlStatistics {
             id: syncer.local_server_info().static_info.id.clone(),
             catalog: Arc::clone(&self.catalog),
         }));

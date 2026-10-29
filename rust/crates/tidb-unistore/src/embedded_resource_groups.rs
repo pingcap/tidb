@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 /// See the module docs.
 #[derive(Default)]
-pub(crate) struct EmbeddedResourceGroupProvider {
+pub struct EmbeddedResourceGroupProvider {
     /// Go's mock answers the group-settings watch with a channel it keeps;
     /// the senders stay here so the controller's watch stays open.
     watches: Mutex<Vec<mpsc::Sender<WatchResponse>>>,

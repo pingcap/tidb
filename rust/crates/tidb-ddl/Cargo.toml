@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl-systable = { path = "../tidb-ddl-systable" }
 tidb-exprctx = { path = "../tidb-exprctx" }

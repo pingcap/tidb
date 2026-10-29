@@ -534,7 +534,7 @@ pub fn unistore_cluster_session_stack_from(
             &tikv_store,
             0,
             Arc::new(
-                crate::domain::embedded_resource_groups::EmbeddedResourceGroupProvider::default(),
+                tidb_unistore::embedded_resource_groups::EmbeddedResourceGroupProvider::default(),
             ),
         )?,
         store: Arc::clone(&tikv_store),

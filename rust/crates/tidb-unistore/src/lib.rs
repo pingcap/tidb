@@ -22,6 +22,7 @@
 //! `lockstore` (`tidb-unistore-lockstore`), `util/lockwaiter`
 //! (`tidb-unistore-lockwaiter`) and `tikv/mvcc` (`tidb-unistore-mvcc`).
 
+pub mod embedded_resource_groups;
 pub mod cluster;
 pub mod mock;
 pub mod pd;

@@ -39,6 +39,7 @@
 //! [`RealClusterDdl`].
 
 mod cluster_bdr;
+pub mod stat;
 pub mod ddl_history;
 pub mod cluster_ddl;
 pub mod ddl_affinity;
