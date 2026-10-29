@@ -439,6 +439,7 @@ func uint24(b []byte) int {
 }
 
 // Packets up to this size are sent uncompressed; MySQL itself uses 50 bytes.
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
 const minCompressLength = 512
 
 // Shared by all connections: each writer holds a few hundred KiB of encoder state.
