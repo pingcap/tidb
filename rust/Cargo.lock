@@ -6014,6 +6014,7 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
+ "tidb-temptable",
  "tidb-terror",
  "tidb-test-isolation",
  "tidb-tikvutil",
@@ -6822,6 +6823,17 @@ dependencies = [
  "tidb-mysql",
  "tidb-txnkv",
  "tidb-util",
+]
+
+[[package]]
+name = "tidb-temptable"
+version = "0.0.0"
+dependencies = [
+ "tidb-driver-error",
+ "tidb-hack",
+ "tidb-infoschema",
+ "tidb-model",
+ "tidb-table",
 ]
 
 [[package]]

@@ -457,7 +457,7 @@ pub struct Session {
     /// `SHOW TABLES` (which `Catalog::table_names` excludes), and while
     /// expanding a view's body (`logical_plan_builder.go:4941`), which the
     /// planner reads through the catalog's detached view.
-    local_temporary_tables: Vec<(String, String, tidb_table::kv_table::KvTable)>,
+    local_temporary_tables: tidb_infoschema::session_tables::SessionTables,
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from, which `DDLExec` builds a LOCAL temporary table's
     /// `TableInfo` against. `None` for a session no node opened.

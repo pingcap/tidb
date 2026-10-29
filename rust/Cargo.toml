@@ -240,6 +240,7 @@ members = [
     "crates/tidb-autoid",
     "crates/tidb-table",
     "crates/tidb-tblctx",
+    "crates/tidb-temptable",
     "crates/tidb-unistore-dbreader",
     "crates/tidb-unistore-kverrors",
     "crates/tidb-ddl-build",

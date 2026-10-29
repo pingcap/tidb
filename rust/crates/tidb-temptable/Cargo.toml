@@ -1,0 +1,18 @@
+[package]
+name = "tidb-temptable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/table/temptable: the session's temporary-table DDL (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }
+tidb-table = { path = "../tidb-table" }

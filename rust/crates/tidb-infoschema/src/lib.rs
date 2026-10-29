@@ -64,6 +64,7 @@ impl CatalogTableKey {
 
 pub mod infoschema_errors;
 pub mod metric_table_def;
+pub mod session_tables;
 pub mod virtual_tables;
 pub mod infoschema_meta;
 pub mod metricsschema;
