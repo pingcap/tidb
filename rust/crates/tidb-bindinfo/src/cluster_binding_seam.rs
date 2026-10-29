@@ -24,7 +24,6 @@ use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemT
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_kv::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
-use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
@@ -75,7 +74,7 @@ pub trait ClusterBindings: Send + Sync {
 struct StoredBindings<S: StoreClient> {
     opener: RealOptimisticTransactionOpener<S>,
     catalog: Arc<SharedClusterCatalog>,
-    globals: GlobalSysvars,
+    globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     cache: SharedBindingCache,
     timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
@@ -102,7 +101,7 @@ impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
         // Go readBindingsFromStorage runs SELECT through an internal session.
         // bind_info's create_time/update_time are TIMESTAMP(6), so decoding
         // needs that session's timezone rather than the no-TIMESTAMP shortcut.
-        let timezone = tidb_store_driver::session_time_zone::RealTiKvSessionTimeZone::parse(
+        let timezone = crate::session_time_zone::RealTiKvSessionTimeZone::parse(
             &self
                 .globals
                 .get("time_zone")
@@ -223,7 +222,7 @@ impl Drop for BindingReloader {
 pub fn start_binding_cache<S>(
     opener: RealOptimisticTransactionOpener<S>,
     catalog: Arc<SharedClusterCatalog>,
-    globals: GlobalSysvars,
+    globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
 ) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String>
@@ -384,7 +383,7 @@ mod tests {
                     databases: Vec::new(),
                 },
             )),
-            globals: GlobalSysvars::default(),
+            globals: std::sync::Arc::new(tidb_domain::global_sysvars::GlobalSysvars::default()),
             cache: SharedBindingCache::default(),
             timeout: Duration::from_secs(1),
             owner: owner.clone(),

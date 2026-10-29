@@ -144,6 +144,7 @@ members = [
     "crates/tidb-sessionctx",
     "crates/tidb-stmtctx",
     "crates/tidb-store-driver",
+    "crates/tidb-store-driver-txn",
     "crates/tidb-store-driver-error",
     "crates/tidb-bindinfo",
     "crates/tidb-ast",

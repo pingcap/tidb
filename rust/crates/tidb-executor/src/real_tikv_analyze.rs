@@ -56,7 +56,7 @@ use tidb_stats_handle_storage::cluster_stats_write::{plan_analyze_stats_write, p
 use tidb_stats_handle_history::history_stats::{plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
 use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };

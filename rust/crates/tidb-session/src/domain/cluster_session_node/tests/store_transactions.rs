@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
 use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};

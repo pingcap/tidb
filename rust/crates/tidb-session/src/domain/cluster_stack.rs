@@ -407,7 +407,7 @@ pub fn cluster_session_stack(
     let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
         authority.transaction_opener(),
         Arc::clone(&catalog),
-        users.global_vars(),
+        Arc::new(users.global_vars()),
         CONTROL_PLANE_TIMEOUT,
         match etcd.clone() {
             Some(client) => Arc::new(tidb_owner::OwnerManager::new(

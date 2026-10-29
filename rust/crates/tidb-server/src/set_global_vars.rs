@@ -22,9 +22,8 @@
 //! every `@@` read without a session copy falls through to.
 //!
 //! Dispositions of the rest of Go's function, by name:
-//! * `hostname` — already live through `tidb_sem`: startup calls
-//!   `sem::disable()`/`enable()`, whose hostname default is what
-//!   `effective_sysvar_default` answers. Not repeated here.
+//! * `hostname` — already written: startup calls `sem::disable()`/`enable()`,
+//!   which `SetSysVar` it as Go's do. Not repeated here.
 //! * `version` and `version_comment` — initialized from the same process-wide
 //!   package variables Go updates before this function runs.
 //! * `tidb_slow_query_file` — the registry's effective default reads the
@@ -263,11 +262,12 @@ mod tests {
         assert_eq!(globals.get(plan_cache).expect("readable"), "444");
         assert_eq!(globals.get(binding_cache).expect("readable"), "1048576");
 
-        // Go's hostname leg: `os.Hostname()` when it resolves. The sem tier
-        // owns that default here; `disable()` is the restore path startup
-        // takes without SEM.
+        // Go's hostname leg: `os.Hostname()` when it resolves. `disable()` is
+        // the restore path startup takes without SEM, and it `SetSysVar`s it.
         tidb_sem::disable();
-        let hostname = tidb_sem::effective_sysvar_default("hostname").expect("answered");
+        let hostname = tidb_variable::sysvar::effective_default(
+            tidb_variable::sysvar::get_sys_var("hostname").expect("hostname is a sysvar"),
+        );
         assert_ne!(hostname, "");
     }
 }

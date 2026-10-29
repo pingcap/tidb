@@ -20,7 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_store_driver::meta_txn::MetaTxnStorage;
+use tidb_store_driver_txn::meta_txn::MetaTxnStorage;
 use tidb_meta::transaction::Mutator;
 use tidb_model::Job;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};

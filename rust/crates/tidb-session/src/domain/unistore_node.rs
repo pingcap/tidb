@@ -27,7 +27,7 @@ use crate::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 
 use tidb_distsql::cop_paging::CopRuntimeConfig;
-use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 #[cfg(test)]
 use tidb_unistore::kv_handler::KvHandler;
@@ -77,7 +77,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 #[cfg(test)]
 mod transaction_buffer_tests {
     use super::*;
-    use tidb_store_driver::cluster_table_storage::SessionTransaction;
+    use tidb_store_driver_txn::cluster_table_storage::SessionTransaction;
     use tidb_kv::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
@@ -126,7 +126,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let buffer = MutationBuffer::new();
@@ -171,7 +171,7 @@ mod transaction_buffer_tests {
         let mut transaction = SessionTransaction::begin(
             Arc::new(opener),
             IN_PROCESS_TIMEOUT,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let checked = Arc::new(CheckedTables::default());
@@ -204,13 +204,13 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let key = b"locked".to_vec();
         assert!(matches!(
             transaction.lock_keys(vec![key.clone()]).unwrap(),
-            tidb_store_driver::cluster_table_storage::LockKeysOutcome::Locked { .. }
+            tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome::Locked { .. }
         ));
         transaction
             .commit_with(
@@ -658,7 +658,7 @@ pub fn unistore_cluster_session_stack_from(
     let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
         opener.clone(),
         Arc::clone(&catalog),
-        users.global_vars(),
+        Arc::new(users.global_vars()),
         IN_PROCESS_TIMEOUT,
         Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
@@ -796,13 +796,13 @@ pub fn unistore_cluster_session_stack_from(
     })
 }
 
-/// [`tidb_store_driver::meta_txn`] against real (embedded) storage: Go's
+/// [`tidb_store_driver_txn::meta_txn`] against real (embedded) storage: Go's
 /// `kv.Transaction` memory-buffer contract, `meta.NewMutator(txn)`, and
 /// `kv.RunInNewTxn`'s retry on a write conflict.
 #[cfg(test)]
 mod meta_txn_tests {
     use super::*;
-    use tidb_store_driver::meta_txn::MetaTxnStorage;
+    use tidb_store_driver_txn::meta_txn::MetaTxnStorage;
     use tidb_meta::transaction::{Mutator, RawTransaction};
     use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 

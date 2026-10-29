@@ -62,14 +62,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
     overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_sessionctx::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };
@@ -524,7 +524,7 @@ pub trait OpenClusterTransaction: Send {
     /// (Go `PointGetExecutor.getAndLock`) when the statement failed on it.
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver_txn::cluster_table_storage::StatementLockFailure> {
         None
     }
 
@@ -1805,7 +1805,7 @@ where
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver_txn::cluster_table_storage::StatementLockFailure> {
         SessionTransaction::take_statement_lock_failure(self)
     }
 

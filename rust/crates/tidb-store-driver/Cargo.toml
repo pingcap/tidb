@@ -8,22 +8,15 @@ repository.workspace = true
 description = "TiDB's TiKV store: Go pkg/store/driver (Rust rewrite)."
 
 [dependencies]
-tidb-store-driver-error = { path = "../tidb-store-driver-error" }
-tidb-timeutil = { path = "../tidb-timeutil" }
-tidb-datatype = { path = "../tidb-datatype" }
-tidb-meta = { path = "../tidb-meta" }
+tidb-copr = { path = "../tidb-copr" }
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-codec = { path = "../tidb-codec" }
-tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
-tidb-error = { path = "../tidb-error" }
-tidb-hack = { path = "../tidb-hack" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-config = { path = "../tidb-config" }
 tikv-client.workspace = true
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
-tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-vardef = { path = "../tidb-vardef" }
 
 [lints]
 workspace = true

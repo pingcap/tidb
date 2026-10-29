@@ -8,16 +8,17 @@ repository.workspace = true
 description = "TiDB SQL bindings: Go pkg/bindinfo (Rust rewrite)."
 
 [dependencies]
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-worker-stack = { path = "../tidb-worker-stack" }
 rand = "0.10"
 tidb-ddl = { path = "../tidb-ddl" }
-tidb-domain = { path = "../tidb-domain" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-owner = { path = "../tidb-owner" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-lexer = { path = "../tidb-lexer" }
@@ -38,3 +39,6 @@ prometheus = { version = "0.14", default-features = false }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-domain = { path = "../tidb-domain" }

@@ -22,7 +22,7 @@ use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_write::{plan_change_global_stats_id, plan_stats_meta_version_refresh, plan_update_stats_version};
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     commit_pessimistic_statement, PessimisticStatementTransactionError,
 };
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;

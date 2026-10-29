@@ -32,7 +32,7 @@ use tidb_domain::ru_stats::{
     Consumption, DailyRuStats, GroupRuStats, ResourceGroupInfo, ResourceGroupWithRuStats, RuStats,
     RuStatsDeps, RuStatsError, RuStatsWriter,
 };
-use tidb_store_driver::meta_txn::{MetaTxnError, MetaTxnStorage};
+use tidb_store_driver_txn::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{
@@ -106,7 +106,7 @@ where
     /// One read-only meta transaction, rolled back afterwards.
     fn read_meta<T>(
         &self,
-        read: impl FnOnce(&mut tidb_store_driver::meta_txn::MetaTxn<S>) -> Result<T, RuStatsError>,
+        read: impl FnOnce(&mut tidb_store_driver_txn::meta_txn::MetaTxn<S>) -> Result<T, RuStatsError>,
     ) -> Result<T, RuStatsError> {
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage

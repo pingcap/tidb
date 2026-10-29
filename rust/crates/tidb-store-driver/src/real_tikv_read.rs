@@ -17,6 +17,7 @@
 //! opener every session shares. Statements reach it only through the shared
 //! planner and executor (`tidb-executor::cluster_storage` / `remote_scan`).
 
+use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,25 +72,6 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
 /// Write capability re-exported so the server never depends on `tidb-txnkv`
 /// directly; the dependency direction stays server -> exec -> txnkv.
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-
-/// Builds one worker-local query transport from process-owned shared handles.
-///
-/// An implementation may retain the unique process lifecycle owners together
-/// with their cloneable request/cache handles, but it must give a session only
-/// the handles. In particular, opening a session must not connect another PD
-/// client, create a region cache, start a maintenance worker, or start a tonic
-/// runtime. The returned transport deliberately has no `Send` bound because
-/// the fixed server worker creates and consumes it on one thread.
-///
-/// The production implementation reads through the node's client-rust store
-/// (`NativeCopTransport` over `TikvStore`).
-pub trait RealTiKvSessionTransportFactory: Send + Sync {
-    /// Worker-local transport type created for one admitted connection.
-    type Transport: QueryTransport;
-
-    /// Creates query-local state over the already-running process authority.
-    fn open_session_transport(&self) -> Result<Self::Transport, String>;
-}
 
 /// Why the process authority could not be built.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,7 +166,7 @@ impl ProductionReadProcessAuthority {
                 .map_err(|error| ProcessAuthorityError::Transport(error.to_string()))?
                 // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
                 // the node exactly as `@@tidb_pessimistic_txn_fair_locking` is.
-                .with_commit_protocol(crate::session_commit_protocol::bootstrap_commit_protocol());
+                .with_commit_protocol(tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol());
         startup(&transaction_opener).map_err(ProcessAuthorityError::Startup)?;
         Ok(Self {
             factory: Some(Arc::new(factory)),

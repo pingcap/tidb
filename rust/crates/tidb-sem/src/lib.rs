@@ -20,14 +20,10 @@
 //! and this port inlines the identical string values (verified against
 //! `pkg/sessionctx/vardef` and `pkg/parser/mysql`).
 //!
-//! `Enable` and `Disable` also own the two process-default values Go changes
-//! through `variable.SetSysVar`. The session crate consumes
-//! [`effective_sysvar_default`] whenever it would otherwise read a captured
-//! registry default, preserving one-way crate ownership without a shadow
-//! registry or a dependency cycle.
+//! `Enable` and `Disable` also write the two process defaults Go changes
+//! through `variable.SetSysVar` (`tidb_enable_enhanced_security`, `hostname`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock, RwLock};
 
 // SEM's restricted system-table names (Go's package-local constants).
 const EXPR_PUSHDOWN_BLACKLIST: &str = "expr_pushdown_blacklist";
@@ -118,21 +114,6 @@ const INVISIBLE_SYS_VARS: &[&str] = &[
 /// The process-wide SEM flag (Go's `semEnabled int32`).
 static SEM_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// The mutable Go `SysVar.Value` for `hostname`. Enhanced security is the
-/// same boolean as `SEM_ENABLED`, so storing another copy could let the two
-/// observables diverge.
-static HOSTNAME_DEFAULT: OnceLock<RwLock<String>> = OnceLock::new();
-
-fn hostname_default() -> &'static RwLock<String> {
-    HOSTNAME_DEFAULT.get_or_init(|| RwLock::new(DEF_HOSTNAME.to_owned()))
-}
-
-fn set_hostname_default(value: String) {
-    *hostname_default()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
-}
-
 /// Read the OS hostname independently of the SQL hostname default.
 #[cfg(unix)]
 pub fn operating_system_hostname() -> Option<String> {
@@ -181,31 +162,11 @@ pub fn operating_system_hostname() -> Option<String> {
     None
 }
 
-/// Returns the current Go `SysVar.Value` for the two defaults SEM owns.
-///
-/// This narrow integration surface is intentionally owned here: callers
-/// should fall back to their captured registry value when it returns `None`.
-#[doc(hidden)]
-#[must_use]
-pub fn effective_sysvar_default(name: &str) -> Option<String> {
-    if name.eq_ignore_ascii_case(ENHANCED_SECURITY_SYS_VAR) {
-        return Some(if is_enabled() { ON } else { OFF }.to_owned());
-    }
-    if name.eq_ignore_ascii_case(HOSTNAME_SYS_VAR) {
-        return Some(
-            hostname_default()
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone(),
-        );
-    }
-    None
-}
-
 /// Go `Enable`: turns SEM on.
 pub fn enable() {
     SEM_ENABLED.store(true, Ordering::SeqCst);
-    set_hostname_default(DEF_HOSTNAME.to_owned());
+    tidb_variable::sysvar::set_sys_var(ENHANCED_SECURITY_SYS_VAR, ON);
+    tidb_variable::sysvar::set_sys_var(HOSTNAME_SYS_VAR, DEF_HOSTNAME);
     tidb_logutil::bg_logger().info(
         "tidb-server is operating with security enhanced mode (SEM) enabled",
         &[],
@@ -216,8 +177,9 @@ pub fn enable() {
 /// system reports one. A failed lookup leaves the previous value unchanged.
 pub fn disable() {
     SEM_ENABLED.store(false, Ordering::SeqCst);
+    tidb_variable::sysvar::set_sys_var(ENHANCED_SECURITY_SYS_VAR, OFF);
     if let Some(hostname) = operating_system_hostname() {
-        set_hostname_default(hostname);
+        tidb_variable::sysvar::set_sys_var(HOSTNAME_SYS_VAR, &hostname);
     }
 }
 

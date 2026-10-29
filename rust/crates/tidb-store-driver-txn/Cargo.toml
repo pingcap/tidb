@@ -1,0 +1,24 @@
+[package]
+name = "tidb-store-driver-txn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a session statement locks, stages and commits through."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
+tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-kv = { path = "../tidb-kv" }
+tikv-client.workspace = true
+tidb-proto = { path = "../tidb-proto" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-vardef = { path = "../tidb-vardef" }

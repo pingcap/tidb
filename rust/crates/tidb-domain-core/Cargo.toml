@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-domain-globalconfigsync = { path = "../tidb-domain-globalconfigsync" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
@@ -37,7 +38,6 @@ tidb-table = { path = "../tidb-table" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-ast = { path = "../tidb-ast" }

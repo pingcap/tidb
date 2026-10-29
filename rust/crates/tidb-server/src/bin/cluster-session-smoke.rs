@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
 use tidb_copr::cop_client::CopClient;
@@ -186,7 +186,7 @@ fn run_autocommit(
         opener,
         buffer,
         read_ts,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         None,
         |_| {},
     ) {
@@ -214,7 +214,7 @@ fn run_explicit_transaction(
     let transaction = match SessionTransaction::begin(
         Arc::clone(opener),
         TIMEOUT,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     ) {
         Ok(transaction) => transaction,
         Err(error) => return Some(error.to_string()),

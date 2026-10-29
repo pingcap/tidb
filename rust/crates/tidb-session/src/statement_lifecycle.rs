@@ -29,7 +29,7 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
+use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_kv::cluster_storage::{BufferCheckpoint, ClusterSnapshot, SwappableSnapshot};
@@ -306,7 +306,7 @@ impl StatementLifecycle<'_> {
         // once per statement (`adapter.go:580-593`): keys locked and the
         // pessimistic retry count, only when a lock actually happened.
         if let Some(observation) =
-            tidb_store_driver::cluster_table_storage::take_last_pessimistic_lock_observation()
+            tidb_store_driver_txn::cluster_table_storage::take_last_pessimistic_lock_observation()
         {
             if observation.lock_keys > 0 {
                 tidb_metrics::session::STATEMENT_LOCK_KEYS_COUNT

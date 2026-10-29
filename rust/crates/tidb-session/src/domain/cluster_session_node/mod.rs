@@ -163,8 +163,8 @@
 //! driver's own error where it cannot.
 //!
 //! [`ClusterTableStorage`]: tidb_kv::cluster_storage::ClusterTableStorage
-//! [`StatementSnapshot`]: tidb_store_driver::cluster_table_storage::StatementSnapshot
-//! [`SessionTransaction`]: tidb_store_driver::cluster_table_storage::SessionTransaction
+//! [`StatementSnapshot`]: tidb_store_driver_txn::cluster_table_storage::StatementSnapshot
+//! [`SessionTransaction`]: tidb_store_driver_txn::cluster_table_storage::SessionTransaction
 
 use crate::statement_lifecycle::CatalogFollowing as _;
 use crate::store_session::{sql_query_error, StoreTxnOps};
@@ -236,7 +236,7 @@ use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF
 use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
 use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 #[cfg(test)]
-use tidb_store_driver::cluster_table_storage::LockKeysOutcome;
+use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
 mod non_transactional_dml;
 mod record_set;
 use tidb_domain_core::schema_sync;
@@ -1433,7 +1433,7 @@ impl<'s> ClusterServerSession<'s> {
                 let snapshot = transaction
                     .snapshot_for(false)
                     .map_err(SqlQueryError::unknown)?;
-                let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
+                let snapshot = tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
                     snapshot,
                     &self.node.buffer,
                 );
@@ -1455,7 +1455,7 @@ impl<'s> ClusterServerSession<'s> {
             let snapshot = transaction
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
-            let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
+            let snapshot = tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
                 snapshot,
                 &self.node.buffer,
             );
@@ -1563,7 +1563,7 @@ impl<'s> ClusterServerSession<'s> {
         let snapshot = transaction
             .snapshot_for(false)
             .map_err(SqlQueryError::unknown)?;
-        let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
+        let snapshot = tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
             snapshot,
             &self.node.buffer,
         );
@@ -1649,7 +1649,7 @@ impl<'s> ClusterServerSession<'s> {
             let snapshot = transaction
                 .snapshot_for(false)
                 .map_err(SqlQueryError::unknown)?;
-            let snapshot = tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
+            let snapshot = tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
                 snapshot,
                 &self.node.buffer,
             );

@@ -14,7 +14,6 @@ tidb-context = { path = "../tidb-context" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-sem = { path = "../tidb-sem" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-timeutil = { path = "../tidb-timeutil" }

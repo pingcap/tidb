@@ -42,7 +42,7 @@ use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
 use tidb_ddl_build::table_info_build::DdlAdmissionError;
 
-use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
+use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::ddl_job_table::DdlJobTable;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
@@ -843,7 +843,7 @@ pub fn answer_ddl_without_job<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let plan = transaction
         .snapshot()
@@ -1040,7 +1040,7 @@ where
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::clone(&opener),
             timeout,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let lock_outcome =
             match transaction.lock_keys(vec![tidb_meta::key::next_global_id_kv_key()]) {
@@ -1130,7 +1130,7 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = preparation.start_ts();
     let prepared = {
@@ -1479,7 +1479,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = preparation.start_ts();
     let prepared = {
@@ -1627,7 +1627,7 @@ pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let jobs = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1689,7 +1689,7 @@ pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let minimum = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1731,7 +1731,7 @@ pub fn load_history_persisted_ddl_job<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let history = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1801,7 +1801,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = transaction.start_ts();
     let row_ids = backfiller.system_row_ids();
@@ -2044,7 +2044,7 @@ fn clean_mdl_info_with_retry<S: StoreClient>(
         let transaction = SessionTransaction::begin(
             Arc::clone(&opener),
             timeout,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let mut mutations = Vec::new();
         let cleanup = {

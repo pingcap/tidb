@@ -17,6 +17,7 @@
 //! transfer (`binding`), the global binding cache (`binding_cache`) and the
 //! storage helpers (`binding_utils`).
 
+pub mod session_time_zone;
 pub mod binding;
 pub mod binding_cache;
 pub mod binding_utils;

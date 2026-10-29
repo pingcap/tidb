@@ -26,7 +26,6 @@ tidb-log = { path = "../tidb-log" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-placement = { path = "../tidb-placement" }
 tidb-proto = { path = "../tidb-proto" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-murmur3 = { path = "../tidb-murmur3" }

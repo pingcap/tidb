@@ -39,7 +39,7 @@ use crate::cluster_stats_write::{
     loaded_stats_item_statements, plan_delete_table_stats, plan_loaded_stats_item_statement,
     plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
 };
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };

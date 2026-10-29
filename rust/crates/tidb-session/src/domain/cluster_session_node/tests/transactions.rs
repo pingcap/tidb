@@ -93,7 +93,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
         return;
     }
     use tidb_config::config_tree::config::update_global;
-    use tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with;
+    use tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with;
     use tidb_txnkv::transaction::BufferMutation;
 
     let (session, _) = open_session();

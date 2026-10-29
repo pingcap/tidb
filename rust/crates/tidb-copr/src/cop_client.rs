@@ -24,7 +24,25 @@ use tidb_distsql::{QueryDispatch, QueryTransport};
 use tidb_txnkv::TransportRequest;
 use tidb_txnkv::RequestTypeSupportedChecker;
 
-use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
+
+/// Builds one worker-local query transport from process-owned shared handles.
+///
+/// An implementation may retain the unique process lifecycle owners together
+/// with their cloneable request/cache handles, but it must give a session only
+/// the handles. In particular, opening a session must not connect another PD
+/// client, create a region cache, start a maintenance worker, or start a tonic
+/// runtime. The returned transport deliberately has no `Send` bound because
+/// the fixed server worker creates and consumes it on one thread.
+///
+/// The production implementation reads through the node's client-rust store
+/// (`NativeCopTransport` over `TikvStore`).
+pub trait RealTiKvSessionTransportFactory: Send + Sync {
+    /// Worker-local transport type created for one admitted connection.
+    type Transport: tidb_distsql::QueryTransport;
+
+    /// Creates query-local state over the already-running process authority.
+    fn open_session_transport(&self) -> Result<Self::Transport, String>;
+}
 
 /// Go `copr.CopClient` over the node's transport factory.
 pub struct CopClient<F> {

@@ -215,7 +215,7 @@ where
         let transaction = SessionTransaction::begin(
             Arc::clone(opener),
             timeout,
-            tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let start_ts = transaction.start_ts();
         let buffer = MutationBuffer::new();

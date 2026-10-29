@@ -97,7 +97,7 @@ pub fn in_process_stack_from_image(
     let transaction_opener =
         RealOptimisticTransactionOpener::from_capabilities(tikv_store.clone(), IN_PROCESS_TIMEOUT)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-            .with_commit_protocol(tidb_store_driver::session_commit_protocol::bootstrap_commit_protocol());
+            .with_commit_protocol(tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol());
     Ok(InProcessStack {
         pd,
         opener: transaction_opener,

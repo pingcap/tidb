@@ -727,7 +727,7 @@ pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
     sys_var_index_lookup(name).map(|index| &SYS_VARS[index])
 }
 
-fn sem_v2_defaults() -> &'static RwLock<HashMap<String, String>> {
+fn set_sys_var_defaults() -> &'static RwLock<HashMap<String, String>> {
     static DEFAULTS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
     DEFAULTS.get_or_init(|| RwLock::new(HashMap::new()))
 }
@@ -738,7 +738,7 @@ pub fn set_sys_var(name: &str, value: &str) {
     let Some(definition) = get_sys_var(name) else {
         return;
     };
-    sem_v2_defaults()
+    set_sys_var_defaults()
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(definition.name.to_owned(), value.to_owned());
@@ -831,7 +831,7 @@ pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
                 .clone(),
         );
     }
-    if let Some(value) = sem_v2_defaults()
+    if let Some(value) = set_sys_var_defaults()
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(definition.name)
@@ -839,8 +839,7 @@ pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
     {
         return Cow::Owned(value);
     }
-    tidb_sem::effective_sysvar_default(definition.name)
-        .map_or_else(|| Cow::Borrowed(definition.value), Cow::Owned)
+    Cow::Borrowed(definition.value)
 }
 /// go `server.setSystemTimeZoneVariable` -> `timeutil.InferSystemTZ`
 /// (`pkg/util/timeutil/time_zone.go`): the IANA name inferred from `$TZ` or

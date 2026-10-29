@@ -30,7 +30,7 @@
 use tidb_domain_core::session_transaction::transaction_options;
 use std::sync::Arc;
 
-use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_kv::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;

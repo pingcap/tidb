@@ -36,8 +36,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use tidb_store_driver::cluster_table_storage::LockKeysOutcome;
-use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
+use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
+use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_kv::cluster_storage::{
     ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
@@ -358,7 +358,7 @@ impl OpenClusterTransaction for LazyClusterTransaction {
 
     fn take_statement_lock_failure(
         &self,
-    ) -> Option<tidb_store_driver::cluster_table_storage::StatementLockFailure> {
+    ) -> Option<tidb_store_driver_txn::cluster_table_storage::StatementLockFailure> {
         self.shared
             .state()
             .open

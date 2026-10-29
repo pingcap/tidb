@@ -14,7 +14,6 @@ workspace = true
 tidb-intest = { path = "../tidb-intest" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-codec = { path = "../tidb-codec" }
-tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-kv = { path = "../tidb-kv" }
@@ -31,6 +30,7 @@ tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-parser = { path = "../tidb-parser" }
 
 [dev-dependencies]
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-session = { path = "../tidb-session" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 serde_json = { workspace = true }

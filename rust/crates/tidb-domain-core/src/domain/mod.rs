@@ -1520,7 +1520,7 @@ impl Domain {
                 );
                 for statement in tidb_stats_handle_usage::session_stats_collect::stats_delta_statements(&updates) {
                     let ((), mutations) =
-                        tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
+                        tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
                             &staged,
                             |retry_ts| {
@@ -1528,7 +1528,7 @@ impl Domain {
                                     Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
                                     None => transaction.snapshot_for(true),
                                 }?;
-                                Ok(tidb_store_driver::cluster_table_storage::overlay_staged_mutations(
+                                Ok(tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
                                     snapshot, &staged,
                                 ))
                             },
@@ -1558,7 +1558,7 @@ impl Domain {
                             },
                         )
                         .map_err(|error| error.to_string())?;
-                    tidb_store_driver::cluster_table_storage::stage_mutations(&staged, mutations)
+                    tidb_store_driver_txn::cluster_table_storage::stage_mutations(&staged, mutations)
                         .map_err(|error| error.to_string())?;
                 }
                 Ok::<_, String>(updates)
@@ -1600,7 +1600,7 @@ impl Domain {
                         let staged = MutationBuffer::new();
                         transaction.bind_mutation_buffer(&staged);
                         let ((modify_count, count), lock_mutations) =
-                            tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |read_ts| match read_ts {
@@ -1628,10 +1628,10 @@ impl Domain {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_store_driver::cluster_table_storage::stage_mutations(&staged, lock_mutations)
+                        tidb_store_driver_txn::cluster_table_storage::stage_mutations(&staged, lock_mutations)
                             .map_err(|error| error.to_string())?;
                         let ((), replace_mutations) =
-                            tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
+                            tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
                                 &staged,
                                 |retry_ts| match retry_ts {
@@ -1664,7 +1664,7 @@ impl Domain {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_store_driver::cluster_table_storage::stage_mutations(
+                        tidb_store_driver_txn::cluster_table_storage::stage_mutations(
                             &staged,
                             replace_mutations,
                         )
@@ -2878,7 +2878,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let create_time = tidb_datatype::current_time::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
             let ((), mutations) =
-                tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
+                tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
                     transaction.start_ts(),
                     &staged,
                     |read_ts| match read_ts {
@@ -2913,7 +2913,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     },
                 )
                 .map_err(|error| error.to_string())?;
-            tidb_store_driver::cluster_table_storage::stage_mutations(&staged, mutations)
+            tidb_store_driver_txn::cluster_table_storage::stage_mutations(&staged, mutations)
                 .map_err(|error| error.to_string())?;
         }
         transaction.commit(&staged).map_err(|error| error.message)?;

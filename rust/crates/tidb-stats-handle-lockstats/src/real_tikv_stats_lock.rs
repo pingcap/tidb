@@ -31,7 +31,7 @@ use crate::cluster_stats_lock::{
     query_cluster_locked_tables, ClusterStatsLockApplyError, ClusterStatsLockError,
 };
 use crate::lock_target::ClusterStatsLockStatement;
-use tidb_store_driver::cluster_table_storage::{
+use tidb_store_driver_txn::cluster_table_storage::{
     lock_pessimistic_statement, overlay_staged_mutations, PessimisticStatementTransactionError,
     SessionTransaction,
 };
