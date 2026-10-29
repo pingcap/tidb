@@ -649,7 +649,8 @@ func TestStmtSummaryHistoryOpenEndedTimeRange(t *testing.T) {
 }
 
 // TestStmtSummaryHistoryPreparedTimeRange exercises Dashboard's real prepared
-// query through the persistent reader, including the binary parameter API.
+// query through the persistent reader, including the session prepared-statement
+// API with bound arguments.
 func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
 	defer config.RestoreFunc()()
 	dir := t.TempDir()
