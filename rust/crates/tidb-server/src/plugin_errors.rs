@@ -44,3 +44,78 @@ pub static ERR_DUPLICATE_PLUGIN: LazyLock<TerrorError> =
 /// Source `plugin.errRequireVersionCheckFail` (`pkg/plugin/errors.go:28`).
 pub static ERR_REQUIRE_VERSION_CHECK_FAIL: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Plugin, errcode::ErrRequireVersionCheckFail));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_ID.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_INVALID_PLUGIN_ID"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_ID.code().value(),
+            errcode::ErrInvalidPluginID as isize,
+            "plugin::ERR_INVALID_PLUGIN_ID"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_MANIFEST.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_INVALID_PLUGIN_MANIFEST"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_MANIFEST.code().value(),
+            errcode::ErrInvalidPluginManifest as isize,
+            "plugin::ERR_INVALID_PLUGIN_MANIFEST"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_NAME.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_INVALID_PLUGIN_NAME"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_NAME.code().value(),
+            errcode::ErrInvalidPluginName as isize,
+            "plugin::ERR_INVALID_PLUGIN_NAME"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_VERSION.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_INVALID_PLUGIN_VERSION"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PLUGIN_VERSION.code().value(),
+            errcode::ErrInvalidPluginVersion as isize,
+            "plugin::ERR_INVALID_PLUGIN_VERSION"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATE_PLUGIN.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_DUPLICATE_PLUGIN"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATE_PLUGIN.code().value(),
+            errcode::ErrDuplicatePlugin as isize,
+            "plugin::ERR_DUPLICATE_PLUGIN"
+        );
+        assert_eq!(
+            super::ERR_REQUIRE_VERSION_CHECK_FAIL.class(),
+            TerrorClass::Plugin,
+            "plugin::ERR_REQUIRE_VERSION_CHECK_FAIL"
+        );
+        assert_eq!(
+            super::ERR_REQUIRE_VERSION_CHECK_FAIL
+                .code()
+                .value(),
+            errcode::ErrRequireVersionCheckFail as isize,
+            "plugin::ERR_REQUIRE_VERSION_CHECK_FAIL"
+        );
+    }
+}

@@ -80,3 +80,202 @@ pub static ERR_RESOURCE_GROUP_THROTTLED: LazyLock<TerrorError> =
 /// Source `store/driver/error.ErrUnknown` (`pkg/store/driver/error/error.go:66`).
 pub static ERR_UNKNOWN: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::TiKv, errcode::ErrUnknown));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_TOKEN_LIMIT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TOKEN_LIMIT"
+        );
+        assert_eq!(
+            super::ERR_TOKEN_LIMIT.code().value(),
+            errcode::ErrTiKVStoreLimit as isize,
+            "tikv::ERR_TOKEN_LIMIT"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_SERVER_TIMEOUT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_KV_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_SERVER_TIMEOUT.code().value(),
+            errcode::ErrTiKVServerTimeout as isize,
+            "tikv::ERR_TI_KV_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_TI_FLASH_SERVER_TIMEOUT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_FLASH_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_TI_FLASH_SERVER_TIMEOUT.code().value(),
+            errcode::ErrTiFlashServerTimeout as isize,
+            "tikv::ERR_TI_FLASH_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_TXN_ABORTED_BY_GC.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TXN_ABORTED_BY_GC"
+        );
+        assert_eq!(
+            super::ERR_TXN_ABORTED_BY_GC.code().value(),
+            errcode::ErrTxnAbortedByGC as isize,
+            "tikv::ERR_TXN_ABORTED_BY_GC"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_STALE_COMMAND.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_KV_STALE_COMMAND"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_STALE_COMMAND.code().value(),
+            errcode::ErrTiKVStaleCommand as isize,
+            "tikv::ERR_TI_KV_STALE_COMMAND"
+        );
+        assert_eq!(
+            super::ERR_QUERY_INTERRUPTED.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_QUERY_INTERRUPTED"
+        );
+        assert_eq!(
+            super::ERR_QUERY_INTERRUPTED.code().value(),
+            errcode::ErrQueryInterrupted as isize,
+            "tikv::ERR_QUERY_INTERRUPTED"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_MAX_TIMESTAMP_NOT_SYNCED.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_KV_MAX_TIMESTAMP_NOT_SYNCED"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_MAX_TIMESTAMP_NOT_SYNCED
+                .code()
+                .value(),
+            errcode::ErrTiKVMaxTimestampNotSynced as isize,
+            "tikv::ERR_TI_KV_MAX_TIMESTAMP_NOT_SYNCED"
+        );
+        assert_eq!(
+            super::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET"
+        );
+        assert_eq!(
+            super::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
+                .code()
+                .value(),
+            errcode::ErrLockAcquireFailAndNoWaitSet as isize,
+            "tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET"
+        );
+        assert_eq!(
+            super::ERR_RESOLVE_LOCK_TIMEOUT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_RESOLVE_LOCK_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_RESOLVE_LOCK_TIMEOUT.code().value(),
+            errcode::ErrResolveLockTimeout as isize,
+            "tikv::ERR_RESOLVE_LOCK_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_LOCK_WAIT_TIMEOUT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_LOCK_WAIT_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_LOCK_WAIT_TIMEOUT.code().value(),
+            errcode::ErrLockWaitTimeout as isize,
+            "tikv::ERR_LOCK_WAIT_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_SERVER_BUSY.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_KV_SERVER_BUSY"
+        );
+        assert_eq!(
+            super::ERR_TI_KV_SERVER_BUSY.code().value(),
+            errcode::ErrTiKVServerBusy as isize,
+            "tikv::ERR_TI_KV_SERVER_BUSY"
+        );
+        assert_eq!(
+            super::ERR_TI_FLASH_SERVER_BUSY.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_TI_FLASH_SERVER_BUSY"
+        );
+        assert_eq!(
+            super::ERR_TI_FLASH_SERVER_BUSY.code().value(),
+            errcode::ErrTiFlashServerBusy as isize,
+            "tikv::ERR_TI_FLASH_SERVER_BUSY"
+        );
+        assert_eq!(
+            super::ERR_PD_SERVER_TIMEOUT.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_PD_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_PD_SERVER_TIMEOUT.code().value(),
+            errcode::ErrPDServerTimeout as isize,
+            "tikv::ERR_PD_SERVER_TIMEOUT"
+        );
+        assert_eq!(
+            super::ERR_REGION_UNAVAILABLE.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_REGION_UNAVAILABLE"
+        );
+        assert_eq!(
+            super::ERR_REGION_UNAVAILABLE.code().value(),
+            errcode::ErrRegionUnavailable as isize,
+            "tikv::ERR_REGION_UNAVAILABLE"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS.code().value(),
+            errcode::ErrResourceGroupNotExists as isize,
+            "tikv::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_CONFIG_UNAVAILABLE.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_RESOURCE_GROUP_CONFIG_UNAVAILABLE"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_CONFIG_UNAVAILABLE
+                .code()
+                .value(),
+            errcode::ErrResourceGroupConfigUnavailable as isize,
+            "tikv::ERR_RESOURCE_GROUP_CONFIG_UNAVAILABLE"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_THROTTLED.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_RESOURCE_GROUP_THROTTLED"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_THROTTLED.code().value(),
+            errcode::ErrResourceGroupThrottled as isize,
+            "tikv::ERR_RESOURCE_GROUP_THROTTLED"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN.class(),
+            TerrorClass::TiKv,
+            "tikv::ERR_UNKNOWN"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN.code().value(),
+            errcode::ErrUnknown as isize,
+            "tikv::ERR_UNKNOWN"
+        );
+    }
+}

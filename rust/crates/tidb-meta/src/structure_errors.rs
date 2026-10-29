@@ -38,3 +38,58 @@ pub static ERR_INVALID_LIST_META_DATA: LazyLock<TerrorError> =
 /// Source `structure.ErrWriteOnSnapshot` (`pkg/structure/structure.go:31`).
 pub static ERR_WRITE_ON_SNAPSHOT: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Structure, errcode::ErrWriteOnSnapshot));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_HASH_KEY_FLAG.class(),
+            TerrorClass::Structure,
+            "structure::ERR_INVALID_HASH_KEY_FLAG"
+        );
+        assert_eq!(
+            super::ERR_INVALID_HASH_KEY_FLAG.code().value(),
+            errcode::ErrInvalidHashKeyFlag as isize,
+            "structure::ERR_INVALID_HASH_KEY_FLAG"
+        );
+        assert_eq!(
+            super::ERR_INVALID_LIST_INDEX.class(),
+            TerrorClass::Structure,
+            "structure::ERR_INVALID_LIST_INDEX"
+        );
+        assert_eq!(
+            super::ERR_INVALID_LIST_INDEX.code().value(),
+            errcode::ErrInvalidListIndex as isize,
+            "structure::ERR_INVALID_LIST_INDEX"
+        );
+        assert_eq!(
+            super::ERR_INVALID_LIST_META_DATA.class(),
+            TerrorClass::Structure,
+            "structure::ERR_INVALID_LIST_META_DATA"
+        );
+        assert_eq!(
+            super::ERR_INVALID_LIST_META_DATA
+                .code()
+                .value(),
+            errcode::ErrInvalidListMetaData as isize,
+            "structure::ERR_INVALID_LIST_META_DATA"
+        );
+        assert_eq!(
+            super::ERR_WRITE_ON_SNAPSHOT.class(),
+            TerrorClass::Structure,
+            "structure::ERR_WRITE_ON_SNAPSHOT"
+        );
+        assert_eq!(
+            super::ERR_WRITE_ON_SNAPSHOT.code().value(),
+            errcode::ErrWriteOnSnapshot as isize,
+            "structure::ERR_WRITE_ON_SNAPSHOT"
+        );
+    }
+}

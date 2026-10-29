@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `statistics.ErrQueryInterrupted` (`pkg/statistics/cmsketch.go:50`).
 pub static ERR_QUERY_INTERRUPTED: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Executor, errcode::ErrQueryInterrupted));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_QUERY_INTERRUPTED.class(),
+            TerrorClass::Executor,
+            "statistics::ERR_QUERY_INTERRUPTED"
+        );
+        assert_eq!(
+            super::ERR_QUERY_INTERRUPTED.code().value(),
+            errcode::ErrQueryInterrupted as isize,
+            "statistics::ERR_QUERY_INTERRUPTED"
+        );
+    }
+}

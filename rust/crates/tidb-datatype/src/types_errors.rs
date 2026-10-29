@@ -188,3 +188,492 @@ pub static ERR_JSON_VACUOUS_PATH: LazyLock<TerrorError> =
 /// Source `types.ErrTimestampInDSTTransition` (`pkg/types/errors.go:103`).
 pub static ERR_TIMESTAMP_IN_DST_TRANSITION: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Executor, errcode::ErrTimeStampInDSTTransition));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_JSON_TEXT.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_TEXT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_TEXT.code().value(),
+            errcode::ErrInvalidJSONText as isize,
+            "types::ERR_INVALID_JSON_TEXT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_TYPE.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_TYPE.code().value(),
+            errcode::ErrInvalidJSONType as isize,
+            "types::ERR_INVALID_JSON_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_TEXT_IN_PARAM.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_TEXT_IN_PARAM"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_TEXT_IN_PARAM
+                .code()
+                .value(),
+            errcode::ErrInvalidJSONTextInParam as isize,
+            "types::ERR_INVALID_JSON_TEXT_IN_PARAM"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_PATH"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH.code().value(),
+            errcode::ErrInvalidJSONPath as isize,
+            "types::ERR_INVALID_JSON_PATH"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_CHARSET.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_CHARSET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_CHARSET.code().value(),
+            errcode::ErrInvalidJSONCharset as isize,
+            "types::ERR_INVALID_JSON_CHARSET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_DATA.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_DATA"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_DATA.code().value(),
+            errcode::ErrInvalidJSONData as isize,
+            "types::ERR_INVALID_JSON_DATA"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION
+                .code()
+                .value(),
+            errcode::ErrInvalidJSONPathMultipleSelection as isize,
+            "types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_CONTAINS_PATH_TYPE.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_CONTAINS_PATH_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_CONTAINS_PATH_TYPE
+                .code()
+                .value(),
+            errcode::ErrInvalidJSONContainsPathType as isize,
+            "types::ERR_INVALID_JSON_CONTAINS_PATH_TYPE"
+        );
+        assert_eq!(
+            super::ERR_JSON_DOCUMENT_NULL_KEY.class(),
+            TerrorClass::Json,
+            "types::ERR_JSON_DOCUMENT_NULL_KEY"
+        );
+        assert_eq!(
+            super::ERR_JSON_DOCUMENT_NULL_KEY.code().value(),
+            errcode::ErrJSONDocumentNULLKey as isize,
+            "types::ERR_JSON_DOCUMENT_NULL_KEY"
+        );
+        assert_eq!(
+            super::ERR_JSON_DOCUMENT_TOO_DEEP.class(),
+            TerrorClass::Json,
+            "types::ERR_JSON_DOCUMENT_TOO_DEEP"
+        );
+        assert_eq!(
+            super::ERR_JSON_DOCUMENT_TOO_DEEP.code().value(),
+            errcode::ErrJSONDocumentTooDeep as isize,
+            "types::ERR_JSON_DOCUMENT_TOO_DEEP"
+        );
+        assert_eq!(
+            super::ERR_JSON_OBJECT_KEY_TOO_LONG.class(),
+            TerrorClass::Types,
+            "types::ERR_JSON_OBJECT_KEY_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_JSON_OBJECT_KEY_TOO_LONG.code().value(),
+            errcode::ErrJSONObjectKeyTooLong as isize,
+            "types::ERR_JSON_OBJECT_KEY_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH_ARRAY_CELL.class(),
+            TerrorClass::Json,
+            "types::ERR_INVALID_JSON_PATH_ARRAY_CELL"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_PATH_ARRAY_CELL
+                .code()
+                .value(),
+            errcode::ErrInvalidJSONPathArrayCell as isize,
+            "types::ERR_INVALID_JSON_PATH_ARRAY_CELL"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_SECOND_ARGUMENT_TYPE.class(),
+            TerrorClass::Json,
+            "types::ERR_UNSUPPORTED_SECOND_ARGUMENT_TYPE"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_SECOND_ARGUMENT_TYPE
+                .code()
+                .value(),
+            errcode::ErrUnsupportedSecondArgumentType as isize,
+            "types::ERR_UNSUPPORTED_SECOND_ARGUMENT_TYPE"
+        );
+        assert_eq!(
+            super::ERR_DATA_TOO_LONG.class(),
+            TerrorClass::Types,
+            "types::ERR_DATA_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_DATA_TOO_LONG.code().value(),
+            errcode::ErrDataTooLong as isize,
+            "types::ERR_DATA_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_VALUE_FOR_TYPE.class(),
+            TerrorClass::Types,
+            "types::ERR_ILLEGAL_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_VALUE_FOR_TYPE.code().value(),
+            errcode::ErrIllegalValueForType as isize,
+            "types::ERR_ILLEGAL_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED.class(),
+            TerrorClass::Types,
+            "types::ERR_TRUNCATED"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED.code().value(),
+            errcode::WarnDataTruncated as isize,
+            "types::ERR_TRUNCATED"
+        );
+        assert_eq!(
+            super::ERR_OVERFLOW.class(),
+            TerrorClass::Types,
+            "types::ERR_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_OVERFLOW.code().value(),
+            errcode::ErrDataOutOfRange as isize,
+            "types::ERR_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_DIV_BY_ZERO.class(),
+            TerrorClass::Types,
+            "types::ERR_DIV_BY_ZERO"
+        );
+        assert_eq!(
+            super::ERR_DIV_BY_ZERO.code().value(),
+            errcode::ErrDivisionByZero as isize,
+            "types::ERR_DIV_BY_ZERO"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_DISPLAY_WIDTH.class(),
+            TerrorClass::Types,
+            "types::ERR_TOO_BIG_DISPLAY_WIDTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_DISPLAY_WIDTH.code().value(),
+            errcode::ErrTooBigDisplaywidth as isize,
+            "types::ERR_TOO_BIG_DISPLAY_WIDTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_FIELD_LENGTH.class(),
+            TerrorClass::Types,
+            "types::ERR_TOO_BIG_FIELD_LENGTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_FIELD_LENGTH.code().value(),
+            errcode::ErrTooBigFieldlength as isize,
+            "types::ERR_TOO_BIG_FIELD_LENGTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_SET.class(),
+            TerrorClass::Types,
+            "types::ERR_TOO_BIG_SET"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_SET.code().value(),
+            errcode::ErrTooBigSet as isize,
+            "types::ERR_TOO_BIG_SET"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_SCALE.class(),
+            TerrorClass::Types,
+            "types::ERR_TOO_BIG_SCALE"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_SCALE.code().value(),
+            errcode::ErrTooBigScale as isize,
+            "types::ERR_TOO_BIG_SCALE"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_PRECISION.class(),
+            TerrorClass::Types,
+            "types::ERR_TOO_BIG_PRECISION"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_PRECISION.code().value(),
+            errcode::ErrTooBigPrecision as isize,
+            "types::ERR_TOO_BIG_PRECISION"
+        );
+        assert_eq!(
+            super::ERR_BAD_NUMBER.class(),
+            TerrorClass::Types,
+            "types::ERR_BAD_NUMBER"
+        );
+        assert_eq!(
+            super::ERR_BAD_NUMBER.code().value(),
+            errcode::ErrBadNumber as isize,
+            "types::ERR_BAD_NUMBER"
+        );
+        assert_eq!(
+            super::ERR_INVALID_FIELD_SIZE.class(),
+            TerrorClass::Types,
+            "types::ERR_INVALID_FIELD_SIZE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_FIELD_SIZE.code().value(),
+            errcode::ErrInvalidFieldSize as isize,
+            "types::ERR_INVALID_FIELD_SIZE"
+        );
+        assert_eq!(
+            super::ERR_M_BIGGER_THAN_D.class(),
+            TerrorClass::Types,
+            "types::ERR_M_BIGGER_THAN_D"
+        );
+        assert_eq!(
+            super::ERR_M_BIGGER_THAN_D.code().value(),
+            errcode::ErrMBiggerThanD as isize,
+            "types::ERR_M_BIGGER_THAN_D"
+        );
+        assert_eq!(
+            super::ERR_WARN_DATA_OUT_OF_RANGE.class(),
+            TerrorClass::Types,
+            "types::ERR_WARN_DATA_OUT_OF_RANGE"
+        );
+        assert_eq!(
+            super::ERR_WARN_DATA_OUT_OF_RANGE.code().value(),
+            errcode::ErrWarnDataOutOfRange as isize,
+            "types::ERR_WARN_DATA_OUT_OF_RANGE"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATED_VALUE_IN_TYPE.class(),
+            TerrorClass::Types,
+            "types::ERR_DUPLICATED_VALUE_IN_TYPE"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATED_VALUE_IN_TYPE.code().value(),
+            errcode::ErrDuplicatedValueInType as isize,
+            "types::ERR_DUPLICATED_VALUE_IN_TYPE"
+        );
+        assert_eq!(
+            super::ERR_DATETIME_FUNCTION_OVERFLOW.class(),
+            TerrorClass::Types,
+            "types::ERR_DATETIME_FUNCTION_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_DATETIME_FUNCTION_OVERFLOW
+                .code()
+                .value(),
+            errcode::ErrDatetimeFunctionOverflow as isize,
+            "types::ERR_DATETIME_FUNCTION_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_CAST_AS_SIGNED_OVERFLOW.class(),
+            TerrorClass::Types,
+            "types::ERR_CAST_AS_SIGNED_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_CAST_AS_SIGNED_OVERFLOW.code().value(),
+            errcode::ErrCastAsSignedOverflow as isize,
+            "types::ERR_CAST_AS_SIGNED_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_CAST_NEG_INT_AS_UNSIGNED.class(),
+            TerrorClass::Types,
+            "types::ERR_CAST_NEG_INT_AS_UNSIGNED"
+        );
+        assert_eq!(
+            super::ERR_CAST_NEG_INT_AS_UNSIGNED.code().value(),
+            errcode::ErrCastNegIntAsUnsigned as isize,
+            "types::ERR_CAST_NEG_INT_AS_UNSIGNED"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR_FORMAT.class(),
+            TerrorClass::Types,
+            "types::ERR_INVALID_YEAR_FORMAT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR_FORMAT.code().value(),
+            errcode::ErrInvalidYearFormat as isize,
+            "types::ERR_INVALID_YEAR_FORMAT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR.class(),
+            TerrorClass::Types,
+            "types::ERR_INVALID_YEAR"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR.code().value(),
+            errcode::ErrInvalidYear as isize,
+            "types::ERR_INVALID_YEAR"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VAL.class(),
+            TerrorClass::Types,
+            "types::ERR_TRUNCATED_WRONG_VAL"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VAL.code().value(),
+            errcode::ErrTruncatedWrongValue as isize,
+            "types::ERR_TRUNCATED_WRONG_VAL"
+        );
+        assert_eq!(
+            super::ERR_INVALID_WEEK_MODE_FORMAT.class(),
+            TerrorClass::Types,
+            "types::ERR_INVALID_WEEK_MODE_FORMAT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_WEEK_MODE_FORMAT.code().value(),
+            errcode::ErrInvalidWeekModeFormat as isize,
+            "types::ERR_INVALID_WEEK_MODE_FORMAT"
+        );
+        assert_eq!(
+            super::ERR_WRONG_FIELD_SPEC.class(),
+            TerrorClass::Types,
+            "types::ERR_WRONG_FIELD_SPEC"
+        );
+        assert_eq!(
+            super::ERR_WRONG_FIELD_SPEC.code().value(),
+            errcode::ErrWrongFieldSpec as isize,
+            "types::ERR_WRONG_FIELD_SPEC"
+        );
+        assert_eq!(
+            super::ERR_SYNTAX.class(),
+            TerrorClass::Types,
+            "types::ERR_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_SYNTAX.code().value(),
+            errcode::ErrParse as isize,
+            "types::ERR_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE.class(),
+            TerrorClass::Types,
+            "types::ERR_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE.code().value(),
+            errcode::ErrTruncatedWrongValue as isize,
+            "types::ERR_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE2.class(),
+            TerrorClass::Types,
+            "types::ERR_WRONG_VALUE2"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE2.code().value(),
+            errcode::ErrWrongValue as isize,
+            "types::ERR_WRONG_VALUE2"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_TYPE.class(),
+            TerrorClass::Types,
+            "types::ERR_WRONG_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_TYPE.code().value(),
+            errcode::ErrWrongValueForType as isize,
+            "types::ERR_WRONG_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_STATS_MISSING.class(),
+            TerrorClass::Types,
+            "types::ERR_PARTITION_STATS_MISSING"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_STATS_MISSING.code().value(),
+            errcode::ErrPartitionStatsMissing as isize,
+            "types::ERR_PARTITION_STATS_MISSING"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_COLUMN_STATS_MISSING.class(),
+            TerrorClass::Types,
+            "types::ERR_PARTITION_COLUMN_STATS_MISSING"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_COLUMN_STATS_MISSING
+                .code()
+                .value(),
+            errcode::ErrPartitionColumnStatsMissing as isize,
+            "types::ERR_PARTITION_COLUMN_STATS_MISSING"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_DATETIME_VALUE.class(),
+            TerrorClass::Types,
+            "types::ERR_INCORRECT_DATETIME_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_DATETIME_VALUE.code().value(),
+            errcode::ErrIncorrectDatetimeValue as isize,
+            "types::ERR_INCORRECT_DATETIME_VALUE"
+        );
+        assert_eq!(
+            super::ERR_JSON_BAD_ONE_OR_ALL_ARG.class(),
+            TerrorClass::Types,
+            "types::ERR_JSON_BAD_ONE_OR_ALL_ARG"
+        );
+        assert_eq!(
+            super::ERR_JSON_BAD_ONE_OR_ALL_ARG.code().value(),
+            errcode::ErrJSONBadOneOrAllArg as isize,
+            "types::ERR_JSON_BAD_ONE_OR_ALL_ARG"
+        );
+        assert_eq!(
+            super::ERR_JSON_VACUOUS_PATH.class(),
+            TerrorClass::Types,
+            "types::ERR_JSON_VACUOUS_PATH"
+        );
+        assert_eq!(
+            super::ERR_JSON_VACUOUS_PATH.code().value(),
+            errcode::ErrJSONVacuousPath as isize,
+            "types::ERR_JSON_VACUOUS_PATH"
+        );
+        assert_eq!(
+            super::ERR_TIMESTAMP_IN_DST_TRANSITION.class(),
+            TerrorClass::Executor,
+            "types::ERR_TIMESTAMP_IN_DST_TRANSITION"
+        );
+        assert_eq!(
+            super::ERR_TIMESTAMP_IN_DST_TRANSITION
+                .code()
+                .value(),
+            errcode::ErrTimeStampInDSTTransition as isize,
+            "types::ERR_TIMESTAMP_IN_DST_TRANSITION"
+        );
+    }
+}

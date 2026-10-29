@@ -22,7 +22,7 @@
 
 use std::sync::LazyLock;
 
-use super::{std_err, Class};
+use tidb_terror::catalog_support::{std_err, Class};
 use tidb_terror::TerrorError;
 use tidb_errno::errcode;
 
@@ -32,3 +32,38 @@ pub static ERR_HTTP_SERVICE_ERROR: LazyLock<TerrorError> =
 /// Source `domain/infosync.ErrPrometheusAddrIsNotSet` (`pkg/domain/infosync/info.go:88`).
 pub static ERR_PROMETHEUS_ADDR_IS_NOT_SET: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Domain, errcode::ErrPrometheusAddrIsNotSet));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_HTTP_SERVICE_ERROR.class(),
+            TerrorClass::Domain,
+            "infosync::ERR_HTTP_SERVICE_ERROR"
+        );
+        assert_eq!(
+            super::ERR_HTTP_SERVICE_ERROR.code().value(),
+            errcode::ErrHTTPServiceError as isize,
+            "infosync::ERR_HTTP_SERVICE_ERROR"
+        );
+        assert_eq!(
+            super::ERR_PROMETHEUS_ADDR_IS_NOT_SET.class(),
+            TerrorClass::Domain,
+            "infosync::ERR_PROMETHEUS_ADDR_IS_NOT_SET"
+        );
+        assert_eq!(
+            super::ERR_PROMETHEUS_ADDR_IS_NOT_SET
+                .code()
+                .value(),
+            errcode::ErrPrometheusAddrIsNotSet as isize,
+            "infosync::ERR_PROMETHEUS_ADDR_IS_NOT_SET"
+        );
+    }
+}

@@ -43,3 +43,56 @@ pub static ERR_ILLEGAL_MIX2_COLLATION: LazyLock<TerrorError> =
 /// Source `util/collate.ErrIllegalMix3Collation` (`pkg/util/collate/collate.go:49`).
 pub static ERR_ILLEGAL_MIX3_COLLATION: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Expression, errcode::ErrCantAggregate3collations));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_UNSUPPORTED_COLLATION.class(),
+            TerrorClass::Ddl,
+            "collate::ERR_UNSUPPORTED_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_COLLATION.code().value(),
+            errcode::ErrUnknownCollation as isize,
+            "collate::ERR_UNSUPPORTED_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX_COLLATION.class(),
+            TerrorClass::Expression,
+            "collate::ERR_ILLEGAL_MIX_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX_COLLATION.code().value(),
+            errcode::ErrCantAggregateNcollations as isize,
+            "collate::ERR_ILLEGAL_MIX_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX2_COLLATION.class(),
+            TerrorClass::Expression,
+            "collate::ERR_ILLEGAL_MIX2_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX2_COLLATION.code().value(),
+            errcode::ErrCantAggregate2collations as isize,
+            "collate::ERR_ILLEGAL_MIX2_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX3_COLLATION.class(),
+            TerrorClass::Expression,
+            "collate::ERR_ILLEGAL_MIX3_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_MIX3_COLLATION.code().value(),
+            errcode::ErrCantAggregate3collations as isize,
+            "collate::ERR_ILLEGAL_MIX3_COLLATION"
+        );
+    }
+}

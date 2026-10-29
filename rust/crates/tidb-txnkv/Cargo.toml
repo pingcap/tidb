@@ -37,7 +37,6 @@ serde_json.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-log = { path = "../tidb-log" }
 tidb-proto = { path = "../tidb-proto" }

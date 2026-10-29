@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `util/admin.ErrAdminCheckTable` (`pkg/util/admin/admin.go:267`).
 pub static ERR_ADMIN_CHECK_TABLE: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Admin, errcode::ErrAdminCheckTable));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_ADMIN_CHECK_TABLE.class(),
+            TerrorClass::Admin,
+            "admin::ERR_ADMIN_CHECK_TABLE"
+        );
+        assert_eq!(
+            super::ERR_ADMIN_CHECK_TABLE.code().value(),
+            errcode::ErrAdminCheckTable as isize,
+            "admin::ERR_ADMIN_CHECK_TABLE"
+        );
+    }
+}

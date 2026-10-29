@@ -35,3 +35,48 @@ pub static ERR_NON_TRANSACTIONAL_JOB_FAILURE: LazyLock<TerrorError> =
 /// Source `session.errResultIsEmpty` (`pkg/session/session.go:4102`).
 pub static ERR_RESULT_IS_EMPTY: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Executor, errcode::ErrResultIsEmpty));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_FOR_UPDATE_CANT_RETRY.class(),
+            TerrorClass::Session,
+            "session::ERR_FOR_UPDATE_CANT_RETRY"
+        );
+        assert_eq!(
+            super::ERR_FOR_UPDATE_CANT_RETRY.code().value(),
+            errcode::ErrForUpdateCantRetry as isize,
+            "session::ERR_FOR_UPDATE_CANT_RETRY"
+        );
+        assert_eq!(
+            super::ERR_NON_TRANSACTIONAL_JOB_FAILURE.class(),
+            TerrorClass::Session,
+            "session::ERR_NON_TRANSACTIONAL_JOB_FAILURE"
+        );
+        assert_eq!(
+            super::ERR_NON_TRANSACTIONAL_JOB_FAILURE
+                .code()
+                .value(),
+            errcode::ErrNonTransactionalJobFailure as isize,
+            "session::ERR_NON_TRANSACTIONAL_JOB_FAILURE"
+        );
+        assert_eq!(
+            super::ERR_RESULT_IS_EMPTY.class(),
+            TerrorClass::Executor,
+            "session::ERR_RESULT_IS_EMPTY"
+        );
+        assert_eq!(
+            super::ERR_RESULT_IS_EMPTY.code().value(),
+            errcode::ErrResultIsEmpty as isize,
+            "session::ERR_RESULT_IS_EMPTY"
+        );
+    }
+}

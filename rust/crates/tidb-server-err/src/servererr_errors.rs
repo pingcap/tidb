@@ -71,3 +71,178 @@ pub static ERR_MUST_CHANGE_PASSWORD: LazyLock<TerrorError> =
 /// Source `server/err.ErrServerShutdown` (`pkg/server/err/error.go:52`).
 pub static ERR_SERVER_SHUTDOWN: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Server, errcode::ErrServerShutdown));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_TYPE.class(),
+            TerrorClass::Server,
+            "servererr::ERR_INVALID_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TYPE.code().value(),
+            errcode::ErrInvalidType as isize,
+            "servererr::ERR_INVALID_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_SEQUENCE.class(),
+            TerrorClass::Server,
+            "servererr::ERR_INVALID_SEQUENCE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_SEQUENCE.code().value(),
+            errcode::ErrInvalidSequence as isize,
+            "servererr::ERR_INVALID_SEQUENCE"
+        );
+        assert_eq!(
+            super::ERR_NOT_ALLOWED_COMMAND.class(),
+            TerrorClass::Server,
+            "servererr::ERR_NOT_ALLOWED_COMMAND"
+        );
+        assert_eq!(
+            super::ERR_NOT_ALLOWED_COMMAND.code().value(),
+            errcode::ErrNotAllowedCommand as isize,
+            "servererr::ERR_NOT_ALLOWED_COMMAND"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.class(),
+            TerrorClass::Server,
+            "servererr::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.code().value(),
+            errcode::ErrAccessDenied as isize,
+            "servererr::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED_NO_PASSWORD.class(),
+            TerrorClass::Server,
+            "servererr::ERR_ACCESS_DENIED_NO_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED_NO_PASSWORD
+                .code()
+                .value(),
+            errcode::ErrAccessDeniedNoPassword as isize,
+            "servererr::ERR_ACCESS_DENIED_NO_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_CON_COUNT.class(),
+            TerrorClass::Server,
+            "servererr::ERR_CON_COUNT"
+        );
+        assert_eq!(
+            super::ERR_CON_COUNT.code().value(),
+            errcode::ErrConCount as isize,
+            "servererr::ERR_CON_COUNT"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_USER_CONNECTIONS.class(),
+            TerrorClass::Server,
+            "servererr::ERR_TOO_MANY_USER_CONNECTIONS"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_USER_CONNECTIONS
+                .code()
+                .value(),
+            errcode::ErrTooManyUserConnections as isize,
+            "servererr::ERR_TOO_MANY_USER_CONNECTIONS"
+        );
+        assert_eq!(
+            super::ERR_SECURE_TRANSPORT_REQUIRED.class(),
+            TerrorClass::Server,
+            "servererr::ERR_SECURE_TRANSPORT_REQUIRED"
+        );
+        assert_eq!(
+            super::ERR_SECURE_TRANSPORT_REQUIRED
+                .code()
+                .value(),
+            errcode::ErrSecureTransportRequired as isize,
+            "servererr::ERR_SECURE_TRANSPORT_REQUIRED"
+        );
+        assert_eq!(
+            super::ERR_USER_PREFIX_MISMATCH.class(),
+            TerrorClass::Server,
+            "servererr::ERR_USER_PREFIX_MISMATCH"
+        );
+        assert_eq!(
+            super::ERR_USER_PREFIX_MISMATCH.code().value(),
+            errcode::ErrUserPrefixMismatch as isize,
+            "servererr::ERR_USER_PREFIX_MISMATCH"
+        );
+        assert_eq!(
+            super::ERR_MULTI_STATEMENT_DISABLED.class(),
+            TerrorClass::Server,
+            "servererr::ERR_MULTI_STATEMENT_DISABLED"
+        );
+        assert_eq!(
+            super::ERR_MULTI_STATEMENT_DISABLED
+                .code()
+                .value(),
+            errcode::ErrMultiStatementDisabled as isize,
+            "servererr::ERR_MULTI_STATEMENT_DISABLED"
+        );
+        assert_eq!(
+            super::ERR_NEW_ABORTING_CONNECTION.class(),
+            TerrorClass::Server,
+            "servererr::ERR_NEW_ABORTING_CONNECTION"
+        );
+        assert_eq!(
+            super::ERR_NEW_ABORTING_CONNECTION
+                .code()
+                .value(),
+            errcode::ErrNewAbortingConnection as isize,
+            "servererr::ERR_NEW_ABORTING_CONNECTION"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_AUTH_MODE.class(),
+            TerrorClass::Server,
+            "servererr::ERR_NOT_SUPPORTED_AUTH_MODE"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_AUTH_MODE
+                .code()
+                .value(),
+            errcode::ErrNotSupportedAuthMode as isize,
+            "servererr::ERR_NOT_SUPPORTED_AUTH_MODE"
+        );
+        assert_eq!(
+            super::ERR_NET_PACKET_TOO_LARGE.class(),
+            TerrorClass::Server,
+            "servererr::ERR_NET_PACKET_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_NET_PACKET_TOO_LARGE.code().value(),
+            errcode::ErrNetPacketTooLarge as isize,
+            "servererr::ERR_NET_PACKET_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_MUST_CHANGE_PASSWORD.class(),
+            TerrorClass::Server,
+            "servererr::ERR_MUST_CHANGE_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_MUST_CHANGE_PASSWORD.code().value(),
+            errcode::ErrMustChangePassword as isize,
+            "servererr::ERR_MUST_CHANGE_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_SERVER_SHUTDOWN.class(),
+            TerrorClass::Server,
+            "servererr::ERR_SERVER_SHUTDOWN"
+        );
+        assert_eq!(
+            super::ERR_SERVER_SHUTDOWN.code().value(),
+            errcode::ErrServerShutdown as isize,
+            "servererr::ERR_SERVER_SHUTDOWN"
+        );
+    }
+}

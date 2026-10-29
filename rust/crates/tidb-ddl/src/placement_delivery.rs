@@ -97,7 +97,7 @@ pub fn put_rule_bundles(
         .map(|bundle| serde_json::to_value(bundle).and_then(serde_json::from_value))
         .collect::<Result<Vec<pd_http::GroupBundle>, _>>()
         .map_err(|error| PlacementDeliveryError::Encode(error.to_string()))?;
-    let pd_http_client = tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client);
+    let pd_http_client = tidb_domain_infosync::pd_http::info_syncer_pd_http_client(pd_http_client);
     request_pd(
         timeout,
         pd_http_client.set_placement_rule_bundles(&rule_bundles, true),
@@ -119,7 +119,7 @@ pub fn delete_tiflash_placement_rules(
     physical_table_ids: &[i64],
     timeout: Duration,
 ) -> Result<(), PlacementDeliveryError> {
-    let pd_http_client = tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client);
+    let pd_http_client = tidb_domain_infosync::pd_http::info_syncer_pd_http_client(pd_http_client);
     let rule_ops: Vec<_> = physical_table_ids
         .iter()
         .map(|&id| tiflash_rule_delete_op(id))

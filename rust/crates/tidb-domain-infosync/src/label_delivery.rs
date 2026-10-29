@@ -49,7 +49,7 @@ impl PdLabelManager {
     #[must_use]
     pub fn new(pd_http_client: &pd_http::Client) -> Self {
         Self {
-            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client),
+            pd_http_client: crate::pd_http::info_syncer_pd_http_client(pd_http_client),
         }
     }
 }

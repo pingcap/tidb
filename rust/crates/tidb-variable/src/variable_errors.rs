@@ -124,3 +124,278 @@ pub static ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG: LazyLock<TerrorError> = LazyLo
         "%s is deprecated and will be removed in a future release.",
     )
 });
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX.class(),
+            TerrorClass::Variable,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX.code().value(),
+            errcode::ErrWarnDeprecatedSyntax as isize,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_SNAPSHOT_TOO_OLD.class(),
+            TerrorClass::Variable,
+            "variable::ERR_SNAPSHOT_TOO_OLD"
+        );
+        assert_eq!(
+            super::ERR_SNAPSHOT_TOO_OLD.code().value(),
+            errcode::ErrSnapshotTooOld as isize,
+            "variable::ERR_SNAPSHOT_TOO_OLD"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_VALUE_FOR_VAR.class(),
+            TerrorClass::Variable,
+            "variable::ERR_UNSUPPORTED_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_VALUE_FOR_VAR
+                .code()
+                .value(),
+            errcode::ErrUnsupportedValueForVar as isize,
+            "variable::ERR_UNSUPPORTED_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_SYSTEM_VAR.class(),
+            TerrorClass::Variable,
+            "variable::ERR_UNKNOWN_SYSTEM_VAR"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_SYSTEM_VAR.code().value(),
+            errcode::ErrUnknownSystemVariable as isize,
+            "variable::ERR_UNKNOWN_SYSTEM_VAR"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_SCOPE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_INCORRECT_SCOPE"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_SCOPE.code().value(),
+            errcode::ErrIncorrectGlobalLocalVar as isize,
+            "variable::ERR_INCORRECT_SCOPE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_TIME_ZONE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_UNKNOWN_TIME_ZONE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_TIME_ZONE.code().value(),
+            errcode::ErrUnknownTimeZone as isize,
+            "variable::ERR_UNKNOWN_TIME_ZONE"
+        );
+        assert_eq!(
+            super::ERR_READ_ONLY.class(),
+            TerrorClass::Variable,
+            "variable::ERR_READ_ONLY"
+        );
+        assert_eq!(
+            super::ERR_READ_ONLY.code().value(),
+            errcode::ErrVariableIsReadonly as isize,
+            "variable::ERR_READ_ONLY"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_VAR.class(),
+            TerrorClass::Variable,
+            "variable::ERR_WRONG_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_VAR.code().value(),
+            errcode::ErrWrongValueForVar as isize,
+            "variable::ERR_WRONG_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_WRONG_TYPE_FOR_VAR.class(),
+            TerrorClass::Variable,
+            "variable::ERR_WRONG_TYPE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_WRONG_TYPE_FOR_VAR.code().value(),
+            errcode::ErrWrongTypeForVar as isize,
+            "variable::ERR_WRONG_TYPE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE.code().value(),
+            errcode::ErrTruncatedWrongValue as isize,
+            "variable::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_MAX_PREPARED_STMT_COUNT_REACHED.class(),
+            TerrorClass::Variable,
+            "variable::ERR_MAX_PREPARED_STMT_COUNT_REACHED"
+        );
+        assert_eq!(
+            super::ERR_MAX_PREPARED_STMT_COUNT_REACHED
+                .code()
+                .value(),
+            errcode::ErrMaxPreparedStmtCountReached as isize,
+            "variable::ERR_MAX_PREPARED_STMT_COUNT_REACHED"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_ISOLATION_LEVEL.class(),
+            TerrorClass::Variable,
+            "variable::ERR_UNSUPPORTED_ISOLATION_LEVEL"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_ISOLATION_LEVEL
+                .code()
+                .value(),
+            errcode::ErrUnsupportedIsolationLevel as isize,
+            "variable::ERR_UNSUPPORTED_ISOLATION_LEVEL"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_SYSTEM_VARIABLE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_UNKNOWN_SYSTEM_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_SYSTEM_VARIABLE
+                .code()
+                .value(),
+            errcode::ErrUnknownSystemVariable as isize,
+            "variable::ERR_UNKNOWN_SYSTEM_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_GLOBAL_VARIABLE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_GLOBAL_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_GLOBAL_VARIABLE.code().value(),
+            errcode::ErrGlobalVariable as isize,
+            "variable::ERR_GLOBAL_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_LOCAL_VARIABLE.class(),
+            TerrorClass::Variable,
+            "variable::ERR_LOCAL_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_LOCAL_VARIABLE.code().value(),
+            errcode::ErrLocalVariable as isize,
+            "variable::ERR_LOCAL_VARIABLE"
+        );
+        assert_eq!(
+            super::ERR_VALUE_NOT_SUPPORTED_WHEN.class(),
+            TerrorClass::Variable,
+            "variable::ERR_VALUE_NOT_SUPPORTED_WHEN"
+        );
+        assert_eq!(
+            super::ERR_VALUE_NOT_SUPPORTED_WHEN
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "variable::ERR_VALUE_NOT_SUPPORTED_WHEN"
+        );
+        assert_eq!(
+            super::ERR_SET_GLOBAL_MAX_ALLOWED_PACKET.class(),
+            TerrorClass::Variable,
+            "variable::ERR_SET_GLOBAL_MAX_ALLOWED_PACKET"
+        );
+        assert_eq!(
+            super::ERR_SET_GLOBAL_MAX_ALLOWED_PACKET
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "variable::ERR_SET_GLOBAL_MAX_ALLOWED_PACKET"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_IN_NEXT_GEN.class(),
+            TerrorClass::Variable,
+            "variable::ERR_NOT_SUPPORTED_IN_NEXT_GEN"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_IN_NEXT_GEN
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "variable::ERR_NOT_SUPPORTED_IN_NEXT_GEN"
+        );
+        assert_eq!(
+            super::ERR_NOT_VALID_PASSWORD.class(),
+            TerrorClass::Executor,
+            "variable::ERR_NOT_VALID_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_NOT_VALID_PASSWORD.code().value(),
+            errcode::ErrNotValidPassword as isize,
+            "variable::ERR_NOT_VALID_PASSWORD"
+        );
+        assert_eq!(
+            super::ERR_FUNCTIONS_NOOP_IMPL.class(),
+            TerrorClass::Variable,
+            "variable::ERR_FUNCTIONS_NOOP_IMPL"
+        );
+        assert_eq!(
+            super::ERR_FUNCTIONS_NOOP_IMPL.code().value(),
+            errcode::ErrNotSupportedYet as isize,
+            "variable::ERR_FUNCTIONS_NOOP_IMPL"
+        );
+        assert_eq!(
+            super::ERR_VARIABLE_NO_LONGER_SUPPORTED.class(),
+            TerrorClass::Variable,
+            "variable::ERR_VARIABLE_NO_LONGER_SUPPORTED"
+        );
+        assert_eq!(
+            super::ERR_VARIABLE_NO_LONGER_SUPPORTED
+                .code()
+                .value(),
+            errcode::ErrVariableNoLongerSupported as isize,
+            "variable::ERR_VARIABLE_NO_LONGER_SUPPORTED"
+        );
+        assert_eq!(
+            super::ERR_INVALID_DEFAULT_UTF8_MB4_COLLATION.class(),
+            TerrorClass::Variable,
+            "variable::ERR_INVALID_DEFAULT_UTF8_MB4_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_INVALID_DEFAULT_UTF8_MB4_COLLATION
+                .code()
+                .value(),
+            errcode::ErrInvalidDefaultUTF8MB4Collation as isize,
+            "variable::ERR_INVALID_DEFAULT_UTF8_MB4_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT.class(),
+            TerrorClass::Variable,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT
+                .code()
+                .value(),
+            errcode::ErrWarnDeprecatedSyntaxNoReplacement as isize,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG.class(),
+            TerrorClass::Variable,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG
+                .code()
+                .value(),
+            errcode::ErrWarnDeprecatedSyntaxNoReplacement as isize,
+            "variable::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG"
+        );
+    }
+}

@@ -35,3 +35,48 @@ pub static ERR_INCONSISTENT_HANDLE: LazyLock<TerrorError> =
 /// Source `table/tables.ErrInconsistentIndexedValue` (`pkg/table/tables/mutation_checker.go:43`).
 pub static ERR_INCONSISTENT_INDEXED_VALUE: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Table, errcode::ErrInconsistentIndexedValue));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INCONSISTENT_ROW_VALUE.class(),
+            TerrorClass::Table,
+            "tables::ERR_INCONSISTENT_ROW_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INCONSISTENT_ROW_VALUE.code().value(),
+            errcode::ErrInconsistentRowValue as isize,
+            "tables::ERR_INCONSISTENT_ROW_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INCONSISTENT_HANDLE.class(),
+            TerrorClass::Table,
+            "tables::ERR_INCONSISTENT_HANDLE"
+        );
+        assert_eq!(
+            super::ERR_INCONSISTENT_HANDLE.code().value(),
+            errcode::ErrInconsistentHandle as isize,
+            "tables::ERR_INCONSISTENT_HANDLE"
+        );
+        assert_eq!(
+            super::ERR_INCONSISTENT_INDEXED_VALUE.class(),
+            TerrorClass::Table,
+            "tables::ERR_INCONSISTENT_INDEXED_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INCONSISTENT_INDEXED_VALUE
+                .code()
+                .value(),
+            errcode::ErrInconsistentIndexedValue as isize,
+            "tables::ERR_INCONSISTENT_INDEXED_VALUE"
+        );
+    }
+}

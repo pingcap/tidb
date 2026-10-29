@@ -71,3 +71,172 @@ pub static ERR_COALESCE_PARTITION_NO_PARTITION: LazyLock<TerrorError> =
 /// Source `parser/ast.ErrWrongUsage` (`pkg/parser/ast/ddl.go:4432`).
 pub static ERR_WRONG_USAGE: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Ddl, errcode::ErrWrongUsage));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_NO_PARTS.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_NO_PARTS"
+        );
+        assert_eq!(
+            super::ERR_NO_PARTS.code().value(),
+            errcode::ErrNoParts as isize,
+            "ast::ERR_NO_PARTS"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_COLUMN_LIST.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITION_COLUMN_LIST"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_COLUMN_LIST.code().value(),
+            errcode::ErrPartitionColumnList as isize,
+            "ast::ERR_PARTITION_COLUMN_LIST"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_REQUIRES_VALUES.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITION_REQUIRES_VALUES"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_REQUIRES_VALUES.code().value(),
+            errcode::ErrPartitionRequiresValues as isize,
+            "ast::ERR_PARTITION_REQUIRES_VALUES"
+        );
+        assert_eq!(
+            super::ERR_PARTITIONS_MUST_BE_DEFINED.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITIONS_MUST_BE_DEFINED"
+        );
+        assert_eq!(
+            super::ERR_PARTITIONS_MUST_BE_DEFINED.code().value(),
+            errcode::ErrPartitionsMustBeDefined as isize,
+            "ast::ERR_PARTITIONS_MUST_BE_DEFINED"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_NO_PART.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITION_WRONG_NO_PART"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_NO_PART.code().value(),
+            errcode::ErrPartitionWrongNoPart as isize,
+            "ast::ERR_PARTITION_WRONG_NO_PART"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_NO_SUBPART.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITION_WRONG_NO_SUBPART"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_NO_SUBPART.code().value(),
+            errcode::ErrPartitionWrongNoSubpart as isize,
+            "ast::ERR_PARTITION_WRONG_NO_SUBPART"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_VALUES.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_PARTITION_WRONG_VALUES"
+        );
+        assert_eq!(
+            super::ERR_PARTITION_WRONG_VALUES.code().value(),
+            errcode::ErrPartitionWrongValues as isize,
+            "ast::ERR_PARTITION_WRONG_VALUES"
+        );
+        assert_eq!(
+            super::ERR_ROW_SINGLE_PARTITION_FIELD.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_ROW_SINGLE_PARTITION_FIELD"
+        );
+        assert_eq!(
+            super::ERR_ROW_SINGLE_PARTITION_FIELD.code().value(),
+            errcode::ErrRowSinglePartitionField as isize,
+            "ast::ERR_ROW_SINGLE_PARTITION_FIELD"
+        );
+        assert_eq!(
+            super::ERR_SUBPARTITION.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_SUBPARTITION"
+        );
+        assert_eq!(
+            super::ERR_SUBPARTITION.code().value(),
+            errcode::ErrSubpartition as isize,
+            "ast::ERR_SUBPARTITION"
+        );
+        assert_eq!(
+            super::ERR_SYSTEM_VERSIONING_WRONG_PARTITIONS.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_SYSTEM_VERSIONING_WRONG_PARTITIONS"
+        );
+        assert_eq!(
+            super::ERR_SYSTEM_VERSIONING_WRONG_PARTITIONS
+                .code()
+                .value(),
+            errcode::ErrSystemVersioningWrongPartitions as isize,
+            "ast::ERR_SYSTEM_VERSIONING_WRONG_PARTITIONS"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_VALUES.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_TOO_MANY_VALUES"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_VALUES.code().value(),
+            errcode::ErrTooManyValues as isize,
+            "ast::ERR_TOO_MANY_VALUES"
+        );
+        assert_eq!(
+            super::ERR_WRONG_PARTITION_TYPE_EXPECTED_SYSTEM_TIME.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_WRONG_PARTITION_TYPE_EXPECTED_SYSTEM_TIME"
+        );
+        assert_eq!(
+            super::ERR_WRONG_PARTITION_TYPE_EXPECTED_SYSTEM_TIME
+                .code()
+                .value(),
+            errcode::ErrWrongPartitionTypeExpectedSystemTime as isize,
+            "ast::ERR_WRONG_PARTITION_TYPE_EXPECTED_SYSTEM_TIME"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET.code().value(),
+            errcode::ErrUnknownCharacterSet as isize,
+            "ast::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_COALESCE_PARTITION_NO_PARTITION.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_COALESCE_PARTITION_NO_PARTITION"
+        );
+        assert_eq!(
+            super::ERR_COALESCE_PARTITION_NO_PARTITION
+                .code()
+                .value(),
+            errcode::ErrCoalescePartitionNoPartition as isize,
+            "ast::ERR_COALESCE_PARTITION_NO_PARTITION"
+        );
+        assert_eq!(
+            super::ERR_WRONG_USAGE.class(),
+            TerrorClass::Ddl,
+            "ast::ERR_WRONG_USAGE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_USAGE.code().value(),
+            errcode::ErrWrongUsage as isize,
+            "ast::ERR_WRONG_USAGE"
+        );
+    }
+}

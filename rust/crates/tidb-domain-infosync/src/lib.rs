@@ -13,6 +13,8 @@
 // limitations under the License.
 
 //! Go `pkg/domain/infosync`: the PD-facing label, resource-manager and affinity clients.
+pub mod infosync_errors;
+pub mod pd_http;
 pub mod label_manager;
 pub mod resource_manager_client;
 pub mod label_delivery;

@@ -35,3 +35,50 @@ pub static ERR_UNKNOWN_COLLATION: LazyLock<TerrorError> =
 /// Source `parser/charset.ErrCollationCharsetMismatch` (`pkg/parser/charset/charset.go:31`).
 pub static ERR_COLLATION_CHARSET_MISMATCH: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Ddl, errcode::ErrCollationCharsetMismatch));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_CHARACTER_STRING.class(),
+            TerrorClass::Parser,
+            "charset::ERR_INVALID_CHARACTER_STRING"
+        );
+        assert_eq!(
+            super::ERR_INVALID_CHARACTER_STRING
+                .code()
+                .value(),
+            errcode::ErrInvalidCharacterString as isize,
+            "charset::ERR_INVALID_CHARACTER_STRING"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_COLLATION.class(),
+            TerrorClass::Ddl,
+            "charset::ERR_UNKNOWN_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_COLLATION.code().value(),
+            errcode::ErrUnknownCollation as isize,
+            "charset::ERR_UNKNOWN_COLLATION"
+        );
+        assert_eq!(
+            super::ERR_COLLATION_CHARSET_MISMATCH.class(),
+            TerrorClass::Ddl,
+            "charset::ERR_COLLATION_CHARSET_MISMATCH"
+        );
+        assert_eq!(
+            super::ERR_COLLATION_CHARSET_MISMATCH
+                .code()
+                .value(),
+            errcode::ErrCollationCharsetMismatch as isize,
+            "charset::ERR_COLLATION_CHARSET_MISMATCH"
+        );
+    }
+}

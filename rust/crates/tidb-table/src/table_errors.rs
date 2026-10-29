@@ -95,3 +95,254 @@ pub static ERR_OPT_ON_CACHE_TABLE: LazyLock<TerrorError> =
 /// Source `table.ErrCheckConstraintViolated` (`pkg/table/table.go:117`).
 pub static ERR_CHECK_CONSTRAINT_VIOLATED: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Table, errcode::ErrCheckConstraintViolated));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_COLUMN_CANT_NULL.class(),
+            TerrorClass::Table,
+            "table::ERR_COLUMN_CANT_NULL"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_CANT_NULL.code().value(),
+            errcode::ErrBadNull as isize,
+            "table::ERR_COLUMN_CANT_NULL"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_COLUMN.class(),
+            TerrorClass::Table,
+            "table::ERR_UNKNOWN_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_COLUMN.code().value(),
+            errcode::ErrBadField as isize,
+            "table::ERR_UNKNOWN_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATE_COLUMN.class(),
+            TerrorClass::Table,
+            "table::ERR_DUPLICATE_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_DUPLICATE_COLUMN.code().value(),
+            errcode::ErrFieldSpecifiedTwice as isize,
+            "table::ERR_DUPLICATE_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_WARN_NULL_TO_NOTNULL.class(),
+            TerrorClass::Executor,
+            "table::ERR_WARN_NULL_TO_NOTNULL"
+        );
+        assert_eq!(
+            super::ERR_WARN_NULL_TO_NOTNULL.code().value(),
+            errcode::ErrWarnNullToNotnull as isize,
+            "table::ERR_WARN_NULL_TO_NOTNULL"
+        );
+        assert_eq!(
+            super::ERR_GET_DEFAULT_FAILED.class(),
+            TerrorClass::Table,
+            "table::ERR_GET_DEFAULT_FAILED"
+        );
+        assert_eq!(
+            super::ERR_GET_DEFAULT_FAILED.code().value(),
+            errcode::ErrFieldGetDefaultFailed as isize,
+            "table::ERR_GET_DEFAULT_FAILED"
+        );
+        assert_eq!(
+            super::ERR_NO_DEFAULT_VALUE.class(),
+            TerrorClass::Table,
+            "table::ERR_NO_DEFAULT_VALUE"
+        );
+        assert_eq!(
+            super::ERR_NO_DEFAULT_VALUE.code().value(),
+            errcode::ErrNoDefaultForField as isize,
+            "table::ERR_NO_DEFAULT_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INDEX_OUT_BOUND.class(),
+            TerrorClass::Table,
+            "table::ERR_INDEX_OUT_BOUND"
+        );
+        assert_eq!(
+            super::ERR_INDEX_OUT_BOUND.code().value(),
+            errcode::ErrIndexOutBound as isize,
+            "table::ERR_INDEX_OUT_BOUND"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_OP.class(),
+            TerrorClass::Table,
+            "table::ERR_UNSUPPORTED_OP"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_OP.code().value(),
+            errcode::ErrUnsupportedOp as isize,
+            "table::ERR_UNSUPPORTED_OP"
+        );
+        assert_eq!(
+            super::ERR_ROW_NOT_FOUND.class(),
+            TerrorClass::Table,
+            "table::ERR_ROW_NOT_FOUND"
+        );
+        assert_eq!(
+            super::ERR_ROW_NOT_FOUND.code().value(),
+            errcode::ErrRowNotFound as isize,
+            "table::ERR_ROW_NOT_FOUND"
+        );
+        assert_eq!(
+            super::ERR_TABLE_STATE_CANT_NONE.class(),
+            TerrorClass::Table,
+            "table::ERR_TABLE_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_TABLE_STATE_CANT_NONE.code().value(),
+            errcode::ErrTableStateCantNone as isize,
+            "table::ERR_TABLE_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_STATE_CANT_NONE.class(),
+            TerrorClass::Table,
+            "table::ERR_COLUMN_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_STATE_CANT_NONE.code().value(),
+            errcode::ErrColumnStateCantNone as isize,
+            "table::ERR_COLUMN_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_STATE_NON_PUBLIC.class(),
+            TerrorClass::Table,
+            "table::ERR_COLUMN_STATE_NON_PUBLIC"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_STATE_NON_PUBLIC.code().value(),
+            errcode::ErrColumnStateNonPublic as isize,
+            "table::ERR_COLUMN_STATE_NON_PUBLIC"
+        );
+        assert_eq!(
+            super::ERR_INDEX_STATE_CANT_NONE.class(),
+            TerrorClass::Table,
+            "table::ERR_INDEX_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_INDEX_STATE_CANT_NONE.code().value(),
+            errcode::ErrIndexStateCantNone as isize,
+            "table::ERR_INDEX_STATE_CANT_NONE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_RECORD_KEY.class(),
+            TerrorClass::Table,
+            "table::ERR_INVALID_RECORD_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_RECORD_KEY.code().value(),
+            errcode::ErrInvalidRecordKey as isize,
+            "table::ERR_INVALID_RECORD_KEY"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.class(),
+            TerrorClass::Table,
+            "table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
+                .code()
+                .value(),
+            errcode::ErrTruncatedWrongValueForField as isize,
+            "table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_PARTITION.class(),
+            TerrorClass::Table,
+            "table::ERR_UNKNOWN_PARTITION"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_PARTITION.code().value(),
+            errcode::ErrUnknownPartition as isize,
+            "table::ERR_UNKNOWN_PARTITION"
+        );
+        assert_eq!(
+            super::ERR_NO_PARTITION_FOR_GIVEN_VALUE.class(),
+            TerrorClass::Table,
+            "table::ERR_NO_PARTITION_FOR_GIVEN_VALUE"
+        );
+        assert_eq!(
+            super::ERR_NO_PARTITION_FOR_GIVEN_VALUE
+                .code()
+                .value(),
+            errcode::ErrNoPartitionForGivenValue as isize,
+            "table::ERR_NO_PARTITION_FOR_GIVEN_VALUE"
+        );
+        assert_eq!(
+            super::ERR_LOCK_OR_ACTIVE_TRANSACTION.class(),
+            TerrorClass::Table,
+            "table::ERR_LOCK_OR_ACTIVE_TRANSACTION"
+        );
+        assert_eq!(
+            super::ERR_LOCK_OR_ACTIVE_TRANSACTION
+                .code()
+                .value(),
+            errcode::ErrLockOrActiveTransaction as isize,
+            "table::ERR_LOCK_OR_ACTIVE_TRANSACTION"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_HAS_RUN_OUT.class(),
+            TerrorClass::Table,
+            "table::ERR_SEQUENCE_HAS_RUN_OUT"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_HAS_RUN_OUT.code().value(),
+            errcode::ErrSequenceRunOut as isize,
+            "table::ERR_SEQUENCE_HAS_RUN_OUT"
+        );
+        assert_eq!(
+            super::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET.class(),
+            TerrorClass::Table,
+            "table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET"
+        );
+        assert_eq!(
+            super::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                .code()
+                .value(),
+            errcode::ErrRowDoesNotMatchGivenPartitionSet as isize,
+            "table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET"
+        );
+        assert_eq!(
+            super::ERR_TEMP_TABLE_FULL.class(),
+            TerrorClass::Table,
+            "table::ERR_TEMP_TABLE_FULL"
+        );
+        assert_eq!(
+            super::ERR_TEMP_TABLE_FULL.code().value(),
+            errcode::ErrRecordFileFull as isize,
+            "table::ERR_TEMP_TABLE_FULL"
+        );
+        assert_eq!(
+            super::ERR_OPT_ON_CACHE_TABLE.class(),
+            TerrorClass::Ddl,
+            "table::ERR_OPT_ON_CACHE_TABLE"
+        );
+        assert_eq!(
+            super::ERR_OPT_ON_CACHE_TABLE.code().value(),
+            errcode::ErrOptOnCacheTable as isize,
+            "table::ERR_OPT_ON_CACHE_TABLE"
+        );
+        assert_eq!(
+            super::ERR_CHECK_CONSTRAINT_VIOLATED.class(),
+            TerrorClass::Table,
+            "table::ERR_CHECK_CONSTRAINT_VIOLATED"
+        );
+        assert_eq!(
+            super::ERR_CHECK_CONSTRAINT_VIOLATED.code().value(),
+            errcode::ErrCheckConstraintViolated as isize,
+            "table::ERR_CHECK_CONSTRAINT_VIOLATED"
+        );
+    }
+}

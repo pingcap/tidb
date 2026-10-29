@@ -7,7 +7,6 @@ Done (each is its Go package's crate now): every `tidb-util` entry (one crate pe
 Blocked on a behavior-level change, not a move:
 - `planner/property` (`physical_property`, `stats_info`, `task_type`) and `planner/cardinality`: the planner's `stats_info::HistColl` reimplements Go `statistics.HistColl`, and cardinality reads planner core (`access_path`, logical plans).
 - `planner/util/path.go` (`access_path`) and `domainmisc`: read planner core, which Go's `planner/util` reaches only through `core/base`, still inside the planner crate.
-- `tidb-error`'s `catalog`: done except `infosync` (each package's prototypes are its crate's `<package>_errors`); `infosync`'s `ErrHTTPServiceError` is raised by tidb-txnkv's `cluster_http`, Go `store/driver` woven into txnkv -- the txnkv / store-driver split below.
 - tidb-txnkv holds Go `pkg/kv` plus `store/driver` and `store/driver/txn`, and 20 crates below the store driver hold the concrete transaction opener where Go's go through `kv.Storage`: the storage-seam redesign (ExecPlan). codec's `table_key` (Go `tablecodec`) waits on it too.
 - txnkv's `mpp_probe`, `key_ranges`, `range_diagnostics` (Go `store/copr`): tidb-copr depends on tidb-distsql, the reverse of Go's `distsql -> copr`.
 
@@ -33,7 +32,7 @@ Checked, and they stay where they are (the citation is to a Go file the module p
 
 Not mismatches, checked: tidb-table `column_default` builds a computed default from the AST at DDL time and from the stored text when a table loads, the same computation Go's `ddl/add_column.go` and `table/column.go` (`getColDefaultExprValue` re-parses the stored text) share; there is no DDL-only half to move.
 
-Re-layerings, recorded in the ExecPlan (behavior-level, not moves): planner `property` / `cardinality` / `access_path` / `domain_misc` / `stats_info`; `handle_range`'s metadata half; tidb-executor `compiler/non_prepared_plan_cache` (planner/core over executor tables); tidb-txnkv's `driver` (Go `store/driver` woven into its transaction modules); tidb-codec `table_key` (tablecodec, called from kv/txnkv); tidb-error's `infosync` catalog; the `StmtContext` in tidb-sessionctx (it no longer reaches tidb-table: `hypo_index` is tidb-variable's, `table/tblctx` is tidb-tblctx, the sequence lookup is `tidb_util::misc`'s); the cluster-storage seam.
+Re-layerings, recorded in the ExecPlan (behavior-level, not moves): planner `property` / `cardinality` / `access_path` / `domain_misc` / `stats_info`; `handle_range`'s metadata half; tidb-executor `compiler/non_prepared_plan_cache` (planner/core over executor tables); tidb-txnkv's `driver` (Go `store/driver` woven into its transaction modules); tidb-codec `table_key` (tablecodec, called from kv/txnkv); tidb-table's `IndexRange` (a second port of Go `ranger.Range`); the `StmtContext` in tidb-sessionctx (it no longer reaches tidb-table: `hypo_index` is tidb-variable's, `table/tblctx` is tidb-tblctx, the sequence lookup is `tidb_util::misc`'s); the cluster-storage seam.
 
 Each Rust module whose `//!` docs cite a Go package (most-cited `pkg/...` path) unrelated to its crate's Go package, after dropping modules whose file name matches a Go file in the crate's package. A citation is a lead, not proof: each entry needs a check against the Go source before it moves.
 

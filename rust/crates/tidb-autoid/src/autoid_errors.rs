@@ -47,3 +47,88 @@ pub static ERR_INVALID_ALLOCATOR_TYPE: LazyLock<TerrorError> =
 /// Source `meta/autoid.ErrAutoRandReadFailed` (`pkg/meta/autoid/errors.go:30`).
 pub static ERR_AUTO_RAND_READ_FAILED: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Autoid, errcode::ErrAutoRandReadFailed));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_TABLE_ID.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_INVALID_TABLE_ID"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TABLE_ID.code().value(),
+            errcode::ErrInvalidTableID as isize,
+            "autoid::ERR_INVALID_TABLE_ID"
+        );
+        assert_eq!(
+            super::ERR_INVALID_INCREMENT_AND_OFFSET.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_INVALID_INCREMENT_AND_OFFSET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_INCREMENT_AND_OFFSET
+                .code()
+                .value(),
+            errcode::ErrInvalidIncrementAndOffset as isize,
+            "autoid::ERR_INVALID_INCREMENT_AND_OFFSET"
+        );
+        assert_eq!(
+            super::ERR_NOT_IMPLEMENTED.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_NOT_IMPLEMENTED"
+        );
+        assert_eq!(
+            super::ERR_NOT_IMPLEMENTED.code().value(),
+            errcode::ErrNotImplemented as isize,
+            "autoid::ERR_NOT_IMPLEMENTED"
+        );
+        assert_eq!(
+            super::ERR_AUTOINC_READ_FAILED.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_AUTOINC_READ_FAILED"
+        );
+        assert_eq!(
+            super::ERR_AUTOINC_READ_FAILED.code().value(),
+            errcode::ErrAutoincReadFailed as isize,
+            "autoid::ERR_AUTOINC_READ_FAILED"
+        );
+        assert_eq!(
+            super::ERR_WRONG_AUTO_KEY.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_WRONG_AUTO_KEY"
+        );
+        assert_eq!(
+            super::ERR_WRONG_AUTO_KEY.code().value(),
+            errcode::ErrWrongAutoKey as isize,
+            "autoid::ERR_WRONG_AUTO_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_ALLOCATOR_TYPE.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_INVALID_ALLOCATOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_ALLOCATOR_TYPE.code().value(),
+            errcode::ErrUnknownAllocatorType as isize,
+            "autoid::ERR_INVALID_ALLOCATOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_AUTO_RAND_READ_FAILED.class(),
+            TerrorClass::Autoid,
+            "autoid::ERR_AUTO_RAND_READ_FAILED"
+        );
+        assert_eq!(
+            super::ERR_AUTO_RAND_READ_FAILED.code().value(),
+            errcode::ErrAutoRandReadFailed as isize,
+            "autoid::ERR_AUTO_RAND_READ_FAILED"
+        );
+    }
+}

@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `util/timeutil.ErrUnknownTimeZone` (`pkg/util/timeutil/errors.go:23`).
 pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Variable, errcode::ErrUnknownTimeZone));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_UNKNOWN_TIME_ZONE.class(),
+            TerrorClass::Variable,
+            "timeutil::ERR_UNKNOWN_TIME_ZONE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_TIME_ZONE.code().value(),
+            errcode::ErrUnknownTimeZone as isize,
+            "timeutil::ERR_UNKNOWN_TIME_ZONE"
+        );
+    }
+}

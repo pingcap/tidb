@@ -4101,7 +4101,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-domain-serverinfo",
  "tidb-errno",
- "tidb-error",
  "tidb-fixcontrol",
  "tidb-globalconn",
  "tidb-log",
@@ -4235,8 +4234,11 @@ dependencies = [
  "tidb-ddl-label",
  "tidb-domain-affinity",
  "tidb-errno",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-model",
  "tidb-proto",
+ "tidb-terror",
  "tidb-txnkv",
  "tikv-client",
 ]
@@ -4269,7 +4271,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
- "tidb-error",
  "tidb-expr",
  "tidb-kv",
  "tidb-mysql",
@@ -4331,46 +4332,6 @@ name = "tidb-errno"
 version = "0.0.0"
 dependencies = [
  "tidb-mysql",
-]
-
-[[package]]
-name = "tidb-error"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "tidb-ast",
- "tidb-autoid",
- "tidb-charset",
- "tidb-datatype",
- "tidb-domain",
- "tidb-errctx",
- "tidb-errno",
- "tidb-executor",
- "tidb-expr",
- "tidb-hint",
- "tidb-infoschema",
- "tidb-kv",
- "tidb-memory",
- "tidb-meta",
- "tidb-mysql",
- "tidb-parser",
- "tidb-parser-types",
- "tidb-privilege",
- "tidb-server",
- "tidb-server-err",
- "tidb-session",
- "tidb-sessionstates",
- "tidb-stats",
- "tidb-table",
- "tidb-tablecodec",
- "tidb-terror",
- "tidb-tiflashcompute",
- "tidb-timeutil",
- "tidb-txnkv",
- "tidb-variable",
- "tidb-workloadrepo",
- "tracing",
 ]
 
 [[package]]
@@ -5241,7 +5202,6 @@ dependencies = [
  "serde_json",
  "tidb-charset",
  "tidb-errno",
- "tidb-error",
  "tidb-goruntime",
  "tidb-mysql",
  "tidb-parser-format",
@@ -7130,7 +7090,6 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-errno",
- "tidb-error",
  "tidb-go-time-layout",
  "tidb-hack",
  "tidb-log",
@@ -7168,7 +7127,6 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-domain",
- "tidb-error",
  "tidb-proto",
  "tidb-tablecodec",
  "tidb-txnkv",

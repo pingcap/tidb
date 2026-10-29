@@ -164,3 +164,60 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_DEFAULT.class(),
+            TerrorClass::Types,
+            "parser_types::ERR_INVALID_DEFAULT"
+        );
+        assert_eq!(
+            super::ERR_INVALID_DEFAULT.code().value(),
+            errcode::ErrInvalidDefault as isize,
+            "parser_types::ERR_INVALID_DEFAULT"
+        );
+        assert_eq!(
+            super::ERR_DATA_OUT_OF_RANGE.class(),
+            TerrorClass::Types,
+            "parser_types::ERR_DATA_OUT_OF_RANGE"
+        );
+        assert_eq!(
+            super::ERR_DATA_OUT_OF_RANGE.code().value(),
+            errcode::ErrDataOutOfRange as isize,
+            "parser_types::ERR_DATA_OUT_OF_RANGE"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE.class(),
+            TerrorClass::Types,
+            "parser_types::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE
+                .code()
+                .value(),
+            errcode::ErrTruncatedWrongValue as isize,
+            "parser_types::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_VALUE_FOR_TYPE.class(),
+            TerrorClass::Types,
+            "parser_types::ERR_ILLEGAL_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_ILLEGAL_VALUE_FOR_TYPE
+                .code()
+                .value(),
+            errcode::ErrIllegalValueForType as isize,
+            "parser_types::ERR_ILLEGAL_VALUE_FOR_TYPE"
+        );
+    }
+}

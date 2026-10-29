@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `util/hint.ErrWarnConflictingHint` (`pkg/util/hint/hint.go:1275`).
 pub static ERR_WARN_CONFLICTING_HINT: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Optimizer, errcode::ErrWarnConflictingHint));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_WARN_CONFLICTING_HINT.class(),
+            TerrorClass::Optimizer,
+            "hint::ERR_WARN_CONFLICTING_HINT"
+        );
+        assert_eq!(
+            super::ERR_WARN_CONFLICTING_HINT.code().value(),
+            errcode::ErrWarnConflictingHint as isize,
+            "hint::ERR_WARN_CONFLICTING_HINT"
+        );
+    }
+}

@@ -36,7 +36,7 @@ impl PdHttpAffinityClient {
     #[must_use]
     pub fn new(pd_http_client: &pd_http::Client) -> Self {
         Self {
-            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client),
+            pd_http_client: crate::pd_http::info_syncer_pd_http_client(pd_http_client),
         }
     }
 
@@ -46,7 +46,7 @@ impl PdHttpAffinityClient {
         request: impl std::future::Future<Output = tikv_client::Result<T>> + Send,
     ) -> Result<T, PdHttpError> {
         tidb_txnkv::cluster_http::block_on_pd_http(request).map_err(|message| {
-            if tidb_txnkv::cluster_http::is_http_service_error(&message) {
+            if crate::pd_http::is_http_service_error(&message) {
                 PdHttpError::Coded {
                     code: tidb_errno::errcode::ErrHTTPServiceError,
                     message,

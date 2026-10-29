@@ -92,3 +92,252 @@ pub static ERR_WRONG_USAGE: LazyLock<TerrorError> =
 /// Source `parser.ErrWrongDBName` (`pkg/parser/parser_api.go:59`).
 pub static ERR_WRONG_DB_NAME: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Parser, errcode::ErrWrongDBName));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT
+                .code()
+                .value(),
+            errcode::ErrWarnOptimizerHintUnsupportedHint as isize,
+            "parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_INVALID_TOKEN.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_OPTIMIZER_HINT_INVALID_TOKEN"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_INVALID_TOKEN
+                .code()
+                .value(),
+            errcode::ErrWarnOptimizerHintInvalidToken as isize,
+            "parser::ERR_WARN_OPTIMIZER_HINT_INVALID_TOKEN"
+        );
+        assert_eq!(
+            super::ERR_WARN_MEMORY_QUOTA_OVERFLOW.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_MEMORY_QUOTA_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_WARN_MEMORY_QUOTA_OVERFLOW
+                .code()
+                .value(),
+            errcode::ErrWarnMemoryQuotaOverflow as isize,
+            "parser::ERR_WARN_MEMORY_QUOTA_OVERFLOW"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR
+                .code()
+                .value(),
+            errcode::ErrWarnOptimizerHintParseError as isize,
+            "parser::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_INVALID_INTEGER.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_OPTIMIZER_HINT_INVALID_INTEGER"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_INVALID_INTEGER
+                .code()
+                .value(),
+            errcode::ErrWarnOptimizerHintInvalidInteger as isize,
+            "parser::ERR_WARN_OPTIMIZER_HINT_INVALID_INTEGER"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_WRONG_POS.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_OPTIMIZER_HINT_WRONG_POS"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTIMIZER_HINT_WRONG_POS
+                .code()
+                .value(),
+            errcode::ErrWarnOptimizerHintWrongPos as isize,
+            "parser::ERR_WARN_OPTIMIZER_HINT_WRONG_POS"
+        );
+        assert_eq!(
+            super::ERR_SYNTAX.class(),
+            TerrorClass::Parser,
+            "parser::ERR_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_SYNTAX.code().value(),
+            errcode::ErrSyntax as isize,
+            "parser::ERR_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_PARSE.class(),
+            TerrorClass::Parser,
+            "parser::ERR_PARSE"
+        );
+        assert_eq!(
+            super::ERR_PARSE.code().value(),
+            errcode::ErrParse as isize,
+            "parser::ERR_PARSE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET.class(),
+            TerrorClass::Parser,
+            "parser::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET.code().value(),
+            errcode::ErrUnknownCharacterSet as isize,
+            "parser::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR_COLUMN_LENGTH.class(),
+            TerrorClass::Parser,
+            "parser::ERR_INVALID_YEAR_COLUMN_LENGTH"
+        );
+        assert_eq!(
+            super::ERR_INVALID_YEAR_COLUMN_LENGTH
+                .code()
+                .value(),
+            errcode::ErrInvalidYearColumnLength as isize,
+            "parser::ERR_INVALID_YEAR_COLUMN_LENGTH"
+        );
+        assert_eq!(
+            super::ERR_WRONG_ARGUMENTS.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WRONG_ARGUMENTS"
+        );
+        assert_eq!(
+            super::ERR_WRONG_ARGUMENTS.code().value(),
+            errcode::ErrWrongArguments as isize,
+            "parser::ERR_WRONG_ARGUMENTS"
+        );
+        assert_eq!(
+            super::ERR_WRONG_FIELD_TERMINATORS.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WRONG_FIELD_TERMINATORS"
+        );
+        assert_eq!(
+            super::ERR_WRONG_FIELD_TERMINATORS.code().value(),
+            errcode::ErrWrongFieldTerminators as isize,
+            "parser::ERR_WRONG_FIELD_TERMINATORS"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_DISPLAY_WIDTH.class(),
+            TerrorClass::Parser,
+            "parser::ERR_TOO_BIG_DISPLAY_WIDTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_DISPLAY_WIDTH.code().value(),
+            errcode::ErrTooBigDisplaywidth as isize,
+            "parser::ERR_TOO_BIG_DISPLAY_WIDTH"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_PRECISION.class(),
+            TerrorClass::Parser,
+            "parser::ERR_TOO_BIG_PRECISION"
+        );
+        assert_eq!(
+            super::ERR_TOO_BIG_PRECISION.code().value(),
+            errcode::ErrTooBigPrecision as isize,
+            "parser::ERR_TOO_BIG_PRECISION"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_ALTER_LOCK.class(),
+            TerrorClass::Parser,
+            "parser::ERR_UNKNOWN_ALTER_LOCK"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_ALTER_LOCK.code().value(),
+            errcode::ErrUnknownAlterLock as isize,
+            "parser::ERR_UNKNOWN_ALTER_LOCK"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_ALTER_ALGORITHM.class(),
+            TerrorClass::Parser,
+            "parser::ERR_UNKNOWN_ALTER_ALGORITHM"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_ALTER_ALGORITHM.code().value(),
+            errcode::ErrUnknownAlterAlgorithm as isize,
+            "parser::ERR_UNKNOWN_ALTER_ALGORITHM"
+        );
+        assert_eq!(
+            super::ERR_NULL_IN_VALUES_LESS_THAN.class(),
+            TerrorClass::Parser,
+            "parser::ERR_NULL_IN_VALUES_LESS_THAN"
+        );
+        assert_eq!(
+            super::ERR_NULL_IN_VALUES_LESS_THAN.code().value(),
+            errcode::ErrNullInValuesLessThan as isize,
+            "parser::ERR_NULL_IN_VALUES_LESS_THAN"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE.code().value(),
+            errcode::ErrWrongValue as isize,
+            "parser::ERR_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_DEPRECATED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX.code().value(),
+            errcode::ErrWarnDeprecatedSyntax as isize,
+            "parser::ERR_WARN_DEPRECATED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT
+                .code()
+                .value(),
+            errcode::ErrWarnDeprecatedSyntaxNoReplacement as isize,
+            "parser::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_WRONG_USAGE.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WRONG_USAGE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_USAGE.code().value(),
+            errcode::ErrWrongUsage as isize,
+            "parser::ERR_WRONG_USAGE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_DB_NAME.class(),
+            TerrorClass::Parser,
+            "parser::ERR_WRONG_DB_NAME"
+        );
+        assert_eq!(
+            super::ERR_WRONG_DB_NAME.code().value(),
+            errcode::ErrWrongDBName as isize,
+            "parser::ERR_WRONG_DB_NAME"
+        );
+    }
+}

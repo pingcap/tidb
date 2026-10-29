@@ -149,3 +149,408 @@ pub static ERR_UNSUPPORTED_JSON_COMPARISON: LazyLock<TerrorError> = LazyLock::ne
         "comparison of JSON in the LEAST and GREATEST operators",
     )
 });
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_CANNOT_CONVERT_STRING.class(),
+            TerrorClass::Expression,
+            "expression::ERR_CANNOT_CONVERT_STRING"
+        );
+        assert_eq!(
+            super::ERR_CANNOT_CONVERT_STRING
+                .code()
+                .value(),
+            errcode::ErrCannotConvertString as isize,
+            "expression::ERR_CANNOT_CONVERT_STRING"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_PARAMETER_COUNT.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INCORRECT_PARAMETER_COUNT"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_PARAMETER_COUNT
+                .code()
+                .value(),
+            errcode::ErrWrongParamcountToNativeFct as isize,
+            "expression::ERR_INCORRECT_PARAMETER_COUNT"
+        );
+        assert_eq!(
+            super::ERR_DIVISION_BY_ZERO.class(),
+            TerrorClass::Expression,
+            "expression::ERR_DIVISION_BY_ZERO"
+        );
+        assert_eq!(
+            super::ERR_DIVISION_BY_ZERO.code().value(),
+            errcode::ErrDivisionByZero as isize,
+            "expression::ERR_DIVISION_BY_ZERO"
+        );
+        assert_eq!(
+            super::ERR_REGEXP.class(),
+            TerrorClass::Expression,
+            "expression::ERR_REGEXP"
+        );
+        assert_eq!(
+            super::ERR_REGEXP.code().value(),
+            errcode::ErrRegexp as isize,
+            "expression::ERR_REGEXP"
+        );
+        assert_eq!(
+            super::ERR_OPERAND_COLUMNS.class(),
+            TerrorClass::Expression,
+            "expression::ERR_OPERAND_COLUMNS"
+        );
+        assert_eq!(
+            super::ERR_OPERAND_COLUMNS.code().value(),
+            errcode::ErrOperandColumns as isize,
+            "expression::ERR_OPERAND_COLUMNS"
+        );
+        assert_eq!(
+            super::ERR_CUT_VALUE_GROUP_CONCAT.class(),
+            TerrorClass::Expression,
+            "expression::ERR_CUT_VALUE_GROUP_CONCAT"
+        );
+        assert_eq!(
+            super::ERR_CUT_VALUE_GROUP_CONCAT
+                .code()
+                .value(),
+            errcode::ErrCutValueGroupConcat as isize,
+            "expression::ERR_CUT_VALUE_GROUP_CONCAT"
+        );
+        assert_eq!(
+            super::ERR_FUNCTIONS_NOOP_IMPL.class(),
+            TerrorClass::Expression,
+            "expression::ERR_FUNCTIONS_NOOP_IMPL"
+        );
+        assert_eq!(
+            super::ERR_FUNCTIONS_NOOP_IMPL.code().value(),
+            errcode::ErrNotSupportedYet as isize,
+            "expression::ERR_FUNCTIONS_NOOP_IMPL"
+        );
+        assert_eq!(
+            super::ERR_INVALID_ARGUMENT_FOR_LOGARITHM.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM"
+        );
+        assert_eq!(
+            super::ERR_INVALID_ARGUMENT_FOR_LOGARITHM
+                .code()
+                .value(),
+            errcode::ErrInvalidArgumentForLogarithm as isize,
+            "expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_TYPE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INCORRECT_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_TYPE.code().value(),
+            errcode::ErrIncorrectType as isize,
+            "expression::ERR_INCORRECT_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TYPE_FOR_JSON.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INVALID_TYPE_FOR_JSON"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TYPE_FOR_JSON
+                .code()
+                .value(),
+            errcode::ErrInvalidTypeForJSON as isize,
+            "expression::ERR_INVALID_TYPE_FOR_JSON"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TABLE_SAMPLE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INVALID_TABLE_SAMPLE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TABLE_SAMPLE.code().value(),
+            errcode::ErrInvalidTableSample as isize,
+            "expression::ERR_INVALID_TABLE_SAMPLE"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_YET.class(),
+            TerrorClass::Expression,
+            "expression::ERR_NOT_SUPPORTED_YET"
+        );
+        assert_eq!(
+            super::ERR_NOT_SUPPORTED_YET.code().value(),
+            errcode::ErrNotSupportedYet as isize,
+            "expression::ERR_NOT_SUPPORTED_YET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_FOR_FUNC_INDEX.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INVALID_JSON_FOR_FUNC_INDEX"
+        );
+        assert_eq!(
+            super::ERR_INVALID_JSON_FOR_FUNC_INDEX
+                .code()
+                .value(),
+            errcode::ErrInvalidJSONValueForFuncIndex as isize,
+            "expression::ERR_INVALID_JSON_FOR_FUNC_INDEX"
+        );
+        assert_eq!(
+            super::ERR_DATA_OUT_OF_RANGE_FUNC_INDEX.class(),
+            TerrorClass::Expression,
+            "expression::ERR_DATA_OUT_OF_RANGE_FUNC_INDEX"
+        );
+        assert_eq!(
+            super::ERR_DATA_OUT_OF_RANGE_FUNC_INDEX
+                .code()
+                .value(),
+            errcode::ErrDataOutOfRangeFunctionalIndex as isize,
+            "expression::ERR_DATA_OUT_OF_RANGE_FUNC_INDEX"
+        );
+        assert_eq!(
+            super::ERR_FUNC_INDEX_DATA_IS_TOO_LONG.class(),
+            TerrorClass::Expression,
+            "expression::ERR_FUNC_INDEX_DATA_IS_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_FUNC_INDEX_DATA_IS_TOO_LONG
+                .code()
+                .value(),
+            errcode::ErrFunctionalIndexDataIsTooLong as isize,
+            "expression::ERR_FUNC_INDEX_DATA_IS_TOO_LONG"
+        );
+        assert_eq!(
+            super::ERR_FUNCTION_NOT_EXISTS.class(),
+            TerrorClass::Expression,
+            "expression::ERR_FUNCTION_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_FUNCTION_NOT_EXISTS.code().value(),
+            errcode::ErrSpDoesNotExist as isize,
+            "expression::ERR_FUNCTION_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_ZLIB_Z_DATA.class(),
+            TerrorClass::Expression,
+            "expression::ERR_ZLIB_Z_DATA"
+        );
+        assert_eq!(
+            super::ERR_ZLIB_Z_DATA.code().value(),
+            errcode::ErrZlibZData as isize,
+            "expression::ERR_ZLIB_Z_DATA"
+        );
+        assert_eq!(
+            super::ERR_ZLIB_Z_BUF.class(),
+            TerrorClass::Expression,
+            "expression::ERR_ZLIB_Z_BUF"
+        );
+        assert_eq!(
+            super::ERR_ZLIB_Z_BUF.code().value(),
+            errcode::ErrZlibZBuf as isize,
+            "expression::ERR_ZLIB_Z_BUF"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_ARGS.class(),
+            TerrorClass::Expression,
+            "expression::ERR_INCORRECT_ARGS"
+        );
+        assert_eq!(
+            super::ERR_INCORRECT_ARGS.code().value(),
+            errcode::ErrWrongArguments as isize,
+            "expression::ERR_INCORRECT_ARGS"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET.class(),
+            TerrorClass::Expression,
+            "expression::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_CHARACTER_SET
+                .code()
+                .value(),
+            errcode::ErrUnknownCharacterSet as isize,
+            "expression::ERR_UNKNOWN_CHARACTER_SET"
+        );
+        assert_eq!(
+            super::ERR_DEFAULT_VALUE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_DEFAULT_VALUE"
+        );
+        assert_eq!(
+            super::ERR_DEFAULT_VALUE.code().value(),
+            errcode::ErrInvalidDefault as isize,
+            "expression::ERR_DEFAULT_VALUE"
+        );
+        assert_eq!(
+            super::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT.class(),
+            TerrorClass::Expression,
+            "expression::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT
+                .code()
+                .value(),
+            errcode::ErrWarnDeprecatedSyntaxNoReplacement as isize,
+            "expression::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT"
+        );
+        assert_eq!(
+            super::ERR_WARN_ALLOWED_PACKET_OVERFLOWED.class(),
+            TerrorClass::Expression,
+            "expression::ERR_WARN_ALLOWED_PACKET_OVERFLOWED"
+        );
+        assert_eq!(
+            super::ERR_WARN_ALLOWED_PACKET_OVERFLOWED
+                .code()
+                .value(),
+            errcode::ErrWarnAllowedPacketOverflowed as isize,
+            "expression::ERR_WARN_ALLOWED_PACKET_OVERFLOWED"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTION_IGNORED.class(),
+            TerrorClass::Expression,
+            "expression::ERR_WARN_OPTION_IGNORED"
+        );
+        assert_eq!(
+            super::ERR_WARN_OPTION_IGNORED.code().value(),
+            errcode::WarnOptionIgnored as isize,
+            "expression::ERR_WARN_OPTION_IGNORED"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_TRUNCATED_WRONG_VALUE
+                .code()
+                .value(),
+            errcode::ErrTruncatedWrongValue as isize,
+            "expression::ERR_TRUNCATED_WRONG_VALUE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_LOCALE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_UNKNOWN_LOCALE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_LOCALE.code().value(),
+            errcode::ErrUnknownLocale as isize,
+            "expression::ERR_UNKNOWN_LOCALE"
+        );
+        assert_eq!(
+            super::ERR_NON_UNIQ.class(),
+            TerrorClass::Expression,
+            "expression::ERR_NON_UNIQ"
+        );
+        assert_eq!(
+            super::ERR_NON_UNIQ.code().value(),
+            errcode::ErrNonUniq as isize,
+            "expression::ERR_NON_UNIQ"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_TYPE.class(),
+            TerrorClass::Expression,
+            "expression::ERR_WRONG_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_TYPE.code().value(),
+            errcode::ErrWrongValueForType as isize,
+            "expression::ERR_WRONG_VALUE_FOR_TYPE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN.class(),
+            TerrorClass::Expression,
+            "expression::ERR_UNKNOWN"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN.code().value(),
+            errcode::ErrUnknown as isize,
+            "expression::ERR_UNKNOWN"
+        );
+        assert_eq!(
+            super::ERR_SPECIFIC_ACCESS_DENIED.class(),
+            TerrorClass::Expression,
+            "expression::ERR_SPECIFIC_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_SPECIFIC_ACCESS_DENIED
+                .code()
+                .value(),
+            errcode::ErrSpecificAccessDenied as isize,
+            "expression::ERR_SPECIFIC_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_USER_LOCK_DEADLOCK.class(),
+            TerrorClass::Expression,
+            "expression::ERR_USER_LOCK_DEADLOCK"
+        );
+        assert_eq!(
+            super::ERR_USER_LOCK_DEADLOCK.code().value(),
+            errcode::ErrUserLockDeadlock as isize,
+            "expression::ERR_USER_LOCK_DEADLOCK"
+        );
+        assert_eq!(
+            super::ERR_USER_LOCK_WRONG_NAME.class(),
+            TerrorClass::Expression,
+            "expression::ERR_USER_LOCK_WRONG_NAME"
+        );
+        assert_eq!(
+            super::ERR_USER_LOCK_WRONG_NAME.code().value(),
+            errcode::ErrUserLockWrongName as isize,
+            "expression::ERR_USER_LOCK_WRONG_NAME"
+        );
+        assert_eq!(
+            super::ERR_JSON_IN_BOOLEAN_CONTEXT.class(),
+            TerrorClass::Expression,
+            "expression::ERR_JSON_IN_BOOLEAN_CONTEXT"
+        );
+        assert_eq!(
+            super::ERR_JSON_IN_BOOLEAN_CONTEXT
+                .code()
+                .value(),
+            errcode::ErrJSONInBooleanContext as isize,
+            "expression::ERR_JSON_IN_BOOLEAN_CONTEXT"
+        );
+        assert_eq!(
+            super::ERR_BAD_NULL.class(),
+            TerrorClass::Expression,
+            "expression::ERR_BAD_NULL"
+        );
+        assert_eq!(
+            super::ERR_BAD_NULL.code().value(),
+            errcode::ErrBadNull as isize,
+            "expression::ERR_BAD_NULL"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_ACCESS_DENIED.class(),
+            TerrorClass::Expression,
+            "expression::ERR_SEQUENCE_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_ACCESS_DENIED
+                .code()
+                .value(),
+            errcode::ErrTableaccessDenied as isize,
+            "expression::ERR_SEQUENCE_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_JSON_COMPARISON.class(),
+            TerrorClass::Expression,
+            "expression::ERR_UNSUPPORTED_JSON_COMPARISON"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_JSON_COMPARISON
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "expression::ERR_UNSUPPORTED_JSON_COMPARISON"
+        );
+    }
+}

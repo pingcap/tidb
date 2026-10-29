@@ -38,3 +38,36 @@ pub static ERR_INFO_SCHEMA_CHANGED: LazyLock<TerrorError> = LazyLock::new(|| {
         ". [try again later]",
     )
 });
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INFO_SCHEMA_EXPIRED.class(),
+            TerrorClass::Domain,
+            "domain::ERR_INFO_SCHEMA_EXPIRED"
+        );
+        assert_eq!(
+            super::ERR_INFO_SCHEMA_EXPIRED.code().value(),
+            errcode::ErrInfoSchemaExpired as isize,
+            "domain::ERR_INFO_SCHEMA_EXPIRED"
+        );
+        assert_eq!(
+            super::ERR_INFO_SCHEMA_CHANGED.class(),
+            TerrorClass::Domain,
+            "domain::ERR_INFO_SCHEMA_CHANGED"
+        );
+        assert_eq!(
+            super::ERR_INFO_SCHEMA_CHANGED.code().value(),
+            errcode::ErrInfoSchemaChanged as isize,
+            "domain::ERR_INFO_SCHEMA_CHANGED"
+        );
+    }
+}

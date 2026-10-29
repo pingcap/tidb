@@ -11,7 +11,6 @@ description = "TiDB column types: Go pkg/parser/types (Rust rewrite)."
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-error = { path = "../tidb-error" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-charset = { path = "../tidb-charset" }

@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `util/tiflashcompute.errTopoFetcher` (`pkg/util/tiflashcompute/topo_fetcher.go:50`).
 pub static ERR_TOPO_FETCHER: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Util, errcode::ErrInternal));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_TOPO_FETCHER.class(),
+            TerrorClass::Util,
+            "tiflashcompute::ERR_TOPO_FETCHER"
+        );
+        assert_eq!(
+            super::ERR_TOPO_FETCHER.code().value(),
+            errcode::ErrInternal as isize,
+            "tiflashcompute::ERR_TOPO_FETCHER"
+        );
+    }
+}

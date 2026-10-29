@@ -52,3 +52,95 @@ pub static ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK: Lazy
 /// Source `privilege/privileges.ErrMustChangePasswordLogin` (`pkg/privilege/privileges/errors.go:30`).
 pub static ERR_MUST_CHANGE_PASSWORD_LOGIN: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Privilege, errcode::ErrMustChangePasswordLogin));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_PRIVILEGE_TYPE.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_INVALID_PRIVILEGE_TYPE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_PRIVILEGE_TYPE
+                .code()
+                .value(),
+            errcode::ErrInvalidPrivilegeType as isize,
+            "privileges::ERR_INVALID_PRIVILEGE_TYPE"
+        );
+        assert_eq!(
+            super::ERR_NONEXISTING_GRANT.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_NONEXISTING_GRANT"
+        );
+        assert_eq!(
+            super::ERR_NONEXISTING_GRANT.code().value(),
+            errcode::ErrNonexistingGrant as isize,
+            "privileges::ERR_NONEXISTING_GRANT"
+        );
+        assert_eq!(
+            super::ERR_LOAD_PRIVILEGE.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_LOAD_PRIVILEGE"
+        );
+        assert_eq!(
+            super::ERR_LOAD_PRIVILEGE.code().value(),
+            errcode::ErrLoadPrivilege as isize,
+            "privileges::ERR_LOAD_PRIVILEGE"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.code().value(),
+            errcode::ErrAccessDenied as isize,
+            "privileges::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_ACCOUNT_HAS_BEEN_LOCKED.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_ACCOUNT_HAS_BEEN_LOCKED"
+        );
+        assert_eq!(
+            super::ERR_ACCOUNT_HAS_BEEN_LOCKED
+                .code()
+                .value(),
+            errcode::ErrAccountHasBeenLocked as isize,
+            "privileges::ERR_ACCOUNT_HAS_BEEN_LOCKED"
+        );
+        assert_eq!(
+            super::ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK
+                .class(),
+            TerrorClass::Privilege,
+            "privileges::ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK"
+        );
+        assert_eq!(
+            super::ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK
+                .code()
+                .value(),
+            errcode::ErUserAccessDeniedForUserAccountBlockedByPasswordLock as isize,
+            "privileges::ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK"
+        );
+        assert_eq!(
+            super::ERR_MUST_CHANGE_PASSWORD_LOGIN.class(),
+            TerrorClass::Privilege,
+            "privileges::ERR_MUST_CHANGE_PASSWORD_LOGIN"
+        );
+        assert_eq!(
+            super::ERR_MUST_CHANGE_PASSWORD_LOGIN
+                .code()
+                .value(),
+            errcode::ErrMustChangePasswordLogin as isize,
+            "privileges::ERR_MUST_CHANGE_PASSWORD_LOGIN"
+        );
+    }
+}

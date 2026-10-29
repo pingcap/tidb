@@ -169,3 +169,514 @@ pub static ERR_PROTECTED_TABLE_MODE: LazyLock<TerrorError> =
 /// Source `infoschema.ErrInvalidTableModeSet` (`pkg/infoschema/error.go:114`).
 pub static ERR_INVALID_TABLE_MODE_SET: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Schema, errcode::ErrInvalidTableModeSet));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_DATABASE_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_DATABASE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DATABASE_EXISTS.code().value(),
+            errcode::ErrDBCreateExists as isize,
+            "infoschema::ERR_DATABASE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DATABASE_DROP_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_DATABASE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DATABASE_DROP_EXISTS.code().value(),
+            errcode::ErrDBDropExists as isize,
+            "infoschema::ERR_DATABASE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_ACCESS_DENIED.code().value(),
+            errcode::ErrAccessDenied as isize,
+            "infoschema::ERR_ACCESS_DENIED"
+        );
+        assert_eq!(
+            super::ERR_DATABASE_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_DATABASE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DATABASE_NOT_EXISTS.code().value(),
+            errcode::ErrBadDB as isize,
+            "infoschema::ERR_DATABASE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_PLACEMENT_POLICY_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_PLACEMENT_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_PLACEMENT_POLICY_EXISTS
+                .code()
+                .value(),
+            errcode::ErrPlacementPolicyExists as isize,
+            "infoschema::ERR_PLACEMENT_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_PLACEMENT_POLICY_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                .code()
+                .value(),
+            errcode::ErrPlacementPolicyNotExists as isize,
+            "infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_RESOURCE_GROUP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_EXISTS
+                .code()
+                .value(),
+            errcode::ErrResourceGroupExists as isize,
+            "infoschema::ERR_RESOURCE_GROUP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS
+                .code()
+                .value(),
+            errcode::ErrResourceGroupNotExists as isize,
+            "infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.class(),
+            TerrorClass::Executor,
+            "infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME
+                .code()
+                .value(),
+            errcode::ErrResourceGroupInvalidBackgroundTaskName as isize,
+            "infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE
+                .code()
+                .value(),
+            errcode::ErrResourceGroupInvalidForRole as isize,
+            "infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE"
+        );
+        assert_eq!(
+            super::ERR_RESERVED_SYNTAX.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_RESERVED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_RESERVED_SYNTAX.code().value(),
+            errcode::ErrReservedSyntax as isize,
+            "infoschema::ERR_RESERVED_SYNTAX"
+        );
+        assert_eq!(
+            super::ERR_TABLE_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_EXISTS.code().value(),
+            errcode::ErrTableExists as isize,
+            "infoschema::ERR_TABLE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_DROP_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_DROP_EXISTS.code().value(),
+            errcode::ErrBadTable as isize,
+            "infoschema::ERR_TABLE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_DROP_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_SEQUENCE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_SEQUENCE_DROP_EXISTS.code().value(),
+            errcode::ErrUnknownSequence as isize,
+            "infoschema::ERR_SEQUENCE_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_COLUMN_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_NOT_EXISTS.code().value(),
+            errcode::ErrBadField as isize,
+            "infoschema::ERR_COLUMN_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_COLUMN_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_COLUMN_EXISTS.code().value(),
+            errcode::ErrDupFieldName as isize,
+            "infoschema::ERR_COLUMN_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_KEY_NAME_DUPLICATE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_KEY_NAME_DUPLICATE"
+        );
+        assert_eq!(
+            super::ERR_KEY_NAME_DUPLICATE.code().value(),
+            errcode::ErrDupKeyName as isize,
+            "infoschema::ERR_KEY_NAME_DUPLICATE"
+        );
+        assert_eq!(
+            super::ERR_NONUNIQ_TABLE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_NONUNIQ_TABLE"
+        );
+        assert_eq!(
+            super::ERR_NONUNIQ_TABLE.code().value(),
+            errcode::ErrNonuniqTable as isize,
+            "infoschema::ERR_NONUNIQ_TABLE"
+        );
+        assert_eq!(
+            super::ERR_MULTIPLE_PRI_KEY.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_MULTIPLE_PRI_KEY"
+        );
+        assert_eq!(
+            super::ERR_MULTIPLE_PRI_KEY.code().value(),
+            errcode::ErrMultiplePriKey as isize,
+            "infoschema::ERR_MULTIPLE_PRI_KEY"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_KEY_PARTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TOO_MANY_KEY_PARTS"
+        );
+        assert_eq!(
+            super::ERR_TOO_MANY_KEY_PARTS.code().value(),
+            errcode::ErrTooManyKeyParts as isize,
+            "infoschema::ERR_TOO_MANY_KEY_PARTS"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NOT_EXISTS
+                .code()
+                .value(),
+            errcode::ErrCantDropFieldOrKey as isize,
+            "infoschema::ERR_FOREIGN_KEY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_LOCKED_FOR_WRITE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+                .code()
+                .value(),
+            errcode::ErrTableNotLockedForWrite as isize,
+            "infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_LOCKED.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_NOT_LOCKED"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_LOCKED.code().value(),
+            errcode::ErrTableNotLocked as isize,
+            "infoschema::ERR_TABLE_NOT_LOCKED"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_EXISTS.code().value(),
+            errcode::ErrNoSuchTable as isize,
+            "infoschema::ERR_TABLE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_KEY_NOT_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_KEY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_KEY_NOT_EXISTS.code().value(),
+            errcode::ErrKeyDoesNotExist as isize,
+            "infoschema::ERR_KEY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_CANNOT_ADD_FOREIGN.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_CANNOT_ADD_FOREIGN"
+        );
+        assert_eq!(
+            super::ERR_CANNOT_ADD_FOREIGN.code().value(),
+            errcode::ErrCannotAddForeign as isize,
+            "infoschema::ERR_CANNOT_ADD_FOREIGN"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_ON_PARTITIONED.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_ON_PARTITIONED
+                .code()
+                .value(),
+            errcode::ErrForeignKeyOnPartitioned as isize,
+            "infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NOT_MATCH.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_NOT_MATCH"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NOT_MATCH
+                .code()
+                .value(),
+            errcode::ErrWrongFkDef as isize,
+            "infoschema::ERR_FOREIGN_KEY_NOT_MATCH"
+        );
+        assert_eq!(
+            super::ERR_INDEX_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_INDEX_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_INDEX_EXISTS.code().value(),
+            errcode::ErrDupIndex as isize,
+            "infoschema::ERR_INDEX_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_USER_DROP_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_USER_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_USER_DROP_EXISTS.code().value(),
+            errcode::ErrBadUser as isize,
+            "infoschema::ERR_USER_DROP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_USER_ALREADY_EXISTS.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_USER_ALREADY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_USER_ALREADY_EXISTS.code().value(),
+            errcode::ErrUserAlreadyExists as isize,
+            "infoschema::ERR_USER_ALREADY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_LOCKED.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_LOCKED"
+        );
+        assert_eq!(
+            super::ERR_TABLE_LOCKED.code().value(),
+            errcode::ErrTableLocked as isize,
+            "infoschema::ERR_TABLE_LOCKED"
+        );
+        assert_eq!(
+            super::ERR_WRONG_OBJECT.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_WRONG_OBJECT"
+        );
+        assert_eq!(
+            super::ERR_WRONG_OBJECT.code().value(),
+            errcode::ErrWrongObject as isize,
+            "infoschema::ERR_WRONG_OBJECT"
+        );
+        assert_eq!(
+            super::ERR_ADMIN_CHECK_TABLE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_ADMIN_CHECK_TABLE"
+        );
+        assert_eq!(
+            super::ERR_ADMIN_CHECK_TABLE.code().value(),
+            errcode::ErrAdminCheckTable as isize,
+            "infoschema::ERR_ADMIN_CHECK_TABLE"
+        );
+        assert_eq!(
+            super::ERR_EMPTY_DATABASE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_EMPTY_DATABASE"
+        );
+        assert_eq!(
+            super::ERR_EMPTY_DATABASE.code().value(),
+            errcode::ErrBadDB as isize,
+            "infoschema::ERR_EMPTY_DATABASE"
+        );
+        assert_eq!(
+            super::ERR_FORBID_SCHEMA_CHANGE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FORBID_SCHEMA_CHANGE"
+        );
+        assert_eq!(
+            super::ERR_FORBID_SCHEMA_CHANGE.code().value(),
+            errcode::ErrForbidSchemaChange as isize,
+            "infoschema::ERR_FORBID_SCHEMA_CHANGE"
+        );
+        assert_eq!(
+            super::ERR_TABLE_WITHOUT_PRIMARY_KEY.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY"
+        );
+        assert_eq!(
+            super::ERR_TABLE_WITHOUT_PRIMARY_KEY
+                .code()
+                .value(),
+            errcode::ErrTableWithoutPrimaryKey as isize,
+            "infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+                .code()
+                .value(),
+            errcode::ErrForeignKeyCannotUseVirtualColumn as isize,
+            "infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
+                .code()
+                .value(),
+            errcode::ErrForeignKeyCannotOpenParent as isize,
+            "infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
+                .code()
+                .value(),
+            errcode::ErrForeignKeyNoColumnInParent as isize,
+            "infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
+                .code()
+                .value(),
+            errcode::ErrForeignKeyNoIndexInParent as isize,
+            "infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_COLUMN_NOT_NULL.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL"
+        );
+        assert_eq!(
+            super::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
+                .code()
+                .value(),
+            errcode::ErrForeignKeyColumnNotNull as isize,
+            "infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_SUPPORT_DISABLED.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_SUPPORT_DISABLED
+                .code()
+                .value(),
+            errcode::ErrResourceGroupSupportDisabled as isize,
+            "infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED"
+        );
+        assert_eq!(
+            super::ERR_CHECK_CONSTRAINT_DUP_NAME.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_CHECK_CONSTRAINT_DUP_NAME"
+        );
+        assert_eq!(
+            super::ERR_CHECK_CONSTRAINT_DUP_NAME
+                .code()
+                .value(),
+            errcode::ErrCheckConstraintDupName as isize,
+            "infoschema::ERR_CHECK_CONSTRAINT_DUP_NAME"
+        );
+        assert_eq!(
+            super::ERR_PROTECTED_TABLE_MODE.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_PROTECTED_TABLE_MODE"
+        );
+        assert_eq!(
+            super::ERR_PROTECTED_TABLE_MODE.code().value(),
+            errcode::ErrProtectedTableMode as isize,
+            "infoschema::ERR_PROTECTED_TABLE_MODE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TABLE_MODE_SET.class(),
+            TerrorClass::Schema,
+            "infoschema::ERR_INVALID_TABLE_MODE_SET"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TABLE_MODE_SET
+                .code()
+                .value(),
+            errcode::ErrInvalidTableModeSet as isize,
+            "infoschema::ERR_INVALID_TABLE_MODE_SET"
+        );
+    }
+}

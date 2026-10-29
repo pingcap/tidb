@@ -53,3 +53,64 @@ pub static ERR_COULD_NOT_START_SNAPSHOT: LazyLock<TerrorError> = LazyLock::new(|
         "Snapshot initiation failed",
     )
 });
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_VAR.class(),
+            TerrorClass::Util,
+            "workloadrepo::ERR_WRONG_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_WRONG_VALUE_FOR_VAR
+                .code()
+                .value(),
+            errcode::ErrWrongValueForVar as isize,
+            "workloadrepo::ERR_WRONG_VALUE_FOR_VAR"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_ETCD_REQUIRED.class(),
+            TerrorClass::Util,
+            "workloadrepo::ERR_UNSUPPORTED_ETCD_REQUIRED"
+        );
+        assert_eq!(
+            super::ERR_UNSUPPORTED_ETCD_REQUIRED
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "workloadrepo::ERR_UNSUPPORTED_ETCD_REQUIRED"
+        );
+        assert_eq!(
+            super::ERR_WORKLOAD_NOT_STARTED.class(),
+            TerrorClass::Util,
+            "workloadrepo::ERR_WORKLOAD_NOT_STARTED"
+        );
+        assert_eq!(
+            super::ERR_WORKLOAD_NOT_STARTED
+                .code()
+                .value(),
+            errcode::ErrNotSupportedYet as isize,
+            "workloadrepo::ERR_WORKLOAD_NOT_STARTED"
+        );
+        assert_eq!(
+            super::ERR_COULD_NOT_START_SNAPSHOT.class(),
+            TerrorClass::Util,
+            "workloadrepo::ERR_COULD_NOT_START_SNAPSHOT"
+        );
+        assert_eq!(
+            super::ERR_COULD_NOT_START_SNAPSHOT
+                .code()
+                .value(),
+            errcode::ErrUnknown as isize,
+            "workloadrepo::ERR_COULD_NOT_START_SNAPSHOT"
+        );
+    }
+}

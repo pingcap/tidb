@@ -29,3 +29,26 @@ use tidb_errno::errcode;
 /// Source `server.errUnknownFieldType` (`pkg/server/conn_stmt_params.go:27`).
 pub static ERR_UNKNOWN_FIELD_TYPE: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Server, errcode::ErrUnknownFieldType));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_UNKNOWN_FIELD_TYPE.class(),
+            TerrorClass::Server,
+            "server::ERR_UNKNOWN_FIELD_TYPE"
+        );
+        assert_eq!(
+            super::ERR_UNKNOWN_FIELD_TYPE.code().value(),
+            errcode::ErrUnknownFieldType as isize,
+            "server::ERR_UNKNOWN_FIELD_TYPE"
+        );
+    }
+}

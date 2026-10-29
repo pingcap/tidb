@@ -35,3 +35,46 @@ pub static ERR_INVALID_RECORD_KEY: LazyLock<TerrorError> =
 /// Source `tablecodec.errInvalidIndexKey` (`pkg/tablecodec/tablecodec.go:46`).
 pub static ERR_INVALID_INDEX_KEY: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::XEval, errcode::ErrInvalidIndexKey));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_INVALID_KEY.class(),
+            TerrorClass::XEval,
+            "tablecodec::ERR_INVALID_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_KEY.code().value(),
+            errcode::ErrInvalidKey as isize,
+            "tablecodec::ERR_INVALID_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_RECORD_KEY.class(),
+            TerrorClass::XEval,
+            "tablecodec::ERR_INVALID_RECORD_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_RECORD_KEY.code().value(),
+            errcode::ErrInvalidRecordKey as isize,
+            "tablecodec::ERR_INVALID_RECORD_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_INDEX_KEY.class(),
+            TerrorClass::XEval,
+            "tablecodec::ERR_INVALID_INDEX_KEY"
+        );
+        assert_eq!(
+            super::ERR_INVALID_INDEX_KEY.code().value(),
+            errcode::ErrInvalidIndexKey as isize,
+            "tablecodec::ERR_INVALID_INDEX_KEY"
+        );
+    }
+}

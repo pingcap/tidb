@@ -240,7 +240,7 @@ impl TiFlashReplicaManager {
             "http"
         };
         let client = tidb_txnkv::cluster_http::internal_http_client(security)?;
-        let stores_client = tidb_txnkv::cluster_http::info_syncer_pd_http_client(&pd_http_client);
+        let stores_client = tidb_domain_infosync::pd_http::info_syncer_pd_http_client(&pd_http_client);
         let mut manager = Self::new(
             catalog,
             move || {
@@ -279,7 +279,7 @@ impl TiFlashReplicaManager {
             catalog,
             stores: Box::new(stores),
             ddl,
-            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(&pd_http_client),
+            pd_http_client: tidb_domain_infosync::pd_http::info_syncer_pd_http_client(&pd_http_client),
             http,
             http_scheme: "http",
             state: Mutex::new(PollState::default()),

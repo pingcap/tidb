@@ -6,7 +6,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/tidb-error",
     "crates/tidb-server-err",
     "crates/tidb-plannererrors",
     "crates/tidb-errctx",

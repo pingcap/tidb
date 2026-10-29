@@ -86,3 +86,156 @@ pub static ERR_LOCK_EXPIRE: LazyLock<TerrorError> =
 /// Source `kv.ErrAssertionFailed` (`pkg/kv/error.go:78`).
 pub static ERR_ASSERTION_FAILED: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::TiKv, errcode::ErrAssertionFailed));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_NOT_EXIST.class(),
+            TerrorClass::Kv,
+            "kv::ERR_NOT_EXIST"
+        );
+        assert_eq!(
+            super::ERR_NOT_EXIST.code().value(),
+            errcode::ErrNotExist as isize,
+            "kv::ERR_NOT_EXIST"
+        );
+        assert_eq!(
+            super::ERR_TXN_RETRYABLE.class(),
+            TerrorClass::Kv,
+            "kv::ERR_TXN_RETRYABLE"
+        );
+        assert_eq!(
+            super::ERR_TXN_RETRYABLE.code().value(),
+            errcode::ErrTxnRetryable as isize,
+            "kv::ERR_TXN_RETRYABLE"
+        );
+        assert_eq!(
+            super::ERR_CANNOT_SET_NIL_VALUE.class(),
+            TerrorClass::Kv,
+            "kv::ERR_CANNOT_SET_NIL_VALUE"
+        );
+        assert_eq!(
+            super::ERR_CANNOT_SET_NIL_VALUE.code().value(),
+            errcode::ErrCannotSetNilValue as isize,
+            "kv::ERR_CANNOT_SET_NIL_VALUE"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TXN.class(),
+            TerrorClass::Kv,
+            "kv::ERR_INVALID_TXN"
+        );
+        assert_eq!(
+            super::ERR_INVALID_TXN.code().value(),
+            errcode::ErrInvalidTxn as isize,
+            "kv::ERR_INVALID_TXN"
+        );
+        assert_eq!(
+            super::ERR_TXN_TOO_LARGE.class(),
+            TerrorClass::Kv,
+            "kv::ERR_TXN_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_TXN_TOO_LARGE.code().value(),
+            errcode::ErrTxnTooLarge as isize,
+            "kv::ERR_TXN_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_ENTRY_TOO_LARGE.class(),
+            TerrorClass::Kv,
+            "kv::ERR_ENTRY_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_ENTRY_TOO_LARGE.code().value(),
+            errcode::ErrEntryTooLarge as isize,
+            "kv::ERR_ENTRY_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_KEY_TOO_LARGE.class(),
+            TerrorClass::Kv,
+            "kv::ERR_KEY_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_KEY_TOO_LARGE.code().value(),
+            errcode::ErrKeyTooLarge as isize,
+            "kv::ERR_KEY_TOO_LARGE"
+        );
+        assert_eq!(
+            super::ERR_KEY_EXISTS.class(),
+            TerrorClass::Kv,
+            "kv::ERR_KEY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_KEY_EXISTS.code().value(),
+            errcode::ErrDupEntry as isize,
+            "kv::ERR_KEY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_NOT_IMPLEMENTED.class(),
+            TerrorClass::Kv,
+            "kv::ERR_NOT_IMPLEMENTED"
+        );
+        assert_eq!(
+            super::ERR_NOT_IMPLEMENTED.code().value(),
+            errcode::ErrNotImplemented as isize,
+            "kv::ERR_NOT_IMPLEMENTED"
+        );
+        assert_eq!(
+            super::ERR_WRITE_CONFLICT.class(),
+            TerrorClass::Kv,
+            "kv::ERR_WRITE_CONFLICT"
+        );
+        assert_eq!(
+            super::ERR_WRITE_CONFLICT.code().value(),
+            errcode::ErrWriteConflict as isize,
+            "kv::ERR_WRITE_CONFLICT"
+        );
+        assert_eq!(
+            super::ERR_WRITE_CONFLICT_IN_TI_DB.class(),
+            TerrorClass::Kv,
+            "kv::ERR_WRITE_CONFLICT_IN_TI_DB"
+        );
+        assert_eq!(
+            super::ERR_WRITE_CONFLICT_IN_TI_DB.code().value(),
+            errcode::ErrWriteConflictInTiDB as isize,
+            "kv::ERR_WRITE_CONFLICT_IN_TI_DB"
+        );
+        assert_eq!(
+            super::ERR_SHARED_LOCK_LOST.class(),
+            TerrorClass::TiKv,
+            "kv::ERR_SHARED_LOCK_LOST"
+        );
+        assert_eq!(
+            super::ERR_SHARED_LOCK_LOST.code().value(),
+            errcode::ErrSharedLockLost as isize,
+            "kv::ERR_SHARED_LOCK_LOST"
+        );
+        assert_eq!(
+            super::ERR_LOCK_EXPIRE.class(),
+            TerrorClass::TiKv,
+            "kv::ERR_LOCK_EXPIRE"
+        );
+        assert_eq!(
+            super::ERR_LOCK_EXPIRE.code().value(),
+            errcode::ErrLockExpire as isize,
+            "kv::ERR_LOCK_EXPIRE"
+        );
+        assert_eq!(
+            super::ERR_ASSERTION_FAILED.class(),
+            TerrorClass::TiKv,
+            "kv::ERR_ASSERTION_FAILED"
+        );
+        assert_eq!(
+            super::ERR_ASSERTION_FAILED.code().value(),
+            errcode::ErrAssertionFailed as isize,
+            "kv::ERR_ASSERTION_FAILED"
+        );
+    }
+}

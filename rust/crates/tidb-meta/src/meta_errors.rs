@@ -65,3 +65,150 @@ pub static ERR_DDL_REORG_ELEMENT_NOT_EXIST: LazyLock<TerrorError> =
 /// Source `meta.ErrInvalidString` (`pkg/meta/meta.go:175`).
 pub static ERR_INVALID_STRING: LazyLock<TerrorError> =
     LazyLock::new(|| std_err(Class::Meta, errcode::ErrInvalidCharacterString));
+
+#[cfg(test)]
+mod go_class_code_tests {
+    use tidb_errno::errcode;
+    use tidb_terror::TerrorClass;
+
+    /// Each prototype carries the class and code of the Go definition it
+    /// transcribes (`Class.NewStd(code)`), so `Error()` prints Go's
+    /// `[class:code]`.
+    #[test]
+    fn prototypes_carry_their_go_class_and_code() {
+        assert_eq!(
+            super::ERR_DB_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_DB_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DB_EXISTS.code().value(),
+            errcode::ErrDBCreateExists as isize,
+            "meta::ERR_DB_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DB_NOT_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_DB_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DB_NOT_EXISTS.code().value(),
+            errcode::ErrBadDB as isize,
+            "meta::ERR_DB_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_POLICY_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_POLICY_EXISTS.code().value(),
+            errcode::ErrPlacementPolicyExists as isize,
+            "meta::ERR_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_POLICY_NOT_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_POLICY_NOT_EXISTS.code().value(),
+            errcode::ErrPlacementPolicyNotExists as isize,
+            "meta::ERR_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_MASKING_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_EXISTS.code().value(),
+            errcode::ErrMaskingPolicyExists as isize,
+            "meta::ERR_MASKING_POLICY_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_NOT_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_MASKING_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_NOT_EXISTS.code().value(),
+            errcode::ErrMaskingPolicyNotExists as isize,
+            "meta::ERR_MASKING_POLICY_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_EXPR_INVALID_COLUMN.class(),
+            TerrorClass::Meta,
+            "meta::ERR_MASKING_POLICY_EXPR_INVALID_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_MASKING_POLICY_EXPR_INVALID_COLUMN
+                .code()
+                .value(),
+            errcode::ErrMaskingPolicyExprInvalidColumn as isize,
+            "meta::ERR_MASKING_POLICY_EXPR_INVALID_COLUMN"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_RESOURCE_GROUP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_EXISTS.code().value(),
+            errcode::ErrResourceGroupExists as isize,
+            "meta::ERR_RESOURCE_GROUP_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_RESOURCE_GROUP_NOT_EXISTS.code().value(),
+            errcode::ErrResourceGroupNotExists as isize,
+            "meta::ERR_RESOURCE_GROUP_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_TABLE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_EXISTS.code().value(),
+            errcode::ErrTableExists as isize,
+            "meta::ERR_TABLE_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_EXISTS.class(),
+            TerrorClass::Meta,
+            "meta::ERR_TABLE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_TABLE_NOT_EXISTS.code().value(),
+            errcode::ErrNoSuchTable as isize,
+            "meta::ERR_TABLE_NOT_EXISTS"
+        );
+        assert_eq!(
+            super::ERR_DDL_REORG_ELEMENT_NOT_EXIST.class(),
+            TerrorClass::Meta,
+            "meta::ERR_DDL_REORG_ELEMENT_NOT_EXIST"
+        );
+        assert_eq!(
+            super::ERR_DDL_REORG_ELEMENT_NOT_EXIST
+                .code()
+                .value(),
+            errcode::ErrDDLReorgElementNotExist as isize,
+            "meta::ERR_DDL_REORG_ELEMENT_NOT_EXIST"
+        );
+        assert_eq!(
+            super::ERR_INVALID_STRING.class(),
+            TerrorClass::Meta,
+            "meta::ERR_INVALID_STRING"
+        );
+        assert_eq!(
+            super::ERR_INVALID_STRING.code().value(),
+            errcode::ErrInvalidCharacterString as isize,
+            "meta::ERR_INVALID_STRING"
+        );
+    }
+}

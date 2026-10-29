@@ -31,7 +31,6 @@ reqwest = { workspace = true, features = ["blocking"] }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 prometheus = { version = "0.14", default-features = false }
 toml.workspace = true
-tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
