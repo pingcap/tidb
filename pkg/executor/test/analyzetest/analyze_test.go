@@ -1239,9 +1239,11 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// The default TopN of column c keeps all values, so c has no buckets. The
+	// primary key a has no TopN, so its buckets cannot show the options.
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p1.GetCol(tableInfo.Columns[2].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])

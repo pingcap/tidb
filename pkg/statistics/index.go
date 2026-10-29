@@ -213,10 +213,16 @@ func (idx *Index) IsAnalyzed() bool {
 	return IsAnalyzed(idx.StatsVer)
 }
 
-// UniqueBySchema returns true if a public, non-prefix, single-column unique
-// index keeps every non-NULL value of the column or index with the given ID
-// distinct. With localOnly, global indexes do not count.
+// UniqueBySchema returns true if the schema keeps every non-NULL value of the
+// column or index with the given ID distinct: the integer handle column, or a
+// public, non-prefix, single-column unique index or its column. With
+// localOnly, global indexes do not count.
 func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64, localOnly bool) bool {
+	if !isIndex && tblInfo.PKIsHandle {
+		if pk := tblInfo.GetPkColInfo(); pk != nil && pk.ID == id {
+			return true
+		}
+	}
 	for _, idx := range tblInfo.Indices {
 		if (localOnly && idx.Global) || !IsSingleColNonPrefixUniqueIndex(idx) {
 			continue
