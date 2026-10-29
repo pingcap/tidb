@@ -15,7 +15,7 @@
 //! Go `pkg/infoschema/metrics_schema.go`: the `metrics_schema` tables. Go
 //! registers one virtual table per `MetricTableMap` entry when the package
 //! initializes (`genColumnInfos` + `buildTableMeta`), numbered after the
-//! schema's id in name order; this builds the same objects once per process
+//! schema's id in name order; this builds the same objects the same way once per process
 //! and shares them with every catalog, so `DESCRIBE`, `SHOW CREATE TABLE` and
 //! `information_schema.columns` answer from the objects themselves. A scan
 //! reads the absent metric storage and fails (`build_mem_table`).
@@ -31,27 +31,6 @@ pub const METRICS_SCHEMA: &str = "metrics_schema";
 /// Go `autoid.MetricSchemaDBID` (`SystemSchemaIDFlag | 20000`).
 pub const METRICS_SCHEMA_DB_ID: i64 = (1 << 62) | 20000;
 
-/// Go `MetricTableDef.genColumnInfos` + `buildTableMeta`, as the `CREATE
-/// TABLE` that builds the same table: `time` first, the labels as
-/// `varchar(512)`, `quantile` only for a quantile metric (its default is the
-/// metric's quantile), then `value`; every table is `utf8mb4_bin` and carries
-/// the metric's comment.
-fn create_table_sql(name: &str, def: &crate::metric_table_def::MetricTableDef) -> String {
-    let mut columns = vec!["`time` DATETIME DEFAULT CURRENT_TIMESTAMP".to_owned()];
-    for label in def.labels {
-        columns.push(format!("`{label}` VARCHAR(512) COLLATE utf8mb4_bin"));
-    }
-    if def.quantile > 0.0 {
-        columns.push(format!("`quantile` DOUBLE DEFAULT '{}'", def.quantile));
-    }
-    columns.push("`value` DOUBLE".to_owned());
-    format!(
-        "CREATE TABLE `{name}` ({}) COMMENT='{}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-        columns.join(", "),
-        def.comment.replace('\\', "\\\\").replace('\'', "''"),
-    )
-}
-
 /// Every metric table as a catalog entry, keyed by name.
 pub fn tables() -> HashMap<String, Arc<TableEntry>> {
     static TABLES: OnceLock<HashMap<String, Arc<TableEntry>>> = OnceLock::new();
@@ -65,13 +44,17 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
                 .collect::<Vec<_>>();
             defs.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (index, (name, def)) in defs.into_iter().enumerate() {
-                crate::run_create_system_table_in(
-                    &create_table_sql(name, def),
-                    &mut scratch,
-                    METRICS_SCHEMA,
-                    METRICS_SCHEMA_DB_ID + 1 + index as i64,
+                let mut info = go_table_info(name, def);
+                info.id = METRICS_SCHEMA_DB_ID + 1 + index as i64;
+                let table = tidb_table::table_from_meta::cluster_table(
+                    &info,
+                    &tidb_kv::storage::MemTableStorage::new(),
+                    &tidb_table::table_from_meta::AutoIdSource::Unavailable,
                 )
-                .expect("Go's metric table definitions build in this tier");
+                .unwrap_or_else(|error| panic!("metrics_schema.{name} cannot load: {error}"));
+                scratch
+                    .register_kv_in(METRICS_SCHEMA, name, table)
+                    .expect("the metrics schema exists in the scratch catalog");
             }
             let tables = scratch
                 .tables_of(METRICS_SCHEMA)
@@ -81,4 +64,36 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
             tables
         })
         .clone()
+}
+
+/// Go `MetricTableDef.genColumnInfos` + `buildTableMeta` + the comment and
+/// counters `metrics_schema.go`'s `init` sets.
+fn go_table_info(name: &str, def: &crate::metric_table_def::MetricTableDef) -> tidb_model::TableInfo {
+    use crate::infoschema_meta::{build_table_meta, Deflt, InfoColumn};
+    use tidb_datatype::FieldTypeCode;
+    let column = |name: &'static str, tp, size, deflt| InfoColumn {
+        name,
+        tp,
+        size,
+        decimal: 0,
+        flag: 0,
+        deflt,
+        comment: None,
+    };
+    let mut columns = vec![column("time", FieldTypeCode::Datetime, 19, Some(Deflt::Str("CURRENT_TIMESTAMP")))];
+    for label in def.labels {
+        columns.push(column(label, FieldTypeCode::Varchar, 512, None));
+    }
+    if def.quantile > 0.0 {
+        let default: &'static str = Box::leak(def.quantile_default().into_boxed_str());
+        columns.push(column("quantile", FieldTypeCode::Double, 22, Some(Deflt::Str(default))));
+    }
+    columns.push(column("value", FieldTypeCode::Double, 22, None));
+    let refs: Vec<&InfoColumn> = columns.iter().collect();
+    let mut info = build_table_meta(name, &refs);
+    info.comment = def.comment.to_owned();
+    info.db_id = METRICS_SCHEMA_DB_ID;
+    info.max_column_id = i64::try_from(info.columns.len()).unwrap_or(0);
+    info.max_index_id = i64::try_from(info.indices.len()).unwrap_or(0);
+    info
 }

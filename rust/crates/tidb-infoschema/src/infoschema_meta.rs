@@ -58,28 +58,28 @@ const RESOURCE_GROUP_NAME_LENGTH: i64 = 32;
 /// `longtext` where the declaration says `TypeLonglong` with no size and
 /// `TypeLongBlob`: Go's blob widths come from the type, its integer widths
 /// come from the declared `size` verbatim -- including the zero.
-struct InfoColumn {
+pub(crate) struct InfoColumn {
     /// Go `columnInfo.name`.
-    name: &'static str,
+    pub(crate) name: &'static str,
     /// Go `columnInfo.tp`.
-    tp: FieldTypeCode,
+    pub(crate) tp: FieldTypeCode,
     /// Go `columnInfo.size`, which is the flen for every type Go does not
     /// override below.
-    size: i64,
+    pub(crate) size: i64,
     /// Go `columnInfo.decimal`.
-    decimal: i32,
+    pub(crate) decimal: i32,
     /// Go `columnInfo.flag`.
-    flag: u32,
+    pub(crate) flag: u32,
     /// Go `columnInfo.deflt`, an `any` holding a Go `int` or `string`.
-    deflt: Option<Deflt>,
+    pub(crate) deflt: Option<Deflt>,
     /// Go `columnInfo.comment`, which `SHOW CREATE TABLE` prints after the
     /// column.
-    comment: Option<&'static str>,
+    pub(crate) comment: Option<&'static str>,
 }
 
 /// The dynamic types Go's `columnInfo.deflt` holds in these tables.
 #[derive(Clone, Copy, Debug)]
-enum Deflt {
+pub(crate) enum Deflt {
     /// A Go `int` literal (`deflt: 0`).
     Int(i64),
     /// A Go `string`.
@@ -8831,7 +8831,7 @@ fn build_column_info(col_id: i64, column: &InfoColumn) -> tidb_model::ColumnInfo
 
 /// Go `infoschema.buildTableMeta`: the memory table's `TableInfo`, with
 /// `CLUSTER_SLOW_QUERY`'s key column as its handle.
-fn build_table_meta(table_name: &str, columns: &[&InfoColumn]) -> tidb_model::TableInfo {
+pub(crate) fn build_table_meta(table_name: &str, columns: &[&InfoColumn]) -> tidb_model::TableInfo {
     let mut info = tidb_model::TableInfo {
         name: tidb_ast::CiString::new(table_name),
         state: tidb_model::SchemaState::PUBLIC,

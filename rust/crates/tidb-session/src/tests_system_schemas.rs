@@ -1790,6 +1790,23 @@ fn metrics_schema_tables_describe_and_show_like_go() {
         .run("SELECT * FROM metrics_schema.tidb_qps")
         .unwrap_err();
     assert!(error.to_string().contains("pd unavailable"), "{error}");
+    // Go builds metric tables with `buildTableMeta` (`DOUBLE` decimal 0, no
+    // binary flag on `DATETIME`), so `value` reports scale 0, captured from
+    // the oracle.
+    let columns = row_text(session.run(
+        "SELECT column_name, numeric_precision, numeric_scale, datetime_precision, column_type \
+         FROM information_schema.columns WHERE table_schema = 'METRICS_SCHEMA' AND table_name = 'up' \
+         ORDER BY column_name",
+    ));
+    assert_eq!(
+        columns,
+        [
+            ["instance", "NULL", "NULL", "NULL", "varchar(512)"],
+            ["job", "NULL", "NULL", "NULL", "varchar(512)"],
+            ["time", "NULL", "NULL", "0", "datetime"],
+            ["value", "22", "0", "NULL", "double"],
+        ]
+    );
 }
 
 /// Go lists a view and a sequence in `information_schema.partitions` as
