@@ -224,6 +224,7 @@ go_test(
         "//pkg/util/context",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/execdetails",
+        "//pkg/util/intest",
         "//pkg/util/metricsutil",
         "//pkg/util/plancodec",
         "//pkg/util/replayer",
