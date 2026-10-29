@@ -412,6 +412,9 @@ type ExecStmt struct {
 	retryCount        uint
 	retryStartTime    time.Time
 
+	// fkCascadeKeysToLock holds the keys to lock that the foreign key cascades released from the statement buffer.
+	fkCascadeKeysToLock []kv.Key
+
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
 	// [2]time.Duration to record such info for each phase. The first duration
@@ -916,7 +919,9 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// change first.
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
-		a.Ctx.StmtCommit(ctx)
+		if err := a.stmtCommitForFKCascade(ctx); err != nil {
+			return err
+		}
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
 	if err != nil {
@@ -926,10 +931,30 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		}
 		return err
 	}
-	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
-		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
-	}
 	return nil
+}
+
+// stmtCommitForFKCascade calls `StmtCommit` for the foreign key cascade. In a pessimistic transaction, it first saves
+// the keys that need to be locked, since `StmtCommit` releases them from the statement buffer that
+// `handlePessimisticDML` gets the keys to lock from.
+func (a *ExecStmt) stmtCommitForFKCascade(ctx context.Context) error {
+	if a.Ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		txn, _ := a.Ctx.Txn(false)
+		keys, err := txn.(pessimisticTxn).KeysNeedToLock()
+		if err != nil {
+			return err
+		}
+		a.fkCascadeKeysToLock = append(a.fkCascadeKeysToLock, keys...)
+	}
+	a.Ctx.StmtCommit(ctx)
+	return nil
+}
+
+func (a *ExecStmt) releaseFKSavepoint() {
+	sessVars := a.Ctx.GetSessionVars()
+	if name := sessVars.StmtCtx.ForeignKeyTriggerCtx.SavepointName; name != "" {
+		sessVars.TxnCtx.ReleaseSavepoint(name)
+	}
 }
 
 var maxForeignKeyCascadeDepth = 15
@@ -1013,7 +1038,9 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		}
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
-		a.Ctx.StmtCommit(ctx)
+		if err := a.stmtCommitForFKCascade(ctx); err != nil {
+			return err
+		}
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
 		if err != nil {
 			return err
@@ -1022,7 +1049,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 }
 
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
-// cascade behaviour and this ExecStmt is in transaction.
+// cascade behaviour and this ExecStmt is in transaction or is pessimistic.
 func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
 	var execWithFKTrigger WithForeignKeyTrigger
 	if explain, ok := e.(*ExplainExec); ok {
@@ -1035,15 +1062,15 @@ func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
 	}
 	sessVar := a.Ctx.GetSessionVars()
 	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
-	if !sessVar.InTxn() {
+	if !sessVar.InTxn() && !sessVar.TxnCtx.IsPessimistic {
 		return
 	}
 	txn, err := a.Ctx.Txn(false)
 	if err != nil || !txn.Valid() {
 		return
 	}
-	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
-	// cascade failed.
+	// Record a txn savepoint, the savepoint is use to do rollback when handle foreign key cascade failed, or when the
+	// pessimistic statement fails or retries after the foreign key cascade.
 	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
 	memDBCheckpoint := txn.GetMemDBCheckpoint()
 	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
@@ -1068,7 +1095,6 @@ func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
 		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
 	}
 	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
-	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	return nil
 }
 
@@ -1086,6 +1112,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
 		handled := !isExplainAnalyze
+		defer a.releaseFKSavepoint()
 		if isPessimistic {
 			err := a.handlePessimisticDML(ctx, toCheck)
 			return handled, nil, err
@@ -1314,6 +1341,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			err = err1
 		}
 	}()
+	defer func() {
+		// The foreign key cascades have called `StmtCommit`, so the statement rollback can't undo their changes.
+		if err != nil {
+			if err1 := a.handleFKTriggerError(sctx.GetSessionVars().StmtCtx); err1 != nil {
+				err = errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+			}
+		}
+	}()
 
 	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
 		seVars := sctx.GetSessionVars()
@@ -1361,6 +1396,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 
 		txnCtx.ResetUnchangedKeysForLock()
+		a.fkCascadeKeysToLock = a.fkCascadeKeysToLock[:0]
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
@@ -1390,6 +1426,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		if err1 != nil {
 			return err1
 		}
+		keys = append(keys, a.fkCascadeKeysToLock...)
 
 		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
 			// When `tidb_foreign_key_check_in_shared_lock` is off, lock all keys in exclusive mode
@@ -1568,6 +1605,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
+	if err = a.handleFKTriggerError(a.Ctx.GetSessionVars().StmtCtx); err != nil {
+		return nil, err
+	}
 	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
