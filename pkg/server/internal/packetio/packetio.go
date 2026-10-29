@@ -543,12 +543,32 @@ func readPayload(r io.Reader, length int) ([]byte, error) {
 	return data, nil
 }
 
+// readZlibPayload reads exactly one compressed payload and checks that its stream, checksum
+// included, ends where the header says.
 func readZlibPayload(r io.Reader, compressedLength, uncompressedLength int) ([]byte, error) {
-	zr, err := zlib.NewReader(io.LimitReader(r, int64(compressedLength)))
+	compressed, err := readPayload(r, compressedLength)
+	if err != nil {
+		return nil, err
+	}
+	in := bytes.NewReader(compressed)
+	zr, err := zlib.NewReader(in)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return readPayload(zr, uncompressedLength)
+	data, err := readPayload(zr, uncompressedLength)
+	if err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if n, err := zr.Read(extra[:]); n > 0 {
+		return nil, errors.Errorf("zlib payload is larger than the header says %d", uncompressedLength)
+	} else if err != io.EOF {
+		return nil, errors.Trace(err)
+	}
+	if in.Len() > 0 {
+		return nil, errors.Errorf("zlib payload has %d bytes after the end of its stream", in.Len())
+	}
+	return data, nil
 }
 
 func (*compressedReader) Close() error {

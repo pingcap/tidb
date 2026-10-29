@@ -779,6 +779,15 @@ func TestCompressedReaderRejectsABrokenPacket(t *testing.T) {
 		{"short zstd payload", mysql.CompressionZstd, compressedPacket(0, len(payload), zstdPayload)[:20], requireError},
 		{"corrupt zlib payload", mysql.CompressionZlib, compressedPacket(0, len(payload), bytes.Repeat([]byte{0xff}, 40)), requireError},
 		{"corrupt zstd payload", mysql.CompressionZstd, compressedPacket(0, len(payload), bytes.Repeat([]byte{0xff}, 40)), requireError},
+		{"zlib payload longer than its header", mysql.CompressionZlib, compressedPacket(0, 16, zlibPayload), func(t *testing.T, err error) {
+			require.ErrorContains(t, err, "the header says 16")
+		}},
+		{"zlib payload with a bad checksum", mysql.CompressionZlib, compressedPacket(0, len(payload), corruptChecksum(zlibPayload)), func(t *testing.T, err error) {
+			require.ErrorIs(t, err, zlib.ErrChecksum)
+		}},
+		{"zlib payload followed by other bytes", mysql.CompressionZlib, compressedPacket(0, len(payload), append(bytes.Clone(zlibPayload), 'x')), func(t *testing.T, err error) {
+			require.ErrorContains(t, err, "1 bytes after the end")
+		}},
 		{"unknown algorithm", mysql.CompressionNone, compressedPacket(0, len(payload), zlibPayload), requireError},
 	}
 	for _, c := range cases {
@@ -794,6 +803,30 @@ func TestCompressedReaderRejectsABrokenPacket(t *testing.T) {
 
 func requireError(t *testing.T, err error) {
 	require.Error(t, err)
+}
+
+func corruptChecksum(compressed []byte) []byte {
+	corrupt := bytes.Clone(compressed)
+	corrupt[len(corrupt)-1] ^= 0xff
+	return corrupt
+}
+
+func TestCompressedReaderZlibReadsOnePayload(t *testing.T) {
+	first := make([]byte, 256*1024)
+	for i := range first {
+		first[i] = byte(rand.IntN(256))
+	}
+	compressed := deflate(t, first)
+	in := bytes.NewBuffer(compressedPacket(0, len(first), compressed))
+	in.Write(compressedPacket(1, 0, []byte{'z'}))
+
+	seq := uint8(0)
+	cr := newCompressedReader(in, mysql.CompressionZlib, &seq)
+	got := make([]byte, len(first)+1)
+	_, err := io.ReadFull(cr, got)
+	require.NoError(t, err)
+	require.Equal(t, append(first, 'z'), got)
+	require.Zero(t, in.Len())
 }
 
 func BenchmarkCompressedReaderZstd(b *testing.B) {
