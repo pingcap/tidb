@@ -523,7 +523,7 @@ func (cr *compressedReader) readPacket() ([]byte, error) {
 	compressedLength, sequence, uncompressedLength := uint24(header[0:3]), header[3], uint24(header[4:7])
 	if sequence != *cr.compressedSequence {
 		return nil, server_err.ErrInvalidSequence.GenWithStack(
-			"invalid compressed sequence, received %d while expecting %d", sequence, cr.compressedSequence)
+			"invalid compressed sequence, received %d while expecting %d", sequence, *cr.compressedSequence)
 	}
 	*cr.compressedSequence++
 	if uncompressedLength == 0 {

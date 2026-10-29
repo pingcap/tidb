@@ -773,6 +773,7 @@ func TestCompressedReaderRejectsABrokenPacket(t *testing.T) {
 		}},
 		{"wrong sequence", mysql.CompressionZlib, compressedPacket(1, 0, []byte{'a'}), func(t *testing.T, err error) {
 			require.True(t, server_err.ErrInvalidSequence.Equal(err), "%v", err)
+			require.ErrorContains(t, err, "received 1 while expecting 0")
 		}},
 		{"short uncompressed payload", mysql.CompressionZlib, compressedPacket(0, 0, []byte("abcd"))[:9], requireError},
 		{"short zlib payload", mysql.CompressionZlib, compressedPacket(0, len(payload), zlibPayload)[:20], requireError},
