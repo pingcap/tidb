@@ -32,6 +32,8 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::cluster_session_node;
 pub(crate) use tidb_session::domain::configured_user_store;
 mod client_socket;
+pub mod server_errors;
+pub mod plugin_errors;
 pub mod column_convert;
 pub mod connection_resultset;
 mod connection_writers;

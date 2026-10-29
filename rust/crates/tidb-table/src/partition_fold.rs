@@ -193,7 +193,7 @@ pub fn build_list_values(
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+            &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
     }
@@ -213,7 +213,7 @@ pub fn build_list_values_with_unsigned(
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+            &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
     }
@@ -290,13 +290,13 @@ pub fn build_list_values_with_unsigned(
             }
             PartitionDefinitionClause::LessThan(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                    &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
                         .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                         .generate_with_stack_by_args(&["LIST".into()]),
                 ))
             }

@@ -37,6 +37,7 @@
 //! root statement envelope stays here; session/system-variable payloads live
 //! under their source-owned statement modules.
 
+pub mod ast_errors;
 #[path = "stmt/admin.rs"]
 mod admin;
 #[path = "stmt/analyze.rs"]

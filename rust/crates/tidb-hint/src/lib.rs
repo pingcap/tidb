@@ -15,6 +15,7 @@
 //! Optimizer-hint interpretation and AST hint transfer, transcreated from
 //! pinned Go package `pkg/util/hint`.
 
+pub mod hint_errors;
 mod plan;
 mod processor;
 mod query_block;

@@ -47,7 +47,7 @@ fn password_validation_error(error: PwdError<VarError>) -> DriverError {
             "invalid validate_password numeric setting: {error}"
         ))),
         PwdError::NotValid(reason) => DriverError::from(
-            tidb_error::catalog::variable::ERR_NOT_VALID_PASSWORD
+            tidb_variable::variable_errors::ERR_NOT_VALID_PASSWORD
                 .generate_with_stack_by_args(&[reason.into()]),
         ),
     }
@@ -151,7 +151,7 @@ impl PasswordOrLockOptions {
                 Option_::Expire(Expire::Interval(days)) => {
                     if *days <= 0 || *days > MAX_PASSWORD_EXPIRE_INTERVAL_DAYS {
                         return Err(DriverError::from(
-                            tidb_error::catalog::types::ERR_WRONG_VALUE2
+                            tidb_datatype::types_errors::ERR_WRONG_VALUE2
                                 .generate_with_stack_by_args(&[
                                     "DAY".into(),
                                     (*days).to_string().into(),
@@ -2193,7 +2193,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 ));
             }
             return Err(DriverError::from(
-                tidb_error::catalog::privileges::ERR_NONEXISTING_GRANT
+                tidb_privilege::privileges_errors::ERR_NONEXISTING_GRANT
                     .fast_generate_by_args(&["root".into(), "%".into()]),
             ));
         }
@@ -2267,7 +2267,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             registry.show_grants(&user, &host, &roles, self.session_vars().sql_mode())
         else {
             return Err(DriverError::from(
-                tidb_error::catalog::privileges::ERR_NONEXISTING_GRANT
+                tidb_privilege::privileges_errors::ERR_NONEXISTING_GRANT
                     .fast_generate_by_args(&[user.into(), host.into()]),
             ));
         };

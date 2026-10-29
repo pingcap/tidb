@@ -368,7 +368,7 @@ fn func_call_default(
             }
             let [Expr::Column(path)] = args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["nextval".into()]),
                 ));
             };
@@ -400,7 +400,7 @@ fn func_call_default(
         "vec_from_text" => {
             if args.len() != 1 {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["vec_from_text".into()]),
                 ));
             }
@@ -411,7 +411,7 @@ fn func_call_default(
         "rand" => {
             if args.len() > 1 {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["rand".into()]),
                 ));
             }
@@ -424,7 +424,7 @@ fn func_call_default(
         "uuid" => {
             if !args.is_empty() {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["uuid".into()]),
                 ));
             }
@@ -437,7 +437,7 @@ fn func_call_default(
         "uuid_to_bin" => {
             if !(1..=2).contains(&args.len()) {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["uuid_to_bin".into()]),
                 ));
             }
@@ -450,7 +450,7 @@ fn func_call_default(
         "date_format" => {
             let [now, format] = args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["date_format".into()]),
                 ));
             };
@@ -465,7 +465,7 @@ fn func_call_default(
             };
             if !now_args.is_empty() {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["now".into()]),
                 ));
             }
@@ -495,7 +495,7 @@ fn func_call_default(
         "replace" => {
             let [source, _, _] = args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["replace".into()]),
                 ));
             };
@@ -514,7 +514,7 @@ fn func_call_default(
             };
             let [uuid] = upper_args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["upper".into()]),
                 ));
             };
@@ -529,7 +529,7 @@ fn func_call_default(
             };
             if !uuid_args.is_empty() {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["uuid".into()]),
                 ));
             }
@@ -542,7 +542,7 @@ fn func_call_default(
         "upper" => {
             let [substring] = args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["upper".into()]),
                 ));
             };
@@ -557,7 +557,7 @@ fn func_call_default(
             };
             let [user, separator, _] = substring_args else {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["substring_index".into()]),
                 ));
             };
@@ -572,7 +572,7 @@ fn func_call_default(
             };
             if !user_args.is_empty() {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["user".into()]),
                 ));
             }
@@ -603,7 +603,7 @@ fn func_call_default(
         "str_to_date" => {
             if args.len() != 2 {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["str_to_date".into()]),
                 ));
             }
@@ -621,7 +621,7 @@ fn func_call_default(
         "json_object" => {
             if !args.len().is_multiple_of(2) {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["json_object".into()]),
                 ));
             }
@@ -639,7 +639,7 @@ fn func_call_default(
         "json_quote" => {
             if args.len() != 1 {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                         .generate_with_stack_by_args(&["json_quote".into()]),
                 ));
             }

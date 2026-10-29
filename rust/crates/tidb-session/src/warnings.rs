@@ -271,7 +271,7 @@ impl Session {
             // A class-less diagnostic is Go's hint refusal (8061).
             let proto = diagnostic
                 .terror
-                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR);
+                .unwrap_or(&tidb_parser::parser_errors::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR);
             self.append_sql_warning(SqlWarning::of(
                 crate::WarningLevel::Warning,
                 proto,
@@ -282,7 +282,7 @@ impl Session {
             // Go lexer `toDecimal`: the parser's `types.ErrTruncatedWrongValue`.
             self.append_sql_warning(SqlWarning::of(
                 crate::WarningLevel::Warning,
-                &tidb_error::catalog::parser_types::ERR_TRUNCATED_WRONG_VALUE,
+                &tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE,
                 message,
             ));
         }

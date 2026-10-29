@@ -17,6 +17,8 @@ nextgen = ["tidb-config/nextgen"]
 workspace = true
 
 [dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-partialjson = { path = "../tidb-partialjson" }
@@ -28,7 +30,6 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-dxf = { path = "../tidb-dxf" }
-tidb-error = { path = "../tidb-error" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

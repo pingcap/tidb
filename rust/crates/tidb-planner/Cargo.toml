@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
+tidb-autoid = { path = "../tidb-autoid" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }

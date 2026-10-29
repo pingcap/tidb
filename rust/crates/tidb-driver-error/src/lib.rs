@@ -114,7 +114,7 @@ mod source_tests {
 
     #[test]
     fn region_unavailable_uses_tidb_error_code() {
-        let error = DriverError::from(tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE.generate_with_stack_by_args(&[])).to_mysql_error();
+        let error = DriverError::from(tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE.generate_with_stack_by_args(&[])).to_mysql_error();
         assert_eq!(error.code, tidb_errno::errcode::ErrRegionUnavailable);
         assert_eq!(error.state, *b"HY000");
         assert_eq!(error.message, "Region is unavailable");
@@ -144,7 +144,7 @@ impl From<StorageError> for DriverError {
     fn from(error: StorageError) -> Self {
         match error {
             StorageError::Sql(error) => Self::Mysql(error),
-            StorageError::Retryable(_) => tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE
+            StorageError::Retryable(_) => tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE
                 .generate_with_stack_by_args(&[])
                 .into(),
             other => Self::Exec(ExecError::Internal(other.to_string().into())),

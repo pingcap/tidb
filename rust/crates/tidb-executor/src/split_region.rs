@@ -690,7 +690,7 @@ impl ValueConverter<'_> {
             return Err(DriverError::Mysql(MysqlError::from_sql_error(reported)));
         };
         Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
+            &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
                 "Incorrect value: '{}' for column '{}'",
                 truncate_chars(&text, 128),
                 truncate_chars(column_name, 192)

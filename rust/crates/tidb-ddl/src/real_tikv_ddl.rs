@@ -2216,7 +2216,7 @@ mod tests {
     #[test]
     fn session_ddl_commit_classification_preserves_determinate_errors() {
         let conflict = LockSqlError::from(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
+            &tidb_kv::kv_errors::ERR_WRITE_CONFLICT
                 .generate_with_stack("write conflict at schema version key"),
         ));
         assert!(matches!(

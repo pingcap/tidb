@@ -279,7 +279,7 @@ pub(crate) fn weight_string(
             let length = usize::try_from(length).unwrap_or(0);
             if length < bytes.len() {
                 ctx.append_go_warning(
-                    &tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE,
+                    &crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE,
                     &format!(
                         "Truncated incorrect BINARY({length}) value: '{}'",
                         tidb_datatype::warning_subject_byte_cap(&String::from_utf8_lossy(&bytes))

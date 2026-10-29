@@ -368,7 +368,7 @@ fn store_facade_preserves_schema_error_and_never_publishes_invalid_schema() {
             assert!(check_ts > 0);
             assert_eq!(table_ids, &[42]);
             Err(SchemaLeaseError {
-                error: tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED
+                error: tidb_domain::domain_errors::ERR_INFO_SCHEMA_CHANGED
                     .generate_with_stack("schema changed"),
             })
         }

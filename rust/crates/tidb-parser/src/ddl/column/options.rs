@@ -103,7 +103,7 @@ impl Parser {
                 };
                 let collation = canonical_collation(&name).ok_or_else(|| {
                     self.err_coded(
-                        &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                        &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                         &format!("Unknown collation: '{name}'"),
                     )
                 })?;

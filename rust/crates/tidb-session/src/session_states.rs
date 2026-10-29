@@ -86,19 +86,19 @@ impl Session {
     pub fn encode_session_states(&self) -> Result<SessionStates, DriverError> {
         if self.in_transaction() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&["session has an active transaction".into()]),
             )));
         }
         if !self.local_temporary_tables.is_empty() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&["session has local temporary tables".into()]),
             )));
         }
         if self.advisory_locks.has_locks() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&["session has advisory locks".into()]),
             )));
         }
@@ -106,19 +106,19 @@ impl Session {
         // cannot move with it.
         if self.has_locked_tables() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&["session has locked tables".into()]),
             )));
         }
         if self.vars.sandbox_mode {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&["session is in sandbox mode".into()]),
             )));
         }
         if let Some(reason) = self.protocol_session_states.cannot_migrate {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                     .generate_with_stack_by_args(&[reason.to_string().into()]),
             )));
         }
@@ -144,7 +144,7 @@ impl Session {
                 };
                 if value != default {
                     return Err(DriverError::Mysql(MysqlError::from_terror(
-                        &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                        &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
                             .generate_with_stack_by_args(&[(format!(
                                 "session has set invisible variable '{}'",
                                 definition.name

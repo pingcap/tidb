@@ -23,6 +23,7 @@ mod batch_getter;
 mod cache_db;
 mod checker;
 mod client;
+pub mod tikv_errors;
 pub mod client_go_metrics;
 pub mod cluster_http;
 mod counter;

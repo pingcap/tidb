@@ -134,7 +134,7 @@ impl Parser {
             [] => Ok(Some(0)),
             [b] => Ok(Some(*b)),
             _ => Err(self.err_coded(
-                &tidb_error::catalog::parser::ERR_WRONG_ARGUMENTS,
+                &crate::parser_errors::ERR_WRONG_ARGUMENTS,
                 "Incorrect arguments to ESCAPE",
             )),
         }

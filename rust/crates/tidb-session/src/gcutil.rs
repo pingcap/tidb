@@ -72,7 +72,7 @@ pub(crate) fn driver_error(error: tidb_gcutil::Error<DriverError>) -> DriverErro
     match error {
         tidb_gcutil::Error::Context(error) => error,
         tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => DriverError::from(
-            tidb_error::catalog::variable::ERR_SNAPSHOT_TOO_OLD
+            tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD
                 .generate_with_stack_by_args(&[safe_point_time.into()]),
         ),
         other => DriverError::unsupported(other.to_string()),

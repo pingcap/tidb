@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB sessionctx/sessionstates: the session state a migration carries (Rust rewrite)."
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-context = { path = "../tidb-context" }
@@ -19,7 +20,6 @@ openssl = "0.10.81"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

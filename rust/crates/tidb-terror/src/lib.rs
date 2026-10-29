@@ -18,6 +18,7 @@
 //! registration and freeze behavior, RFC identities, MySQL conversion,
 //! compatible JSON, equality, logging/termination helpers, and stack capture.
 
+pub mod catalog_support;
 mod mysql_error;
 
 pub use mysql_error::MysqlError;

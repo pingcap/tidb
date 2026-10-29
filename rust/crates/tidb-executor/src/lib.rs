@@ -43,6 +43,9 @@
 //! Ordinary executor timing and row counts use the statement's Go-compatible
 //! `RuntimeStatsColl` when execution-info collection is enabled.
 
+pub mod executor_errors;
+pub mod consistency_errors;
+pub mod admin_errors;
 pub mod handle_range;
 pub mod exec_stmt_observation;
 pub mod adapter;

@@ -565,7 +565,7 @@ impl PreparedStatementRegistry {
         if statement.bound_params_too_large {
             return Some(SqlQueryError::from(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::servererr::ERR_NET_PACKET_TOO_LARGE
+                    &tidb_server_err::servererr_errors::ERR_NET_PACKET_TOO_LARGE
                         .generate_with_stack_by_args(&[]),
                 ),
             ));
@@ -1866,7 +1866,7 @@ fn log_dispatch_failure<S: QuerySession>(
     error: &SqlQueryError,
 ) {
     if error.identity
-        == Some(tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity())
+        == Some(tidb_txnkv::tikv_errors::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity())
     {
         tidb_log::debug(
             "Expected error for FOR UPDATE NOWAIT",
@@ -2378,7 +2378,7 @@ fn run_connection_commands<S: QuerySession>(
                                         if capabilities & CLIENT_LOCAL_FILES == 0 {
                                             let error = SqlQueryError::from(
                                                 tidb_terror::MysqlError::from_terror(
-                                                    &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND
+                                                    &tidb_server_err::servererr_errors::ERR_NOT_ALLOWED_COMMAND
                                                         .generate_with_stack_by_args(&[]),
                                                 ),
                                             );
@@ -3337,7 +3337,7 @@ mod dispatch_failure_log_tests {
 
         let duplicate =
             SqlQueryError::new(1062, *b"23000", "Duplicate entry '1' for key 't.PRIMARY'")
-                .with_identity(Some(tidb_error::catalog::kv::ERR_KEY_EXISTS.identity()));
+                .with_identity(Some(tidb_kv::kv_errors::ERR_KEY_EXISTS.identity()));
         let mut payload = vec![tidb_mysql::consts::ComQuery];
         payload.extend_from_slice(b"insert into t values (1)");
         let registry = PreparedStatementRegistry::default();
@@ -3360,7 +3360,7 @@ mod dispatch_failure_log_tests {
         assert!(line.contains("user:root"), "{line}");
 
         let nowait = SqlQueryError::new(3572, *b"HY000", "NOWAIT").with_identity(Some(
-            tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
+            tidb_txnkv::tikv_errors::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
         ));
         let before = sink.string().len();
         log_dispatch_failure(

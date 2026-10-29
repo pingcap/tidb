@@ -1917,7 +1917,7 @@ impl Partial {
                 // the fatal 3158 (oracle g-group: `JSON_OBJECTAGG(NULL, 1)`).
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY
+                        &tidb_datatype::types_errors::ERR_JSON_DOCUMENT_NULL_KEY
                             .generate_with_stack_by_args(&[]),
                     )
                     .from_evaluation(),
@@ -1933,7 +1933,7 @@ impl Partial {
             (Partial::JsonObjectAgg(_, _, true), Some(_)) => {
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET
+                        &tidb_datatype::types_errors::ERR_INVALID_JSON_CHARSET
                             .generate_with_stack_by_args(&[("binary".to_owned()).into()]),
                     ),
                 ));
@@ -5521,7 +5521,7 @@ mod tests {
             assert!(matches!(
                 err,
                 ExecError::Mysql(ref error)
-                    if error.equal(&tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET)
+                    if error.equal(&tidb_datatype::types_errors::ERR_INVALID_JSON_CHARSET)
                         && error.message.contains("'binary'")
             ));
         }

@@ -337,7 +337,7 @@ impl PrivilegeRegistry {
             if count > 0 || days > 0 {
                 if account.iter().any(|row| row.timestamp == timestamp) {
                     return Err(tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::kv::ERR_KEY_EXISTS.generate_with_stack_by_args(&[
+                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.generate_with_stack_by_args(&[
                             format!("{host}-{user}-{timestamp}").into(),
                             "mysql.password_history.PRIMARY".into(),
                         ]),

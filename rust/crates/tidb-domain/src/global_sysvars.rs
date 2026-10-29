@@ -606,7 +606,7 @@ impl GlobalSysvars {
         }
         let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
@@ -697,13 +697,13 @@ impl GlobalSysvars {
     pub fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "SESSION".into(),
                 ]),
@@ -949,13 +949,13 @@ impl GlobalSysvars {
     pub fn set_instance(&self, name: &str, value: String) -> Result<bool, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.is_read_only() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
@@ -1259,13 +1259,13 @@ impl GlobalSysvars {
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1273,7 +1273,7 @@ impl GlobalSysvars {
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
@@ -1560,13 +1560,13 @@ impl GlobalSysvars {
     pub fn reset(&self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1574,7 +1574,7 @@ impl GlobalSysvars {
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
@@ -1596,13 +1596,13 @@ impl GlobalSysvars {
     pub fn reset_instance(&self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1610,7 +1610,7 @@ impl GlobalSysvars {
         }
         if !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }

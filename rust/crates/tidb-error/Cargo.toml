@@ -25,5 +25,30 @@ name = "all"
 path = "tests/all.rs"
 
 [dev-dependencies]
+tidb-domain = { path = "../tidb-domain" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-hint = { path = "../tidb-hint" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-privilege = { path = "../tidb-privilege" }
+tidb-server = { path = "../tidb-server" }
+tidb-session = { path = "../tidb-session" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-table = { path = "../tidb-table" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
+tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-server-err = { path = "../tidb-server-err" }

@@ -38,5 +38,6 @@ tokio.workspace = true
 async-trait.workspace = true
 
 [dev-dependencies]
+tidb-domain = { path = "../tidb-domain" }
 flate2.workspace = true
 tidb-error = { path = "../tidb-error" }

@@ -158,7 +158,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                             return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()))
                         }
                         crate::ErrorLevel::Warn => ctx.append_go_warning(
-                            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                             &format!(
                                 "Truncated incorrect DECIMAL value: '{}'",
                                 tidb_datatype::format_float_g_shortest(value)
@@ -271,7 +271,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 match ctx.truncate_level() {
                                 crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
                                 crate::ErrorLevel::Warn => ctx.append_go_warning(
-                                    &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                                    &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                                     &format!("Truncated incorrect DECIMAL value: '{value}'"),
                                 ),
                                 crate::ErrorLevel::Ignore => {}
@@ -1155,7 +1155,7 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
             // `cast(1.5 as unsigned)` -> 2 with no warning at all.
             if d.round_to_i64_saturating() < 0 {
                 ctx.append_go_warning(
-                    &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                    &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                     &format!("Truncated incorrect DECIMAL value: '{d}'"),
                 );
             }
@@ -1194,7 +1194,7 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // WARNING rather than a statement error, because
         // `builtinCastRealAsIntSig` routes it through `HandleOverflow`.
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_OVERFLOW,
+            &tidb_datatype::types_errors::ERR_OVERFLOW,
             &format!(
                 "constant {} overflows bigint",
                 tidb_datatype::format_float_g_shortest(rounded)
@@ -1210,7 +1210,7 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // statement context turns that status into the 1690 warning used by
         // `builtinCastRealAsIntSig`.
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_OVERFLOW,
+            &tidb_datatype::types_errors::ERR_OVERFLOW,
             &format!(
                 "constant {} overflows bigint",
                 tidb_datatype::format_float_g_shortest(rounded)
@@ -1302,7 +1302,7 @@ fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
             let rounded = value.round_ties_even();
             if !(i64::MIN as f64..=i64::MAX as f64).contains(&rounded) {
                 ctx.append_go_warning(
-                    &tidb_error::catalog::types::ERR_OVERFLOW,
+                    &tidb_datatype::types_errors::ERR_OVERFLOW,
                     &format!(
                         "constant {} overflows bigint",
                         tidb_datatype::format_float_g_shortest(rounded)
@@ -1311,7 +1311,7 @@ fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
             }
         }
         Datum::Decimal(value) if value.round_to_i64().is_none() => ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
             &format!("Truncated incorrect DECIMAL value: '{value}'"),
         ),
         Datum::String(value) => {
@@ -1342,7 +1342,7 @@ fn report_positive_string_signed_complement(text: &str, ctx: &dyn crate::Columns
         .is_ok_and(|value| value > i64::MAX as u64)
     {
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_CAST_AS_SIGNED_OVERFLOW,
+            &tidb_datatype::types_errors::ERR_CAST_AS_SIGNED_OVERFLOW,
             "Cast to signed converted positive out-of-range integer to its negative complement",
         );
     }
@@ -1430,7 +1430,7 @@ fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
         return;
     }
     ctx.append_go_warning(
-        &tidb_error::catalog::types::ERR_CAST_NEG_INT_AS_UNSIGNED,
+        &tidb_datatype::types_errors::ERR_CAST_NEG_INT_AS_UNSIGNED,
         "Cast to unsigned converted negative integer to it's positive complement",
     );
 }
@@ -1460,7 +1460,7 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
         // CAST('1e300' AS DECIMAL)). The value is still retained (saturated);
         // the production clamp below reports its own formatted row.
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_OVERFLOW,
+            &tidb_datatype::types_errors::ERR_OVERFLOW,
             "%s value is out of range in '%s'",
         );
     }
@@ -1473,7 +1473,7 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
         )
     ) {
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
             &format!(
                 "Truncated incorrect DECIMAL value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(trimmed)
@@ -1785,7 +1785,7 @@ fn cast_to_time_value(
         };
         if adjusted {
             ctx.append_go_warning(
-                &tidb_error::catalog::types::ERR_TIMESTAMP_IN_DST_TRANSITION,
+                &tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION,
                 &format!("Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'", value.core_time(), zone.dag_zone().0),
             );
         }
@@ -1931,7 +1931,7 @@ fn cast_to_time_value(
     };
     if truncated {
         ctx.append_go_warning(
-            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
             &format!(
                 "Truncated incorrect datetime value: '{}'",
                 tidb_datatype::warning_subject_byte_cap(&s)

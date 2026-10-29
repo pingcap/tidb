@@ -2153,7 +2153,7 @@ fn expression_default_origin(
         )
     {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED,
+            &tidb_datatype::types_errors::ERR_TRUNCATED,
         ));
     }
     let value = converted.value;

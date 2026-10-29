@@ -11,6 +11,6 @@ description = "TiDB pkg/util: the root package (Rust)."
 workspace = true
 
 [dependencies]
+tidb-parser = { path = "../tidb-parser" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }

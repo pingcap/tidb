@@ -13,6 +13,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
+tidb-charset = { path = "../tidb-charset" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-errno = { path = "../tidb-errno" }

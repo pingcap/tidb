@@ -196,7 +196,7 @@ fn build_table_partitioning_inner(
     if partitioning.subpartition.is_some() {
         if matches!(method.kind, PartitionType::HASH | PartitionType::KEY) {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_SUBPARTITION.generate_with_stack_by_args(&[]),
+                &tidb_ast::ast_errors::ERR_SUBPARTITION.generate_with_stack_by_args(&[]),
             ));
         }
         // Go `FastGen(fmt.Sprintf(...))`: the text replaces the template.
@@ -290,7 +290,7 @@ fn build_table_partitioning_inner(
         check_partition_columns_unique(&dependencies)?;
         if definitions.is_empty() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_NO_PARTS
+                &tidb_ast::ast_errors::ERR_NO_PARTS
                     .generate_with_stack_by_args(&["partitions".into()]),
             ));
         }
@@ -518,7 +518,7 @@ fn build_table_partitioning_inner(
     // no SQL text reaches it with zero definitions.
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::ast::ERR_NO_PARTS
+            &tidb_ast::ast_errors::ERR_NO_PARTS
                 .generate_with_stack_by_args(&["partitions".into()]),
         ));
     }

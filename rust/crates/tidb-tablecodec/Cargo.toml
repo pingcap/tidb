@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }
 chrono.workspace = true
 chrono-tz.workspace = true

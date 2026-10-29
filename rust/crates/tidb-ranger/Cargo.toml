@@ -14,7 +14,6 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-hack = { path = "../tidb-hack" }

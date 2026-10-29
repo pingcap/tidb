@@ -28,9 +28,9 @@ fn setter_scope_contract_matches_go() {
                 .set_system(definition.name, definition.value.to_owned())
                 .expect_err("SESSION must reject a non-session variable");
             assert!(
-                error.equal(&tidb_error::catalog::variable::ERR_INCORRECT_SCOPE)
-                    || error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE)
-                    || error.equal(&tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR),
+                error.equal(&tidb_variable::variable_errors::ERR_INCORRECT_SCOPE)
+                    || error.equal(&tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE)
+                    || error.equal(&tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR),
                 "unexpected SESSION error for {}: {error:?}",
                 definition.name
             );
@@ -40,8 +40,8 @@ fn setter_scope_contract_matches_go() {
                 .set_global(definition.name, definition.value.to_owned())
                 .expect_err("GLOBAL must reject a non-global/non-instance variable");
             assert!(
-                error.equal(&tidb_error::catalog::variable::ERR_INCORRECT_SCOPE)
-                    || error.equal(&tidb_error::catalog::variable::ERR_LOCAL_VARIABLE),
+                error.equal(&tidb_variable::variable_errors::ERR_INCORRECT_SCOPE)
+                    || error.equal(&tidb_variable::variable_errors::ERR_LOCAL_VARIABLE),
                 "unexpected GLOBAL error for {}: {error:?}",
                 definition.name
             );

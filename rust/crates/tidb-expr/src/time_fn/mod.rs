@@ -911,7 +911,7 @@ fn number_arg(value: &Datum, cols: &dyn Columns) -> Result<Option<f64>, EvalErro
                 let text = v.as_utf8().unwrap_or_default();
                 let text = text.trim();
                 cols.append_go_warning(
-                    &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                    &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                     &format!("Truncated incorrect DOUBLE value: '{text}'"),
                 );
                 Some(0.0)
@@ -928,7 +928,7 @@ fn number_arg(value: &Datum, cols: &dyn Columns) -> Result<Option<f64>, EvalErro
                     let text = std::str::from_utf8(v).unwrap_or_default();
                     let text = text.trim();
                     cols.append_go_warning(
-                        &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                        &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                         &format!("Truncated incorrect DOUBLE value: '{text}'"),
                     );
                     Some(0.0)
@@ -1046,7 +1046,7 @@ fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if (magnitude as u64) / 3600 > 838 {
         // Go's `errTruncatedWrongValue` is the expression package's.
         cols.handle_truncate_error(
-            tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
+            crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
                 "Truncated incorrect time value: '{}'",
                 tidb_goruntime::go_strconv::format_float(magnitude, b'f', -1, 64)
             )),

@@ -476,7 +476,7 @@ use tidb_txnkv::Key;
         assert!(matches!(
             error,
             tidb_table::kv_table::KvTableError::Mysql(ref error)
-                if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+                if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
         ));
         assert!(buffer.take_presume_not_exists().is_empty());
 
@@ -505,7 +505,7 @@ use tidb_txnkv::Key;
             matches!(
                 table.insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true),
                 Err(tidb_table::kv_table::KvTableError::Mysql(error))
-                    if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+                    if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
                         && error.message.starts_with("Duplicate entry '7' for key")
             ),
             "a duplicate staged by this transaction is checked locally"
@@ -561,7 +561,7 @@ use tidb_txnkv::Key;
             for error in [
                 StorageError::Backend("index unavailable".to_owned()),
                 StorageError::Retryable("region changed".to_owned()),
-                StorageError::Sql(crate::MysqlError::from_terror(&tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
+                StorageError::Sql(crate::MysqlError::from_terror(&tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
             ] {
                 let (store, snapshot, buffer) = storage(&[]);
                 let mut table = KvTable::with_storage(

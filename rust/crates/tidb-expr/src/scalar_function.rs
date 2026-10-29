@@ -2202,7 +2202,7 @@ impl ScalarFunction {
                     let mut timeout = crate::arg_eval_type::eval_int(&int_timeout)?.unwrap_or(0);
                     if !(0..=MAX_ADVISORY_LOCK_TIMEOUT_SECS).contains(&timeout) {
                         ctx.append_go_warning(
-                            &tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE,
+                            &crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE,
                             &format!("Truncated incorrect get_lock value: '{timeout}'"),
                         );
                         timeout = MAX_ADVISORY_LOCK_TIMEOUT_SECS;

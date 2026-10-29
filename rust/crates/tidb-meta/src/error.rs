@@ -238,7 +238,9 @@ impl MetaError {
     /// class and code travel with the value.
     #[must_use]
     pub fn proto(&self) -> Option<&'static tidb_terror::TerrorError> {
-        use tidb_error::catalog::{kv, meta, structure};
+        use tidb_kv::kv_errors as kv;
+        use crate::meta_errors as meta;
+        use crate::structure_errors as structure;
         Some(match self {
             Self::InvalidFieldPrefix(_) => &meta::ERR_INVALID_STRING,
             Self::UnexpectedTypeFlag(_) => &structure::ERR_INVALID_HASH_KEY_FLAG,

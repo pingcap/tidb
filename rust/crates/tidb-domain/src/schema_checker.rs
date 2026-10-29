@@ -178,8 +178,8 @@ impl SchemaCheckError {
     #[must_use]
     pub fn proto(self) -> &'static tidb_terror::TerrorError {
         match self {
-            Self::InfoSchemaChanged => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED,
-            Self::InfoSchemaExpired => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED,
+            Self::InfoSchemaChanged => &crate::domain_errors::ERR_INFO_SCHEMA_CHANGED,
+            Self::InfoSchemaExpired => &crate::domain_errors::ERR_INFO_SCHEMA_EXPIRED,
         }
     }
 

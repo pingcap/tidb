@@ -751,7 +751,7 @@ pub(crate) fn bin(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, Eva
     if let Some(text) = raw {
         if radix_truncated(text) {
             ctx.append_go_warning(
-                &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                 &format!(
                     "Truncated incorrect INTEGER value: '{}'",
                     String::from_utf8_lossy(text)
@@ -1627,7 +1627,7 @@ pub(crate) fn bit_count(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
     if let Some(text) = raw {
         if radix_truncated(text) {
             ctx.append_go_warning(
-                &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                 &format!(
                     "Truncated incorrect INTEGER value: '{}'",
                     String::from_utf8_lossy(text)
@@ -1792,7 +1792,7 @@ const FORMAT_MAX_DECIMALS: i64 = 30;
 /// Go `errUnknownLocale` (`ErrUnknownLocale`, 1649).
 fn append_unknown_locale_warning(ctx: &dyn crate::Columns, locale: &str) {
     ctx.append_go_warning(
-        &tidb_error::catalog::expression::ERR_UNKNOWN_LOCALE,
+        &crate::expression_errors::ERR_UNKNOWN_LOCALE,
         &format!("Unknown locale: '{locale}'"),
     );
 }
@@ -1981,7 +1981,7 @@ pub(crate) fn char_func_with_context(
     if let Some(error) = error {
         // Go `charset.ErrInvalidCharacterString`.
         ctx.append_go_warning(
-            &tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING,
+            &tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING,
             &error.to_string(),
         );
         if ctx.strict_sql_mode() {

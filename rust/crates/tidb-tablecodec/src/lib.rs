@@ -17,6 +17,7 @@
 //! The crate sits above the dependency-leaf datum codecs and canonical KV
 //! handles, preserving Go's real `util/codec -> kv -> tablecodec` direction.
 
+pub mod tablecodec_errors;
 mod table_index;
 mod table_row;
 

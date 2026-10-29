@@ -26,6 +26,7 @@
 
 #![allow(missing_docs)]
 
+pub mod statistics_errors;
 pub mod analysis_policy;
 pub mod analyze_jobs;
 pub mod analyze_version_policy;

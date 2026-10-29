@@ -232,16 +232,16 @@ impl SessionVars {
                 // the same 1235 row.
                 self.append_stmt_warning(
                     VarWarningLevel::Error,
-                    &tidb_error::catalog::variable::ERR_FUNCTIONS_NOOP_IMPL,
+                    &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL,
                     message,
                 );
                 Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::variable::ERR_FUNCTIONS_NOOP_IMPL
+                    &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL
                         .generate_with_stack_by_args(&[(clause).into()]),
                 ))
             }
             NoopFuncsMode::Warn => {
-                self.append_stmt_warning(VarWarningLevel::Warning, &tidb_error::catalog::variable::ERR_FUNCTIONS_NOOP_IMPL, message);
+                self.append_stmt_warning(VarWarningLevel::Warning, &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL, message);
                 Ok(())
             }
         }
@@ -292,13 +292,13 @@ impl SessionVars {
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
         if !skip {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNSUPPORTED_ISOLATION_LEVEL
+                &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL
                     .generate_with_stack_by_args(&[(normalized).into()]),
             ));
         }
         self.append_stmt_warning(
             VarWarningLevel::Warning,
-            &tidb_error::catalog::variable::ERR_UNSUPPORTED_ISOLATION_LEVEL,
+            &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL,
             format!(
                 "The isolation level '{normalized}' is not supported. Set \
                  tidb_skip_isolation_level_check=1 to skip this error"
@@ -366,7 +366,7 @@ impl SessionVars {
             }
         }
         Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::variable::ERR_READ_ONLY.generate_with_stack_by_args(&[
+            &crate::variable_errors::ERR_READ_ONLY.generate_with_stack_by_args(&[
                 "SESSION".into(),
                 ("max_allowed_packet".to_owned()).into(),
                 "GLOBAL".into(),
@@ -410,7 +410,7 @@ impl SessionVars {
         if normalized.value == "static" {
             self.append_stmt_warning(
                 VarWarningLevel::Warning,
-                &tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
+                &crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
                 "static prune mode is deprecated and will be removed in the future release."
                     .to_owned(),
             );
@@ -478,7 +478,7 @@ impl SessionVars {
         if normalized.value == "OFF" {
             self.append_stmt_warning(
                 VarWarningLevel::Warning,
-                &tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
+                &crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
                 "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
             );
         }
@@ -527,13 +527,13 @@ impl SessionVars {
             // which is why `SHOW WARNINGS` after `set ... = off` reports the
             // deprecation warning AND the error.
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
                 "tidb_enable_list_partition is deprecated and will be removed in a future \
                  release.",
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_tiflash_pipeline_model") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
                 "tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release.",
             ))
         } else if name.eq_ignore_ascii_case("tidb_mpp_store_fail_ttl") {
@@ -543,7 +543,7 @@ impl SessionVars {
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_column_tracking") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
                 "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now.",
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_exchange_partition") && normalized == "OFF"
@@ -555,7 +555,7 @@ impl SessionVars {
         } else if name.eq_ignore_ascii_case("tidb_enable_new_cost_interface") && normalized == "OFF"
         {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'OFF' is deprecated and will be removed in a future release. Please use ON instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_tiflash_read_for_write_stmt")
@@ -569,7 +569,7 @@ impl SessionVars {
             && normalized == "INT_ONLY"
         {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_global_index") && normalized == "OFF" {
@@ -579,7 +579,7 @@ impl SessionVars {
             ))
         } else if name.eq_ignore_ascii_case("tidb_auto_analyze_partition_batch_size") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
                 "Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release.",
             ))
         } else if name.eq_ignore_ascii_case("tidb_enable_async_merge_global_stats") {
@@ -592,34 +592,34 @@ impl SessionVars {
             ))
         } else if name.eq_ignore_ascii_case("tidb_disable_txn_auto_retry") && normalized == "OFF" {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'OFF' is deprecated and will be removed in a future release. Please use ON instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_index_lookup_concurrency") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_index_serial_scan_concurrency") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'.",
             ))
         } else if name.eq_ignore_ascii_case("tidb_prepared_plan_cache_size") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'tidb_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_non_prepared_plan_cache_size") {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "'tidb_non_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead",
             ))
         } else if name.eq_ignore_ascii_case("tidb_merge_partition_stats_concurrency")
             && normalized != "1"
         {
             Some((
-                Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX),
+                Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX),
                 "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility.",
             ))
         } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
@@ -635,7 +635,7 @@ impl SessionVars {
                 })
                 .map(|_| {
                     (
-                        Some(&*tidb_error::catalog::variable::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
+                        Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT),
                         "Updating 'default_collation_for_utf8mb4' is deprecated. It will be made \
                          read-only in a future release.",
                     )
@@ -673,7 +673,7 @@ impl SessionVars {
             .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
         self.append_stmt_warning(
             VarWarningLevel::Warning,
-            &tidb_error::catalog::variable::ERR_TRUNCATED_WRONG_VALUE,
+            &crate::variable_errors::ERR_TRUNCATED_WRONG_VALUE,
             format!("Truncated incorrect {reported} value: '{original}'"),
         );
     }

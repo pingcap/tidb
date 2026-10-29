@@ -1547,7 +1547,7 @@ pub fn convert_point_in_place(
             ) = (&p.value, &converted.event)
             {
                 evaluator.append_go_warning(
-                    &tidb_error::catalog::types::ERR_TIMESTAMP_IN_DST_TRANSITION,
+                    &tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION,
                     &format!(
                         "Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'",
                         time.core_time(),

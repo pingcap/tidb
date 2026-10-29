@@ -14,6 +14,7 @@
 
 //! Go `pkg/util/workloadrepo`: the cluster workload-repository worker.
 
+pub mod workloadrepo_errors;
 pub mod node;
 
 use std::fmt::Write as _;

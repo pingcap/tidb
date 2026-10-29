@@ -158,7 +158,7 @@ pub fn plan_hash_partition_management(
                     }
                 };
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                    &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
                         .generate_with_stack_by_args(&[
                             method.to_string().into(),
                             clause.to_string().into(),
@@ -183,7 +183,7 @@ pub fn plan_hash_partition_management(
             }
             if count < 1 {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_COALESCE_PARTITION_NO_PARTITION
+                    &tidb_ast::ast_errors::ERR_COALESCE_PARTITION_NO_PARTITION
                         .generate_with_stack_by_args(&[]),
                 ));
             }
@@ -642,7 +642,7 @@ pub fn plan_add_partitions(
         // definitions written out; a bare count carries none.
         tidb_ast::AddPartitionSpec::Count(_) => {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                     .generate_with_stack_by_args(&[(non_hash_partition_method(table))
                         .to_string()
                         .into()]),
@@ -651,7 +651,7 @@ pub fn plan_add_partitions(
     };
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(
+            &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(
                 &[(non_hash_partition_method(table)).to_string().into()],
             ),
         ));
@@ -668,7 +668,7 @@ pub fn plan_add_partitions(
             matches!(definition.clause, tidb_ast::PartitionDefinitionClause::None)
         }) {
             return Err(MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES
+                &tidb_ast::ast_errors::ERR_PARTITION_REQUIRES_VALUES
                     .generate_with_stack_by_args(&[method.into(), clause.into()]),
             ));
         }
@@ -1155,7 +1155,7 @@ pub fn plan_last_partition_less_than(
         }
         PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                     .generate_with_stack_by_args(&["LIST".into()]),
             ))
         }
@@ -1446,7 +1446,7 @@ pub fn plan_reorganize_partition(
         // definitions.
         if definitions.is_empty() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                     .generate_with_stack_by_args(&[(partition.kind.sql()).to_string().into()]),
             ));
         }

@@ -643,7 +643,7 @@ impl Session {
                     None => {
                         if let Some(reason) = sysvar::removed_sys_var_reason(name) {
                             return Err(var_error(tidb_terror::MysqlError::from_terror(
-                                &tidb_error::catalog::variable::ERR_VARIABLE_NO_LONGER_SUPPORTED
+                                &tidb_variable::variable_errors::ERR_VARIABLE_NO_LONGER_SUPPORTED
                                     .generate_with_stack_by_args(&[
                                         (name.to_ascii_lowercase()).into(),
                                         (reason.to_owned()).into(),
@@ -651,7 +651,7 @@ impl Session {
                             )));
                         }
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                            &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
@@ -673,7 +673,7 @@ impl Session {
                     };
                     if let Some(allowed) = incorrect_scope {
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE
+                            &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE
                                 .generate_with_stack_by_args(&[
                                     (name.to_ascii_lowercase()).into(),
                                     (allowed).into(),
@@ -684,7 +684,7 @@ impl Session {
                         && def.is_internal_session_variable()
                     {
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                            &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
@@ -929,7 +929,7 @@ impl Session {
                 }
                 Err(error)
                     if !is_fix_control
-                        && error.equal(&tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR) =>
+                        && error.equal(&tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR) =>
                 {
                     // go's SET_VAR application validates the hint's variables
                     // TWICE (the plan build and the execute pass), and each

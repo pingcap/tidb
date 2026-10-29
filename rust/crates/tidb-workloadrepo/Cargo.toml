@@ -11,6 +11,8 @@ description = "TiDB workload repository worker"
 workspace = true
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-datatype = { path = "../tidb-datatype" }

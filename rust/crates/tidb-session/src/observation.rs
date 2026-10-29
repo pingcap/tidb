@@ -850,7 +850,7 @@ impl Session {
         identity: Option<tidb_terror::TerrorIdentity>,
     ) -> String {
         if self.redact_log_mode() != "OFF"
-            && identity == Some(tidb_error::catalog::parser::ERR_PARSE.identity())
+            && identity == Some(tidb_parser::parser_errors::ERR_PARSE.identity())
         {
             return "fail to parse SQL, and must redact the whole error when enable log redaction"
                 .to_owned();

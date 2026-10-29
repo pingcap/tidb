@@ -314,7 +314,7 @@ impl Parser {
         // (`DOUBLE(10)`), while `SetStrictDoubleTypeCheck(false)` accepts it.
         if self.strict_double_type_check && name == "DOUBLE" && args.len() == 1 {
             // Go `p.syntaxError`: ErrSyntax (1149).
-            return Err(self.err_coded(&tidb_error::catalog::parser::ERR_SYNTAX, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use"));
+            return Err(self.err_coded(&crate::parser_errors::ERR_SYNTAX, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use"));
         }
         if year_type
             && args.first().is_some_and(
@@ -322,7 +322,7 @@ impl Parser {
             )
         {
             return Err(self.err_coded(
-                &tidb_error::catalog::parser::ERR_INVALID_YEAR_COLUMN_LENGTH,
+                &crate::parser_errors::ERR_INVALID_YEAR_COLUMN_LENGTH,
                 "Supports only YEAR or YEAR(4) column",
             ));
         }

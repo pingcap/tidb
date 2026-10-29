@@ -33,7 +33,7 @@ fn unique_indexes() {
     )
     .unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS),
+        error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS),
         "{error:?}"
     );
     // Captured from TiDB: the key is qualified table.index, as in
@@ -57,7 +57,7 @@ fn unique_indexes() {
         &mut catalog,
         &crate::StmtContext::for_query()
     ))
-    .is_err_and(|error| error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)));
+    .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)));
     assert_eq!(
         datum_text_for_test(
             &run_select_on(

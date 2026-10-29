@@ -22,7 +22,7 @@ use tidb_table::kv_table::KvTableError;
 fn coprocessor_cot_error_matches_go() {
     // pkg/expression/builtin_math_test.go: TestCot.
     let storage = StorageError::Sql(MysqlError::from_terror(
-        &tidb_error::catalog::types::ERR_OVERFLOW
+        &tidb_datatype::types_errors::ERR_OVERFLOW
             .generate_with_stack("DOUBLE value is out of range in 'cot(0)'"),
     ));
     let error = crate::DriverError::Exec(ExecError::from(KvTableError::from(storage)))

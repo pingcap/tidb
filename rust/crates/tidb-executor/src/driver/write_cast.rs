@@ -420,24 +420,24 @@ fn complete_typed_cast(
     let row = row + 1;
     match error.code {
         1690 if insert || update => MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+            &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE
                 .generate_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1264 if insert => MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+            &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE
                 .generate_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1406 if insert || update => MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_DATA_TOO_LONG
+            &tidb_datatype::types_errors::ERR_DATA_TOO_LONG
                 .generate_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1265 if insert => MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED
+            &tidb_datatype::types_errors::ERR_TRUNCATED
                 .generate_with_stack_by_args(&[column.into(), row.into()]),
         ),
         // Go `completeLoadErr`.
         1406 if shape == CastShape::LoadDataRow => MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED
+            &tidb_datatype::types_errors::ERR_TRUNCATED
                 .generate_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1292 if insert

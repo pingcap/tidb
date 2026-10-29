@@ -384,7 +384,7 @@ fn get_modifiable_column_job(
         && has_null(stored, col.id)?
     {
         return Err(coded_refusal(
-            &tidb_error::catalog::types::ERR_TRUNCATED,
+            &tidb_datatype::types_errors::ERR_TRUNCATED,
             format!(
                 "Data truncated for column '{}' at row 1",
                 new_col.name.lowercase()

@@ -287,7 +287,7 @@ impl Session {
         Err(DriverError::from(
             (warning
                 .terror
-                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT))
+                .unwrap_or(&tidb_parser::parser_errors::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT))
             .generate_with_stack(message),
         ))
     }

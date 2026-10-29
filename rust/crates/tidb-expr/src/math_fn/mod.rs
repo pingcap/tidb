@@ -477,7 +477,7 @@ fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
         Some(x) if x <= 0.0 => {
             ctx.append_go_warning(
-                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                &crate::expression_errors::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
                 "Invalid argument for logarithm",
             );
             Datum::Null
@@ -500,7 +500,7 @@ fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
                 // go `builtinLog2ArgSig`: the invalid base/argument warns
                 // ErrInvalidArgumentForLogarithm (3020) on its way to NULL.
                 ctx.append_go_warning(
-                    &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                    &crate::expression_errors::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
                     "Invalid argument for logarithm",
                 );
                 return Ok(Datum::Null);
@@ -522,7 +522,7 @@ fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // answers NULL with 1292 + 3020).
         Some(x) if x <= 0.0 => {
             ctx.append_go_warning(
-                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                &crate::expression_errors::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
                 "Invalid argument for logarithm",
             );
             Datum::Null
@@ -541,7 +541,7 @@ fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
         Some(x) if x <= 0.0 => {
             ctx.append_go_warning(
-                &tidb_error::catalog::expression::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
+                &crate::expression_errors::ERR_INVALID_ARGUMENT_FOR_LOGARITHM,
                 "Invalid argument for logarithm",
             );
             Datum::Null

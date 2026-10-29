@@ -503,7 +503,7 @@ impl AdmissibilityScan {
         };
         if tidb_expr::builtin_registry::verify_args_by_count(&name, count).is_err() {
             self.fail(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                     .generate_with_stack_by_args(&[name.to_string().into()]),
             ));
             return false;

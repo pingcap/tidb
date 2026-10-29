@@ -127,7 +127,7 @@ impl KvTable {
         match value {
             Ok(value) if !value.is_empty() => Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
                         (duplicate_value.to_owned()).into(),
                         (duplicate_key.to_owned()).into(),
                     ]),

@@ -24,6 +24,8 @@
 mod binary_json;
 mod binary_json_ops;
 mod binary_literal;
+pub mod types_errors;
+pub mod collate_errors;
 pub mod current_time;
 pub mod char_length;
 mod collation;

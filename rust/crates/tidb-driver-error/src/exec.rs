@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
             MysqlError::from_terror(
-                &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO
+                &tidb_expr::expression_errors::ERR_DIVISION_BY_ZERO
                     .generate_with_stack_by_args(&[])
             )
             .from_evaluation()
@@ -154,7 +154,7 @@ mod tests {
                 "aes_encrypt"
             ))),
             MysqlError::from_terror(
-                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                     .generate_with_stack_by_args(&["aes_encrypt".into()])
             )
             .from_evaluation()
@@ -164,7 +164,7 @@ mod tests {
                 "The initialization vector supplied to aes_encrypt is too short".to_owned()
             ))),
             MysqlError::from_terror(
-                &tidb_error::catalog::expression::ERR_INCORRECT_ARGS.generate_with_stack(
+                &tidb_expr::expression_errors::ERR_INCORRECT_ARGS.generate_with_stack(
                     "The initialization vector supplied to aes_encrypt is too short"
                 )
             )
@@ -176,7 +176,7 @@ mod tests {
                 expression: "random_bytes".to_string(),
             })),
             MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_OVERFLOW
+                &tidb_datatype::types_errors::ERR_OVERFLOW
                     .generate_with_stack("length value is out of range in 'random_bytes'")
             )
             .from_evaluation()

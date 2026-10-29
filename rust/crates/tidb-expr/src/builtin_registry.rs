@@ -434,7 +434,7 @@ pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalE
     // return it bare.
     if matches!(key, "regexp_instr" | "regexp_replace") {
         return Err(crate::regexp::err_regexp_wrapping_error(
-            &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+            &crate::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
                 .fast_generate_by_args(&[key.into()])
                 .to_string(),
         ));

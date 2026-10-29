@@ -70,6 +70,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 mod export;
+pub mod privileges_errors;
 pub mod account_policy;
 pub mod load;
 pub mod loaded;

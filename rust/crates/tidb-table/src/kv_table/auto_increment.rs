@@ -192,7 +192,7 @@ impl KvTable {
     pub fn auto_id_exhausted_error(&self) -> tidb_terror::MysqlError {
         if self.auto_id_cache() != 1 {
             return tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                     .generate_with_stack_by_args(&[]),
             );
         }
@@ -204,7 +204,7 @@ impl KvTable {
         // error through its `Error()` text, so the class prefix is part of the
         // 1105 message.
         let message = if unsigned {
-            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                 .fast_generate_by_args(&[])
                 .to_string()
         } else {

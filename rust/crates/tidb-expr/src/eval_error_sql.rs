@@ -18,7 +18,10 @@
 //! compile error until someone gives it a code and a message. TiDB's
 //! executor and the coprocessor (`toPBError`) both answer through it.
 
-use tidb_error::catalog::{charset, collate, expression, types};
+use tidb_charset::charset_errors as charset;
+use tidb_datatype::collate_errors as collate;
+use crate::expression_errors as expression;
+use tidb_datatype::types_errors as types;
 use tidb_terror::MysqlError;
 use tidb_mysql::errors::SqlError;
 use tidb_terror::TerrorError;

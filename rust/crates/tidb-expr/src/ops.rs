@@ -543,7 +543,7 @@ pub(crate) fn eval_binary_full(
                 Ok(ordering) => ordering,
                 Err(_) => {
                     ctx.append_go_warning(
-                        &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                        &tidb_datatype::types_errors::ERR_WRONG_VALUE,
                         &format!("Incorrect time value: '{text}'"),
                     );
                     return Ok(if op == NullEq {
@@ -809,7 +809,7 @@ pub(crate) fn eval_binary_full(
             // Go `builtinArithmeticDivideDecimalSig`: the expression
             // package's `errTruncatedWrongValue`.
             ctx.handle_truncate_error(
-                tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE
+                crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE
                     .generate(format!("Truncated incorrect DECIMAL value: '{quotient}'")),
             )?;
         }
@@ -1016,7 +1016,7 @@ pub(crate) fn decimal_integer_division(
         // Go `builtinArithmeticIntDivideDecimalSig`: the expression
         // package's `errTruncatedWrongValue`.
         ctx.handle_truncate_error(
-            tidb_error::catalog::expression::ERR_TRUNCATED_WRONG_VALUE
+            crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE
                 .generate(format!("Truncated incorrect DECIMAL value: '{quotient}'")),
         )?;
     }
@@ -1255,7 +1255,7 @@ fn time_compare_ordering(
         Ok(ordering) => Ok(Some(ordering)),
         Err(_) => {
             ctx.append_go_warning(
-                &tidb_error::catalog::types::ERR_WRONG_VALUE,
+                &tidb_datatype::types_errors::ERR_WRONG_VALUE,
                 &format!("Incorrect datetime value: '{text}'"),
             );
             Ok(None)

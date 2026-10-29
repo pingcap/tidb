@@ -15,6 +15,7 @@
 //! Go `pkg/parser/charset`: the character sets, their collations' registry
 //! and the encodings the parser and every later layer read.
 
+pub mod charset_errors;
 pub mod ascii_encoding;
 pub mod charset;
 pub mod encoding_base;

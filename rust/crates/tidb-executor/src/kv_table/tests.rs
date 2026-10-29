@@ -604,7 +604,7 @@ fn row_conflicts_only_include_matching_partial_indexes() {
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].handle, TableHandle::Int(1));
     assert!(matches!(&conflicts[0].error, KvTableError::Mysql(error)
-        if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+        if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
             && error.message == "Duplicate entry 'same' for key 'partial_conflicts.unique_s'"));
 }
 

@@ -14,6 +14,7 @@
 
 //! Memory tracking, OOM actions, resource pools, and global arbitration.
 
+pub mod memory_errors;
 mod action;
 mod arbitrator;
 mod arbitrator_utils;

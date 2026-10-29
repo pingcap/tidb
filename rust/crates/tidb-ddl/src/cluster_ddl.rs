@@ -3985,7 +3985,7 @@ fn verify_no_overflow_shard_bits<S: MetaSnapshot>(
     let mask = ((1u64 << shard_row_id_bits) - 1) << (ROW_ID_BIT_LENGTH - shard_row_id_bits - 1);
     if next_global & (mask as i64) > 0 {
         return Err(coded_refusal(
-            &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
+            &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED,
             format!(
                 "shard_row_id_bits {shard_row_id_bits} will cause next global auto ID {next_global} overflow"
             ),
@@ -4170,7 +4170,9 @@ fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
 /// Go identity it was raised with. The checks raise a closed set of Go errors;
 /// this names them, and any other number stays a plain refusal.
 pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
-    use tidb_error::catalog::{kv, table, types};
+    use tidb_error::catalog::table;
+    use tidb_kv::kv_errors as kv;
+    use tidb_datatype::types_errors as types;
     let proto: Option<&'static TerrorError> = match code {
         1062 => Some(&kv::ERR_KEY_EXISTS),
         1048 => Some(&table::ERR_COLUMN_CANT_NULL),
@@ -4180,7 +4182,7 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
         1366 => Some(&table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD),
         1406 => Some(&types::ERR_DATA_TOO_LONG),
         1690 => Some(&types::ERR_OVERFLOW),
-        1365 => Some(&tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO),
+        1365 => Some(&tidb_expr::expression_errors::ERR_DIVISION_BY_ZERO),
         1451 => Some(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2),
         1452 => Some(&tidb_dbterror::ERR_NO_REFERENCED_ROW2),
         3819 => Some(&tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
@@ -8593,7 +8595,7 @@ fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result
     let max = MAX_FIELD_VARCHAR_LENGTH / info.maxlen as i64;
     if flen != tidb_datatype::UNSPECIFIED_LENGTH && flen > max {
         return Err(unsupported_charset_change(
-            &tidb_error::catalog::types::ERR_TOO_BIG_FIELD_LENGTH,
+            &tidb_datatype::types_errors::ERR_TOO_BIG_FIELD_LENGTH,
             format!(
                 "Column length too big for column '{name}' (max = {max}); \
                  use BLOB or TEXT instead"

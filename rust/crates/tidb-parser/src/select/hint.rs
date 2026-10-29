@@ -892,7 +892,7 @@ pub fn parse_hint(
                 parser.bump();
                 parser.skip_hint_args();
                 diagnostics.push(HintDiagnostic::classed(
-                    &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
+                    &crate::parser_errors::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
                     format!("Optimizer hint {source_name} is not supported by TiDB and is ignored"),
                 ));
             } else if !is_recognized_hint_token_name(name) {
@@ -910,7 +910,7 @@ pub fn parse_hint(
                 } else {
                     parser.skip_hint_args();
                     diagnostics.push(HintDiagnostic::classed(
-                        &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
+                        &crate::parser_errors::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
                         format!(
                             "Optimizer hint {source_name} is not supported by TiDB and is ignored"
                         ),
@@ -1044,7 +1044,7 @@ fn hint_1064_diagnostic(initial_line: usize, column: usize, near: &str) -> HintD
     // go's own rendering carries a trailing space after the quoted near
     // (oracle g-hint: `... near ") */" ` with the space before the row end).
     HintDiagnostic::classed(
-        &tidb_error::catalog::parser::ERR_PARSE,
+        &crate::parser_errors::ERR_PARSE,
         format!(
             "Optimizer hint syntax error at line {initial_line} column {column} near \"{near}\" "
         ),

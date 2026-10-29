@@ -221,7 +221,7 @@ fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
     use tidb_kv::storage::StorageError;
     for storage in [
         StorageError::Sql(crate::MysqlError::from_terror(
-            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"),
+            &tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"),
         )),
         StorageError::Backend("backend unavailable".to_owned()),
         StorageError::Backend("Retryable(backend diagnostic text)".to_owned()),
@@ -252,7 +252,7 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
         kv_write_error(retryable()),
     ] {
         assert!(
-            error.equal(&tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE),
+            error.equal(&tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE),
             "retryable storage failure lost its transaction identity"
         );
     }
@@ -296,7 +296,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
         &ctx,
     )
     .expect_err("an existing clustered key must not be overwritten");
-    assert!(existing.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS));
+    assert!(existing.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS));
     let mut repeated_catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
@@ -309,7 +309,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
         &ctx,
     )
     .expect_err("duplicate keys in one VALUES list must be rejected");
-    assert!(repeated.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS));
+    assert!(repeated.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS));
 }
 
 /// Go finishes a table-range cop task with a root TableReader before feeding

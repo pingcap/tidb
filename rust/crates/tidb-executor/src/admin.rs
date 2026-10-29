@@ -1076,7 +1076,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
             if user != target_row.user && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
             {
                 return Err(DriverError::Mysql(crate::MysqlError::from_terror(
-                    &tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(
+                    &tidb_privilege::privileges_errors::ERR_ACCESS_DENIED.generate_with_stack(
                         format!(
                         "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
                     ),
@@ -1333,7 +1333,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             index,
             index_count,
         } => DriverError::from(
-            tidb_error::catalog::admin::ERR_ADMIN_CHECK_TABLE.generate_with_stack(format!(
+            crate::admin_errors::ERR_ADMIN_CHECK_TABLE.generate_with_stack(format!(
                 "table count {table_count} != index({index}) count {index_count}"
             )),
         ),
@@ -1344,7 +1344,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             index_values,
             record_values,
         } => DriverError::from(
-            tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT.generate_with_stack(
+            crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.generate_with_stack(
                 format!(
                     "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
              index-values:{index_values} != record-values:{record_values}"
@@ -1362,7 +1362,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
                 compare_error,
             } = *mismatch;
             DriverError::from(
-                tidb_error::catalog::consistency::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
+                crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
                     .generate_with_stack(format!(
                 "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
                  {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
@@ -1377,7 +1377,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             DriverError::unsupported(detail)
         }
         AdminCheckError::PartialIndexWithoutFastCheck => DriverError::from(
-            tidb_error::catalog::executor::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
+            crate::executor_errors::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
                 .generate_with_stack_by_args(&[]),
         ),
     }

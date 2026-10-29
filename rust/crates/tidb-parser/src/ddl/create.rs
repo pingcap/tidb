@@ -148,7 +148,7 @@ impl Parser {
         }
         if path.len() > 1 && path[0].trim().is_empty() {
             return Err(self.err_coded(
-                &tidb_error::catalog::parser::ERR_WRONG_DB_NAME,
+                &crate::parser_errors::ERR_WRONG_DB_NAME,
                 &format!("Incorrect database name '{}'", path[0]),
             ));
         }

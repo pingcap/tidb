@@ -274,7 +274,7 @@ impl KvTableDdl for KvTable {
             let shown = value.sql_bytes().unwrap_or_default();
             return Ok(Some(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
+                    &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
                         "Data truncated for column '{}', value is '{}'",
                         (column),
                         (String::from_utf8_lossy(&shown).into_owned())

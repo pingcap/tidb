@@ -318,7 +318,7 @@ fn ignored_write_error(
     ignore: bool,
     ctx: &crate::StmtContext,
 ) -> Result<UpdateOutcome, DriverError> {
-    if ignore && error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS) {
+    if ignore && error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS) {
         let warning = error.to_mysql_error();
         ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,

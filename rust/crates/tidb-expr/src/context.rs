@@ -265,7 +265,8 @@ impl SequenceEvalError {
     /// The Go error this raises, as Go raises it.
     #[must_use]
     pub fn to_terror(&self) -> tidb_terror::TerrorError {
-        use tidb_error::catalog::{expression, infoschema, table};
+        use tidb_error::catalog::{infoschema, table};
+        use crate::expression_errors as expression;
         match self {
             SequenceEvalError::RunOut(database, name) => table::ERR_SEQUENCE_HAS_RUN_OUT
                 .generate_with_stack_by_args(&[database.as_str().into(), name.as_str().into()]),
@@ -383,7 +384,8 @@ impl JsonError {
     /// errors in `types`, the argument errors in `expression`.
     #[must_use]
     pub fn to_terror(&self) -> tidb_terror::TerrorError {
-        use tidb_error::catalog::{expression, types};
+        use crate::expression_errors as expression;
+        use tidb_datatype::types_errors as types;
         match self {
             JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
                 "The document root must not be followed by other values.".into(),

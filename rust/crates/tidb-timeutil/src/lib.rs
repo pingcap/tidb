@@ -14,6 +14,7 @@
 
 //! TiDB time-zone utilities and context-aware sleep.
 
+pub mod timeutil_errors;
 mod time_zone;
 
 pub use time_zone::{

@@ -193,7 +193,7 @@ fn convert_string_to_duration(
             DurationOrTime::Time(time) => {
                 if converted.event.is_some() {
                     cols.append_go_warning(
-                        &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+                        &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                         &format!("Truncated incorrect datetime value: '{trimmed}'"),
                     );
                 }

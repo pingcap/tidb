@@ -51,7 +51,6 @@ tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-domain = { path = "../tidb-domain" }
-tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }

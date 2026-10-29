@@ -40,7 +40,7 @@ pub fn build_list_columns_values(
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+            &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
     }
@@ -111,7 +111,7 @@ pub fn build_list_columns_values(
                         // COLUMNS key.
                         _ => {
                             return Err(tidb_terror::MysqlError::from_terror(
-                                &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST
+                                &tidb_ast::ast_errors::ERR_PARTITION_COLUMN_LIST
                                     .generate_with_stack_by_args(&[]),
                             ))
                         }
@@ -143,13 +143,13 @@ pub fn build_list_columns_values(
             }
             PartitionDefinitionClause::LessThan(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                    &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
                         .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
                         .generate_with_stack_by_args(&["LIST".into()]),
                 ))
             }

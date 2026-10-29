@@ -24,6 +24,7 @@
 //! Tests mirror those domains under `src/tests/`.
 mod admin;
 mod analyze;
+pub mod parser_errors;
 pub mod arena;
 pub mod auth;
 mod binding;
@@ -467,7 +468,7 @@ fn parse_one_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             message: "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use".to_owned(),
             offset: p.peek().end_offset,
             near_offset: p.peek().offset,
-            terror: Some(&tidb_error::catalog::parser::ERR_SYNTAX),
+            terror: Some(&crate::parser_errors::ERR_SYNTAX),
         });
     }
     Ok(stmt)
@@ -1021,7 +1022,7 @@ impl Parser {
                 .into_iter()
                 .map(|message| match message.strip_prefix("[parser:8066]") {
                     Some(body) => HintDiagnostic::classed(
-                        &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_WRONG_POS,
+                        &crate::parser_errors::ERR_WARN_OPTIMIZER_HINT_WRONG_POS,
                         body,
                     ),
                     None => HintDiagnostic::plain(message),
@@ -1117,7 +1118,7 @@ impl Parser {
                     );
                     if let Some(error) = converted.error() {
                         self.warnings.push(HintDiagnostic::classed(
-                            &tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING,
+                            &tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING,
                             error.to_string(),
                         ));
                     }
@@ -1136,7 +1137,7 @@ impl Parser {
                     };
                     if !conversion.refused {
                         self.warnings.push(HintDiagnostic::classed(
-                            &tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING,
+                            &tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING,
                             conversion.error.to_string(),
                         ));
                     } else if self.scanner_error.is_none() {
@@ -1144,7 +1145,7 @@ impl Parser {
                             message: conversion.error.to_string(),
                             offset,
                             near_offset: offset,
-                            terror: Some(&tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING),
+                            terror: Some(&tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING),
                         };
                         self.scanner_error = Some((offset, error));
                     }
@@ -1260,7 +1261,7 @@ impl Parser {
         }
         let near = &self.source[offset..near_end];
         self.warnings.push(HintDiagnostic::classed(
-            &tidb_error::catalog::parser::ERR_PARSE,
+            &crate::parser_errors::ERR_PARSE,
             format!(
                 "You have an error in your SQL syntax; check the manual that \
                  corresponds to your TiDB version for the right syntax to use line {line} \

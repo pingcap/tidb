@@ -69,7 +69,7 @@ impl Session {
                 // well (driver_tidb.go:376's error door), so SHOW WARNINGS
                 // after the refused statement carries the same 1235 row.
                 let error = DriverError::from(
-                    tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                    tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
                         .generate_with_stack_by_args(&[(clause).into()]),
                 );
                 self.append_driver_error(WarningLevel::Error, &error);
@@ -80,7 +80,7 @@ impl Session {
                 self.append_driver_error(
                     WarningLevel::Warning,
                     &DriverError::from(
-                        tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                        tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
                             .generate_with_stack_by_args(&[(clause).into()]),
                     ),
                 );
@@ -119,7 +119,7 @@ impl Session {
         }
         for clause in gated {
             let error = DriverError::from(
-                tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL
+                tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
                     .generate_with_stack_by_args(&[(clause).into()]),
             );
             if mode == NoopFuncsMode::Off {

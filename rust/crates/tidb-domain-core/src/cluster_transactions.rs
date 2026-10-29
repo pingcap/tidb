@@ -1894,7 +1894,7 @@ mod write_conflict_rewrite_tests {
         SqlQueryError {
             write_conflict: Some(Box::new(args.clone())),
             ..SqlQueryError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack(args.message()),
+                &tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack(args.message()),
             ))
         }
     }

@@ -2912,7 +2912,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if table_ref.sample.is_some() {
             return Err(PlanError::from(
-                tidb_error::catalog::expression::ERR_INVALID_TABLE_SAMPLE
+                tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
                     .generate_with_stack_by_args(&["Unsupported TABLESAMPLE in sequences".into()]),
             ));
         }
@@ -3044,7 +3044,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .is_some_and(|sample| sample.method != Some(tidb_ast::SampleMethod::Region))
         {
             return Err(PlanError::from(
-                tidb_error::catalog::expression::ERR_INVALID_TABLE_SAMPLE
+                tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
                     .generate_with_stack_by_args(&["Only supports REGIONS sampling method".into()]),
             ));
         }
@@ -3105,7 +3105,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             if table_ref.sample.is_some() {
                 return Err(PlanError::from(
-                    tidb_error::catalog::expression::ERR_INVALID_TABLE_SAMPLE
+                    tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
                         .generate_with_stack_by_args(&["Unsupported TABLESAMPLE in views".into()]),
                 ));
             }
@@ -3180,7 +3180,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if table.is_memory_table {
             if table_ref.sample.is_some() {
                 return Err(PlanError::from(
-                    tidb_error::catalog::expression::ERR_INVALID_TABLE_SAMPLE
+                    tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
                         .generate_with_stack_by_args(&[
                             "Unsupported TABLESAMPLE in virtual tables".into(),
                         ]),

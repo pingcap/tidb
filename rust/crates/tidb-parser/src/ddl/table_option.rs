@@ -71,7 +71,7 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let charset = canonical_charset(&raw).ok_or_else(|| {
                     self.err_coded(
-                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unknown character set: '{raw}'"),
                     )
                 })?;
@@ -83,7 +83,7 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let charset = canonical_charset(&raw).ok_or_else(|| {
                     self.err_coded(
-                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unknown character set: '{raw}'"),
                     )
                 })?;
@@ -95,7 +95,7 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let collation = canonical_collation(&raw).ok_or_else(|| {
                     self.err_coded(
-                        &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                        &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                         &format!("Unknown collation: '{raw}'"),
                     )
                 })?;
@@ -108,7 +108,7 @@ impl Parser {
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
                     // Go `ddl_table_option_parser.go`: ErrWrongValue (1525).
                     return Err(self.err_coded(
-                        &tidb_error::catalog::parser::ERR_WRONG_VALUE,
+                        &crate::parser_errors::ERR_WRONG_VALUE,
                         &format!("Incorrect argument (should be Y or N) value: '{value}'"),
                     ));
                 }

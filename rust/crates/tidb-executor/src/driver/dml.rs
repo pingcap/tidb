@@ -1489,12 +1489,12 @@ fn run_insert_rows(
                         AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
                                 .to_owned()).into()])),
                         AutoRandomError::AutoId(AutoIdError::Exhausted) => {
-                            DriverError::from(tidb_error::catalog::autoid::ERR_AUTO_RAND_READ_FAILED.generate_with_stack_by_args(&[]))
+                            DriverError::from(tidb_autoid::autoid_errors::ERR_AUTO_RAND_READ_FAILED.generate_with_stack_by_args(&[]))
                         }
                         AutoRandomError::AutoId(AutoIdError::OutOfRange {
                             value,
                             type_name,
-                        }) => DriverError::from(tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
+                        }) => DriverError::from(tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
                             DriverError::from(tidb_terror::MysqlError::unknown(detail.0))
                         }
@@ -1573,7 +1573,7 @@ fn run_insert_rows(
                             AutoIdError::OutOfRange { value, type_name } => {
                                 if ctx.strict() && !insert.ignore {
                                     return Err(DriverError::from(
-                                        tidb_error::catalog::types::ERR_OVERFLOW
+                                        tidb_datatype::types_errors::ERR_OVERFLOW
                                             .generate_with_stack(format!(
                                                 "constant {} overflows {}",
                                                 value, type_name
@@ -1582,20 +1582,20 @@ fn run_insert_rows(
                                 }
                                 ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                                     tidb_context::WarningLevel::Warning,
-                                    tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(
+                                    tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(
                                         format!("constant {value} overflows {type_name}"),
                                     ),
                                 ));
                                 if !has_on_duplicate {
                                     if !insert.ignore {
                                         return Err(DriverError::from(
-                                            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                                            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                                                 .generate_with_stack_by_args(&[]),
                                         ));
                                     }
                                     ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                                         tidb_context::WarningLevel::Warning,
-                                        tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                                        tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                                             .generate_with_stack_by_args(&[]),
                                     ));
                                     return Ok((0, None));

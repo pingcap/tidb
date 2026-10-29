@@ -118,7 +118,7 @@ fn tidb_decode_sql_digests(
         }
         // Go `errIncorrectArgs.FastGen(...)` (`ErrWrongArguments`, 1210).
         ctx.append_go_warning(
-            &tidb_error::catalog::expression::ERR_INCORRECT_ARGS,
+            &crate::expression_errors::ERR_INCORRECT_ARGS,
             &format!(
                 "The argument can't be unmarshalled as JSON array: '{}'",
                 String::from_utf8_lossy(&shown)

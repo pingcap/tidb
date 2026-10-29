@@ -16,6 +16,7 @@
 //! encodes and `SET SESSION_STATES` restores, as Go's JSON, and the token a
 //! migrated session logs in with.
 
+pub mod sessionstates_errors;
 mod session_states;
 mod session_token;
 
@@ -27,4 +28,4 @@ pub use session_token::{
     create_session_token, get_load_cert_interval, reload_signing_cert, set_cert_path,
     set_key_path, validate_session_token, SessionToken, LOAD_CERT_INTERVAL,
 };
-use tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION;
+use crate::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION;

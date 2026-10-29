@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/table and pkg/table/tables for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }

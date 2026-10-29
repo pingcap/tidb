@@ -291,7 +291,7 @@ fn charset_commands_are_typed_and_canonical() {
         let error = parse(sql).expect_err(sql);
         assert_eq!(
             error.terror.map(|terror| terror.code()),
-            Some(tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET.code()),
+            Some(crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET.code()),
             "{sql}: {error:?}"
         );
     }

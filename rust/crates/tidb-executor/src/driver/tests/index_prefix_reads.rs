@@ -134,7 +134,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
     let error = run_insert_on("INSERT INTO u VALUES ('abcxyz')", &mut catalog, &ctx)
         .expect_err("a row sharing the indexed prefix must be rejected");
     assert!(
-        error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+        error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
             && error.to_string().starts_with("Duplicate entry 'abc' "),
         "{error:?}"
     );

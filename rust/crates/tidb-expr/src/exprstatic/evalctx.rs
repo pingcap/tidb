@@ -643,7 +643,7 @@ fn current_time_fn_from_string_val(val: &str) -> CurrentTimeFn {
         let converted = str_to_float(&val, false);
         if converted.event.is_some() {
             return Err(EvalCtxError::new(
-                tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
                     .generate(format!(
                         "Truncated incorrect DOUBLE value: '{}'",
                         tidb_datatype::float_warning_input(&val)
@@ -857,7 +857,7 @@ impl SessionVarsSnapshot for StaticSessionVars {
 fn parse_number<T: std::str::FromStr>(name: &str, val: &str) -> Result<T, EvalCtxError> {
     val.trim().parse::<T>().map_err(|_| {
         EvalCtxError::new(
-            tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR
+            tidb_variable::variable_errors::ERR_WRONG_TYPE_FOR_VAR
                 .fast_generate_by_args(&[name.into()])
                 .to_string(),
         )
@@ -890,7 +890,7 @@ fn normalize_enum(name: &str, val: &str, values: &[&str]) -> Result<String, Eval
 /// Go `variable.ErrWrongValueForVar`, as its `Error()` text.
 fn wrong_value_for_var(name: &str, value: &str) -> EvalCtxError {
     EvalCtxError::new(
-        tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+        tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
             .fast_generate_by_args(&[name.into(), value.into()])
             .to_string(),
     )

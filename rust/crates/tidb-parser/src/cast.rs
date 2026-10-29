@@ -62,7 +62,7 @@ impl Parser {
             let charset = canonical_charset(&raw)
                 .ok_or_else(|| {
                     self.err_coded(
-                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unknown character set: '{raw}'"),
                     )
                 })?
@@ -278,7 +278,7 @@ impl Parser {
             // `parser` is `terror.ClassParser.NewStd(mysql.ErrTooBigPrecision)`
             // -- `[parser:1426]`, the name argument `CAST`.
             return Err(self.err_coded(
-                &tidb_error::catalog::parser::ERR_TOO_BIG_PRECISION,
+                &crate::parser_errors::ERR_TOO_BIG_PRECISION,
                 &format!("Too-big precision {m} specified for 'CAST'. Maximum is 53."),
             ));
         }

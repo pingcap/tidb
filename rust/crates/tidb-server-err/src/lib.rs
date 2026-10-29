@@ -18,6 +18,8 @@
 //! catalogs. This module supplies the package-level `server:<code>` identities
 //! that Go creates with `dbterror.ClassServer.NewStd`.
 
+pub mod servererr_errors;
+
 use std::sync::LazyLock;
 
 use tidb_terror::{TerrorClass, TerrorCode, TerrorError};

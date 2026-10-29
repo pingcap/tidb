@@ -45,7 +45,7 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     } else {
         let value = parser.peek().text.clone();
         return Err(parser.err_coded(
-            &tidb_error::catalog::parser::ERR_UNKNOWN_ALTER_LOCK,
+            &crate::parser_errors::ERR_UNKNOWN_ALTER_LOCK,
             &format!("Unknown LOCK type '{value}'"),
         ));
     };

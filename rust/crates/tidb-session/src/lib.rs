@@ -1106,6 +1106,7 @@ use tidb_bindinfo::binding_cache;
 use tidb_executor::blacklist;
 mod bootstrap;
 mod classify;
+pub mod session_errors;
 pub mod cursor;
 mod ddl_exec;
 mod ddl_jobs;
@@ -2285,7 +2286,7 @@ impl Session {
         if !client_multi_statements {
             match self.vars().multi_statement_mode() {
                 0 => {
-                    return Err(DriverError::from((&tidb_error::catalog::servererr::ERR_MULTI_STATEMENT_DISABLED).generate_with_stack(DISABLED.to_owned())))
+                    return Err(DriverError::from((&tidb_server_err::servererr_errors::ERR_MULTI_STATEMENT_DISABLED).generate_with_stack(DISABLED.to_owned())))
                 }
                 1 => {}
                 _ => self.deferred_multi_statement_warning = true,
@@ -2757,7 +2758,7 @@ impl Session {
             // aggregate raised it mid-scan) takes the empty-buffer arm even
             // though `to_mysql_error` on the DRIVER error carries no
             // evaluation-origin marker.
-            let eval_fatal = error.equal(&tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY)
+            let eval_fatal = error.equal(&tidb_datatype::types_errors::ERR_JSON_DOCUMENT_NULL_KEY)
                 || (reported.is_from_evaluation()
                     && matches!(
                         reported.code,

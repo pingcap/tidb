@@ -67,7 +67,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 && tidb_vardef::is_read_only_var_in_next_gen(&var_name)
             {
                 return Err(PlanError::eval(tidb_expr::EvalError::Conversion(
-                    tidb_error::catalog::variable::ERR_NOT_SUPPORTED_IN_NEXT_GEN
+                    tidb_variable::variable_errors::ERR_NOT_SUPPORTED_IN_NEXT_GEN
                         .generate(format!("setting {var_name} is not supported in the next generation of TiDB")),
                 )));
             }

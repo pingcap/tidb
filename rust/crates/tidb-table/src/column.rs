@@ -421,7 +421,7 @@ fn cast_contextual_value(
                 tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
             )
         {
-            raw = tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+            raw = tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
                 .generate_with_stack_by_args(&[
                     field.compact_str(false).into(),
                     datum_error_text(source).into(),
@@ -549,7 +549,7 @@ fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_terror::Te
     );
     let source_is_string = matches!(source, Datum::Bytes(_) | Datum::String(_));
     let truncated = |kind: String| {
-        tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+        tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
             .generate_with_stack_by_args(&[kind.into(), text.clone().into()])
     };
     if temporal || !source_is_string {
@@ -570,7 +570,7 @@ fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_terror::Te
 
 /// Go `types.ErrWrongValue.GenWithStackByArgs(types.TypeStr(tp), str)`.
 fn wrong_value(field_type: &FieldType, text: &str) -> tidb_terror::TerrorError {
-    tidb_error::catalog::types::ERR_WRONG_VALUE.generate_with_stack_by_args(&[
+    tidb_datatype::types_errors::ERR_WRONG_VALUE.generate_with_stack_by_args(&[
         tidb_datatype::type_str(field_type.code()).into(),
         text.into(),
     ])
@@ -629,7 +629,7 @@ fn apply_zero_date(
         ctx.strict(),
     );
     let wrong_value_for = |value: &Datum| {
-        tidb_error::catalog::types::ERR_WRONG_VALUE
+        tidb_datatype::types_errors::ERR_WRONG_VALUE
             .generate_with_stack_by_args(&[
                 tidb_datatype::type_str(field_type.code()).into(),
                 datum_error_text(value).into(),

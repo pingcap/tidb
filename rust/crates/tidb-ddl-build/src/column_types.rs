@@ -55,7 +55,7 @@ fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
 pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, MysqlError> {
     tidb_datatype::get_supported_collation_by_name(name).map_err(|error| match error {
         tidb_datatype::CollationError::UnsupportedCollation(name) => MysqlError::from_terror(
-            &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION
+            &tidb_datatype::collate_errors::ERR_UNSUPPORTED_COLLATION
                 .generate_with_stack_by_args(&[name.into()]),
         ),
         tidb_datatype::CollationError::Registry(_) => MysqlError::from_terror(

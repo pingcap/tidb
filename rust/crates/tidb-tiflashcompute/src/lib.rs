@@ -16,6 +16,8 @@
 //! dispatch policy. The HTTP client and timestamped cache belong to the fetcher,
 //! never to a SQL session. See the package inventory in the batch receipt.
 
+pub mod tiflashcompute_errors;
+
 use reqwest::blocking::Client;
 use std::sync::{Arc, OnceLock, RwLock};
 use tidb_config::tiflash::{get_auto_scaler_type, AutoScalerType};
@@ -93,7 +95,7 @@ impl std::fmt::Display for TopologyError {
             write!(
                 f,
                 "{}",
-                tidb_error::catalog::tiflashcompute::ERR_TOPO_FETCHER.generate(&self.message)
+                crate::tiflashcompute_errors::ERR_TOPO_FETCHER.generate(&self.message)
             )
         } else {
             f.write_str(&self.message)

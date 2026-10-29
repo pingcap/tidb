@@ -2474,7 +2474,7 @@ impl KvTable {
                     .map_err(|error| match error {
                         AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
                         _ => KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                            &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                                 .generate_with_stack_by_args(&[]),
                         )),
                     })?;
@@ -2968,7 +2968,7 @@ impl KvTable {
                 found.push(RowConflict {
                     handle,
                     error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
                             value.into(),
                             (self.qualified_key("PRIMARY")).into(),
                         ]),
@@ -3009,7 +3009,7 @@ impl KvTable {
                     found.push(RowConflict {
                         handle,
                         error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
                                 // Both renderings read the key's values: Go's
                                 // batch checker formats `FetchValues` after
                                 // `GenIndexKVIter`'s `Next` cut them in place.
@@ -4424,7 +4424,7 @@ fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError 
         }
         crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
             KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!(
+                &tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(format!(
                     "constant {} overflows {}",
                     (value),
                     "bigint"
@@ -4479,12 +4479,12 @@ pub fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTab
     );
     if source_is_string && numeric_target {
         return KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
                 .generate_with_stack_by_args(&["DOUBLE".into(), text.into()]),
         ));
     }
     KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-        &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
+        &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
             "Data truncated for column '{}', value is '{}'",
             (column.to_owned()),
             (text)

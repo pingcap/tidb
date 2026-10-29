@@ -244,7 +244,7 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
 
     let zero = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
         tidb_ddl::cluster_ddl::DdlPlanError::from(
-            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
         ),
     ));
     assert_query_error_packet(

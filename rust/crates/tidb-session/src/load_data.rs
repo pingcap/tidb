@@ -79,7 +79,7 @@ impl crate::Session {
         // accept before anything else runs.
         if load.local && (!self.local_infile_accepted || data.is_none()) {
             return Err(DriverError::from(
-                (&tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND).generate_with_stack(
+                (&tidb_server_err::servererr_errors::ERR_NOT_ALLOWED_COMMAND).generate_with_stack(
                     "The used command is not allowed with this MySQL version".to_owned(),
                 ),
             ));

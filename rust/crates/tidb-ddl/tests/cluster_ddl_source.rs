@@ -1229,7 +1229,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                     .generate_with_stack_by_args(&[]),
             ),
             1467,
@@ -6134,7 +6134,7 @@ fn persisted_job_errors_carry_the_go_class() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
                     .generate_with_stack_by_args(&[]),
             ),
             "autoid:1467",

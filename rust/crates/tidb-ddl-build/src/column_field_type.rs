@@ -759,7 +759,7 @@ impl ColumnAttributeError {
     /// `types.CheckVectorDimValid`'s plain HY000 error.
     #[must_use]
     pub fn refusal(&self, column: &str) -> tidb_terror::MysqlError {
-        use tidb_error::catalog::types;
+        use tidb_datatype::types_errors as types;
         let error = match self {
             Self::MBiggerThanD => {
                 types::ERR_M_BIGGER_THAN_D.generate_with_stack_by_args(&[column.into()])

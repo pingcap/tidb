@@ -18,6 +18,7 @@
 //! package does.
 
 mod error;
+pub mod variable_errors;
 pub mod hint_updatable_vars;
 pub mod phase_durations;
 pub mod session_vars;

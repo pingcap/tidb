@@ -43,6 +43,7 @@
 //! `rebase_auto_increment`, `truncate` -- stay with the table in
 //! `tidb-table` (Go `pkg/table/tables`), above this package.
 
+pub mod autoid_errors;
 pub mod service_rpc;
 pub mod cluster_auto_id;
 pub mod auto_id_client;

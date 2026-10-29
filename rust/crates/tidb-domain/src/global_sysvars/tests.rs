@@ -348,7 +348,7 @@ mod session_vars {
         assert!(vars
             .get_session_states_system_var("not_a_sysvar")
             .is_err_and(
-                |error| error.equal(&tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR)
+                |error| error.equal(&tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR)
             ));
     }
 
@@ -683,14 +683,14 @@ mod session_vars {
         assert_eq!(
             vars.get_system("nope"),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
         );
         assert_eq!(
             vars.set_system("nope", "1".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
         );
@@ -727,7 +727,7 @@ mod session_vars {
         assert_eq!(
             globals.get("not_a_real_variable"),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("not_a_real_variable".to_owned()).into()])
             ))
         );
@@ -741,7 +741,7 @@ mod session_vars {
         assert_eq!(
             vars.set_system("version", "9".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     ("version".to_owned()).into(),
                     "read only".into()
                 ])
@@ -840,7 +840,7 @@ mod session_vars {
         assert_eq!(
             vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                &tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
                     .generate_with_stack_by_args(&[
                         ("tidb_enforce_mpp".to_owned()).into(),
                         ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
@@ -906,12 +906,12 @@ mod session_vars {
         assert!(vars
             .set_system("tidb_redact_log", "ON".to_owned())
             .is_err_and(|error| error
-                .equal(&tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR)
+                .equal(&tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR)
                 && error.message == "Unknown system variable 'tidb_redact_log'"));
         let instance_error = vars
             .set_system("tidb_instance_plan_cache_max_size", "1".to_owned())
             .expect_err("instance plan cache max size is GLOBAL-only");
-        assert!(instance_error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE));
+        assert!(instance_error.equal(&tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE));
         assert_eq!(
             instance_error.message,
             "Variable 'tidb_instance_plan_cache_max_size' is a GLOBAL variable and should be set with SET GLOBAL"
@@ -941,7 +941,7 @@ mod session_vars {
         assert!(vars
             .set_system("tidb_general_log", "OFF".to_owned())
             .is_err_and(
-                |error| error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE)
+                |error| error.equal(&tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE)
                     && error.message.starts_with("Variable 'tidb_general_log' ")
             ));
     }
@@ -1019,7 +1019,7 @@ mod session_vars {
         assert_eq!(
             vars.set_global("debug_sync", "x".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[("debug_sync".to_owned()).into()])
             ))
         );
@@ -1057,7 +1057,7 @@ mod session_vars {
         assert_eq!(
             vars.set_system("default_password_lifetime", "5".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE.generate_with_stack_by_args(&[
                     ("default_password_lifetime".to_owned()).into()
                 ])
             ))
@@ -1070,7 +1070,7 @@ mod session_vars {
         assert_eq!(
             vars.get_global("debug_sync"),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     ("debug_sync".to_owned()).into(),
                     "SESSION".into()
                 ])

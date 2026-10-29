@@ -81,7 +81,7 @@ fn set_sys_variable(
             return Ok(());
         }
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+            &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                 .generate_with_stack_by_args(&[(name.to_owned()).into()]),
         )
         .into());

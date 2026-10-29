@@ -59,11 +59,11 @@ use crate::sysvar::{alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_SES
 pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> VarError {
     match error {
         ValidationError::WrongType => tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR
+            &crate::variable_errors::ERR_WRONG_TYPE_FOR_VAR
                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
         ),
         ValidationError::WrongValue => tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR.generate_with_stack_by_args(&[
+            &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR.generate_with_stack_by_args(&[
                 (name.to_ascii_lowercase()).into(),
                 (value.to_owned()).into(),
             ]),
@@ -1243,7 +1243,7 @@ impl SessionVars {
     pub fn system_value(&self, name: &str) -> Result<Cow<'_, str>, VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
@@ -1373,7 +1373,7 @@ impl SessionVars {
     pub fn get_session_states_system_var(&self, name: &str) -> Result<(String, bool), VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
@@ -1651,13 +1651,13 @@ impl SessionVars {
     pub fn set_system(&mut self, name: &str, value: String) -> Result<bool, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &crate::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1668,13 +1668,13 @@ impl SessionVars {
         // Keep the SQL setter from bypassing that visibility rule.
         if def.is_internal_session_variable() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         if !def.has_session_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE
+                &crate::variable_errors::ERR_GLOBAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
@@ -1703,7 +1703,7 @@ impl SessionVars {
                 .map_or(true, |allow| allow != "ON")
         {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
                     .generate_with_stack_by_args(&[
                         ("tidb_enforce_mpp".to_owned()).into(),
                         ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
@@ -1739,7 +1739,7 @@ impl SessionVars {
     ) -> Result<(), VarError> {
         if get_sys_var(name).is_none() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
@@ -2014,7 +2014,7 @@ impl SessionVars {
     pub fn global_value_for_session_default(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
@@ -2031,7 +2031,7 @@ impl SessionVars {
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;

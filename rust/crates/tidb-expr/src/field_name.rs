@@ -42,7 +42,7 @@ impl fmt::Display for NonUniqueFieldName {
         write!(
             formatter,
             "{}",
-            tidb_error::catalog::expression::ERR_NON_UNIQ.generate(&self.sql_error.message)
+            crate::expression_errors::ERR_NON_UNIQ.generate(&self.sql_error.message)
         )
     }
 }

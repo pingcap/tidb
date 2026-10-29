@@ -729,7 +729,7 @@ impl ColumnCheckError {
                 format!("Invalid default value for '{name}'"),
             ),
             Self::DisplayWidthOutOfRange => coded(
-                &tidb_error::catalog::types::ERR_TOO_BIG_DISPLAY_WIDTH,
+                &tidb_datatype::types_errors::ERR_TOO_BIG_DISPLAY_WIDTH,
                 format!("Display width out of range for column '{name}' (max = {})", u32::MAX),
             ),
             Self::TooBigFieldLength => {
@@ -739,44 +739,44 @@ impl ColumnCheckError {
                     MAX_FIELD_CHAR_LENGTH
                 };
                 coded(
-                    &tidb_error::catalog::types::ERR_TOO_BIG_FIELD_LENGTH,
+                    &tidb_datatype::types_errors::ERR_TOO_BIG_FIELD_LENGTH,
                     format!(
                         "Column length too big for column '{name}' (max = {maximum}); use BLOB or TEXT instead"
                     ),
                 )
             }
             Self::WrongFieldSpec => coded(
-                &tidb_error::catalog::types::ERR_WRONG_FIELD_SPEC,
+                &tidb_datatype::types_errors::ERR_WRONG_FIELD_SPEC,
                 format!("Incorrect column specifier for column '{name}'"),
             ),
             Self::TooBigScale { scale, maximum } => coded(
-                &tidb_error::catalog::types::ERR_TOO_BIG_SCALE,
+                &tidb_datatype::types_errors::ERR_TOO_BIG_SCALE,
                 format!("Too big scale {scale} specified for column '{name}'. Maximum is {maximum}."),
             ),
             Self::TooBigDisplayWidth { maximum } => coded(
-                &tidb_error::catalog::types::ERR_TOO_BIG_DISPLAY_WIDTH,
+                &tidb_datatype::types_errors::ERR_TOO_BIG_DISPLAY_WIDTH,
                 format!("Display width out of range for column '{name}' (max = {maximum})"),
             ),
             Self::MBiggerThanD => MysqlError::from_terror(
-        &tidb_error::catalog::types::ERR_M_BIGGER_THAN_D
+        &tidb_datatype::types_errors::ERR_M_BIGGER_THAN_D
             .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
     ),
             Self::TooBigSet => coded(
-                &tidb_error::catalog::types::ERR_TOO_BIG_SET,
+                &tidb_datatype::types_errors::ERR_TOO_BIG_SET,
                 format!("Too many strings for column {name} and SET"),
             ),
             Self::IllegalSetValue(value) => coded(
-                &tidb_error::catalog::types::ERR_ILLEGAL_VALUE_FOR_TYPE,
+                &tidb_datatype::types_errors::ERR_ILLEGAL_VALUE_FOR_TYPE,
                 format!("Illegal set '{value}' value found during parsing"),
             ),
             Self::TooBigPrecision { precision } => coded(
-                &tidb_error::catalog::types::ERR_TOO_BIG_PRECISION,
+                &tidb_datatype::types_errors::ERR_TOO_BIG_PRECISION,
                 format!(
                     "Too-big precision {precision} specified for '{name}'. Maximum is {MAX_DECIMAL_WIDTH}."
                 ),
             ),
             Self::InvalidFieldSize => coded(
-                &tidb_error::catalog::types::ERR_INVALID_FIELD_SIZE,
+                &tidb_datatype::types_errors::ERR_INVALID_FIELD_SIZE,
                 format!("Invalid size for column '{name}'."),
             ),
         }
@@ -1010,7 +1010,7 @@ fn check_auto_increment(create: &CreateTableStmt) -> Result<(), MysqlError> {
     }
     if auto_columns.len() > 1 {
         return Err(MysqlError::from_terror(
-            &tidb_error::catalog::autoid::ERR_WRONG_AUTO_KEY.generate_with_stack_by_args(&[]),
+            &tidb_autoid::autoid_errors::ERR_WRONG_AUTO_KEY.generate_with_stack_by_args(&[]),
         ));
     }
     for column in auto_columns {

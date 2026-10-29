@@ -1327,8 +1327,8 @@ fn record_global_stats_result(
         // Go `globalstats`: ANALYZE records the failed merge job and
         // continues; the missing-stats errors become statement warnings.
         ClusterAnalyzeError::Mysql(error)
-            if error.equal(&tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING)
-                || error.equal(&tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING) =>
+            if error.equal(&tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING)
+                || error.equal(&tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING) =>
         {
             warnings.push((error.code, error.message));
         }
@@ -1780,7 +1780,7 @@ where
                     }
                     .map_or("", String::as_str);
                     return Err(
-                        tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                        tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
                             .generate_with_stack_by_args(&[format!(
                                 "table `{}` partition `{}` {} `{name}`",
                                 statement.table,
@@ -2050,7 +2050,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     if statement.skip_missing_partition_stats {
                         continue;
                     }
-                    return Err(tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+                    return Err(tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
                         .generate_with_stack_by_args(&[format!(
                             "table `{}` partition `{partition_name}`",
                             statement.table
@@ -2088,9 +2088,9 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         if is_index { "index" } else { "column" }
                     );
                     let proto = if mode == GlobalStatsMergeMode::Async {
-                        &tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                        &tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
                     } else {
-                        &tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+                        &tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
                     };
                     return Err(proto.generate_with_stack_by_args(&[detail.into()]).into());
                 };
@@ -2110,7 +2110,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     }
                     .map_or("", String::as_str);
                     return Err(
-                        tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                        tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
                             .generate_with_stack_by_args(&[format!(
                                 "table `{}` partition `{partition_name}` {} `{name}`",
                                 statement.table,
@@ -3858,14 +3858,14 @@ mod tests {
 
         super::record_global_stats_result(
             &mut warnings,
-            Err(tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+            Err(tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
                 .generate_with_stack_by_args(&["p0".into()])
                 .into()),
         );
         super::record_global_stats_result(
             &mut warnings,
             Err(
-                tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
                     .generate_with_stack_by_args(&["p1 index i".into()])
                     .into(),
             ),

@@ -525,7 +525,7 @@ fn noop_function_gate() {
     ] {
         assert!(
             session.run(sql).is_err_and(
-                |error| error.equal(&tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL)
+                |error| error.equal(&tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL)
             ),
             "expected a noop-function error from {sql}"
         );

@@ -22,7 +22,7 @@ fn strict() -> StmtContext {
 fn expect_duplicate(catalog: &mut Catalog, sql: &str, value: &str, key: &str) {
     let error = run_insert_reporting(sql, catalog, "test", &strict()).unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
+        error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
             && error.to_string() == format!("Duplicate entry '{value}' for key '{key}'"),
         "inserting {sql:?}: expected Duplicate entry '{value}' for key '{key}', got {error:?}"
     );

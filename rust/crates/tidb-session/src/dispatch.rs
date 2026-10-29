@@ -1469,7 +1469,7 @@ impl Session {
         }
         if let Some(function) = &scan.qualified_function {
             return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-                &tidb_error::catalog::expression::ERR_FUNCTION_NOT_EXISTS
+                &tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS
                     .generate_with_stack(format!("FUNCTION {function} does not exist")),
             )));
         }

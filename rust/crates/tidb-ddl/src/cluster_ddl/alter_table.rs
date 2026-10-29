@@ -1114,7 +1114,7 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
 ) -> Result<(), DdlPlanError> {
     if force && new_base == 0 {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
         ));
     }
     let new_end = new_base.wrapping_sub(1);

@@ -46,6 +46,6 @@ pub const SYNTAX_ERROR_PREFIX: &str = "You have an error in your SQL syntax; che
 /// `*terror.Error`: `parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix,
 /// err.Error())`.
 pub fn syntax_error(message: impl Into<String>) -> tidb_terror::TerrorError {
-    tidb_error::catalog::parser::ERR_PARSE
+    tidb_parser::parser_errors::ERR_PARSE
         .generate_with_stack_by_args(&[SYNTAX_ERROR_PREFIX.into(), message.into().into()])
 }

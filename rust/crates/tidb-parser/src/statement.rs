@@ -154,7 +154,7 @@ impl Parser {
             let global = if self.is_kw("GLOBAL") {
                 self.bump();
                 // Go `ErrWarnDeprecatedSyntax` (1287).
-                self.warn_coded(&tidb_error::catalog::parser::ERR_WARN_DEPRECATED_SYNTAX, "'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead");
+                self.warn_coded(&crate::parser_errors::ERR_WARN_DEPRECATED_SYNTAX, "'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead");
                 true
             } else {
                 false
@@ -168,7 +168,7 @@ impl Parser {
                     partitions.push(self.parse_non_string_ident_like_name()?);
                 }
                 // Go `ErrWarnDeprecatedSyntaxNoReplacement` (1681).
-                self.warn_coded(&tidb_error::catalog::parser::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT, "'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release.");
+                self.warn_coded(&crate::parser_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT, "'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release.");
             }
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::DropStats(
                 Box::new(DropStatsStmt {

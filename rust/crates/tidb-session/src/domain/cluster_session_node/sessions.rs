@@ -738,7 +738,7 @@ impl ClusterStatsSessionContext {
         self.with_session(
             |session| match session.session.set_internal_system_var(name, value) {
                 Ok(()) => Ok(()),
-                Err(error) if error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE) => {
+                Err(error) if error.equal(&tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE) => {
                     Ok(())
                 }
                 Err(error) => Err(stats_session_error(format!("{error:?}"))),
@@ -876,7 +876,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
                 value,
             ) {
                 Ok(()) => Ok(()),
-                Err(error) if error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE) => {
+                Err(error) if error.equal(&tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE) => {
                     Ok(())
                 }
                 Err(error) => Err(stats_session_error(format!("{error:?}"))),

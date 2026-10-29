@@ -172,13 +172,13 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         }
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
+                &tidb_txnkv::tikv_errors::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
                     .generate_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockWaitTimeout { .. } => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.generate_with_stack_by_args(&[]),
+                &tidb_txnkv::tikv_errors::ERR_LOCK_WAIT_TIMEOUT.generate_with_stack_by_args(&[]),
             ))
         }
         // Go retries or aborts the statement; only a commit's conflict is
@@ -250,7 +250,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
 /// Go `ErrKeyExists` rendered with the table's duplicate-entry hint.
 pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
     LockSqlError::from(tidb_terror::MysqlError::from_terror(
-        &tidb_error::catalog::kv::ERR_KEY_EXISTS
+        &tidb_kv::kv_errors::ERR_KEY_EXISTS
             .generate_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
     ))
 }
@@ -259,7 +259,7 @@ pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 /// the conflict's `txnStartTS=..., key=...` description.
 fn write_conflict_error(detail: &str) -> LockSqlError {
     LockSqlError::from(tidb_terror::MysqlError::from_terror(
-        &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
+        &tidb_kv::kv_errors::ERR_WRITE_CONFLICT
             .generate_with_stack(format!("Write conflict, {detail} [try again later]")),
     ))
 }

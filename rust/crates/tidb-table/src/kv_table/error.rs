@@ -77,7 +77,7 @@ impl KvTableError {
         match self {
             KvTableError::Storage(StorageError::Sql(error)) | KvTableError::Mysql(error) => error,
             KvTableError::Storage(StorageError::Retryable(_)) => {
-                MysqlError::from_terror(&tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE)
+                MysqlError::from_terror(&tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE)
             }
             KvTableError::Storage(other) => MysqlError::unknown(other.to_string()),
             KvTableError::Generation {
@@ -88,7 +88,7 @@ impl KvTableError {
             }
             | KvTableError::PartitionEval(eval) => eval.to_mysql_error(),
             other => MysqlError::from_terror(
-                &tidb_error::catalog::parser::ERR_PARSE.generate_with_stack(format!(
+                &tidb_parser::parser_errors::ERR_PARSE.generate_with_stack(format!(
                     "You have an error in your SQL syntax; check the manual that corresponds \
                      to your TiDB version for the right syntax to use row encode failed: {other:?}"
                 )),

@@ -982,7 +982,7 @@ fn non_transactional_job_failure(run: &JobRun, index: usize) -> Option<DriverErr
     if run.ignore_error {
         return None;
     }
-    Some(DriverError::from((&tidb_error::catalog::session::ERR_NON_TRANSACTIONAL_JOB_FAILURE).generate_with_stack(format!(
+    Some(DriverError::from((&crate::session_errors::ERR_NON_TRANSACTIONAL_JOB_FAILURE).generate_with_stack(format!(
             "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {}",
             job.job_id,
             go_datum_string(&job.start),

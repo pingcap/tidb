@@ -147,9 +147,9 @@ pub fn rebase_error(error: AutoRandomError) -> MysqlError {
                 "alter auto_random_base to {base} overflows the incremental bits, max allowed base is {maximum}"
             )).to_string().into()])),
         AutoRandomError::InvalidDefinition(reason) => tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[reason.to_string().into()])),
-        AutoRandomError::AutoId(AutoIdError::Exhausted) => tidb_terror::MysqlError::from_terror(&tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[])),
+        AutoRandomError::AutoId(AutoIdError::Exhausted) => tidb_terror::MysqlError::from_terror(&tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[])),
         AutoRandomError::AutoId(AutoIdError::OutOfRange { value, type_name }) => {
-            tidb_terror::MysqlError::from_terror(&tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", (value), (type_name))))
+            tidb_terror::MysqlError::from_terror(&tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", (value), (type_name))))
         }
         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
             tidb_terror::MysqlError::unknown(detail.0)

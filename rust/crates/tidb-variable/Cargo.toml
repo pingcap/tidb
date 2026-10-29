@@ -25,7 +25,6 @@ tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
