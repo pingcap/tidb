@@ -17,6 +17,7 @@ package norm
 import (
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
@@ -66,8 +67,28 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (norma
 		var normalizedSQL string
 		if !fuzzy {
 			normalizedSQL = utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text())
+			// Test hook: simulate the shared restore helper's error
+			// return ("") deterministically. A real restore failure enters
+			// the guard below through this exact value, so the whole
+			// downstream chain (empty digest, restore-fail classification)
+			// is exercised as-is instead of a post-normalization digest
+			// clear that the real path can never produce. Hooked on the
+			// exact-digest path only: the fuzzy path feeds binding matching
+			// itself and must keep working under the hook.
+			failpoint.Inject("bindingDigestRestoreFail", func() {
+				normalizedSQL = ""
+			})
 		} else {
 			normalizedSQL = utilparser.RestoreWithoutDB(n)
+		}
+		// The shared restore helpers swallow the restore error and return ""
+		// on failure, and a successful DML restore is never empty. Hashing
+		// the empty string would fabricate a digest shared by every failing
+		// statement (the trap constant) and let callers mistake the failure
+		// for success (`digest != ""`), so propagate the failure as an empty
+		// digest.
+		if normalizedSQL == "" {
+			return "", ""
 		}
 		normalizedStmt, digest = parser.NormalizeDigestForBinding(normalizedSQL)
 		return normalizedStmt, digest.String()
@@ -89,6 +110,13 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (norma
 			return normalizeSQL, digest
 		case *ast.SetOprStmt:
 			normalizeExplainSQL, _ := normalize(x)
+			// A restore failure must not fall through to the substring
+			// hashing below: DigestNormalized("") would fabricate the
+			// digest-of-empty-string trap constant, which callers would
+			// mistake for a successfully computed digest.
+			if normalizeExplainSQL == "" {
+				return "", ""
+			}
 
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")

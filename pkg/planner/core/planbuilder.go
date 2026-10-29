@@ -1122,14 +1122,12 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
+		normdOrigSQL, _ := norm.NormalizeStmtForBinding(v.OriginNode, norm.WithSpecifiedDB(b.ctx.GetSessionVars().CurrentDB))
 		p = &SQLBindPlan{
 			SQLBindOp: OpSetBindingStatus,
 			Details: []*SQLBindOpDetail{{
-				NormdOrigSQL: parser.NormalizeForBinding(
-					utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()),
-					false,
-				),
-				Db: utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+				NormdOrigSQL: normdOrigSQL,
+				Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 			}},
 		}
 	} else if v.SQLDigest != "" {
@@ -1262,11 +1260,17 @@ func constructSQLBindOPFromPlanDigest(
 	if err != nil {
 		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
-	sqlDigestWithDBStr := sqlDigestWithDB.String()
+	// Guarded normalizer (same vocabulary as the raw chain; a restore failure
+	// yields an empty digest instead of the digest-of-empty-string trap).
+	normdOrigSQL, sqlDigestWithDBStr := norm.NormalizeStmtForBinding(originNode, norm.WithSpecifiedDB(bindableStmt.Schema))
+	if sqlDigestWithDBStr == "" {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			planDigest + " is ignored because its SQL cannot be normalized (restore failed)",
+		))
+		return nil, nil
+	}
 	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
 			planDigest + " is ignored because it corresponds to the same SQL digest as another Plan Digest",
@@ -1338,10 +1342,16 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 		return nil, err
 	}
 
-	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
 	bindSQL := utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+	// Route through the guarded normalizer: a restore failure propagates as
+	// an empty digest instead of being hashed into the digest-of-empty-string
+	// trap constant the raw RestoreWithDefaultDB → NormalizeDigestForBinding
+	// chain used to persist.
+	normdOrigSQL, sqlDigestWithDB := norm.NormalizeStmtForBinding(v.OriginNode, norm.WithSpecifiedDB(b.ctx.GetSessionVars().CurrentDB))
+	if sqlDigestWithDB == "" {
+		return nil, errors.New("create binding failed: the origin SQL cannot be normalized (restore failed)")
+	}
 	p := &SQLBindPlan{
 		IsGlobal:  v.GlobalScope,
 		SQLBindOp: OpSQLBindCreate,
@@ -1353,7 +1363,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 			Charset:      charSet,
 			Collation:    collation,
 			Source:       bindinfo.Manual,
-			SQLDigest:    sqlDigestWithDB.String(),
+			SQLDigest:    sqlDigestWithDB,
 		}},
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)

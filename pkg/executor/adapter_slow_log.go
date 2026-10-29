@@ -21,8 +21,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -186,12 +189,133 @@ func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionV
 	}
 }
 
+// resolveBindingDigestInput returns the statement the binding digest should
+// be computed from, and — when non-empty — the reason this statement can
+// never produce one. EXPLAIN unwraps to its inner statement; EXECUTE resolves
+// its prepared statement on demand (there is no reset-time producer anymore,
+// so an EXECUTE nobody logs costs no binding normalization at all; resolution
+// cannot fail here in a way it didn't already fail during compilation — the
+// same *ast.ExecuteStmt node carries the cached prepared statement from that
+// lookup, and DEALLOCATE cannot interleave inside a statement). An EXECUTE
+// whose inner statement has no binding semantics counts as execute-unresolved,
+// not non-dml. An empty reason means the returned statement is DML-shaped and
+// eligible for normalization — an empty digest after that point is a restore
+// failure.
+func resolveBindingDigestInput(stmtNode ast.StmtNode, sessVars *variable.SessionVars) (ast.StmtNode, string) {
+	switch x := stmtNode.(type) {
+	case *ast.ExecuteStmt:
+		prepStmt, err := plannercore.GetPreparedStmt(x, sessVars)
+		if err != nil {
+			return nil, metrics.LblBindingDigestExecuteUnresolved
+		}
+		inner, reason := resolveBindingDigestInput(prepStmt.PreparedAst.Stmt, sessVars)
+		if reason == metrics.LblBindingDigestNonDML {
+			reason = metrics.LblBindingDigestExecuteUnresolved
+		}
+		return inner, reason
+	case *ast.ExplainStmt:
+		// Classification only: the digest of an EXPLAIN row is computed from
+		// the ExplainStmt itself — norm's own Text()-gated unwrap is the
+		// correct one (the text lives on the wrapper; a manual unwrap here
+		// would hand norm an inner statement with an empty Text(), which its
+		// gate treats as "no bind record wanted").
+		if _, reason := resolveBindingDigestInput(x.Stmt, sessVars); reason != "" {
+			return nil, reason
+		}
+		return x, ""
+	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+		return x, ""
+	}
+	return nil, metrics.LblBindingDigestNonDML
+}
+
+// ensureBindingDigest is the single on-demand computation behind the slow log
+// Binding_digest field: the stmtctx memo is consulted first, and a statement
+// whose memo is still empty — e.g. TryFastPlan point queries return before
+// the binding match, which no longer computes the digest at all — gets its
+// digest computed here from resolveBindingDigestInput's statement with the
+// execution-time current database (for EXECUTE the prepared inner AST, which
+// bakes the PREPARE-time db, so the digest lands on the same vocabulary the
+// binding match would hit). Statements without binding semantics (non-DML,
+// unresolved EXECUTE, restore failure) return "" — absence, never a fallback
+// to the exec digest. A computed value is memoized, so the rule evaluation
+// and the flush of the same statement share one normalization pass.
+func ensureBindingDigest(stmtNode ast.StmtNode, sessVars *variable.SessionVars) string {
+	if digest, ok := sessVars.StmtCtx.BindingDigest(); ok {
+		return digest
+	}
+	inner, reason := resolveBindingDigestInput(stmtNode, sessVars)
+	if reason != "" {
+		return ""
+	}
+	normalized, digest := norm.NormalizeStmtForBinding(inner, norm.WithSpecifiedDB(sessVars.CurrentDB))
+	if digest == "" {
+		return ""
+	}
+	sessVars.StmtCtx.InitBindingDigest(normalized, digest)
+	return digest
+}
+
+// prepareBindingDigestForRules is the rule-evaluation consumer of the binding
+// digest: a `Binding_digest` trigger rule must fire for fast-path statements
+// too (TryFastPlan returns before the binding match, so at rule time the memo
+// is still empty and the accessor's memo-only read sees nothing), so the
+// digest is computed here on demand, before the rules are matched — but only
+// when the effective rule set actually references the field. Not counted: the
+// empty-reason counter is a flush-time reconciliation, and a statement whose
+// rules reject it is not slow-logged.
+func prepareBindingDigestForRules(stmtNode ast.StmtNode, sessVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
+	if items == nil || items.BindingDigest != "" {
+		return
+	}
+	if _, ok := sessVars.SlowLogRules.EffectiveFields[strings.ToLower(variable.SlowLogBindingDigest)]; !ok {
+		return
+	}
+	items.BindingDigest = ensureBindingDigest(stmtNode, sessVars)
+}
+
+// lazyFillBindingDigest is the flush-time consumer of the binding digest:
+// the slow log is being written anyway, which is already the cold path, so a
+// statement whose digest is still empty gets it computed via
+// ensureBindingDigest. Statements without binding semantics (non-DML,
+// EXECUTE whose memo never resolved, restore failure) stay empty —
+// never a fallback to the exec digest — and every empty outcome is counted
+// here, once per slow-logged statement, with its reason.
+func lazyFillBindingDigest(stmtNode ast.StmtNode, sessVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
+	if items.BindingDigest != "" {
+		return
+	}
+	reason := bindingDigestEmptyReason(stmtNode, sessVars)
+	if reason == "" {
+		if digest := ensureBindingDigest(stmtNode, sessVars); digest != "" {
+			items.BindingDigest = digest
+			return
+		}
+		reason = metrics.LblBindingDigestRestoreFail
+	}
+	metrics.BindingDigestEmptyCounter.WithLabelValues(reason).Inc()
+}
+
+// bindingDigestEmptyReason classifies why the binding digest stays empty for
+// this slow-logged statement: it delegates to
+// resolveBindingDigestInput, which also resolves EXECUTE on demand. An empty
+// return value means the statement is DML-shaped (EXPLAIN prefix stripped)
+// and eligible for the on-demand computation — an empty digest after that
+// point is a restore failure. The EXPLAIN edge with an empty Text() (no bind
+// record wanted) also lands on restore-fail: the normalizer returns "" for
+// it and the distinction carries no operational difference.
+func bindingDigestEmptyReason(stmtNode ast.StmtNode, sessVars *variable.SessionVars) string {
+	_, reason := resolveBindingDigestInput(stmtNode, sessVars)
+	return reason
+}
+
 // SetSlowLogItems fills the remaining fields of SlowQueryLogItems after SQL execution.
 func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *variable.SlowQueryLogItems) {
 	if items == nil {
 		return
 	}
 	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx.GetSessionVars(), items)
+	lazyFillBindingDigest(a.StmtNode, a.Ctx.GetSessionVars(), items)
 
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx

@@ -23,6 +23,27 @@ var (
 	BindingCacheMemUsage    prometheus.Gauge
 	BindingCacheMemLimit    prometheus.Gauge
 	BindingCacheNumBindings prometheus.Gauge
+	// BindingDigestEmptyCounter counts slow-logged statements whose
+	// Binding_digest stayed empty, labeled by reason: non-dml
+	// (no binding semantics, by design), restore-fail (DML-shaped but
+	// normalization failed), execute-unresolved (EXECUTE whose memo never
+	// resolved — inner statement without binding semantics or prepare name
+	// not found). Counted once per statement at slow log flush time, so the
+	// scope matches the slow log field itself; empties on statements that
+	// are not slow-logged are not counted.
+	BindingDigestEmptyCounter *prometheus.CounterVec
+)
+
+// Binding-digest empty-reason label values.
+const (
+	// LblBindingDigestNonDML labels statements without binding semantics.
+	LblBindingDigestNonDML = "non-dml"
+	// LblBindingDigestRestoreFail labels DML whose binding normalization failed.
+	LblBindingDigestRestoreFail = "restore-fail"
+	// LblBindingDigestExecuteUnresolved labels EXECUTE statements whose
+	// binding digest never resolved — inner statement without binding
+	// semantics, unknown prepare name, or a failed inner normalization.
+	LblBindingDigestExecuteUnresolved = "execute-unresolved"
 )
 
 // InitBindInfoMetrics initializes bindinfo metrics.
@@ -62,4 +83,11 @@ func InitBindInfoMetrics() {
 			Name:      "binding_cache_num_bindings",
 			Help:      "Number of bindings in binding cache.",
 		})
+	BindingDigestEmptyCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "binding_digest_empty_total",
+			Help:      "Counter of slow-logged statements with an empty binding digest by reason: non-dml, restore-fail, execute-unresolved.",
+		}, []string{"reason"})
 }

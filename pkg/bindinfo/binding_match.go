@@ -33,6 +33,11 @@ var (
 
 // BindingMatchInfo records necessary information for fuzzy binding matching.
 // This is mainly for plan cache to avoid normalizing the same statement repeatedly.
+// Only resolution-independent data is cached here (fuzzy digest, table names);
+// the exact binding digest for the slow log `Binding_digest` field is NOT
+// computed on this path — it depends on the execution-time current database
+// and is computed on demand by its only consumers (the slow-log rule
+// evaluation and flush), see executor.ensureBindingDigest.
 type BindingMatchInfo struct {
 	FuzzyDigest string
 	TableNames  []*ast.TableName

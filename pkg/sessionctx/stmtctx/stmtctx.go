@@ -384,6 +384,23 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+
+	// bindingDigestMemo caches the binding-semantics digest of the statement:
+	// NormalizeDigestForBinding over the default-DB-completed normalized SQL,
+	// the same vocabulary as mysql.bind_info.sql_digest. Unlike digestMemo it
+	// cannot lazily self-compute (the computation needs the AST and the
+	// execution-time DB), so it is pure storage: the slow-log on-demand fills
+	// (rule evaluation / flush — including for EXECUTE, whose prepared inner
+	// statement they resolve themselves) are the only producers, and it resets
+	// together with the whole StatementContext on Reset. The binding match
+	// path never produces it — the digest is computed only when a consumer
+	// needs it, so statements that are never slow-logged pay nothing.
+	bindingDigestMemo struct {
+		sync.Once
+		normalized string
+		digest     string
+	}
+
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
@@ -973,6 +990,35 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 // ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
 func (sc *StatementContext) ResetSQLDigest(s string) {
 	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+}
+
+// InitBindingDigest sets the normalized SQL and its digest in the binding
+// vocabulary (the same vocabulary as mysql.bind_info.sql_digest) for this
+// statement. Like InitSQLDigest it is first-writer-wins: later calls are
+// no-ops. digest must be non-empty — producers that cannot compute a binding
+// digest (non-DML, restore failure, unresolved EXECUTE) must not call this at
+// all, so that BindingDigest reports "absent" and consumers leave the slow log
+// field empty instead of falling back to the exec digest.
+func (sc *StatementContext) InitBindingDigest(normalized, digest string) {
+	if digest == "" {
+		return
+	}
+	sc.bindingDigestMemo.Do(func() {
+		sc.bindingDigestMemo.normalized = normalized
+		sc.bindingDigestMemo.digest = digest
+	})
+}
+
+// BindingDigest gets the binding-semantics digest for this statement, if any
+// producer computed one. ok is false when the statement has no binding digest;
+// callers must treat that as "no value" rather than substituting the exec
+// digest. All producers and consumers run on the statement's goroutine, so the
+// unsynchronized read is safe.
+func (sc *StatementContext) BindingDigest() (digest string, ok bool) {
+	if sc.bindingDigestMemo.digest == "" {
+		return "", false
+	}
+	return sc.bindingDigestMemo.digest, true
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.

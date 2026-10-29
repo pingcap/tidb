@@ -9,5 +9,6 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/util/parser",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )

@@ -63,6 +63,26 @@ func TestSlowLogFieldAccessor(t *testing.T) {
 	}
 }
 
+// The Binding_digest accessor reads only the stmtctx memo: absent memo leaves
+// the field empty, a memoized digest is copied verbatim (no drift),
+// and Match compares the plain string value.
+func TestSlowLogBindingDigestAccessor(t *testing.T) {
+	ctx := newMockCtx()
+	sv := ctx.GetSessionVars()
+	items := &variable.SlowQueryLogItems{}
+	accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogBindingDigest)]
+	require.NotNil(t, accessor)
+
+	accessor.Setter(context.Background(), sv, items)
+	require.Empty(t, items.BindingDigest, "no memo: the Setter must not invent a value")
+
+	sv.StmtCtx.InitBindingDigest("norm", "binding-digest-1")
+	accessor.Setter(context.Background(), sv, items)
+	require.Equal(t, "binding-digest-1", items.BindingDigest)
+	require.True(t, accessor.Match(sv, items, "binding-digest-1"))
+	require.False(t, accessor.Match(sv, items, "other-digest"))
+}
+
 func TestMatchSingleRuleSingleCondition(t *testing.T) {
 	ctx := newMockCtx()
 	items := &variable.SlowQueryLogItems{MemMax: 200}
@@ -357,7 +377,7 @@ func TestMatchUintExecDetailFieldsAfterParse(t *testing.T) {
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
-	require.Equal(t, 31, len(variable.SlowLogRuleFieldAccessors))
+	require.Equal(t, 32, len(variable.SlowLogRuleFieldAccessors))
 	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)

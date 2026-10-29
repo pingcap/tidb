@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -339,6 +340,19 @@ func TestSlowLogFormat(t *testing.T) {
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
 
+	// Binding_digest: omitted from the slow log when empty
+	// (the golden assertions above already pin the empty shape),
+	// and emitted right after Digest when the statement carries a
+	// binding-vocabulary digest.
+	bindingStmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	_, bindingDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithSpecifiedDB(seVar.CurrentDB))
+	require.NotEmpty(t, bindingDigest)
+	logItems.BindingDigest = bindingDigest
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# Digest: "+digest.String()+"\n# Binding_digest: "+bindingDigest+"\n")
+	logItems.BindingDigest = ""
+
 	// Verify SessionConnectAttrs serialization.
 	logItems.SessionConnectAttrs = map[string]string{
 		"_client_name": "libmysql",
@@ -376,7 +390,11 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
-	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
+	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules.
+	// Note: this synthetic flow does not run ResetContextOfStmt, so the
+	// stmtctx still carries the previous statement's binding-digest memo —
+	// the Binding_digest flush producer is covered end-to-end (against the
+	// persisted bind_info vocabulary) in pkg/bindinfo's slow log gate.
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
 			strings.ToLower(variable.SlowLogDBStr):          {},
@@ -427,7 +445,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV", "BindingDigest"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {

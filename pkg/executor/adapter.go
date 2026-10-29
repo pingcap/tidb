@@ -1929,6 +1929,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		// EffectiveFields is not empty (unique fields for this session including global rules),
 		// so we use these rules to decide whether to write the slow log.
 		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
+			// A Binding_digest trigger rule must see the digest of fast-path
+			// statements too (TryFastPlan returns before the binding match,
+			// so the memo is still empty): compute it on demand, before the
+			// rules are matched.
+			prepareBindingDigestForRules(a.StmtNode, sessVars, slowItems)
 			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
 			defer putSlowLogItems(slowItems)
 		} else {

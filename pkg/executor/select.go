@@ -1070,6 +1070,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		s = prepareStmt.PreparedAst.Stmt
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		//
+		// The binding digest is NOT computed here: it is consumer-driven —
+		// the slow-log fills (rule evaluation / flush)
+		// resolve the prepared statement on demand at their own sites, so an
+		// EXECUTE nobody logs costs no binding normalization at all.
 		goCtx := context.Background()
 		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
