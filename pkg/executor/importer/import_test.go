@@ -105,6 +105,26 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
+func TestInitDataStoreWithoutSource(t *testing.T) {
+	ctx := context.Background()
+	// A query import has no source path, and only opens the global sort store.
+	for _, uri := range []string{"", "noop://sort"} {
+		controller := &LoadDataController{Plan: &Plan{CloudStorageURI: uri}}
+		require.NoError(t, controller.InitDataStore(ctx))
+		require.Nil(t, controller.dataStore)
+		require.Equal(t, uri != "", controller.globalSortStore != nil)
+		controller.Close()
+	}
+	// A failed source store does not leak the global sort store.
+	for _, source := range []string{"s3://source/%zz", "unsupported://source/file"} {
+		controller := &LoadDataController{Plan: &Plan{CloudStorageURI: "noop://sort", Path: source}}
+		require.Error(t, controller.InitDataStore(ctx))
+		require.Nil(t, controller.globalSortStore)
+		require.Nil(t, controller.dataStore)
+		controller.Close()
+	}
+}
+
 func TestPlanUseNewCollate(t *testing.T) {
 	plan := &Plan{}
 	require.True(t, plan.GetUseNewCollateOrDefault(true))

@@ -313,36 +313,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	})
 	eg.Go(func() error {
 		defer close(selectedChunkCh)
-		fields := exec.RetTypes(e.selectExec)
-		var idAllocator int64
-		chkSize := e.selectExec.InitCap()
-		maxChkSize := e.selectExec.MaxChunkSize()
-		for {
-			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
-			err := exec.Next(egCtx, e.selectExec, chk)
-			if err != nil {
-				return err
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			select {
-			case selectedChunkCh <- importer.QueryChunk{
-				Fields:      fields,
-				Chk:         chk,
-				RowIDOffset: idAllocator,
-			}:
-				idAllocator += int64(chk.NumRows())
-			case <-egCtx.Done():
-				return egCtx.Err()
-			}
-			if chkSize < maxChkSize {
-				chkSize = chkSize * 2
-				chkSize = min(chkSize, maxChkSize)
-			}
-		}
-		return nil
+		return sendQueryChunks(egCtx, e.selectExec, selectedChunkCh)
 	})
 	if err := eg.Wait(); err != nil {
 		return err
