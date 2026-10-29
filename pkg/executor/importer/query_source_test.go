@@ -77,6 +77,7 @@ func TestCaptureQuerySource(t *testing.T) {
 		require.Len(t, tables, 2)
 		require.Contains(t, tables, "test.query_src")
 		require.Contains(t, tables, "test.query_other")
+		require.NotContains(t, tables, "test.unused_target")
 		tk.MustExec("create temporary table query_tmp(i int)")
 		tk.MustExec("create global temporary table query_gtmp(i int) on commit delete rows")
 		for _, tbl := range []string{"query_tmp", "query_gtmp"} {
@@ -86,15 +87,21 @@ func TestCaptureQuerySource(t *testing.T) {
 		tk.MustExec("create sequence query_seq")
 		for sql, msg := range map[string]string{
 			"select nextval(query_seq)":                                                         "sequences in IMPORT INTO FROM SELECT",
-			"select table_name from information_schema.tables":                                  "memory source tables in IMPORT INTO FROM SELECT",
-			"select variable_name from performance_schema.session_variables":                    "memory source tables in IMPORT INTO FROM SELECT",
-			"select i from query_src where i in (select 1 from information_schema.processlist)": "memory source tables in IMPORT INTO FROM SELECT",
+			"select 1 from query_seq":                                                           "sequences in IMPORT INTO FROM SELECT",
+			"select table_name from information_schema.tables":                                  "virtual source tables in IMPORT INTO FROM SELECT",
+			"select variable_name from performance_schema.session_variables":                    "virtual source tables in IMPORT INTO FROM SELECT",
+			"select i from query_src where i in (select 1 from information_schema.processlist)": "virtual source tables in IMPORT INTO FROM SELECT",
 		} {
 			_, err = capture(tk.Session(), sql)
 			require.ErrorContains(t, err, msg, sql)
 		}
 		_, err = capture(tk.Session(), "select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
+		// A stale read replaces the txn context of the session, so use a new one.
+		staleTK := testkit.NewTestKit(t, store)
+		staleTK.MustExec("use test")
+		_, err = capture(staleTK.Session(), "select i from query_src as of timestamp now(6)")
+		require.ErrorContains(t, err, "stale reads in IMPORT INTO FROM SELECT")
 	})
 	t.Run("views and cached tables", func(t *testing.T) {
 		tk.MustExec("create database query_view_db")
