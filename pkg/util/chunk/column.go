@@ -161,6 +161,11 @@ func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
+// IsFixed reports whether this column stores fixed-length values.
+func (c *Column) IsFixed() bool {
+	return c.isFixed()
+}
+
 // Reset resets this Column according to the EvalType.
 // Different from reset, Reset will reset the elemBuf.
 func (c *Column) Reset(eType types.EvalType) {

@@ -1948,6 +1948,86 @@ func TestMarkUpdateTouchedRowsByColumnDecimalValueComparison(t *testing.T) {
 	require.Equal(t, []uint8{0, 0, 0, 0, 1, 0, 1, 1}, updateTouchedBitmap)
 }
 
+func TestMarkUpdateTouchedRowsByColumnBitValueComparison(t *testing.T) {
+	for _, field := range []struct {
+		name               string
+		flen               int
+		oldValue, newValue []byte
+	}{
+		{name: "bit8", flen: 8, oldValue: []byte{2}, newValue: []byte{3}},
+		{name: "bit64", flen: 64, oldValue: []byte{0x80, 0, 0, 0, 0, 0, 0, 2}, newValue: []byte{0x80, 0, 0, 0, 0, 0, 0, 3}},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, nullability := range []struct {
+				name    string
+				notNull bool
+			}{
+				{name: "nullable"},
+				{name: "not null", notNull: true},
+			} {
+				t.Run(nullability.name, func(t *testing.T) {
+					ft := types.NewFieldType(mysql.TypeBit)
+					ft.SetFlen(field.flen)
+					rows := [][2][]byte{
+						{nil, nil},
+						{field.oldValue, field.newValue},
+						{field.oldValue, field.oldValue},
+						{nil, field.oldValue},
+						{field.oldValue, nil},
+						{nil, nil},
+						{field.oldValue, field.newValue},
+					}
+					want := []uint8{0, 1, 0, 1, 1, 0, 1}
+					if nullability.notNull {
+						ft.AddFlag(mysql.NotNullFlag)
+						rows = [][2][]byte{
+							{field.oldValue, field.newValue},
+							{field.oldValue, field.oldValue},
+							{field.newValue, field.newValue},
+							{field.newValue, field.oldValue},
+						}
+						want = []uint8{1, 0, 0, 1}
+					}
+					chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+					updateRows := make([]int, len(rows))
+					for rowIdx, row := range rows {
+						updateRows[rowIdx] = rowIdx
+						for colIdx, value := range row {
+							if value == nil {
+								chk.AppendNull(colIdx)
+							} else {
+								chk.AppendBytes(colIdx, value)
+							}
+						}
+					}
+					bitmap := make([]uint8, len(rows))
+					err := executil.MarkTouchedRowsByColumn(updateRows, bitmap, 1, 0,
+						chk.Column(0), chk.Column(1), ft, nullability.notNull, "aggregate change")
+					require.NoError(t, err)
+					require.Equal(t, want, bitmap)
+				})
+			}
+		})
+	}
+	t.Run("fixed integer projection", func(t *testing.T) {
+		ft := types.NewFieldType(mysql.TypeBit)
+		ft.SetFlen(64)
+		ft.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+		physicalType := types.NewFieldType(mysql.TypeLonglong)
+		physicalType.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{physicalType, physicalType}, 3)
+		for _, row := range [][2]uint64{{0, 0}, {1 << 63, 1 << 63}, {1 << 63, 1<<63 + 1}} {
+			chk.AppendUint64(0, row[0])
+			chk.AppendUint64(1, row[1])
+		}
+		bitmap := make([]uint8, 3)
+		err := executil.MarkTouchedRowsByColumn([]int{0, 1, 2}, bitmap, 1, 0,
+			chk.Column(0), chk.Column(1), ft, true, "aggregate change")
+		require.NoError(t, err)
+		require.Equal(t, []uint8{0, 0, 1}, bitmap)
+	})
+}
+
 func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
 	enumFT := types.NewFieldType(mysql.TypeEnum)
 	enumFT.SetCharset("utf8mb4")

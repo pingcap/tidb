@@ -329,3 +329,35 @@ drop user if exists 'u_alter_mv'@'%';
 drop user if exists 'u_drop_mv'@'%';
 drop user if exists 'u_mlog_select'@'%';
 drop database if exists mview_privilege_test;
+use test;
+set time_zone = '+00:00';
+insert into mysql.tidb(variable_name, variable_value, comment)
+values ('tikv_gc_safe_point', '20060102-15:04:05 +0000', '')
+on duplicate key update variable_value = values(variable_value);
+create table t_compare_bit (id int primary key, g int, b bit(8), index (g, b));
+insert into t_compare_bit values (1, 1, null), (2, 2, b'00000010');
+create materialized view log on t_compare_bit (id, g, b);
+create materialized view mv_compare_bit (g, m, cnt)
+as select /*+ stream_agg() */ g, min(b), count(*) from t_compare_bit group by g;
+set @bit_mview_id = (select tidb_table_id from information_schema.tables
+where table_schema = 'test' and table_name = 'mv_compare_bit');
+set @bit_read_tso = (select last_success_read_tso from mysql.tidb_mview_refresh_info
+where mview_id = @bit_mview_id);
+update t_compare_bit set b = b'00000011' where id = 2;
+refresh materialized view mv_compare_bit complete in place;
+update mysql.tidb_mview_refresh_info set last_success_read_tso = @bit_read_tso
+where mview_id = @bit_mview_id;
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+compare materialized view mv_compare_bit as of timestamp @compare_ts;
+compare result
+There are differences result in 1 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
+compare materialized view mv_compare_bit as of timestamp @compare_ts output into table mv_compare_bit_output;
+select g, hex(m), cnt, _Differ_type_ from mv_compare_bit_output order by g;
+g	hex(m)	cnt	_Differ_type_
+2	3	1	mview_differ
+drop table mv_compare_bit_output;
+drop materialized view mv_compare_bit;
+drop materialized view log on t_compare_bit;
+drop table t_compare_bit;
