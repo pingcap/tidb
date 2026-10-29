@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The cluster storage seam (`tidb_kv::cluster_storage`) under the tables
+//! The cluster storage seam (`tidb_store_driver_txn::cluster_storage`) under the tables
 //! the executor builds over it.
 
     use crate::KvTableDdl;
 use crate::KvTableReader;
 use tidb_kv::cluster_storage::*;
-use tidb_kv::cluster_storage_test_util::*;
+use tidb_store_driver_txn::cluster_storage::*;
+use tidb_store_driver_txn::cluster_storage_test_util::*;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;

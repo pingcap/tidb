@@ -73,9 +73,8 @@ use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_sessionctx::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
-};
+use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction};
 use tidb_txnkv::rpc::UnaryCallContext;

@@ -20,6 +20,7 @@ tidb-ddl = { path = "../tidb-ddl" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }

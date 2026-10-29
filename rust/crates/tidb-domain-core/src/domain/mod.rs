@@ -45,7 +45,7 @@ use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
 use tidb_stats_handle::table_size_stats::TableStorageStatsProvider;
-use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 

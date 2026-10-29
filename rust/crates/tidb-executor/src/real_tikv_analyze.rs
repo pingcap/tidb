@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_mysql::errors::SqlError;
-use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::adjusted_sample_rate;
 use tidb_stats::{

@@ -209,9 +209,8 @@ mod tests {
 
     use super::*;
     use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
-    use tidb_kv::cluster_storage::{
-        ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
-    };
+    use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+    use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::{build_prepared_select_plan, run_select_on, PreparedPlanCacheEnvironment};
     use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
     use crate::executor::{Executor, ExecutorMeta};

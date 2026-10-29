@@ -18,7 +18,7 @@
 //! follower the cluster connection holds alongside its [`Session`].
 
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_kv::cluster_storage::BufferCheckpoint;
+use tidb_store_driver_txn::cluster_storage::BufferCheckpoint;
 use tidb_driver_error::DriverError;
 
 use crate::statement_lifecycle::{finish_snapshot, CatalogFollowing, SnapshotSlot};

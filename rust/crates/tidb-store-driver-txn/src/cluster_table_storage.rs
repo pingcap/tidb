@@ -56,7 +56,7 @@
 //! snapshot.
 //!
 //! [`ClusterSnapshot`]: tidb_kv::cluster_storage::ClusterSnapshot
-//! [`MutationBuffer`]: tidb_kv::cluster_storage::MutationBuffer
+//! [`MutationBuffer`]: crate::cluster_storage::MutationBuffer
 
 use tidb_store_driver_error::coordinator::{coordinator_sql_error, engine_sql_error};
 use std::collections::{BTreeMap, BTreeSet};
@@ -64,9 +64,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
-};
+use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
+use crate::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_kv::storage::StorageError;
 use tidb_hack::GoToLower;
 use tidb_txnkv::rpc::{UnaryCallContext, UnaryCancellation};
@@ -1656,7 +1655,7 @@ pub fn lock_pessimistic_statement_with<T>(
                 } else {
                     Default::default()
                 };
-                tidb_kv::cluster_storage::key_needs_pessimistic_lock(
+                crate::cluster_storage::key_needs_pessimistic_lock(
                     mutation.key(),
                     value.unwrap_or_default(),
                     flags,

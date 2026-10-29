@@ -33,7 +33,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_txn::cluster_storage::{MutationBuffer, SwappableSnapshot};
 use tidb_model::{ActionType, Job};
 use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_txnkv::transaction::OptimisticCoordinatorError;
@@ -399,7 +400,7 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
 /// which on an index means a query returns rows that are not there, or misses
 /// rows that are, with no error either way.
 ///
-/// [`ClusterTableStorage`]: tidb_kv::cluster_storage::ClusterTableStorage
+/// [`ClusterTableStorage`]: tidb_store_driver_txn::cluster_storage::ClusterTableStorage
 pub trait IndexBackfiller {
     /// Go `checkForeignKeyConstrain` for an `ADD FOREIGN KEY`: the child's
     /// existing rows against its parent, through the same snapshot and

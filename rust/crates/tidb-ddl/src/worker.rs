@@ -48,7 +48,8 @@ use crate::real_tikv_ddl::{
 
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_infoschema_isvalidator::SchemaValidator;
-use tidb_kv::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_table::kv_table::RowDecodeContext;
 use tidb_pd_client::EtcdClient;
 

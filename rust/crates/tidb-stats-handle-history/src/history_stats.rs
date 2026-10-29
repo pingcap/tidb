@@ -28,7 +28,7 @@ use tidb_syssession::stats_table_rows::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;

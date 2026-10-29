@@ -78,7 +78,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 mod transaction_buffer_tests {
     use super::*;
     use tidb_store_driver_txn::cluster_table_storage::SessionTransaction;
-    use tidb_kv::cluster_storage::MutationBuffer;
+    use tidb_store_driver_txn::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
     /// Go `mockstore`'s `tikv.NewKVStore` over unistore: the embedded node's

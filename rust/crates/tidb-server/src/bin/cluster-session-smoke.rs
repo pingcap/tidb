@@ -45,9 +45,8 @@ use tidb_copr::cop_client::CopClient;
 use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_store_driver::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_stats_handle_syncload::stats_watch::StatsSnapshot;
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
-};
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer, SwappableSnapshot};
 use tidb_server::cluster_session::{session_with_cluster_storage, LocalTableAutoIds};
 use tidb_session::StmtResult;
 

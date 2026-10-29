@@ -162,7 +162,7 @@
 //! `information_schema` over the loaded catalog -- runs, and reports the
 //! driver's own error where it cannot.
 //!
-//! [`ClusterTableStorage`]: tidb_kv::cluster_storage::ClusterTableStorage
+//! [`ClusterTableStorage`]: tidb_store_driver_txn::cluster_storage::ClusterTableStorage
 //! [`StatementSnapshot`]: tidb_store_driver_txn::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_store_driver_txn::cluster_table_storage::SessionTransaction
 
@@ -195,9 +195,8 @@ use tidb_executor::real_tikv_analyze::prepare_cluster_analyze_parsed;
 use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
-};
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer, SwappableSnapshot};
 use tidb_planner::transaction_control::{
     classify_transaction_control, classify_transaction_control_stmt, TransactionControl,
 };

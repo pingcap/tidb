@@ -23,7 +23,8 @@ use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
-use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
+use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::Key;
 

@@ -37,9 +37,8 @@ use tidb_txnkv::TransportRequest;
 use tidb_copr::cop_client::CopClient;
 use tidb_executor::cop_reader::open_cop_scan;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
-};
+use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_executor::driver::run_select_on;
 use tidb_infoschema::Catalog;
 use tidb_table::kv_table::KvTable;

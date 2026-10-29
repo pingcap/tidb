@@ -41,7 +41,7 @@
 //! quietly reinterpret, so it is stated once, here.
 //!
 //! A source's rows are not only its storage engine's rows. Inside an explicit
-//! transaction, [`ClusterTableStorage`](tidb_kv::cluster_storage::ClusterTableStorage)
+//! transaction, [`ClusterTableStorage`](tidb_store_driver_txn::cluster_storage::ClusterTableStorage)
 //! merges the session's staged mutation buffer into the same key-ordered
 //! stream the snapshot produces (Go's `MemBuffer` in front of `kv.Snapshot`,
 //! and Go's `UnionScan` above a coprocessor reader). A row this very statement's

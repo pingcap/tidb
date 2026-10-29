@@ -28,7 +28,7 @@ use tidb_terror::MysqlError;
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_executor::{KvTableDdl, KvTableReader};
 use tidb_sessionctx::StmtContext;
-use tidb_kv::cluster_storage::ClusterTableStorage;
+use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_tblctx::MutateContext;
 use tidb_table::kv_table::{KvTable, KvTableError, RowDecodeContext, TableCharset};
 

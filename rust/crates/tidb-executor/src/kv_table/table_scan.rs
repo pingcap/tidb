@@ -3327,7 +3327,7 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
 /// A forward cursor over a table's record range, decoding one row per pull.
 ///
 /// See [`KvTable::row_cursor_with_context`]. Over
-/// [`ClusterTableStorage`](tidb_kv::cluster_storage::ClusterTableStorage) the
+/// [`ClusterTableStorage`](tidb_store_driver_txn::cluster_storage::ClusterTableStorage) the
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
 pub struct RowCursor {

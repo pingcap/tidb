@@ -106,7 +106,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
         let mut read_timestamps = Vec::new();
         let result = lock_pessimistic_statement_with(
             1,
-            &tidb_kv::cluster_storage::MutationBuffer::new(),
+            &tidb_store_driver_txn::cluster_storage::MutationBuffer::new(),
             |read_ts| {
                 read_timestamps.push(read_ts);
                 session.node().domain.transactions.open_snapshot("")

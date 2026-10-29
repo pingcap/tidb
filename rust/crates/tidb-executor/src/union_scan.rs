@@ -1103,8 +1103,8 @@ mod tests {
     }
 }
 
-impl MemBufferSnapshotGetter for std::sync::Arc<tidb_kv::cluster_storage::MemBufferSnapshot> {
+impl MemBufferSnapshotGetter for std::sync::Arc<tidb_kv::mem_buffer::MemBufferSnapshot> {
     fn get(&self, key: &tidb_txnkv::Key) -> Result<Option<Vec<u8>>, crate::ExecError> {
-        Ok(tidb_kv::cluster_storage::MemBufferSnapshot::get(self, key))
+        Ok(tidb_kv::mem_buffer::MemBufferSnapshot::get(self, key))
     }
 }

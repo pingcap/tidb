@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_stats::table_statistics::TableStatistics;
-use tidb_kv::cluster_storage::ClusterTableStorage;
+use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_infoschema::{Catalog, ViewDef};
 use tidb_table::kv_table::KvTable;
 use tidb_kv::storage::TableStorage;
@@ -389,7 +389,8 @@ use tidb_table::table_from_meta::kv_index;
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-    use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
+    use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+    use tidb_store_driver_txn::cluster_storage::MutationBuffer;
     use tidb_kv::storage::StorageError;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
@@ -1166,6 +1167,6 @@ use tidb_table::table_from_meta::kv_index;
 /// *could* be built over. Deciding that reads a `TableInfo`, never a row.
 pub fn detached_storage() -> ClusterTableStorage {
     let slot: Arc<Mutex<dyn tidb_kv::cluster_storage::ClusterSnapshot>> =
-        Arc::new(Mutex::new(tidb_kv::cluster_storage::SwappableSnapshot::new()));
-    ClusterTableStorage::new(tidb_kv::cluster_storage::MutationBuffer::new(), slot)
+        Arc::new(Mutex::new(tidb_store_driver_txn::cluster_storage::SwappableSnapshot::new()));
+    ClusterTableStorage::new(tidb_store_driver_txn::cluster_storage::MutationBuffer::new(), slot)
 }

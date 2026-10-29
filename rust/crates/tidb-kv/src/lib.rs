@@ -28,6 +28,4 @@ pub mod staged_writes;
 pub mod keys_read;
 pub mod mem_buffer;
 pub mod cluster_storage;
-#[cfg(any(test, feature = "test-util"))]
-pub mod cluster_storage_test_util;
 

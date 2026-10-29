@@ -3479,6 +3479,7 @@ dependencies = [
  "tidb-plannererrors",
  "tidb-ristretto",
  "tidb-store-driver-error",
+ "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-terror",
  "tidb-timeutil",
@@ -3933,6 +3934,7 @@ dependencies = [
  "tidb-plannererrors",
  "tidb-sessionctx",
  "tidb-sqlkiller",
+ "tidb-store-driver-txn",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
@@ -4921,7 +4923,6 @@ name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
  "smallvec",
- "tidb-config-kerneltype",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
@@ -4929,7 +4930,6 @@ dependencies = [
  "tidb-mysql",
  "tidb-spill-storage",
  "tidb-sqlkiller",
- "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
@@ -6823,6 +6823,7 @@ dependencies = [
  "serde_json",
  "tidb-codec",
  "tidb-config",
+ "tidb-config-kerneltype",
  "tidb-deadlockhistory",
  "tidb-hack",
  "tidb-kv",
@@ -6837,6 +6838,7 @@ dependencies = [
  "tidb-vardef",
  "tikv-client",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

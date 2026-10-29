@@ -964,9 +964,8 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_txnkv::Key;
 
-    use tidb_kv::cluster_storage::{
-        ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
-    };
+    use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+    use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::run_select_on;
     use tidb_infoschema::Catalog;
     use tidb_table::kv_table::KvTable;

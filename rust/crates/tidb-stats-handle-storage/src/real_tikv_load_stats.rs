@@ -46,7 +46,7 @@ use tidb_store_driver_txn::cluster_table_storage::{
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
-use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 
 /// Go `StatsMetaHistorySourceLoadStats`.
 pub const LOAD_STATS_HISTORY_SOURCE: &str = "load stats";

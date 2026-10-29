@@ -118,7 +118,7 @@ pub trait DdlSessionPool: Send + Sync {
     fn foreign_key(
         &self,
         plan: &ForeignKeyCheck,
-        storage: &tidb_kv::cluster_storage::ClusterTableStorage,
+        storage: &tidb_store_driver_txn::cluster_storage::ClusterTableStorage,
     ) -> Result<(), tidb_terror::MysqlError>;
 
     /// Go `verifyRemainRecordsForCheckConstraint`: every stored row of

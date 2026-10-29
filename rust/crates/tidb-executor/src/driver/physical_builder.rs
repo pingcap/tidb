@@ -104,7 +104,7 @@ enum ReaderStorage {
     /// rows itself.
     Merged,
     /// A `UnionScanExec`'s mem reader: the buffered entries alone.
-    MemBuffer(Arc<tidb_kv::cluster_storage::MemBufferSnapshot>),
+    MemBuffer(Arc<tidb_kv::mem_buffer::MemBufferSnapshot>),
 }
 
 impl ReaderStorage {
@@ -115,7 +115,7 @@ impl ReaderStorage {
             ReaderStorage::Snapshot => table.snapshot_reader(),
             ReaderStorage::Merged => None,
             ReaderStorage::MemBuffer(snapshot) => Some(Box::new(
-                tidb_kv::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
+                tidb_store_driver_txn::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
             )
                 as Box<dyn tidb_kv::storage::TableStorage>),
         };
@@ -7377,7 +7377,7 @@ impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
 /// (`buildMemTableReader` and its index siblings) decode the membuffer
 /// entries as the reader decodes coprocessor rows; this tier builds that mem
 /// reader as the same reader over the buffered entries, copied when the
-/// statement starts ([`tidb_kv::cluster_storage::MemBufferSnapshot`]).
+/// statement starts ([`tidb_kv::mem_buffer::MemBufferSnapshot`]).
 ///
 /// A point read, a dual or a sample is returned as is (Go: they handle the
 /// buffer themselves or read disk only). A backend without a separate

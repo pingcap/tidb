@@ -32,7 +32,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
-use tidb_kv::cluster_storage::{BufferCheckpoint, ClusterSnapshot, SwappableSnapshot};
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_txn::cluster_storage::{BufferCheckpoint, SwappableSnapshot};
 
 use tidb_domain_core::cluster_transactions as transactions;
 use crate::txn_manager::{CommitHooks, TxnManager};

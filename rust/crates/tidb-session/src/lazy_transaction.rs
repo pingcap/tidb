@@ -38,9 +38,8 @@ use std::time::Instant;
 
 use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
-use tidb_kv::cluster_storage::{
-    ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
-};
+use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::transaction::{LockWaitTime, SchemaLeaseChecker};
 use tidb_txnkv::Key;
@@ -302,7 +301,7 @@ impl OpenClusterTransaction for LazyClusterTransaction {
 
     fn commit(
         self: Box<Self>,
-        buffer: &tidb_kv::cluster_storage::MutationBuffer,
+        buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         let activated = self.shared.state().open.is_some();
         // Go commits a transaction that never became valid by doing

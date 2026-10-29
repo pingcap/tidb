@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::Time;
-use tidb_kv::cluster_storage::MutationBuffer;
+use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use crate::lock_stats::StatsLockTransaction;
 use tidb_txnkv::transaction::BufferMutation;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};

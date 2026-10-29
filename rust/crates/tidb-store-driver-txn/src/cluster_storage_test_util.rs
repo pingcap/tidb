@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
 
 use crate::cluster_storage::*;
-use crate::storage::StorageError;
+use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
+use tidb_kv::storage::StorageError;
 
 /// A snapshot that answers from a fixed map and counts what the storage
 /// asked it for, so a test can prove a read never reached the cluster.
