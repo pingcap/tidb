@@ -794,9 +794,6 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		if p.DataSourceType == DataSourceTypeQuery {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
-		}
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {

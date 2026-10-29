@@ -71,11 +71,12 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 // synchronous prepare is fast and provides more responsive validation feedback.
 // Nextgen only supports global sort for IMPORT INTO in production, but local
 // sort can still be exercised in tests, so keep the IsGlobalSort check.
+// Query imports have no source files to discover during asynchronous prepare.
 func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	failpoint.Inject("mockDisableAsyncPrepare", func() {
 		failpoint.Return(false)
 	})
-	return plan != nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
+	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
@@ -222,8 +223,8 @@ func (ri *RuntimeInfo) isConflictStep() bool {
 
 // Percent returns the progress percentage of the current step.
 func (ri *RuntimeInfo) Percent() string {
-	// Currently, we can't track the progress of post process
-	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
+	// Query output size is unknown; initialization and post-process have no measurable total.
+	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit || ri.Step == proto.ImportStepQuery {
 		return notAvailable
 	}
 
@@ -260,6 +261,9 @@ func (ri *RuntimeInfo) ETA() string {
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
+	if ri.Step == proto.ImportStepQuery {
+		return notAvailable
+	}
 	if ri.isConflictStep() {
 		return fmt.Sprintf("%d conflicts", ri.Total)
 	}
@@ -268,6 +272,9 @@ func (ri *RuntimeInfo) TotalSize() string {
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
+	if ri.Step == proto.ImportStepQuery {
+		return notAvailable
+	}
 	if ri.isConflictStep() {
 		return fmt.Sprintf("%d conflicts", ri.Processed)
 	}
@@ -276,6 +283,9 @@ func (ri *RuntimeInfo) ProcessedSize() string {
 
 // SpeedStr returns the processing speed of the current step in human-readable format.
 func (ri *RuntimeInfo) SpeedStr() string {
+	if ri.Step == proto.ImportStepQuery {
+		return notAvailable
+	}
 	if ri.isConflictStep() {
 		return fmt.Sprintf("%d conflicts/s", ri.Speed)
 	}
