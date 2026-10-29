@@ -264,7 +264,6 @@ func TestSlowQueryCacheAsyncReadWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, got)
 	require.Zero(t, len(cache.readCh))
-	require.False(t, cache.hasSQL.Load())
 
 	key := slowQueryKeyOf(7, 1.5, "0123456789abcdef")
 	cache.putIntoCache(key, "select 1;")
@@ -295,7 +294,6 @@ func TestSlowQueryCacheEntrypointsWithoutWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, values)
 	require.Zero(t, len(cache.readCh))
-	require.False(t, cache.hasSQL.Load())
 }
 
 func TestSlowQueryTimeKeyMatchesSlowLogFormat(t *testing.T) {

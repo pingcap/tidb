@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"strconv"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -80,9 +79,6 @@ type slowQueryCache struct {
 	writeCh chan slowQueryCacheWriteTask
 	readCh  chan *slowQueryCacheReadTask
 	running bool
-	// hasSQL is set after the first retained SQL so a lookup can return
-	// without queueing while the cache is empty. It is never cleared.
-	hasSQL atomic.Bool
 
 	slowQueries []SlowQuery
 	writePos    int
@@ -213,7 +209,7 @@ func (c *slowQueryCache) getUnredactedQueries(ctx context.Context, keys []slowQu
 	if diagnosticmode.Enabled() {
 		return nil, nil
 	}
-	if !c.checkRunning() || !c.hasSQL.Load() {
+	if !c.checkRunning() {
 		return make([]string, len(keys)), nil
 	}
 
@@ -295,7 +291,6 @@ func (c *slowQueryCache) appendSlowQuery(key slowQueryKey, sql string) {
 	c.memoryUsage += getSlowQueryValueMemUsage(key, sql)
 	c.slowQueries = append(c.slowQueries, SlowQuery{Key: key, UnredactedSQL: sql})
 	c.locations[key] = len(c.slowQueries) - 1
-	c.hasSQL.Store(true)
 }
 
 func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
@@ -312,7 +307,6 @@ func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 	c.locations[key] = index
 	c.memoryUsage += delta
 	c.advanceWritePos()
-	c.hasSQL.Store(true)
 }
 
 // getReplacementDelta is the retained SlowQuery memory change when a slot is

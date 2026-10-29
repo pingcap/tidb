@@ -295,7 +295,7 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		// An empty cache returns the parsed rows without waiting on the worker.
 		// A successful lookup returns one string per key, and parseLog keeps keys
 		// aligned with rows.
-		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 && globalSlowQueryCache.hasSQL.Load() {
+		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 {
 			unredactedQueries, err := globalSlowQueryCache.getUnredactedQueries(ctx, result.keys)
 			if err != nil {
 				return nil, err
