@@ -365,3 +365,12 @@ pub(crate) mod test_temp_storage {
 
 /// Session-owned reference counts over shared advisory-lock services.
 use tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot;
+
+/// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
+/// `openExecutor`: `breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)`,
+/// once per statement.
+pub(crate) fn notify_before_executor_first_run(ctx: &StmtContext) {
+    if ctx.claim_before_executor_first_run() {
+        tidb_breakpoint::inject_stored_value(ctx.breakpoint_notify(), "beforeExecutorFirstRun");
+    }
+}

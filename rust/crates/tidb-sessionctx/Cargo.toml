@@ -9,7 +9,6 @@ description = "TiDB session context: Go pkg/sessionctx, the context a session ha
 
 [dependencies]
 tidb-tiflash = { path = "../tidb-tiflash" }
-tidb-breakpoint = { path = "../tidb-breakpoint" }
 tidb-context = { path = "../tidb-context" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-fastrand = { path = "../tidb-fastrand" }

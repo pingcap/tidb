@@ -1068,7 +1068,7 @@ fn run_insert_rows(
     // A source query supplies already-evaluated values; a VALUES list
     // supplies expressions. Both fill the same target offsets.
     if insert.source.is_none() {
-        ctx.notify_before_executor_first_run();
+        crate::notify_before_executor_first_run(ctx);
     }
     let value_rows = source_rows.as_deref().unwrap_or_default();
     let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);

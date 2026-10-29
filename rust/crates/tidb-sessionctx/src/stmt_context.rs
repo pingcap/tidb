@@ -4259,23 +4259,25 @@ impl StmtContext {
         self.0.index_force.load(Ordering::Acquire)
     }
 
-    /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
-    /// `openExecutor`. Rebuilt pessimistic executors share the latch.
-    pub fn notify_before_executor_first_run(&self) {
+    /// The statement side of Go `ExecStmt.Exec` between `buildExecutor` and
+    /// `openExecutor`: reports `ExecutorReady` and claims the once-only
+    /// `beforeExecutorFirstRun` latch, which rebuilt pessimistic executors
+    /// share. True when this call claimed it, so the caller fires the
+    /// breakpoint (Go's `breakpoint.Inject` in `executor/adapter.go`).
+    pub fn claim_before_executor_first_run(&self) -> bool {
         // A cluster pre-lock may have consumed the breakpoint latch already;
         // statement counters have their own once-only lifecycle.
         if let Some(observer) = &self.statement_phase_observer {
             observer(StatementPhase::ExecutorReady);
         }
-        if self.before_executor_first_run.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        tidb_breakpoint::inject_stored_value(
-            self.breakpoint_notify_func
-                .as_ref()
-                .map(|notify| notify as &(dyn std::any::Any + Send + Sync)),
-            "beforeExecutorFirstRun",
-        );
+        !self.before_executor_first_run.swap(true, Ordering::AcqRel)
+    }
+
+    /// The session's breakpoint hook (Go's `sctx.Value(breakpoint.NotifyBreakPointFuncKey)`).
+    pub fn breakpoint_notify(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.breakpoint_notify_func
+            .as_ref()
+            .map(|notify| notify as &(dyn std::any::Any + Send + Sync))
     }
 
     /// Publishes the fields derived from the retained physical tree before

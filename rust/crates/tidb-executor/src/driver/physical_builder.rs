@@ -7782,7 +7782,7 @@ pub(super) fn open_query(
         .map(|name| name.names.clone())
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
-    ctx.notify_before_executor_first_run();
+    crate::notify_before_executor_first_run(ctx);
     super::QueryRecordSet::open(root, columns, ctx.statement_memory())
         .map(|record_set| record_set.with_output_names(output_names, current_db))
 }
@@ -7803,7 +7803,7 @@ pub(super) fn open_show(
         .map(|name| name.names.clone())
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
-    ctx.notify_before_executor_first_run();
+    crate::notify_before_executor_first_run(ctx);
     super::QueryRecordSet::open(root, columns, ctx.statement_memory())
         .map(|record_set| record_set.with_output_names(output_names, current_db))
 }
@@ -7824,7 +7824,7 @@ pub(crate) fn execute_for_explain(
         ..BuildState::default()
     };
     let mut root = build_with_state(physical, catalog, ctx, &mut state)?;
-    ctx.notify_before_executor_first_run();
+    crate::notify_before_executor_first_run(ctx);
     let result = (|| {
         root.open()?;
         let mut req = root.new_chunk();
@@ -7906,7 +7906,7 @@ pub(crate) fn execute_dml_source_writing(
         ..BuildState::default()
     };
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
-    ctx.notify_before_executor_first_run();
+    crate::notify_before_executor_first_run(ctx);
     let field_types = root.ret_field_types().to_vec();
     super::visit_executor_rows_writing(
         root,
@@ -7934,7 +7934,7 @@ pub(crate) fn execute_dml_source_chunks(
         ..BuildState::default()
     };
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
-    ctx.notify_before_executor_first_run();
+    crate::notify_before_executor_first_run(ctx);
     let field_types = root.ret_field_types().to_vec();
     super::visit_executor_row_chunks(
         root,
