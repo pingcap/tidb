@@ -582,6 +582,10 @@ type binaryJSONTextNode struct {
 	literal     byte
 }
 
+// binaryJSONInvalidNumberTypeCode marks a number node whose text does not
+// convert, which is not a valid JSONTypeCode. The error is reported only if the
+// number is kept after removing duplicate keys, see validateReachable, so such
+// a node never reaches encodeValue.
 const binaryJSONInvalidNumberTypeCode = 0xff
 
 // binaryJSONTextSpan is a range of binaryJSONTextParser.text.
@@ -699,7 +703,7 @@ func (parser *binaryJSONTextParser) decodeValue() (int, error) {
 			valueSize: uint64(binaryJSONUvarintLen(uint64(value.len)) + int(value.len)),
 			depth:     1,
 		}), nil
-	case '0':
+	case '0': // any number
 		raw, err := parser.dec.ReadValue()
 		if err != nil {
 			return 0, err
@@ -1242,22 +1246,10 @@ func appendUint32(buf []byte, v uint32) []byte {
 }
 
 func calculateBinaryNumberSize(x json.Number) (int64, error) {
-	if strings.ContainsAny(x.String(), "Ee.") {
-		_, err := x.Float64()
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return 8, nil
-	} else if _, err := x.Int64(); err == nil {
-		return 8, nil
-	} else if _, err := strconv.ParseUint(string(x), 10, 64); err == nil {
-		return 8, nil
+	if _, _, err := parseBinaryNumber(x); err != nil {
+		return 0, err
 	}
-	_, err := x.Float64()
-	if err == nil {
-		return 8, nil
-	}
-	return 0, errors.Trace(err)
+	return 8, nil
 }
 
 func calculateBinaryStringSize(v string) int64 {
