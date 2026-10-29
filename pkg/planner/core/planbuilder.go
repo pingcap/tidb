@@ -662,6 +662,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
+	case *ast.CompareMaterializedViewStmt:
+		return b.buildCompareMaterializedView(ctx, x)
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
@@ -3663,15 +3665,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
-		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowMaterializedViews, ast.ShowMaterializedViewLogs, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
+		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus || show.Tp == ast.ShowMaterializedViews || show.Tp == ast.ShowMaterializedViewLogs) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
 		if extractor := newShowBaseExtractor(*show); extractor.Extract() {
 			p.Extractor = extractor
 			buildPattern = false
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -3679,7 +3681,21 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			isTempTableLocal = table.Meta().TempTableType == model.TempTableLocal
 		}
 		user := b.ctx.GetSessionVars().User
-		if isView {
+		if show.Tp == ast.ShowCreateMaterializedViewLog {
+			dbName := show.Table.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, mlogName.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, mlogName.L, "", err)
+		} else if isView {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
@@ -3708,6 +3724,34 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowCreateMaterializedView:
+		var err error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewRemainLogs:
+		var err error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewLogWaitPurge:
+		var err error
+		dbName := show.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, show.Table.Name)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, mlogName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName, mlogName.L, "", err)
 	case ast.ShowBackups:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)
@@ -6228,6 +6272,18 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case ast.ShowMaterializedViews:
+		names = []string{"mview_id", "mview_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewLogs:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowMaterializedViewRemainLogs:
+		names = []string{"mview_id", "mview_name", "mlog_id", "mlog_name", "remain_logs"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowMaterializedViewLogWaitPurge:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name", "wait_purge"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
@@ -6267,6 +6323,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		}
 	case ast.ShowCreateView:
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedView:
+		names = []string{"Materialized View", "Create Materialized View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedViewLog:
+		names = []string{"Materialized View Log", "Create Materialized View Log"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
@@ -6783,4 +6843,61 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 	}
 
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
+}
+
+func (b *PlanBuilder) buildCompareMaterializedView(_ context.Context, stmt *ast.CompareMaterializedViewStmt) (base.Plan, error) {
+	dbName := stmt.ViewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"OPERATE VIEW",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.ViewName.Name.L,
+		)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+
+	if stmt.OutputTable != nil {
+		outputDBName := stmt.OutputTable.Schema.L
+		if outputDBName == "" {
+			outputDBName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if outputDBName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"CREATE",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"INSERT",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+	}
+
+	p := &CompareMaterializedView{Statement: stmt}
+	if stmt.OutputTable == nil {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "compare result", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchemaAndNames(schema.col2Schema(), schema.names)
+	}
+	return p, nil
 }

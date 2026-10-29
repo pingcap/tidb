@@ -1978,3 +1978,10 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 type AdminShowBDRRole struct {
 	physicalop.SimpleSchemaProducer
 }
+
+// CompareMaterializedView represents a "COMPARE MATERIALIZED VIEW ..." plan.
+type CompareMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.CompareMaterializedViewStmt
+}
