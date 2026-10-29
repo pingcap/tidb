@@ -2955,20 +2955,17 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	// Column and index IDs are encoded in row and index keys. Dropped column
 	// values stay in the row, and dropped index keys are removed asynchronously
 	// under the physical table ID, which exchange moves between the tables.
-	// Other partitions also keep the partitioned table's historical IDs, so
-	// both sides take the max instead of swapping.
+	// NT receives PT's old partition, so it inherits PT's original counters.
+	// PT keeps its other partitions and receives NT's physical table ID, so
+	// its counters must cover both tables' historical IDs.
 	// Foreign key and check constraint IDs are not part of the KV encoding.
-	// They are updated here as well so every table-level ID allocator is
-	// handled the same way.
+	// Their metadata stays with each logical table, so leave their counters unchanged.
 	// See https://github.com/pingcap/tidb/issues/72478.
-	maxColumnID := max(pt.MaxColumnID, nt.MaxColumnID)
-	maxIndexID := max(pt.MaxIndexID, nt.MaxIndexID)
-	maxForeignKeyID := max(pt.MaxForeignKeyID, nt.MaxForeignKeyID)
-	maxConstraintID := max(pt.MaxConstraintID, nt.MaxConstraintID)
-	pt.MaxColumnID, nt.MaxColumnID = maxColumnID, maxColumnID
-	pt.MaxIndexID, nt.MaxIndexID = maxIndexID, maxIndexID
-	pt.MaxForeignKeyID, nt.MaxForeignKeyID = maxForeignKeyID, maxForeignKeyID
-	pt.MaxConstraintID, nt.MaxConstraintID = maxConstraintID, maxConstraintID
+	exchangeMaxID := func(ptMaxID, ntMaxID *int64) {
+		*ptMaxID, *ntMaxID = max(*ptMaxID, *ntMaxID), *ptMaxID
+	}
+	exchangeMaxID(&pt.MaxColumnID, &nt.MaxColumnID)
+	exchangeMaxID(&pt.MaxIndexID, &nt.MaxIndexID)
 
 	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
