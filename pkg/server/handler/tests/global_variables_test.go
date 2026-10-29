@@ -38,10 +38,6 @@ import (
 )
 
 func TestGlobalVariables(t *testing.T) {
-	// A canceled request can leave a transport-owned idle connection before
-	// cmux has classified it. Server.Close cannot close that connection, so
-	// release the client's pool before TestMain checks for goroutine leaks.
-	t.Cleanup(http.DefaultClient.CloseIdleConnections)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
