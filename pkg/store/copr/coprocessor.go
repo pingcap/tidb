@@ -223,7 +223,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
-		ema:              newRUEMA(req.Paging.PagingSizeBytes),
+		ema:              newRUEMA(),
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
 	}
@@ -901,8 +901,9 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
-		// skip some nodes, such as BR created when backup/restore
-		if ser.IP == config.UnavailableIP {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if ser.IsDisableRPC() {
 			continue
 		}
 
@@ -1748,10 +1749,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
-func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
-	// Byte-budget paging is independent from row-count paging, so a request-level
-	// byte budget must still carry the pre-charge hint when task.paging is false.
-	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
+func (worker *copIteratorWorker) predictedReadBytes() uint64 {
+	// The byte budget is the only switch for pre-charge. Row-count paging alone
+	// must not send a hint, so tidb_paging_size_bytes = 0 disables pre-charge.
+	// With a byte budget, the hint is sent even when row-count paging is off.
+	if worker.req.Paging.PagingSizeBytes == 0 {
 		return 0
 	}
 	return worker.ema.Predict()
@@ -1824,7 +1826,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
+	req.PredictedReadBytes = worker.predictedReadBytes()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true

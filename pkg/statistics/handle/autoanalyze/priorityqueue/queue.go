@@ -545,65 +545,22 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		}
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
-		// Get all schemas except the memory and system database.
-		tbls := make([]*model.TableInfo, 0, 512)
-		// This only occurs during priority queue initialization which is infrequent.
-		halfCPUNum := runtime.NumCPU() / 2
-		start := time.Now()
-		if err := meta.IterAllTables(
-			ctx,
-			sctx.GetStore(),
-			currentTs,
-			halfCPUNum,
-			// Make sure this function is thread-safe.
-			func(info *model.TableInfo) error {
-				// Ignore the memory and system database.
-				db, ok := is.SchemaByID(info.DBID)
-				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
-					return nil
-				}
-				tbls = append(tbls, info)
-				return nil
-			}); err != nil {
-			return errors.Trace(err)
-		}
-		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", len(tbls)), zap.Duration("duration", time.Since(start)))
-		// Add assertion to verify we've collected all tables by comparing with two different methods.
-		// The below one is way slower than the above one, so we only use it for verification.
-		intest.AssertFunc(func() bool {
-			dbs := is.AllSchemaNames()
-			verifyTbls := make([]*model.TableInfo, 0, 512)
-			for _, db := range dbs {
-				// Ignore the memory and system database.
-				if metadef.IsMemOrSysDB(db.L) {
-					continue
-				}
-
-				tbls, err := is.SchemaTableInfos(context.Background(), db)
-				if err != nil {
-					panic(err)
-				}
-				verifyTbls = append(verifyTbls, tbls...)
-			}
-			return len(verifyTbls) == len(tbls)
-		})
-
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tblInfo := range tbls {
+		pushJobsForTable := func(tblInfo *model.TableInfo) error {
 			// If table locked, skip analyze all partitions of the table.
 			if _, ok := lockedTables[tblInfo.ID]; ok {
-				continue
+				return nil
 			}
 
 			if tblInfo.IsView() {
-				continue
+				return nil
 			}
 
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				if !found {
-					continue
+					return nil
 				}
 
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
@@ -614,7 +571,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				if err != nil {
 					return err
 				}
-				continue
+				return nil
 			}
 
 			// Only analyze the partition that has not been locked.
@@ -641,7 +598,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			} else {
 				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				if !found {
-					continue
+					return nil
 				}
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
@@ -653,7 +610,52 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					return err
 				}
 			}
+			return nil
 		}
+
+		// Get all schemas except the memory and system database.
+		tableCount := 0
+		// This only occurs during priority queue initialization which is infrequent.
+		halfCPUNum := runtime.NumCPU() / 2
+		start := time.Now()
+		if err := meta.IterAllTables(
+			ctx,
+			sctx.GetStore(),
+			currentTs,
+			halfCPUNum,
+			// IterAllTables calls this function serially, so it can push to the queue directly.
+			// Build jobs during the scan: keeping every TableInfo until the end can OOM with many tables.
+			func(info *model.TableInfo) error {
+				// Ignore the memory and system database.
+				db, ok := is.SchemaByID(info.DBID)
+				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
+					return nil
+				}
+				tableCount++
+				return pushJobsForTable(info)
+			}); err != nil {
+			return errors.Trace(err)
+		}
+		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", tableCount), zap.Duration("duration", time.Since(start)))
+		// Add assertion to verify we've collected all tables by comparing with two different methods.
+		// The below one is way slower than the above one, so we only use it for verification.
+		intest.AssertFunc(func() bool {
+			dbs := is.AllSchemaNames()
+			verifyTbls := make([]*model.TableInfo, 0, 512)
+			for _, db := range dbs {
+				// Ignore the memory and system database.
+				if metadef.IsMemOrSysDB(db.L) {
+					continue
+				}
+
+				tbls, err := is.SchemaTableInfos(context.Background(), db)
+				if err != nil {
+					panic(err)
+				}
+				verifyTbls = append(verifyTbls, tbls...)
+			}
+			return len(verifyTbls) == tableCount
+		})
 
 		return nil
 	}, statsutil.FlagWrapTxn)

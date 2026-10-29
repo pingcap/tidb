@@ -16,11 +16,13 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,7 +323,11 @@ func TestStmtSummaryRUVersion(t *testing.T) {
 					_, digest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
 					// Read the finalized total before the assertion query replaces LastQueryInfo.
 					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
-					require.Positive(t, totalRUV2)
+					if kerneltype.IsNextGen() {
+						require.Positive(t, totalRUV2)
+					} else {
+						require.Zero(t, totalRUV2)
+					}
 					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
 					require.GreaterOrEqual(t, wantRead, float64(11))
 					require.GreaterOrEqual(t, wantWrite, float64(7))
@@ -511,6 +517,54 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 			"create user {user_sensitive@% password = ***}",
 			"set password for user user_sensitive@%",
 		))
+}
+
+func TestStmtSummarySampleRedaction(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldSummary := stmtsummaryv2.GlobalStmtSummary
+	t.Cleanup(func() { stmtsummaryv2.GlobalStmtSummary = oldSummary })
+	filename := filepath.Join(t.TempDir(), "statements.log")
+	summary, err := stmtsummaryv2.NewStmtSummary(&stmtsummaryv2.Config{Filename: filename})
+	require.NoError(t, err)
+	t.Cleanup(summary.Close)
+	stmtsummaryv2.GlobalStmtSummary = summary
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = true
+		conf.Instance.StmtSummaryFilename = filename
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	oldMode := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0].(string)
+	t.Cleanup(func() { tk.MustExec("set global tidb_redact_log = " + oldMode) })
+	tk.MustExec("set global tidb_redact_log = ON")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache = 0")
+	tk.MustExec("create table sample_redaction (a varchar(64))")
+	const sql = "select * from sample_redaction where a = 'unique_secret_42'"
+	const normalizedSQL = "select * from `sample_redaction` where `a` = ?"
+	tk.MustQuery(sql)
+	rows := tk.MustQuery("select digest, query_sample_text from information_schema.statements_summary where digest_text = '" + normalizedSQL + "'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, sql, rows[0][1])
+	digest := rows[0][0].(string)
+
+	summary.Close()
+	data, err := os.ReadFile(filename)
+	require.NoError(t, err)
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record struct {
+			Digest    string `json:"digest"`
+			SampleSQL string `json:"sample_sql"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record.Digest == digest {
+			found = true
+			require.Equal(t, normalizedSQL, record.SampleSQL)
+			require.NotContains(t, record.SampleSQL, "unique_secret_42")
+		}
+	}
+	require.True(t, found, "statement sample must be written to the log")
 }
 
 func TestStmtSummaryTableOther(t *testing.T) {
