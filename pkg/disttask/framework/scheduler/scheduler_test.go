@@ -504,3 +504,29 @@ func TestManagerScheduleLoop(t *testing.T) {
 		return err == nil && len(taskKeys) == 0
 	}, time.Second*10, time.Millisecond*100)
 }
+
+func TestGetLiveExecIDsSkipsNonServingNodes(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		execIDs    []string
+	}{
+		{"mixed nodes", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"tidb2":{"ip":"::1","listening_port":4001,"disable_rpc":false},"br":{"ip":"127.0.0.2","listening_port":4000,"disable_rpc":true}}`, []string{"127.0.0.1:4000", "[::1]:4001"}},
+		{"BR reuses serving address", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"br":{"ip":"127.0.0.1","listening_port":4000,"disable_rpc":true}}`, []string{"127.0.0.1:4000"}},
+		{"only BR", `{"br":{"ip":"127.0.0.1","listening_port":4000,"disable_rpc":true}}`, nil},
+		{"no nodes", `{}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", fmt.Sprintf("return(`%s`)", tc.serverInfo))
+			execIDs, err := scheduler.GetLiveExecIDs(ctx)
+			if len(tc.execIDs) == 0 {
+				require.ErrorContains(t, err, "not found instance")
+				require.Empty(t, execIDs)
+			} else {
+				require.NoError(t, err)
+				require.ElementsMatch(t, tc.execIDs, execIDs)
+			}
+		})
+	}
+}

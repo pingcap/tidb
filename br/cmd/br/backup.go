@@ -48,8 +48,10 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	// No need to cache the coproceesor result
-	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		// No need to cache the coprocessor result.
+		conf.TiKVClient.CoprCache.CapacityMB = 0
+	})
 
 	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()

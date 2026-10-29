@@ -227,9 +227,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == "<nil>" {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.DisableRPC {
 			continue
 		}
 		// In-process test domains can register server info without starting a
