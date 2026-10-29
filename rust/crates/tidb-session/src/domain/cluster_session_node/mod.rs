@@ -214,7 +214,7 @@ use crate::domain::pipeline_session::MaterializedResultSetSource;
 use crate::domain::session_api::{ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
-use crate::domain::wire_status::WireStatus;
+use tidb_variable::wire_status::WireStatus;
 use tidb_executor::ddl_exec::map_error;
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
@@ -2639,7 +2639,7 @@ impl<'s> ClusterServerSession<'s> {
                 )
                 .with_statement_status(
                     self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
+                    crate::domain::wire_status::session_status(&self.session),
                 )
                 .with_statement_output(
                     self.session.statement_affected_rows(),

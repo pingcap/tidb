@@ -58,7 +58,7 @@ pub const DEFAULT_COLLATION_ID: u8 = 46;
 /// The status flag set in the initial TiDB handshake, which Go hardcodes there
 /// too (`pkg/server/conn.go:496`) because the handshake precedes any session.
 /// Every LATER packet's status is the session's own -- see
-/// [`tidb_session::domain::wire_status::WireStatus`], which owns the rest of the bits.
+/// [`tidb_variable::wire_status::WireStatus`], which owns the rest of the bits.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 /// The protocol version emitted by TiDB's initial handshake.
 pub const PROTOCOL_VERSION_10: u8 = 10;

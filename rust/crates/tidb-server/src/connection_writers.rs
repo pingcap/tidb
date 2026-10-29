@@ -37,7 +37,7 @@ use crate::mysql_connection::ER_UNKNOWN_STMT_HANDLER;
 use crate::mysql_tls::ClientStream;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_session::domain::wire_status::WireStatus;
+use tidb_variable::wire_status::WireStatus;
 
 /// Writes the OK packet that answers a successful prepared write.
 pub(crate) fn write_affected_rows_ok<O: ConnectionPacketOutput + ?Sized>(

@@ -76,7 +76,7 @@ impl ResultSetSource for Source {
         self.live_status
             .then(|| tidb_session::domain::resultset_source::StatementStatus {
                 warnings: if self.log.contains(&"finish") { 7 } else { 3 },
-                status: tidb_session::domain::wire_status::WireStatus::AUTOCOMMIT,
+                status: tidb_variable::wire_status::WireStatus::AUTOCOMMIT,
                 affected_rows: 0,
                 last_insert_id: 0,
                 info: &[],

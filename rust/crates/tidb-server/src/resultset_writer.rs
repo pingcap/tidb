@@ -557,8 +557,8 @@ pub(crate) fn apply_statement_status(
     status: &tidb_session::domain::resultset_source::StatementStatus<'_>,
     options: &mut crate::resultset::ResultSetOptions,
 ) {
-    const SESSION_BITS: u16 = tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS
-        | tidb_session::domain::wire_status::SERVER_STATUS_AUTOCOMMIT;
+    const SESSION_BITS: u16 = tidb_variable::wire_status::SERVER_STATUS_IN_TRANS
+        | tidb_variable::wire_status::SERVER_STATUS_AUTOCOMMIT;
     options.status_flags = (options.status_flags & !SESSION_BITS) | status.status.bits();
     options.warnings = status.warnings;
     options.affected_rows = status.affected_rows;

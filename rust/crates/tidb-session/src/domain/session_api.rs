@@ -26,7 +26,7 @@ use tidb_executor::adapter::ResultFieldMetadata;
 
 use crate::domain::configured_user_store::AuthenticatedIdentity;
 use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::wire_status::WireStatus;
+use tidb_variable::wire_status::WireStatus;
 use tidb_sessmgr::ProcessKillTarget;
 
 

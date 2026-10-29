@@ -67,7 +67,7 @@ use tidb_ast::Stmt;
 use crate::driver::{QuerySession, QuerySessionFactory};
 use crate::sql_node::{ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_session::domain::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
+use tidb_variable::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
 ///
@@ -1950,8 +1950,8 @@ fn log_dispatch_failure<S: QuerySession>(
             "status",
             tidb_log::Value::Str(format!(
                 "inTxn:{}, autocommit:{}",
-                u8::from(status & tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS != 0),
-                u8::from(status & tidb_session::domain::wire_status::SERVER_STATUS_AUTOCOMMIT != 0),
+                u8::from(status & tidb_variable::wire_status::SERVER_STATUS_IN_TRANS != 0),
+                u8::from(status & tidb_variable::wire_status::SERVER_STATUS_AUTOCOMMIT != 0),
             )),
         ),
         tidb_log::Field::new("sql", tidb_log::Value::Str(sql)),
@@ -2157,7 +2157,7 @@ fn run_connection_commands<S: QuerySession>(
         {
             let idle = last_active.elapsed().as_secs_f64();
             let in_txn =
-                engine.wire_status().bits() & tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS != 0;
+                engine.wire_status().bits() & tidb_variable::wire_status::SERVER_STATUS_IN_TRANS != 0;
             tidb_metrics::server::CONN_IDLE_DURATION
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
@@ -2320,7 +2320,7 @@ fn run_connection_commands<S: QuerySession>(
                         let more_results = statement_index < last_index;
                         let stamp = |status: WireStatus| {
                             if more_results {
-                                status.with(tidb_session::domain::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
+                                status.with(tidb_variable::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
                             } else {
                                 status
                             }

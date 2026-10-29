@@ -22,7 +22,7 @@ pub struct StatementStatus<'a> {
     /// Warnings produced so far, including during Next/Finish.
     pub warnings: u16,
     /// Current transaction/autocommit state.
-    pub status: crate::domain::wire_status::WireStatus,
+    pub status: tidb_variable::wire_status::WireStatus,
     /// Affected-row count for an OK-as-EOF packet.
     pub affected_rows: u64,
     /// Statement's insert identifier.

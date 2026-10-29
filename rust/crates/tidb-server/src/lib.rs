@@ -82,7 +82,6 @@ mod set_global_vars;
 mod sql_node;
 mod stat;
 mod status_transport;
-use tidb_session::domain::wire_status;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,
@@ -137,10 +136,6 @@ pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
     QueryCancellationLease, QueryResult, SessionContext, ShutdownHandle, SqlNodeError,
-};
-pub use wire_status::{
-    WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,
-    SERVER_STATUS_IN_TRANS, SERVER_STATUS_LAST_ROW_SEND,
 };
 
 /// Starts the shared SQL session/catalog lifecycle over the selected storage engine.

@@ -68,7 +68,7 @@ impl<'s> ClusterServerSession<'s> {
         .with_cursor_materialization(field_types, authority)
         .with_statement_status(
             self.session.wire_warning_count(),
-            crate::domain::wire_status::WireStatus::of_session(&self.session),
+            crate::domain::wire_status::session_status(&self.session),
         ))
     }
 

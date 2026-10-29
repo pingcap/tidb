@@ -161,7 +161,7 @@ impl<'s> ClusterServerSession<'s> {
                 Ok(QueryResult::new(Box::new(source))
                     .with_statement_status(
                         self.session.wire_warning_count(),
-                        WireStatus::of_session(&self.session),
+                        crate::domain::wire_status::session_status(&self.session),
                     )
                     .with_statement_output(
                         self.session.statement_affected_rows(),
@@ -178,7 +178,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         let session = &self.owner.session;
         Some(StatementStatus {
             warnings: session.wire_warning_count(),
-            status: WireStatus::of_session(session),
+            status: crate::domain::wire_status::session_status(session),
             affected_rows: session.statement_affected_rows(),
             last_insert_id: session.statement_insert_id(),
             info: session.statement_message().as_bytes(),

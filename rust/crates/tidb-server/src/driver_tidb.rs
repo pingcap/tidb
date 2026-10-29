@@ -26,7 +26,7 @@ use tidb_session::domain::cluster_session_node::DomainSessions;
 use tidb_domain_core::domain::Domain;
 use tidb_session::domain::session_api::{ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_session::domain::wire_status::WireStatus;
+use tidb_variable::wire_status::WireStatus;
 use tidb_session::Session;
 use tidb_globalconn::Allocator;
 
@@ -169,7 +169,7 @@ impl QuerySession for Session {
     /// OK/EOF packet. The driver session owns the transaction state this tier
     /// acts on, so the wire word and the tier's behaviour cannot disagree.
     fn wire_status(&self) -> WireStatus {
-        WireStatus::of_session(self)
+        tidb_session::domain::wire_status::session_status(self)
     }
 
     /// The OK/EOF packet's warning count, read off the same buffer

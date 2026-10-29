@@ -24,7 +24,6 @@ use tidb_executor::adapter::{col_names_to_result_fields, ResultFieldMetadata, Re
 use crate::SessionRecordSet;
 
 use crate::domain::resultset_source::{ResultSetSource, StatementStatus};
-use crate::domain::wire_status::WireStatus;
 
 /// Binds one `COM_STMT_EXECUTE` parameter list to the driver's datum domain.
 ///
@@ -182,7 +181,7 @@ impl ResultSetSource for PreparedRecordSet<'_> {
         let session = self.state.session();
         Some(StatementStatus {
             warnings: session.wire_warning_count(),
-            status: WireStatus::of_session(session),
+            status: crate::domain::wire_status::session_status(session),
             affected_rows: session.statement_affected_rows(),
             last_insert_id: session.statement_insert_id(),
             info: session.statement_message().as_bytes(),
