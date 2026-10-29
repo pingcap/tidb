@@ -117,6 +117,13 @@ func TestNullsOrderAvoidSort(t *testing.T) {
 		// ISNULL(a), a is recognized too, in both directions.
 		{"select a from t use index(ia) order by a is null, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by isnull(a) desc, a", []string{"<nil>", "<nil>", "1", "2", "3"}},
+		// Reversing a nullable column keeps NULLs low, so -a DESC is a ASC NULLS LAST.
+		{"select a from t use index(ia) order by -a desc", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		{"select a from t use index(ia) order by -a", []string{"<nil>", "<nil>", "3", "2", "1"}},
+		{"select a from t use index(ia) order by 0-a desc", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		{"select id from t use index(ia) order by -a desc, id", []string{"3", "1", "5", "2", "4"}},
+		{"select id from t use index(ia) order by -(a+1), id desc", []string{"4", "2", "5", "1", "3"}},
+		{"select a, b from t use index(icab) where c = 1 order by -a desc, b", []string{"2 <nil>", "3 1", "<nil> 1"}},
 	} {
 		tk.MustQuery("explain format = 'brief' " + tc.sql).CheckNotContain("Sort")
 		tk.MustQuery("explain format = 'brief' " + tc.sql).CheckNotContain("TopN")

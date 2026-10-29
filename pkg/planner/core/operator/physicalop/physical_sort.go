@@ -237,11 +237,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 				return nil, false, false
 			}
 			// Reversing value order does not reverse NULL order: -NULL is still
-			// NULL. An opposite index scan cannot satisfy this sort for nullable columns.
-			if desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-				return nil, false, false
-			}
-			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
+			// NULL. So `-c DESC` on a nullable column is `c ASC NULLS LAST`, which
+			// is the NULLs-high order of c rather than its plain opposite order.
+			nullsHigh := desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag())
+			propItems = append(propItems, property.SortItem{Col: col, Desc: desc, NullsHigh: nullsHigh})
 			onlyColumn = false
 		default:
 			return nil, false, false
