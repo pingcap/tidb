@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-type SnapshotMetaManagerT = MetaManager[
-	RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
-]
+type SnapshotMetaManagerT interface {
+	MetaManager[RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore]
+	IndexRepairMetaManager
+}
 type LogMetaManagerT = LogMetaManager[
 	LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
 ]
@@ -74,11 +75,17 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	SaveCheckpointProgress(context.Context, *CheckpointProgress) error
 	ExistsCheckpointProgress(context.Context) (bool, error)
 
+	IndexRepairMetaManager
+
+	TryGetStorage() storeapi.Storage
+}
+
+// IndexRepairMetaManager persists index repair SQLs before any index is dropped.
+// For snapshot restore, their existence also marks completed ingestion and checksum.
+type IndexRepairMetaManager interface {
 	LoadCheckpointIngestIndexRepairSQLs(context.Context) (*CheckpointIngestIndexRepairSQLs, error)
 	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
-
-	TryGetStorage() storeapi.Storage
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {

@@ -1982,7 +1982,7 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	logCheckpointMetaManager checkpoint.IndexRepairMetaManager,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, []checkpoint.CheckpointForeignKeyUpdateSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	var fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL
@@ -2166,18 +2166,33 @@ func writeRepairIngestIndexSQLFile(
 	return nil
 }
 
+// RepairIndexes reuses the checkpointed PITR index repair for snapshot restore.
+// A nil recorder is valid when resuming persisted repair SQLs.
+func RepairIndexes(ctx context.Context, dom *domain.Domain, recorder *ingestrec.IngestRecorder,
+	meta checkpoint.IndexRepairMetaManager, g glue.Glue) error {
+	if err := dom.Reload(); err != nil {
+		return errors.Trace(err)
+	}
+	rc := &LogClient{dom: dom, useCheckpoint: meta != nil}
+	return rc.RepairIngestIndex(ctx, recorder, meta, g, nil)
+}
+
 // RepairIngestIndex drops the indexes from IngestRecorder and re-adds them,
 // or writes the add-index SQLs to external storage when addIndexSQLStorage is set.
 func (rc *LogClient) RepairIngestIndex(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	logCheckpointMetaManager checkpoint.IndexRepairMetaManager,
 	g glue.Glue,
 	addIndexSQLStorage storeapi.Storage,
 ) error {
 	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if len(sqls) == 0 && len(fkSqls) == 0 {
+		return nil
 	}
 
 	info := rc.dom.InfoSchema()
@@ -2197,8 +2212,11 @@ func (rc *LogClient) RepairIngestIndex(
 					sqls[i].OldIndexIDFound = true
 					break
 				}
-				// what if index's state is not public?
 				if indexInfo.Name.O == sql.IndexName {
+					// A DDL job may still be running after the restoring BR exits.
+					if indexInfo.State != model.StatePublic {
+						return errors.Errorf("index %s on %s.%s is still being rebuilt; retry restore after its DDL finishes", sql.IndexName, sql.SchemaName, sql.TableName)
+					}
 					progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
 					// find the same name index, but not the same index id,
 					// which means the repaired index id is created

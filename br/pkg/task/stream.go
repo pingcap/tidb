@@ -2019,6 +2019,27 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
+	// Snapshot and log import preserve the source partition IDs in global index
+	// entries. Rebuild only restored tables, after the final schema is available.
+	for _, db := range schemasReplace.DbReplaceMap {
+		if db.FilteredOut {
+			continue
+		}
+		for _, table := range db.TableMap {
+			if table.FilteredOut {
+				continue
+			}
+			for oldID, newID := range table.PartitionMap {
+				if oldID != newID {
+					if info, ok := mgr.GetDomain().InfoSchema().TableInfoByID(table.TableID); ok {
+						ingestRecorder.AddGlobalIndexes(info)
+					}
+					break
+				}
+			}
+		}
+	}
+
 	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, cfg.addIndexSQLStorage); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}

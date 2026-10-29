@@ -37,14 +37,28 @@ done
 echo "backup start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB"
 
+# Remove the source records so incorrect global index handles cannot read the
+# dropped table's old partitions and accidentally pass the restore checks.
+for i in $(seq $TABLE_COUNT) _Hash _List; do
+    run_sql "DELETE FROM $DB.$TABLE${i};"
+done
+
 run_sql "DROP DATABASE $DB;"
 
 # restore full
 echo "restore start..."
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index=return(true)'
+if run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR > "$TEST_DIR/global-index-interrupted.log" 2>&1; then
+    echo "expected global index repair to be interrupted"
+    exit 1
+fi
+unset GO_FAILPOINTS
+grep 'failed before create ingest index' "$TEST_DIR/global-index-interrupted.log"
 run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 for i in $(seq $TABLE_COUNT) _Hash _List; do
     run_sql "SHOW CREATE TABLE $DB.$TABLE${i};" | grep 'PARTITION'
+    run_sql "SET tidb_enable_fast_table_check=0; ADMIN CHECK TABLE $DB.$TABLE${i};"
     row_count_new[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i};" | awk '/COUNT/{print $2}')
     row_count_new_global_index[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i} use index(idx);" | awk '/COUNT/{print $2}')
     row_count_new_non_unique_global_index[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i} use index(idx1);" | awk '/COUNT/{print $2}')
