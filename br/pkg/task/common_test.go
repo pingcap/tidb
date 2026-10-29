@@ -70,6 +70,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    `s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`,
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
@@ -80,6 +86,18 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedName:  "pitr-add-index-sql-storage",
 			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
 			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
+			inputName:     "upstream-storage",
+			expectedName:  "upstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
+			inputName:     "downstream-storage",
+			expectedName:  "downstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
 		},
 		{
 			inputName:     flagFullBackupCipherKey,
@@ -97,6 +115,12 @@ func TestUrlNoQuery(t *testing.T) {
 			inputName:     "azblob.encryption-key",
 			expectedName:  "azblob.encryption-key",
 			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "s3.sse-kms-context",
+			expectedName:  "s3.sse-kms-context",
+			inputValue:    `{"tenant":"context-value"}`,
 			expectedValue: "<redacted>",
 		},
 		{

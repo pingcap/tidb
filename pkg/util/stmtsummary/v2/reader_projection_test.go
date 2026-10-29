@@ -117,7 +117,8 @@ func TestHistoryProjection(t *testing.T) {
 
 	planRecord, _, err := makeStmtRecordProjection(projectionColumns(PlanStr)).parse(raw)
 	require.NoError(t, err)
-	require.Equal(t, full.SampleSQL, planRecord.SampleSQL, "PLAN error diagnostics need sample SQL")
+	require.Equal(t, full.NormalizedSQL, planRecord.NormalizedSQL, "PLAN error diagnostics need normalized SQL")
+	require.Empty(t, planRecord.SampleSQL, "PLAN does not need unrequested sample SQL")
 
 	selected, _, err := makeStmtRecordProjection(projectionColumns(DigestTextStr)).parse(raw)
 	require.NoError(t, err)

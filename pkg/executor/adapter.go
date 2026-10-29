@@ -2418,6 +2418,8 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Charset = charset
 	stmtExecInfo.Collation = collation
 	stmtExecInfo.NormalizedSQL = normalizedSQL
+	stmtExecInfo.SensitiveStmt, _ = a.StmtNode.(ast.SensitiveStmtNode)
+	stmtExecInfo.SampleParams = sessVars.PlanCacheParams
 	stmtExecInfo.Digest = digest.String()
 	stmtExecInfo.PrevSQL = prevSQL
 	stmtExecInfo.PrevSQLDigest = prevSQLDigest

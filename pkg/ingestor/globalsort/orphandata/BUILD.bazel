@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "orphandata",
-    srcs = ["monitor.go"],
+    srcs = ["cleaner.go"],
     importpath = "github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata",
     visibility = ["//visibility:public"],
     deps = [
@@ -18,7 +18,7 @@ go_test(
     name = "orphandata_test",
     timeout = "short",
     srcs = [
-        "monitor_test.go",
+        "cleaner_test.go",
         "scan_test.go",
     ],
     embed = [":orphandata"],

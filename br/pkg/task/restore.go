@@ -786,7 +786,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	log.Info("creating storage checkpoint meta managers for PiTR",
 		zap.Uint64("restoreID", restoreID),
 		zap.Uint64("downstreamClusterID", downstreamClusterID),
-		zap.String("checkpointStorage", cfg.CheckpointStorage),
+		zap.String("checkpointStorage", objstore.RedactURL(cfg.CheckpointStorage)),
 		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
 
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)

@@ -4376,8 +4376,8 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBEnableAdaptiveLimitScan:
 		varVal = vardef.On
 	case vardef.TiDBAnalyzeSampledNDVThreshold:
-		// New clusters sample NDV for tables and partitions above 500 million rows.
-		varVal = "500000000"
+		// New clusters sample NDV for tables and partitions above 100 million rows.
+		varVal = "100000000"
 	case vardef.TiDBPessimisticTransactionFairLocking:
 		if kerneltype.IsNextGen() {
 			varVal = vardef.Off
