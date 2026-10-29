@@ -20,7 +20,8 @@
 //! and preserves only the source arithmetic.  It does not create a histogram,
 //! inspect a session, or publish the risk variable to a plan context.
 
-use super::{go_max, go_min, out_of_range::out_of_range_full_ndv, row_count_column::RowEstimate};
+use super::{go_max, go_min, out_of_range::out_of_range_full_ndv};
+use tidb_stats::RowEstimate;
 
 /// Caller-owned statistics required by the source uniform equality helper.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -76,7 +77,7 @@ pub fn estimate_uniform_equality(stats: UniformEqualityStats) -> RowEstimate {
         if hist_ndv > 0.0 && stats.modify_count == 0 {
             let min_topn = stats.topn_min_count.unwrap_or(0.0);
             let min_topn_minus_one = (min_topn as u64).wrapping_sub(1) as f64;
-            return RowEstimate::default_est(go_max(min_topn_minus_one, 1.0));
+            return tidb_stats::default_row_est(go_max(min_topn_minus_one, 1.0));
         }
 
         // An empty histogram has no non-NULL count; derive it from the
@@ -103,26 +104,13 @@ pub fn estimate_uniform_equality(stats: UniformEqualityStats) -> RowEstimate {
                 skew_estimate = go_min(skew_estimate, min_topn);
             }
         }
-        return calculate_skew_ratio_counts(
+        return tidb_stats::calculate_skew_ratio_counts(
             avg_row_estimate,
             skew_estimate,
             stats.risk_eq_skew_ratio,
         );
     }
 
-    RowEstimate::default_est(avg_row_estimate)
+    tidb_stats::default_row_est(avg_row_estimate)
 }
 
-/// Re-exports the shared `statistics.CalculateSkewRatioCounts` arithmetic at
-/// the planner's `RowEstimate` boundary. The implementation stays owned by
-/// `tidb-stats`; this adapter keeps the planner leaf from duplicating the
-/// histogram package's source formula.
-#[must_use]
-pub fn calculate_skew_ratio_counts(
-    estimate: f64,
-    skew_estimate: f64,
-    skew_ratio: f64,
-) -> RowEstimate {
-    let source = tidb_stats::calculate_skew_ratio_counts(estimate, skew_estimate, skew_ratio);
-    RowEstimate::new(source.est, source.min_est, source.max_est)
-}

@@ -216,7 +216,7 @@ pub(crate) fn fill_ordinary_index_paths(
                 .as_ref()
                 .and_then(|stats| stats.hist_coll())
                 .map_or(0.0, |hist| hist.realtime_count() as f64);
-            tidb_planner_cardinality::row_count_column::RowEstimate::new(realtime, 0.0, 0.0)
+            tidb_stats::RowEstimate::new(realtime, 0.0, 0.0)
         } else {
             super::index_merge::estimate_index_ranges(
                 source,

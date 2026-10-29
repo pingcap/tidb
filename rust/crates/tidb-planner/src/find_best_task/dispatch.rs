@@ -6400,7 +6400,7 @@ mod tests {
 
         ds.indexes = vec![index];
         ds.table_stats = Some(StatsInfo::new(10.0, []));
-        let estimate = tidb_planner_cardinality::row_count_column::RowEstimate::new(2.0, 1.0, 4.0);
+        let estimate = tidb_stats::RowEstimate::new(2.0, 1.0, 4.0);
         ds.derived_index_paths.entry(0).or_default().row_estimate = Some(estimate);
         let mut plan = LogicalPlan::DataSource(ds);
         let context = crate::logical::rule_tests::test_context(&allocator);

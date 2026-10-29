@@ -116,7 +116,7 @@ pub struct IndexPathState {
     /// unresolved positions remain None instead of shortening the key.
     pub declared_columns: Option<Vec<Option<(tidb_expr::column::Column, i64)>>>,
     /// Access estimate and its skyline risk bounds, adjusted together.
-    pub row_estimate: Option<tidb_planner_cardinality::row_count_column::RowEstimate>,
+    pub row_estimate: Option<tidb_stats::RowEstimate>,
     /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
     /// logical statistics derivation, before final column pruning.
     /// None means the covering decision has not been derived yet.

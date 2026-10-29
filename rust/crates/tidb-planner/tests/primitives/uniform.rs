@@ -20,9 +20,9 @@
 //! the arithmetic contract while leaving mock-store, histogram, TopN, and
 //! session-variable ownership to the Go planner ring.
 
+use tidb_stats::{calculate_skew_ratio_counts, RowEstimate};
 use tidb_planner_cardinality::{
-    row_count_column::RowEstimate,
-    uniform::{calculate_skew_ratio_counts, estimate_uniform_equality, UniformEqualityStats},
+    uniform::{estimate_uniform_equality, UniformEqualityStats},
 };
 
 fn stats() -> UniformEqualityStats {
@@ -44,7 +44,7 @@ fn stats() -> UniformEqualityStats {
 fn uniform_histogram_average_and_skew_bounds() {
     assert_eq!(
         estimate_uniform_equality(stats()),
-        RowEstimate::default_est(10.0)
+        tidb_stats::default_row_est(10.0)
     );
 
     let mut skewed = stats();
@@ -72,7 +72,7 @@ fn empty_histogram_preserves_topn_and_out_of_range_fallbacks() {
     topn_only.not_null_count = 0.0;
     assert_eq!(
         estimate_uniform_equality(topn_only),
-        RowEstimate::default_est(19.0)
+        tidb_stats::default_row_est(19.0)
     );
 
     let mut modified = topn_only;
@@ -81,7 +81,7 @@ fn empty_histogram_preserves_topn_and_out_of_range_fallbacks() {
     modified.increase_factor = 1.2;
     assert_eq!(
         estimate_uniform_equality(modified),
-        RowEstimate::default_est(2.0)
+        tidb_stats::default_row_est(2.0)
     );
 
     let mut deleted = topn_only;
@@ -90,7 +90,7 @@ fn empty_histogram_preserves_topn_and_out_of_range_fallbacks() {
     deleted.increase_factor = 0.8;
     assert_eq!(
         estimate_uniform_equality(deleted),
-        RowEstimate::default_est(8.0)
+        tidb_stats::default_row_est(8.0)
     );
 }
 

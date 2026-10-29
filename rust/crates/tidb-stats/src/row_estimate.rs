@@ -57,6 +57,16 @@ pub fn calculate_skew_ratio_counts(
 }
 
 impl RowEstimate {
+    /// An estimate from its three bounds (Go's `RowEstimate{Est, MinEst, MaxEst}`).
+    #[must_use]
+    pub const fn new(est: f64, min_est: f64, max_est: f64) -> Self {
+        Self {
+            est,
+            min_est,
+            max_est,
+        }
+    }
+
     /// Adds another estimate field by field.
     pub fn add(&mut self, other: Self) {
         self.est += other.est;

@@ -74,7 +74,7 @@ fn column_row_count(
     end: i64,
     realtime_row_count: i64,
     modify_count: i64,
-) -> tidb_planner_cardinality::row_count_column::RowEstimate {
+) -> tidb_stats::RowEstimate {
     get_column_row_count(
         column,
         &[ColumnRange::new(

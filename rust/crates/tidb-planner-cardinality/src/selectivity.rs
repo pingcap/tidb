@@ -639,7 +639,7 @@ pub fn get_row_count_by_index_ranges(
     ranges: &[Range],
     index_columns: &[Column],
     options: &EstimatorOptions,
-) -> Result<super::row_count_column::RowEstimate, EstimationError> {
+) -> Result<tidb_stats::RowEstimate, EstimationError> {
     let mut stats = coll.index_estimation_stats(index_id);
     // `hasColumnStats`, the partial-statistics estimate and the virtual-column
     // check read `idxCols`; an index the collection does not hold still has

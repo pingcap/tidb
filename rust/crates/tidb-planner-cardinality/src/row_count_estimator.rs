@@ -53,7 +53,7 @@ use super::pseudo::{
     pseudo_row_count_by_unsigned_int_ranges, PseudoBoundKind, ScalarRange, SignedIntRange,
     UnsignedIntRange,
 };
-use super::row_count_column::RowEstimate;
+use tidb_stats::RowEstimate;
 use super::uniform::{estimate_uniform_equality, UniformEqualityStats};
 use super::{apply_exponential_backoff, go_max, go_min, MAX_EXPONENTIAL_BACKOFF_COLS};
 use tidb_planner_core_cost::TOLERANCE_FACTOR;
@@ -357,19 +357,19 @@ pub fn equal_row_count_on_column(
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     if value.is_null() {
-        return Ok(RowEstimate::default_est(column.histogram.null_count as f64));
+        return Ok(tidb_stats::default_row_est(column.histogram.null_count as f64));
     }
     let histogram = &column.histogram;
 
     if column.stats_ver < VERSION2 {
         if histogram.is_empty() {
-            return Ok(RowEstimate::default_est(0.0));
+            return Ok(tidb_stats::default_row_est(0.0));
         }
         if histogram.ndv > 0 && histogram.out_of_range(value, collation) {
             let total = column.total_row_count();
             let selectivity =
                 out_of_range_eq_selectivity(histogram.ndv, realtime_row_count, total as i64);
-            return Ok(RowEstimate::default_est(selectivity * total));
+            return Ok(tidb_stats::default_row_est(selectivity * total));
         }
         if let Some(cms) = column.cms.as_ref() {
             let count = tidb_stats::cmsketch::query_value(
@@ -378,20 +378,20 @@ pub fn equal_row_count_on_column(
                 value,
                 Some(options.time_zone.as_ref()),
             )?;
-            return Ok(RowEstimate::default_est(count as f64));
+            return Ok(tidb_stats::default_row_est(count as f64));
         }
         let (hist_count, _) = histogram.equal_row_count(value, false, collation);
-        return Ok(RowEstimate::default_est(hist_count));
+        return Ok(tidb_stats::default_row_est(hist_count));
     }
 
     // Stats version 2.
     if histogram.is_empty() && topn_num(column.topn.as_ref()) == 0 {
-        return Ok(RowEstimate::default_est(0.0));
+        return Ok(tidb_stats::default_row_est(0.0));
     }
     // 1. TopN is exact.
     if let Some(topn) = column.topn.as_ref() {
         if let Some(count) = topn.query_bytes(encoded_value) {
-            return Ok(RowEstimate::default_est(count as f64));
+            return Ok(tidb_stats::default_row_est(count as f64));
         }
     }
     // 2. Bucket repeat / bucket NDV.
@@ -409,7 +409,7 @@ pub fn equal_row_count_on_column(
             modify_count,
         )
     {
-        return Ok(RowEstimate::default_est(hist_count));
+        return Ok(tidb_stats::default_row_est(hist_count));
     }
     // 3. Uniform distribution, which is also where out-of-range values land.
     Ok(uniform_estimate(
@@ -523,7 +523,7 @@ pub fn get_column_row_count(
     pk_is_handle: bool,
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
-    let mut total = RowEstimate::default_est(0.0);
+    let mut total = tidb_stats::default_row_est(0.0);
     let increase_factor = column.increase_factor(realtime_row_count);
 
     for range in ranges {
@@ -703,7 +703,7 @@ pub fn get_index_row_count_with_partial_stats(
     options: &EstimatorOptions,
 ) -> Result<Option<RowEstimate>, EstimationError> {
     if realtime <= 0 {
-        return Ok(Some(RowEstimate::default_est(0.0)));
+        return Ok(Some(tidb_stats::default_row_est(0.0)));
     }
     if columns.len() == 1 {
         let (column, collation) = columns[0];
@@ -727,7 +727,7 @@ pub fn get_index_row_count_with_partial_stats(
             false,
             options,
         )
-        .map(|estimate| Some(RowEstimate::default_est(estimate.est)));
+        .map(|estimate| Some(tidb_stats::default_row_est(estimate.est)));
     }
     let mut partial_ranges = Vec::with_capacity(ranges.len());
     for range in ranges {
@@ -785,7 +785,7 @@ pub fn get_row_count_by_column_ranges(
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     let Some(column) = column.filter(|column| column.total_row_count() != 0.0) else {
-        return Ok(RowEstimate::default_est(pseudo_row_count(
+        return Ok(tidb_stats::default_row_est(pseudo_row_count(
             ranges,
             collation,
             realtime_row_count,
@@ -1022,7 +1022,7 @@ pub fn equal_row_count_on_index(
     options: &EstimatorOptions,
 ) -> RowEstimate {
     if index.num_columns == 1 && encoded == null_key_bytes().as_slice() {
-        return RowEstimate::default_est(index.histogram.null_count as f64);
+        return tidb_stats::default_row_est(index.histogram.null_count as f64);
     }
     let value = Datum::Bytes(encoded.to_vec());
     let histogram = &index.histogram;
@@ -1032,20 +1032,20 @@ pub fn equal_row_count_on_index(
             let total = index.total_row_count();
             let selectivity =
                 out_of_range_eq_selectivity(histogram.ndv, realtime_row_count, total as i64);
-            return RowEstimate::default_est(selectivity * total);
+            return tidb_stats::default_row_est(selectivity * total);
         }
         if let Some(cms) = index.cms.as_ref() {
-            return RowEstimate::default_est(
+            return tidb_stats::default_row_est(
                 cms.query_with_topn(index.topn.as_ref(), encoded) as f64
             );
         }
         let (hist_count, _) = histogram.equal_row_count(&value, false, Collation::Binary);
-        return RowEstimate::default_est(hist_count);
+        return tidb_stats::default_row_est(hist_count);
     }
 
     if let Some(topn) = index.topn.as_ref() {
         if let Some(count) = topn.query_bytes(encoded) {
-            return RowEstimate::default_est(count as f64);
+            return tidb_stats::default_row_est(count as f64);
         }
     }
     let (hist_count, matched) = histogram.equal_row_count(&value, true, Collation::Binary);
@@ -1061,7 +1061,7 @@ pub fn equal_row_count_on_index(
             modify_count,
         )
     {
-        return RowEstimate::default_est(hist_count);
+        return tidb_stats::default_row_est(hist_count);
     }
     uniform_estimate(
         histogram,
@@ -1235,7 +1235,7 @@ pub fn get_index_row_count(
             }),
         )
     {
-        return Ok(RowEstimate::default_est(
+        return Ok(tidb_stats::default_row_est(
             stats.row_counts.index_realtime as f64,
         ));
     }
@@ -1274,7 +1274,7 @@ pub fn get_index_row_count(
                 range.prefix_equal_len()?;
             }
         }
-        return Ok(RowEstimate::default_est(
+        return Ok(tidb_stats::default_row_est(
             crate::ranger_stats_bridge::pseudo_count_by_index_ranges(
                 ranges,
                 stats.row_counts.table_realtime as f64,
@@ -1433,7 +1433,7 @@ pub fn get_index_row_count(
     if total > index.total_row_count() {
         total = index.total_row_count();
     }
-    Ok(RowEstimate::default_est(total))
+    Ok(tidb_stats::default_row_est(total))
 }
 
 /// Go `expBackoffEstimation`.
@@ -1585,12 +1585,12 @@ pub fn get_index_row_count_for_stats_v2(
 ) -> Result<RowEstimate, EstimationError> {
     let realtime_row_count = row_counts.index_realtime;
     let modify_count = row_counts.index_modify;
-    let mut total = RowEstimate::default_est(0.0);
+    let mut total = tidb_stats::default_row_est(0.0);
     let is_single_col_idx = index.num_columns == 1;
     let null_key = null_key_bytes();
 
     for range in ranges {
-        let mut count = RowEstimate::default_est(0.0);
+        let mut count = tidb_stats::default_row_est(0.0);
         let mut lb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val)?;
         let mut rb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.high_val)?;
         let full_len = range.low_val.len() == range.high_val.len() && range.low_val.len() == index.num_columns;
@@ -1606,7 +1606,7 @@ pub fn get_index_row_count_for_stats_v2(
                     if !only_null {
                         total.add_all(1.0);
                     } else {
-                        total = RowEstimate::default_est(index.histogram.null_count as f64);
+                        total = tidb_stats::default_row_est(index.histogram.null_count as f64);
                     }
                     continue;
                 }

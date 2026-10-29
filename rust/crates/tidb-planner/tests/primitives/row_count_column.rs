@@ -18,23 +18,24 @@ use tidb_planner_cardinality::{
     pseudo::{PseudoBoundKind, ScalarRange},
     row_count_column::{
         estimate_column_row_count, pseudo_row_count_with_partial_stats, ColumnRangeInput,
-        ColumnRangeStats, PartialStatsRange, RowEstimate,
+        ColumnRangeStats, PartialStatsRange,
     },
 };
+use tidb_stats::RowEstimate;
 
 #[test]
 fn point_ranges_preserve_primary_key_and_scaled_column_rules() {
     let point = ScalarRange::new(7.0, 7.0, PseudoBoundKind::Value, PseudoBoundKind::Value);
-    let stats = ColumnRangeStats::point(RowEstimate::default_est(2.0));
+    let stats = ColumnRangeStats::point(tidb_stats::default_row_est(2.0));
     let input = [ColumnRangeInput::new(point, false, false, stats)];
 
     assert_eq!(
         estimate_column_row_count(&input, 100.0, 100.0, 0.0, 1.5, true, 0.01),
-        RowEstimate::default_est(1.0)
+        tidb_stats::default_row_est(1.0)
     );
     assert_eq!(
         estimate_column_row_count(&input, 100.0, 100.0, 0.0, 1.5, false, 0.01),
-        RowEstimate::default_est(3.0)
+        tidb_stats::default_row_est(3.0)
     );
 }
 
@@ -42,10 +43,10 @@ fn point_ranges_preserve_primary_key_and_scaled_column_rules() {
 fn interval_ranges_adjust_exclusive_boundaries_and_null() {
     let interval = ScalarRange::new(1.0, 10.0, PseudoBoundKind::Value, PseudoBoundKind::Value);
     let stats = ColumnRangeStats::new(
-        RowEstimate::default_est(0.0),
+        tidb_stats::default_row_est(0.0),
         RowEstimate::new(10.0, 8.0, 12.0),
         RowEstimate::new(2.0, 1.0, 3.0),
-        RowEstimate::default_est(1.0),
+        tidb_stats::default_row_est(1.0),
         None,
     );
     let input = [ColumnRangeInput::new(interval, true, false, stats)];
@@ -56,10 +57,10 @@ fn interval_ranges_adjust_exclusive_boundaries_and_null() {
 
     let null_to_value = ScalarRange::new(0.0, 10.0, PseudoBoundKind::Null, PseudoBoundKind::Value);
     let null_stats = ColumnRangeStats::new(
-        RowEstimate::default_est(0.0),
-        RowEstimate::default_est(2.0),
-        RowEstimate::default_est(0.0),
-        RowEstimate::default_est(1.0),
+        tidb_stats::default_row_est(0.0),
+        tidb_stats::default_row_est(2.0),
+        tidb_stats::default_row_est(0.0),
+        tidb_stats::default_row_est(1.0),
         None,
     );
     let input = [ColumnRangeInput::new(
@@ -70,7 +71,7 @@ fn interval_ranges_adjust_exclusive_boundaries_and_null() {
     )];
     assert_eq!(
         estimate_column_row_count(&input, 100.0, 97.0, 3.0, 1.0, false, 0.01),
-        RowEstimate::default_est(6.0)
+        tidb_stats::default_row_est(6.0)
     );
 }
 

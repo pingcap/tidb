@@ -23,82 +23,7 @@
 //! does not construct a histogram/session/catalog facade.
 
 use super::pseudo::{PseudoBoundKind, ScalarRange};
-
-/// The source three-valued row-count estimate (`Est`, `MinEst`, `MaxEst`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RowEstimate {
-    /// Default estimate used by the planner.
-    pub est: f64,
-    /// Lower uncertainty estimate.
-    pub min_est: f64,
-    /// Upper uncertainty estimate.
-    pub max_est: f64,
-}
-
-impl RowEstimate {
-    /// Creates a row estimate with explicit default/minimum/maximum values.
-    #[must_use]
-    pub const fn new(est: f64, min_est: f64, max_est: f64) -> Self {
-        Self {
-            est,
-            min_est,
-            max_est,
-        }
-    }
-
-    /// Creates an estimate whose three values are identical.
-    #[must_use]
-    pub const fn default_est(value: f64) -> Self {
-        Self::new(value, value, value)
-    }
-
-    /// Adds another estimate field-by-field.
-    pub fn add(&mut self, other: Self) {
-        self.est += other.est;
-        self.min_est += other.min_est;
-        self.max_est += other.max_est;
-    }
-
-    /// Adds one value to all three estimate fields.
-    pub fn add_all(&mut self, value: f64) {
-        self.est += value;
-        self.min_est += value;
-        self.max_est += value;
-    }
-
-    /// Subtracts another estimate field-by-field.
-    pub fn subtract(&mut self, other: Self) {
-        self.est -= other.est;
-        self.min_est -= other.min_est;
-        self.max_est -= other.max_est;
-    }
-
-    /// Multiplies all three estimate fields by one scale factor.
-    pub fn multiply_all(&mut self, factor: f64) {
-        self.est *= factor;
-        self.min_est *= factor;
-        self.max_est *= factor;
-    }
-
-    /// Divides all three estimate fields by one scale factor.
-    pub fn divide_all(&mut self, factor: f64) {
-        self.est /= factor;
-        self.min_est /= factor;
-        self.max_est /= factor;
-    }
-
-    /// Clamps all fields and keeps minimum/default/maximum ordering.
-    ///
-    /// This preserves the source `RowEstimate.Clamp` order, including the
-    /// unusual `min > max` behavior of Go's `mathutil.Clamp`.
-    pub fn clamp(&mut self, lower: f64, upper: f64) {
-        self.est = clamp_value(self.est, lower, upper);
-        self.min_est = go_min(self.min_est, self.est);
-        self.min_est = clamp_value(self.min_est, lower, upper);
-        self.max_est = go_max(self.max_est, self.est);
-        self.max_est = clamp_value(self.max_est, lower, upper);
-    }
-}
+use tidb_stats::RowEstimate;
 
 /// Point, interval, boundary, and optional out-of-range statistics supplied
 /// by the future histogram owner for one normalized range.
@@ -141,9 +66,9 @@ impl ColumnRangeStats {
     pub const fn point(point: RowEstimate) -> Self {
         Self::new(
             point,
-            RowEstimate::default_est(0.0),
-            RowEstimate::default_est(0.0),
-            RowEstimate::default_est(0.0),
+            tidb_stats::default_row_est(0.0),
+            tidb_stats::default_row_est(0.0),
+            tidb_stats::default_row_est(0.0),
             None,
         )
     }
@@ -215,8 +140,8 @@ fn clamp_value(value: f64, lower: f64, upper: f64) -> f64 {
     }
 }
 
-// Go's built-in min/max propagate NaN and preserve a deterministic signed-zero
-// result. Keep these helpers local so primitive f64::min/max cannot silently
+// Go's built-in min propagates NaN and preserves a deterministic signed-zero
+// result. Keep this helper local so primitive f64::min cannot silently
 // alter the source arithmetic.
 fn go_min(left: f64, right: f64) -> f64 {
     if left.is_nan() || right.is_nan() {
@@ -226,20 +151,6 @@ fn go_min(left: f64, right: f64) -> f64 {
         return if left.is_sign_negative() { left } else { right };
     }
     if left < right {
-        left
-    } else {
-        right
-    }
-}
-
-fn go_max(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        return f64::NAN;
-    }
-    if left == 0.0 && left == right {
-        return if left.is_sign_negative() { right } else { left };
-    }
-    if left > right {
         left
     } else {
         right
@@ -273,7 +184,7 @@ pub fn estimate_column_row_count(
     pk_is_handle: bool,
     full_range_tolerance: f64,
 ) -> RowEstimate {
-    let mut total = RowEstimate::default_est(0.0);
+    let mut total = tidb_stats::default_row_est(0.0);
 
     for range in ranges {
         let is_point = same_bound(&range.range);

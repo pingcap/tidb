@@ -3462,7 +3462,7 @@ mod statistics_initialization_tests {
             99,
             tidb_planner::access_path::IndexPathState {
                 row_estimate: Some(
-                    tidb_planner_cardinality::row_count_column::RowEstimate::new(
+                    tidb_stats::RowEstimate::new(
                         900.0, 800.0, 1000.0,
                     ),
                 ),
@@ -3478,7 +3478,7 @@ mod statistics_initialization_tests {
                     -1,
                 ))]),
                 row_estimate: Some(
-                    tidb_planner_cardinality::row_count_column::RowEstimate::new(
+                    tidb_stats::RowEstimate::new(
                         900.0, 800.0, 1000.0,
                     ),
                 ),

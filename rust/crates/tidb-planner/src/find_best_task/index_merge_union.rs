@@ -1455,7 +1455,7 @@ mod tests {
                 .derived_index_paths
                 .entry(index.id)
                 .or_default()
-                .row_estimate = Some(tidb_planner_cardinality::row_count_column::RowEstimate::new(
+                .row_estimate = Some(tidb_stats::RowEstimate::new(
                 100.0, 0.0, 0.0,
             ));
         }

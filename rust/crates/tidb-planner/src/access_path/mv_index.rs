@@ -420,7 +420,7 @@ fn build_partial_path_for_mv_index(
         path: IndexPathState {
             filled: Some(filled),
             declared_columns: None,
-            row_estimate: Some(tidb_planner_cardinality::row_count_column::RowEstimate::new(
+            row_estimate: Some(tidb_stats::RowEstimate::new(
                 rows, rows, rows,
             )),
             is_single_scan: Some(false),
