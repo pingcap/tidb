@@ -57,6 +57,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/planner/planctx",
         "//pkg/planner/util",
         "//pkg/sessionctx",
@@ -112,7 +113,6 @@ go_test(
     timeout = "short",
     srcs = [
         "chunk_process_testkit_test.go",
-        "export_test.go",
         "import_test.go",
         "importer_testkit_test.go",
         "job_test.go",
