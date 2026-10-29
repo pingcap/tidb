@@ -345,10 +345,11 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
+	function := sf.Function.Clone()
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		RetType:  function.getRetTp(),
+		Function: function,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.hashcode != nil {

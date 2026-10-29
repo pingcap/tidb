@@ -423,7 +423,13 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.tp = from.tp
+	// Do not share the return type: a clone is rewritten independently, and
+	// e.g. a comparison coercing it to REAL must not change the original's scale.
+	if from.tp != nil {
+		b.tp = from.tp.Clone()
+	} else {
+		b.tp = nil
+	}
 	b.pbCode = from.pbCode
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {

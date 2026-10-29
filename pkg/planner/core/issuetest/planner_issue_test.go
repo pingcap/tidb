@@ -448,4 +448,13 @@ func TestIssue66322NullifTypeLeak(t *testing.T) {
 	tk.MustExec("create table t0 (c2 decimal unsigned)")
 	tk.MustExec("insert into t0 values (1410890950)")
 	tk.MustQuery("select nullif((select t0.c2 from t0), null), nullif((select t0.c2 from t0), (select null where ifnull(t0.c2, 1))) from t0").Check(testkit.Rows("1410890950 1410890950"))
+
+	// A nonconstant DECIMAL expression must also retain its original scale when
+	// the comparison against PI() coerces a cloned operand to REAL.
+	tk.MustQuery("select nullif(c2 + 0, PI()) from t0").Check(testkit.Rows("1410890950"))
+	tk.MustExec("create table t_nullif_decimal (c2 decimal(10,0))")
+	tk.MustExec("insert into t_nullif_decimal values (1410890950)")
+	tk.MustQuery("select nullif(c2 + 0, PI()) from t_nullif_decimal").Check(testkit.Rows("1410890950"))
+	tk.MustExec("create view v_nullif_decimal_result as select nullif(c2 + 0, PI()) as v from t_nullif_decimal")
+	tk.MustQuery("select data_type, numeric_precision, numeric_scale from information_schema.columns where table_schema = 'test' and table_name = 'v_nullif_decimal_result' and column_name = 'v'").Check(testkit.Rows("decimal 11 0"))
 }
