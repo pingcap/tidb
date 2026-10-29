@@ -218,9 +218,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				testkit.Rows("0 9"))
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t  PRIMARY 1 (1, 1) 1",
-					"test t  PRIMARY 1 (2, 2) 1",
-					"test t  b 0 1 1",
+				testkit.Rows("test t  b 0 1 1",
 					"test t  b 0 2 1",
 					"test t  c 0 6 4",
 					"test t  c 0 7 2",
@@ -234,8 +232,8 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"1 1 9 0 18 2 0"))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  PRIMARY 1 0 4 1 (3, 3) (6, 6) 0",
-					"test t  PRIMARY 1 1 7 1 (7, 7) (9, 9) 0",
+				testkit.Rows("test t  PRIMARY 1 0 5 1 (1, 1) (5, 5) 0",
+					"test t  PRIMARY 1 1 9 1 (6, 6) (9, 9) 0",
 					"test t  b 0 0 4 1 3 6 0",
 					"test t  b 0 1 7 1 7 9 0",
 					"test t  c 0 0 2 1 8 9 0",

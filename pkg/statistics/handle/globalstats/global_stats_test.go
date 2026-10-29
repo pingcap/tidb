@@ -644,8 +644,9 @@ func TestGlobalStatsNDV(t *testing.T) {
 	checkNDV(13, 3, 3, 3, 4)
 
 	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV of the
-	// 32768 rows of tu and th, except for the primary keys on a, which keep
-	// their values distinct and take the exact row count.
+	// 32768 rows of tu and th. The primary keys on a and the composite key ab
+	// of NOT NULL columns keep their values distinct, so they take the exact
+	// row count.
 	tk.MustExec(`create table tu (a int, b int not null, c int, primary key (a) nonclustered,
 	unique key ab(a, b), key ic(c)) partition by hash(a) partitions 2`)
 	tk.MustExec("create table th (a int primary key clustered, b int) partition by hash(a) partitions 2")
@@ -654,6 +655,14 @@ func TestGlobalStatsNDV(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
 	}
 	tk.MustExec("insert into th select a, b from tu")
+	// The key bc of tn repeats with a NULL column, and the stats of the
+	// partial index ub of tp include the rows outside its condition. Their
+	// NDVs are thus below the row count. A partitioned table cannot have a
+	// partial index.
+	tk.MustExec("create table tn (b int not null, c int, unique key bc(b, c)) partition by hash(b) partitions 2")
+	tk.MustExec("insert into tn values (1, null), (1, null), (2, 1), (3, 1)")
+	tk.MustExec("create table tp (b int, c int, unique key ub(b) where c > 0)")
+	tk.MustExec("insert into tp values (1, 0), (1, 0), (2, 1)")
 	// Two rows of tg move from p0 to p1, and only p1 is analyzed again. The
 	// stale stats of p0 and the new stats of p1 then both hold the values 1
 	// and 2 of c, which the global unique index uc keeps distinct. The
@@ -673,9 +682,9 @@ func TestGlobalStatsNDV(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
 		tk.MustExec("analyze table tu")
 		require.Equal(t, []string{
-			"global PRIMARY 32768", "global a 32768", "global ab 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"global PRIMARY 32768", "global a 32768", "global ab 32768", "global b 32236", "global c 32236", "global ic 32236",
 			"p0 PRIMARY 16384", "p0 a 16384", "p0 ab 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
-			"p1 PRIMARY 16384", "p1 a 16384", "p1 ab 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+			"p1 PRIMARY 16384", "p1 a 16384", "p1 ab 16384", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
 		}, ndvs("tu"))
 		tk.MustExec("analyze table th")
 		require.Equal(t, []string{
@@ -683,6 +692,14 @@ func TestGlobalStatsNDV(t *testing.T) {
 			"p0 a 16384", "p0 b 16384",
 			"p1 a 16384", "p1 b 16128",
 		}, ndvs("th"))
+		tk.MustExec("analyze table tn")
+		require.Equal(t, []string{
+			"global b 3", "global bc 3", "global c 1",
+			"p0 b 1", "p0 bc 1", "p0 c 1",
+			"p1 b 2", "p1 bc 2", "p1 c 1",
+		}, ndvs("tn"))
+		tk.MustExec("analyze table tp")
+		require.Equal(t, []string{" b 2", " c 2", " ub 2"}, ndvs("tp"))
 		tk.MustExec("analyze table tg partition p1")
 		require.Equal(t, []string{
 			"global a 8", "global c 6", "global uc 6",
