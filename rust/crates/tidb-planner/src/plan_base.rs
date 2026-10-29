@@ -407,6 +407,12 @@ impl PlanError {
     }
 }
 
+impl From<tidb_planner_util_domainmisc::DomainNotFound> for PlanError {
+    fn from(error: tidb_planner_util_domainmisc::DomainNotFound) -> Self {
+        Self::internal(error.to_string())
+    }
+}
+
 impl From<tidb_terror::MysqlError> for PlanError {
     fn from(error: tidb_terror::MysqlError) -> Self {
         Self {

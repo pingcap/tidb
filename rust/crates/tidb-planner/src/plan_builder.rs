@@ -3576,7 +3576,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             || self.is_for_update_read)
             && self.ctx.connection_id().is_some_and(|id| id > 0);
         if check_fd_latest_indexes {
-            match crate::domain_misc::get_latest_index_info(
+            match tidb_planner_util_domainmisc::get_latest_index_info(
                 self.source.latest_index_schema(),
                 table.table_id,
                 0,

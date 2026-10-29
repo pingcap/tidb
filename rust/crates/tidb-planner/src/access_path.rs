@@ -20,15 +20,13 @@
 
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use tidb_ranger::Range;
-use crate::{
-    cardinality::{
+use crate::cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
-    },
-    tikv_scan_spec::{
+    };
+use crate::tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
         ValidatedIndexPushdown,
-    },
-};
+    };
 
 
 pub(crate) mod index_merge;
@@ -1232,7 +1230,7 @@ pub fn get_possible_access_paths(
         }
         if check_latest_schema && latest_indexes.is_none() {
             let (indexes, changed) =
-                crate::domain_misc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;
+                tidb_planner_util_domainmisc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;
             latest_indexes = indexes;
             check_latest_schema = changed;
         }

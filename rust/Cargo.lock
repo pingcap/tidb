@@ -5795,6 +5795,7 @@ dependencies = [
  "tidb-planner-property",
  "tidb-planner-tablesampler",
  "tidb-planner-util",
+ "tidb-planner-util-domainmisc",
  "tidb-plannererrors",
  "tidb-printer",
  "tidb-proto",
@@ -5946,6 +5947,13 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-planner-cascades-base",
+]
+
+[[package]]
+name = "tidb-planner-util-domainmisc"
+version = "0.0.0"
+dependencies = [
+ "tidb-infoschema",
 ]
 
 [[package]]

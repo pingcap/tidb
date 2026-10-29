@@ -81,7 +81,6 @@ pub mod access_path;
 pub mod cardinality;
 pub mod configured_order_limit_contract;
 pub mod common_plans;
-pub mod domain_misc;
 pub mod enforce;
 pub mod explain;
 pub mod expression_rewriter;

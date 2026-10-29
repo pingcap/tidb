@@ -26,6 +26,18 @@ use tidb_infoschema::table_source::SourceIndex;
 use tidb_infoschema::table_source::LatestIndexSchema;
 
 
+/// Go's `errors.New("domain not found for ctx")`: the caller has no domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DomainNotFound;
+
+impl std::fmt::Display for DomainNotFound {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("domain not found for ctx")
+    }
+}
+
+impl std::error::Error for DomainNotFound {}
+
 /// Go `domainmisc.GetLatestIndexInfo`.
 ///
 /// `None` is Go's nil domain. A missing table in a newer schema produces an
@@ -34,9 +46,8 @@ pub fn get_latest_index_info(
     latest: Option<&LatestIndexSchema>,
     table_id: i64,
     start_version: u64,
-) -> Result<(Option<BTreeMap<i64, SourceIndex>>, bool), crate::plan_base::PlanError> {
-    let latest =
-        latest.ok_or_else(|| crate::plan_base::PlanError::internal("domain not found for ctx"))?;
+) -> Result<(Option<BTreeMap<i64, SourceIndex>>, bool), DomainNotFound> {
+    let latest = latest.ok_or(DomainNotFound)?;
     if latest.schema_meta_version == start_version {
         return Ok((None, false));
     }
