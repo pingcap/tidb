@@ -41,7 +41,7 @@ use tikv_client::{
     Timestamp,
 };
 
-use crate::mock_pd::{GcState, GcStatesError, MockPd};
+use tidb_unistore_tikv::mock_pd::{GcState, GcStatesError, MockPd};
 
 /// PD's `constants.MaxKeyspaceID`.
 pub const MAX_KEYSPACE_ID: u32 = 0x00FF_FFFF;
@@ -442,7 +442,7 @@ impl RetryClientTrait for PdClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock_pd::NULL_KEYSPACE_ID;
+    use tidb_unistore_tikv::mock_pd::NULL_KEYSPACE_ID;
 
     fn keyspace_meta(id: u32, name: &str) -> KeyspaceMeta {
         KeyspaceMeta {

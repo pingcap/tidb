@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use tidb_proto::metapb;
 
-use crate::region_manager::{encode_region_key, new_peer_meta, InProcessRegionManager};
+use tidb_unistore_tikv::region_manager::{encode_region_key, new_peer_meta, InProcessRegionManager};
 
 /// Go `Cluster`: the region manager plus the delays tests schedule.
 #[derive(Debug)]
@@ -96,6 +96,24 @@ impl std::ops::Deref for Cluster {
     fn deref(&self) -> &InProcessRegionManager {
         &self.rm
     }
+}
+
+/// Go `unistore.New`'s region manager: `NewMockRegionManager` followed by
+/// `BootstrapWithSingleStore` -- store 1 (`store1`), region 2 over the whole
+/// keyspace, peer 3.
+#[must_use]
+pub fn new_region_manager() -> InProcessRegionManager {
+    let manager = InProcessRegionManager::new_mock_region_manager();
+    let (store_id, peer_id, region_id) = bootstrap_with_single_store(&manager);
+    debug_assert_eq!(
+        (store_id, region_id, peer_id),
+        (
+            tidb_unistore_tikv::region_manager::STORE_ID,
+            tidb_unistore_tikv::region_manager::BOOTSTRAP_REGION_ID,
+            tidb_unistore_tikv::region_manager::BOOTSTRAP_PEER_ID
+        )
+    );
+    manager
 }
 
 /// Go `BootstrapWithSingleStore` (`unistore/cluster.go`): one store named
@@ -192,7 +210,7 @@ mod tests {
     /// Go `ScheduleDelay` / `handleDelay`: a scheduled delay is taken once.
     #[test]
     fn a_scheduled_delay_is_taken_once() {
-        let cluster = Cluster::new(Arc::new(InProcessRegionManager::new()));
+        let cluster = Cluster::new(Arc::new(crate::cluster::new_region_manager()));
         cluster.schedule_delay(10, 2, Duration::from_millis(5));
         assert_eq!(cluster.take_delay(10, 3), None);
         assert_eq!(cluster.take_delay(10, 2), Some(Duration::from_millis(5)));
@@ -202,10 +220,37 @@ mod tests {
     /// Go `Cluster.SplitRaw` encodes the raw key before splitting.
     #[test]
     fn split_raw_encodes_the_key() {
-        let cluster = Cluster::new(Arc::new(InProcessRegionManager::new()));
+        let cluster = Cluster::new(Arc::new(crate::cluster::new_region_manager()));
         let ids = cluster.alloc_ids(2);
         let right = cluster.split_raw(2, ids[0], b"m", &[ids[1]], ids[1]);
         assert_eq!(right.start_key, encode_region_key(b"m"));
         assert_eq!(right.peers[0].id, ids[1]);
+    }
+
+    /// Go `BootstrapWithMultiRegions` and `BootstrapWithMultiStores`.
+    #[test]
+    fn bootstraps_multi_region_and_multi_store_clusters() {
+        let manager = InProcessRegionManager::new_mock_region_manager();
+        let (store_id, region_ids, peer_ids) =
+            bootstrap_with_multi_regions(&manager, &[b"b".to_vec(), b"d".to_vec()]);
+        assert_eq!(
+            (store_id, region_ids, peer_ids),
+            (1, vec![2, 4, 5], vec![3, 6, 7])
+        );
+        let ranges: Vec<_> = manager
+            .scan_regions(b"", b"", 0)
+            .iter()
+            .map(|(region, leader)| (region.id, leader.id))
+            .collect();
+        assert_eq!(ranges, vec![(2, 3), (4, 3), (5, 6)]);
+
+        let manager = InProcessRegionManager::new_mock_region_manager();
+        let (store_ids, peer_ids, region_id, leader) = bootstrap_with_multi_stores(&manager, 3);
+        assert_eq!(store_ids, vec![1, 2, 3]);
+        assert_eq!(peer_ids, vec![4, 5, 6]);
+        assert_eq!((region_id, leader), (7, 4));
+        assert_eq!(manager.get_all_stores().len(), 3);
+        let (region, _) = manager.get_region_by_key(&encode_region_key(b"")).unwrap();
+        assert_eq!(region.peers.len(), 3);
     }
 }

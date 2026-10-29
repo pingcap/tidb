@@ -1,0 +1,14 @@
+[package]
+name = "tidb-unistore-dbreader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/tikv/dbreader: the reader the unistore coprocessor scans through (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }

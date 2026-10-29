@@ -30,11 +30,11 @@ use tidb_distsql::cop_paging::CopRuntimeConfig;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 #[cfg(test)]
-use tidb_unistore::kv_handler::KvHandler;
+use tidb_unistore_tikv::kv_handler::KvHandler;
 #[cfg(test)]
-use tidb_unistore::mvcc_store::MvccStore;
+use tidb_unistore_tikv::mvcc_store::MvccStore;
 #[cfg(test)]
-use tidb_unistore::tso::InProcessPd;
+use tidb_unistore_tikv::tso::InProcessPd;
 
 use tidb_ddl::embedded_store::{in_process_stack, InProcessStack, IN_PROCESS_TIMEOUT};
 #[cfg(test)]
@@ -88,7 +88,7 @@ mod transaction_buffer_tests {
     #[test]
     fn the_embedded_store_checks_visibility_against_its_txn_safe_point() {
         let pd = InProcessPd::new();
-        let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
+        let regions = Arc::new(tidb_unistore::cluster::new_region_manager());
         let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
             MvccStore::with_pd(pd.oracle()),
             Arc::clone(&regions),
@@ -285,7 +285,7 @@ pub fn unistore_cluster_session_stack(
 /// Go `mockstore.WithMockTiFlash(nodes)`: `nodes` stores labelled
 /// `engine=tiflash` (`tiflash0`, `tiflash1`, ...), each with a peer on every
 /// region (Go adds it to the only region before the first split).
-fn with_mock_tiflash(regions: &tidb_unistore::region_manager::InProcessRegionManager, nodes: usize) {
+fn with_mock_tiflash(regions: &tidb_unistore_tikv::region_manager::InProcessRegionManager, nodes: usize) {
     for index in 0..nodes {
         let store_id = regions.alloc_id();
         regions.add_store(
@@ -308,7 +308,7 @@ fn with_mock_tiflash(regions: &tidb_unistore::region_manager::InProcessRegionMan
 /// instead of running the bootstrap again.
 #[derive(Clone, Debug)]
 pub struct BootstrapImage {
-    /// [`tidb_unistore::mvcc_store::MvccStore::data_image`] of the store.
+    /// [`tidb_unistore_tikv::mvcc_store::MvccStore::data_image`] of the store.
     pub data: Vec<u8>,
     /// The schema version the bootstrap published.
     pub schema_version: i64,

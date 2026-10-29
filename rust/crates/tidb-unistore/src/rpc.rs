@@ -36,7 +36,7 @@ use tikv_client::tikv::Request;
 use tikv_client::{Error, Result};
 
 use crate::cluster::Cluster;
-use crate::kv_handler::KvHandler;
+use tidb_unistore_tikv::kv_handler::KvHandler;
 
 /// Go `UnistoreRPCClientSendHook`: a test's look at every request before the
 /// store serves it.
@@ -292,13 +292,13 @@ impl tikv_client::tikv::Client for RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::region_manager::InProcessRegionManager;
+    use tidb_unistore_tikv::region_manager::InProcessRegionManager;
     use tikv_client::tikv::Client as _;
 
     fn client() -> RpcClient {
-        let rm = Arc::new(InProcessRegionManager::new());
+        let rm = Arc::new(crate::cluster::new_region_manager());
         let handler = Arc::new(Mutex::new(KvHandler::new(
-            crate::mvcc_store::MvccStore::new(),
+            tidb_unistore_tikv::mvcc_store::MvccStore::new(),
             Arc::clone(&rm),
         )));
         RpcClient::new(handler, Arc::new(Cluster::new(rm)))

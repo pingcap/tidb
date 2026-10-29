@@ -4931,7 +4931,7 @@ fn analyze_samples_the_go_handle_ranges() {
         let Some(request) = request.as_any().downcast_ref::<coprocessor::Request>() else {
             return;
         };
-        if request.tp == tidb_unistore::cophandler::REQ_TYPE_ANALYZE {
+        if request.tp == tidb_unistore_cophandler::REQ_TYPE_ANALYZE {
             recorded.lock().unwrap().extend(
                 request
                     .ranges

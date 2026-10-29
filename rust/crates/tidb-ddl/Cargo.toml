@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-errno = { path = "../tidb-errno" }

@@ -168,7 +168,7 @@ async fn gc_lock_resolution_clears_an_abandoned_lock_through_the_embedded_store(
         let mut handler = rpc.handler().lock().unwrap();
         let context = kvrpcpb::Context {
             region_id: cluster
-                .get_region_by_key(&tidb_unistore::region_manager::encode_region_key(b"k7"))
+                .get_region_by_key(&tidb_unistore_tikv::region_manager::encode_region_key(b"k7"))
                 .unwrap()
                 .0
                 .id,

@@ -34,7 +34,7 @@ mod analyze;
 mod eval_context;
 
 #[cfg(test)]
-#[path = "cophandler/region_group_tests.rs"]
+#[path = "region_group_tests.rs"]
 mod region_group_tests;
 
 use tidb_datatype::CollationCollator;
@@ -47,7 +47,6 @@ use tidb_proto::tipb;
 
 use tidb_codec::table_key::RecordHandle;
 
-use crate::mvcc_store::MvccStore;
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
 /// (`pkg/kv/kv.go:375-377`).
@@ -115,7 +114,7 @@ impl TimeZoneSpec {
 /// Go `HandleCopRequest` (`cop_handler.go`): the type dispatch. The unknown
 /// arm's message is Go's exact `fmt.Sprintf`.
 pub fn handle_cop_request(
-    store: &mut MvccStore,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
 ) -> coprocessor::Response {
     match req.tp {
@@ -236,7 +235,7 @@ fn go_byte_slice(bytes: &[u8]) -> String {
 /// Go `handleCopDAGRequest`'s parse half: `buildDAG`'s guards and decode,
 /// with execution refusing by name.
 fn handle_cop_dag_request(
-    _store: &mut MvccStore,
+    _store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
 ) -> coprocessor::Response {
     let context = match build_dag(req) {
@@ -267,7 +266,7 @@ fn handle_cop_dag_request(
 /// The execution slice of Go `buildClosureExecutor` + `handleCopDAGRequest`
 /// (`closure_exec.go`): a TABLE-SCAN-ONLY DAG runs; anything above the scan
 /// refuses by name until its course lands.
-fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Response {
+fn exec_dag(store: &dyn tidb_unistore_dbreader::DbReader, context: &DagContext) -> coprocessor::Response {
     let started = std::time::Instant::now();
     validate_executor_list(&context.dag_req.executors);
     // Go validates every request range while clipping it against the region
@@ -464,7 +463,7 @@ fn with_scan_detail(
 /// for unique indexes by `DecodeIndexKV`, including common handles and
 /// restored collation data.
 fn exec_index_scan(
-    store: &mut MvccStore,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     context: &DagContext,
     idx_scan: &tipb::IndexScan,
     conditions: &[SimpleExpr],
@@ -564,7 +563,7 @@ fn exec_index_scan(
         } else {
             (range.start.clone(), range.end.clone())
         };
-        let pairs = store.scan(&crate::mvcc_store::ScanReq {
+        let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
             start_key,
             end_key,
             limit: u32::MAX,
@@ -581,7 +580,7 @@ fn exec_index_scan(
                 page.scanned(&pair.key);
             }
             if let Some(err) = pair.error {
-                if let crate::mvcc_store::KvError::Locked(lock) = *err {
+                if let tidb_unistore_kverrors::KvError::Locked(lock) = *err {
                     return coprocessor::Response {
                         locked: Some(*lock),
                         ..coprocessor::Response::default()
@@ -1043,7 +1042,7 @@ impl PagingCut {
 /// the row answers its `default_val` when carried, else NULL — Go's
 /// `getDefaultValue` behavior for the null-capable slice.
 fn exec_table_scan(
-    store: &mut MvccStore,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     context: &DagContext,
     tbl_scan: &tipb::TableScan,
     conditions: &[SimpleExpr],
@@ -1111,7 +1110,7 @@ fn exec_table_scan(
         } else {
             (range.start.clone(), range.end.clone())
         };
-        let pairs = store.scan(&crate::mvcc_store::ScanReq {
+        let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
             start_key,
             end_key,
             limit: u32::MAX,
@@ -1129,7 +1128,7 @@ fn exec_table_scan(
             }
             if let Some(err) = pair.error {
                 // Go: the FIRST lock met answers the whole response.
-                if let crate::mvcc_store::KvError::Locked(lock) = *err {
+                if let tidb_unistore_kverrors::KvError::Locked(lock) = *err {
                     return coprocessor::Response {
                         locked: Some(*lock),
                         ..coprocessor::Response::default()
@@ -2060,6 +2059,7 @@ mod tests {
     }
 
     use super::*;
+    use tidb_unistore_tikv::mvcc_store::MvccStore;
 
     // All WRITTEN: Go's cop_handler coverage rides the store's RPC suites.
 
@@ -2291,7 +2291,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -2300,7 +2300,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -2386,7 +2386,7 @@ mod tests {
             let key = encode_row_key_with_handle(table_id, &RecordHandle::Common(handle));
             let value = tidb_codec::encode_value(&[Datum::Int(3), Datum::Int(c)]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -2395,7 +2395,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -2484,7 +2484,7 @@ mod tests {
         ])
         .expect("row");
         store
-            .prewrite(&crate::mvcc_store::PrewriteReq {
+            .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![KvrpcMutation {
                     op: KvrpcOp::Put as i32,
                     key: key.clone(),
@@ -2493,7 +2493,7 @@ mod tests {
                 }],
                 primary_lock: key.clone(),
                 start_version: 10,
-                ..crate::mvcc_store::PrewriteReq::default()
+                ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
             })
             .expect("prewrites");
         store.commit(&[key], 10, 11).expect("commits");
@@ -2623,7 +2623,7 @@ mod tests {
         let mut store = MvccStore::new();
         let key = encode_row_key_with_handle(7, &RecordHandle::Int(1));
         store
-            .prewrite(&crate::mvcc_store::PrewriteReq {
+            .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![KvrpcMutation {
                     op: KvrpcOp::Put as i32,
                     key: key.clone(),
@@ -2632,7 +2632,7 @@ mod tests {
                 }],
                 primary_lock: key,
                 start_version: 5,
-                ..crate::mvcc_store::PrewriteReq::default()
+                ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
             })
             .expect("prewrites");
         let dag = tipb::DagRequest {
@@ -2675,7 +2675,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(handle * 10)]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -2684,7 +2684,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -2759,7 +2759,7 @@ mod tests {
             let key = encode_row_key_with_handle(11, &RecordHandle::Int(handle));
             let value = tidb_codec::encode_value(&[Datum::Int(2), b_value]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -2768,7 +2768,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -2887,7 +2887,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -2896,7 +2896,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -3006,7 +3006,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -3015,7 +3015,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -3113,7 +3113,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -3122,7 +3122,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");
@@ -3261,7 +3261,7 @@ mod tests {
             let value =
                 tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -3270,7 +3270,7 @@ mod tests {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .expect("prewrites");
             store.commit(&[key], 10, 11).expect("commits");

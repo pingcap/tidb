@@ -1,0 +1,23 @@
+[package]
+name = "tidb-unistore-tikv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/tikv: the in-process TiKV server (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }
+tidb-unistore-dbreader = { path = "../tidb-unistore-dbreader" }
+tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }
+tidb-unistore-lockstore = { path = "../tidb-unistore-lockstore" }
+tidb-unistore-lockwaiter = { path = "../tidb-unistore-lockwaiter" }
+tidb-unistore-mvcc = { path = "../tidb-unistore-mvcc" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-log = { path = "../tidb-log" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-txnkv = { path = "../tidb-txnkv" }

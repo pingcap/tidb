@@ -49,9 +49,10 @@ use tidb_proto::kvrpcpb;
 use tidb_proto::KvrpcKeyError;
 
 use crate::mvcc_store::{
-    CheckTxnStatusReq, KvError, MvccInfo, MvccStore, PessimisticLockReq, PrewriteReq, ReadContext,
-    ScanReq,
+    CheckTxnStatusReq, MvccInfo, MvccStore, PessimisticLockReq, PrewriteReq, ReadContext,
 };
+use tidb_unistore_dbreader::ScanReq;
+use tidb_unistore_kverrors::KvError;
 use crate::region_manager::{InProcessRegionManager, RegionCtx};
 
 /// Go `convertToKeyError` (`server.go:1174`): every store error becomes the
@@ -287,10 +288,11 @@ pub struct KvHandler {
     pub regions: Arc<InProcessRegionManager>,
 }
 
+#[cfg(test)]
 impl Default for KvHandler {
-    /// A fresh store over Go's single-store bootstrap.
+    /// A fresh store over the single-store fixture.
     fn default() -> Self {
-        Self::new(MvccStore::new(), Arc::new(InProcessRegionManager::new()))
+        Self::new(MvccStore::new(), Arc::new(InProcessRegionManager::single_store()))
     }
 }
 
@@ -966,7 +968,7 @@ impl KvHandler {
     /// request.
     pub fn coprocessor(&mut self, req: &coprocessor::Request) -> coprocessor::Response {
         let _req_ctx = region_checked!(self, req, coprocessor::Response);
-        let mut resp = crate::cophandler::handle_cop_request(&mut self.store, req);
+        let mut resp = tidb_unistore_cophandler::handle_cop_request(&self.store, req);
         resp.batch_responses = self.store_batch_coprocessor(req);
         resp
     }
@@ -1094,7 +1096,7 @@ fn mvcc_info_to_proto(info: MvccInfo) -> kvrpcpb::MvccInfo {
 }
 
 /// A store pair into the proto pair, error arm included.
-fn pair_to_proto(pair: crate::mvcc_store::KvPair) -> kvrpcpb::KvPair {
+fn pair_to_proto(pair: tidb_unistore_dbreader::KvPair) -> kvrpcpb::KvPair {
     kvrpcpb::KvPair {
         key: pair.key,
         value: pair.value,
@@ -1675,7 +1677,7 @@ mod tests {
         let left = ctx_for(&handler, b"a").unwrap();
         let resp = handler.coprocessor(&coprocessor::Request {
             context: Some(left.clone()),
-            tp: crate::cophandler::REQ_TYPE_CHECKSUM,
+            tp: tidb_unistore_cophandler::REQ_TYPE_CHECKSUM,
             tasks: vec![
                 coprocessor::StoreBatchTask {
                     region_id: left.region_id,
@@ -1711,7 +1713,7 @@ mod tests {
 
         let stale_resp = handler.coprocessor(&coprocessor::Request {
             context: Some(stale),
-            tp: crate::cophandler::REQ_TYPE_CHECKSUM,
+            tp: tidb_unistore_cophandler::REQ_TYPE_CHECKSUM,
             ..coprocessor::Request::default()
         });
         assert!(stale_resp.region_error.unwrap().epoch_not_match.is_some());

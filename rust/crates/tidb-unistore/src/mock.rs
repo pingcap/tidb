@@ -29,14 +29,14 @@ use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
 
 use crate::cluster::Cluster;
-use crate::kv_handler::KvHandler;
-use crate::mock_pd::MockPd;
-use crate::mvcc_store::MvccStore;
+use tidb_unistore_tikv::kv_handler::KvHandler;
+use tidb_unistore_tikv::mock_pd::MockPd;
+use tidb_unistore_tikv::mvcc_store::MvccStore;
 use crate::pd::PdClient;
 use crate::redirector::ClientRedirector;
-use crate::region_manager::InProcessRegionManager;
+use tidb_unistore_tikv::region_manager::InProcessRegionManager;
 use crate::rpc::{RpcClient, RpcConnect};
-use crate::tso::Tso;
+use tidb_unistore_tikv::tso::Tso;
 
 /// client-rust's PD client over the embedded store: its region cache, store
 /// clients and routing over unistore's PD client and RPC client -- wrapped,

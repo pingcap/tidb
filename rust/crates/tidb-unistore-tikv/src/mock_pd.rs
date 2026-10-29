@@ -864,7 +864,7 @@ mod tests {
     #[test]
     fn update_gc_safe_point_fails_silently_on_a_smaller_target() {
         let pd = MockPd::new(
-            Arc::new(InProcessRegionManager::new()),
+            Arc::new(InProcessRegionManager::single_store()),
             Arc::new(Tso::new()),
         );
         pd.gc_states()

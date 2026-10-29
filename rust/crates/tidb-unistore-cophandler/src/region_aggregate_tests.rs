@@ -42,7 +42,7 @@ fn region_aggregate_matches_go_wire_fixture() {
     use std::io::Read;
     let mut data = String::new();
     flate2::read::GzDecoder::new(
-        include_bytes!("../../testdata/region-aggregate-go.tsv.gz").as_slice(),
+        include_bytes!("../testdata/region-aggregate-go.tsv.gz").as_slice(),
     )
     .read_to_string(&mut data)
     .unwrap();
@@ -63,7 +63,7 @@ fn region_aggregate_matches_go_wire_fixture() {
         let ctx = Arc::new(ctx);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<String, (String, String)> {
-                let mut agg = super::super::RegionAggregator::build(&pb, &ctx)
+                let mut agg = crate::RegionAggregator::build(&pb, &ctx)
                     .map_err(|e| ("build_error".to_owned(), e))?;
                 for leaf in leaves {
                     let value = tidb_expr::distsql_builtin::pb_to_expr(&leaf, &[])

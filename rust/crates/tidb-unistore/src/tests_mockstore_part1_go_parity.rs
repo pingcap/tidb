@@ -22,7 +22,7 @@
 //! * Already ported and verified faithful by this batch's re-read: the four
 //!   `lockstore_test.go` tests ([`tidb_unistore_lockstore::tests`],
 //!   [`tidb_unistore_lockstore::iterator::tests`]), `detector_test.go::TestDeadlock`
-//!   ([`crate::detector::tests`]), and all 27 `mvcc_test.go` tests plus
+//!   ([`tidb_unistore_tikv::detector::tests`]), and all 27 `mvcc_test.go` tests plus
 //!   unistore's mock-PD/keyspace surfaces in `tidb-txnkv/src/unistore.rs`.
 //!   Three arms those landed ports skip are exercised HERE because the
 //!   ported store implements them: `TestCheckTxnStatus`'s mismatching-
@@ -34,8 +34,9 @@
 //! in docs/parity/current-audit/placeholder-macro-cleanup-validation.json.
 //! The real MVCC and coprocessor tests above remain registered.
 
-use crate::cophandler::{handle_cop_request, REQ_TYPE_DAG};
-use crate::mvcc_store::{KvError, MvccStore, PessimisticLockReq, PrewriteReq};
+use tidb_unistore_cophandler::{handle_cop_request, REQ_TYPE_DAG};
+use tidb_unistore_tikv::mvcc_store::{MvccStore, PessimisticLockReq, PrewriteReq};
+use tidb_unistore_kverrors::KvError;
 use prost::Message;
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::Datum;
@@ -393,13 +394,13 @@ fn check_txn_status_reports_a_foreign_primary_and_rolls_it_back() {
         .expect("locks");
 
     let err = store
-        .check_txn_status(&crate::mvcc_store::CheckTxnStatusReq {
+        .check_txn_status(&tidb_unistore_tikv::mvcc_store::CheckTxnStatusReq {
             primary_key: pk_here.to_vec(),
             lock_ts: start_ts,
             caller_start_ts: 44,
             current_ts: 44,
             rollback_if_not_exist: true,
-            ..crate::mvcc_store::CheckTxnStatusReq::default()
+            ..tidb_unistore_tikv::mvcc_store::CheckTxnStatusReq::default()
         })
         .expect_err("the mismatch refuses");
     let KvError::PrimaryMismatch { key, lock } = err else {
@@ -513,12 +514,12 @@ fn min_commit_ts_pushes_keep_the_floor_until_a_commit_above_it() {
     };
     let push_at = |store: &mut MvccStore, lock_ts: u64, caller: u64| {
         store
-            .check_txn_status(&crate::mvcc_store::CheckTxnStatusReq {
+            .check_txn_status(&tidb_unistore_tikv::mvcc_store::CheckTxnStatusReq {
                 primary_key: k.to_vec(),
                 lock_ts,
                 caller_start_ts: caller,
                 current_ts: caller,
-                ..crate::mvcc_store::CheckTxnStatusReq::default()
+                ..tidb_unistore_tikv::mvcc_store::CheckTxnStatusReq::default()
             })
             .expect("MustCheckTxnStatus")
     };

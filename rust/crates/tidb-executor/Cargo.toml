@@ -14,6 +14,8 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
+tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-pdhelper = { path = "../tidb-pdhelper" }
 tidb-tblctx = { path = "../tidb-tblctx" }

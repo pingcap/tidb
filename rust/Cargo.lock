@@ -3859,6 +3859,7 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
  "tidb-unistore",
+ "tidb-unistore-tikv",
  "tidb-vardef",
  "tidb-worker-stack",
  "tikv-client",
@@ -4526,6 +4527,8 @@ dependencies = [
  "tidb-txninfo",
  "tidb-txnkv",
  "tidb-unistore",
+ "tidb-unistore-cophandler",
+ "tidb-unistore-tikv",
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
@@ -4703,6 +4706,7 @@ dependencies = [
  "tidb-store-driver-error",
  "tidb-txnkv",
  "tidb-unistore",
+ "tidb-unistore-tikv",
  "tidb-variable",
  "tikv-client",
  "tokio",
@@ -5834,6 +5838,7 @@ dependencies = [
  "tidb-txninfo",
  "tidb-txnkv",
  "tidb-unistore",
+ "tidb-unistore-tikv",
  "tidb-vardef",
  "tidb-variable",
  "tidb-versioninfo",
@@ -6021,6 +6026,8 @@ dependencies = [
  "tidb-txninfo",
  "tidb-txnkv",
  "tidb-unistore",
+ "tidb-unistore-cophandler",
+ "tidb-unistore-tikv",
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
@@ -7088,24 +7095,55 @@ dependencies = [
  "flate2",
  "prost 0.14.4",
  "regex",
- "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
  "tidb-domain",
  "tidb-error",
+ "tidb-proto",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-unistore-cophandler",
+ "tidb-unistore-kverrors",
+ "tidb-unistore-lockstore",
+ "tidb-unistore-tikv",
+ "tikv-client",
+ "tokio",
+]
+
+[[package]]
+name = "tidb-unistore-cophandler"
+version = "0.0.0"
+dependencies = [
+ "chrono-tz",
+ "flate2",
+ "prost 0.14.4",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-datatype",
  "tidb-expr",
- "tidb-log",
  "tidb-model",
  "tidb-proto",
  "tidb-rowcodec",
  "tidb-stats",
  "tidb-tablecodec",
- "tidb-txnkv",
- "tidb-unistore-lockstore",
+ "tidb-unistore-dbreader",
+ "tidb-unistore-kverrors",
+ "tidb-unistore-tikv",
+]
+
+[[package]]
+name = "tidb-unistore-dbreader"
+version = "0.0.0"
+dependencies = [
+ "tidb-unistore-kverrors",
+]
+
+[[package]]
+name = "tidb-unistore-kverrors"
+version = "0.0.0"
+dependencies = [
+ "tidb-proto",
  "tidb-unistore-lockwaiter",
- "tidb-unistore-mvcc",
- "tikv-client",
- "tokio",
 ]
 
 [[package]]
@@ -7123,6 +7161,22 @@ dependencies = [
  "tidb-codec",
  "tidb-proto",
  "tidb-unistore-lockstore",
+]
+
+[[package]]
+name = "tidb-unistore-tikv"
+version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-log",
+ "tidb-proto",
+ "tidb-txnkv",
+ "tidb-unistore-cophandler",
+ "tidb-unistore-dbreader",
+ "tidb-unistore-kverrors",
+ "tidb-unistore-lockstore",
+ "tidb-unistore-lockwaiter",
+ "tidb-unistore-mvcc",
 ]
 
 [[package]]

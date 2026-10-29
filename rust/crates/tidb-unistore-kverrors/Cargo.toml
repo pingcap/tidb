@@ -1,0 +1,15 @@
+[package]
+name = "tidb-unistore-kverrors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/tikv/kverrors: the unistore TiKV's key errors (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-unistore-lockwaiter = { path = "../tidb-unistore-lockwaiter" }
+tidb-proto = { path = "../tidb-proto" }

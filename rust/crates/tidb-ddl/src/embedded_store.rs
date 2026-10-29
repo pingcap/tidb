@@ -26,9 +26,9 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_pd_client::ClusterSecurity;
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_unistore::kv_handler::KvHandler;
-use tidb_unistore::mvcc_store::MvccStore;
-use tidb_unistore::tso::InProcessPd;
+use tidb_unistore_tikv::kv_handler::KvHandler;
+use tidb_unistore_tikv::mvcc_store::MvccStore;
+use tidb_unistore_tikv::tso::InProcessPd;
 
 /// The per-statement RPC budget an in-process call gets. Nothing waits on a
 /// network, so this bounds only local lock waits.
@@ -54,7 +54,7 @@ pub struct InProcessStack {
     /// The transaction opener over the store, its regions and the oracle.
     pub opener: InProcessOpener,
     /// The region plane the store and its client share.
-    pub regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    pub regions: Arc<tidb_unistore_tikv::region_manager::InProcessRegionManager>,
     /// The node's client-rust store, which the coprocessor reads through.
     pub tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
     /// The store's RPC client, whose send hook is Go's
@@ -79,7 +79,7 @@ pub fn in_process_stack_from_image(
     image: Option<&[u8]>,
 ) -> Result<InProcessStack, SqlQueryError> {
     let pd = InProcessPd::new();
-    let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
+    let regions = Arc::new(tidb_unistore::cluster::new_region_manager());
     // Go's unistore store holds THE cluster's mock PD client
     // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
     // the same oracle start timestamps do. The embedded store mirrors that:
@@ -115,7 +115,7 @@ pub fn in_process_stack_from_image(
 /// real cluster's.
 pub fn embedded_tikv_store(
     handler: Arc<std::sync::Mutex<KvHandler>>,
-    regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    regions: Arc<tidb_unistore_tikv::region_manager::InProcessRegionManager>,
     pd: &InProcessPd,
     security: &ClusterSecurity,
 ) -> Result<

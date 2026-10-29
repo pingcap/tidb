@@ -95,7 +95,7 @@ impl Default for Config {
 }
 
 /// `boundary: kvproto` — `deadlock.WaitForEntry`, whole. This package reads
-/// only the three scalars; the TiKV deadlock detector (`tidb_unistore::detector`) fills the diagnostic pair
+/// only the three scalars; the TiKV deadlock detector (`tidb_unistore_tikv::detector`) fills the diagnostic pair
 /// as well, and both share this one type rather than keeping two shapes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WaitForEntry {

@@ -254,8 +254,8 @@ pub(crate) fn column_ref_offsets(expr: &Expr) -> Vec<usize> {
 /// at ts 2, below every test statement's snapshot.
 pub(crate) fn committed_store(
     data: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
-) -> tidb_unistore::mvcc_store::MvccStore {
-    let mut store = tidb_unistore::mvcc_store::MvccStore::new();
+) -> tidb_unistore_tikv::mvcc_store::MvccStore {
+    let mut store = tidb_unistore_tikv::mvcc_store::MvccStore::new();
     let mutations: Vec<tidb_proto::KvrpcMutation> = data
         .into_iter()
         .map(|(key, value)| tidb_proto::KvrpcMutation {
@@ -270,11 +270,11 @@ pub(crate) fn committed_store(
     };
     let keys: Vec<Vec<u8>> = mutations.iter().map(|mutation| mutation.key.clone()).collect();
     store
-        .prewrite(&tidb_unistore::mvcc_store::PrewriteReq {
+        .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
             mutations,
             primary_lock: primary,
             start_version: 1,
-            ..tidb_unistore::mvcc_store::PrewriteReq::default()
+            ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
         })
         .unwrap();
     store.commit(&keys, 1, 2).unwrap();
@@ -295,17 +295,17 @@ pub(crate) struct RegionAnswer {
 
 /// Runs `dag` over `ranges` on unistore's coprocessor.
 pub(crate) fn run_dag(
-    store: &mut tidb_unistore::mvcc_store::MvccStore,
+    store: &mut tidb_unistore_tikv::mvcc_store::MvccStore,
     dag: &DagRequest,
     ranges: &[(Vec<u8>, Vec<u8>)],
     start_ts: u64,
 ) -> Result<RegionAnswer, String> {
     let mut summarized = dag.clone();
     summarized.collect_execution_summaries = Some(true);
-    let response = tidb_unistore::cophandler::handle_cop_request(
+    let response = tidb_unistore_cophandler::handle_cop_request(
         store,
         &tidb_proto::coprocessor::Request {
-            tp: tidb_unistore::cophandler::REQ_TYPE_DAG,
+            tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
             data: summarized.encode_to_vec(),
             ranges: ranges
                 .iter()

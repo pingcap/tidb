@@ -40,7 +40,7 @@ use tidb_proto::{errorpb, kvrpcpb, metapb};
 use crate::mvcc_store::INTERNAL_KEY_PREFIX;
 
 /// The store every region's one peer lives on after
-/// [`crate::cluster::bootstrap_with_single_store`].
+/// the root crate's `cluster::bootstrap_with_single_store`.
 pub const STORE_ID: u64 = 1;
 /// The bootstrap region.
 pub const BOOTSTRAP_REGION_ID: u64 = 2;
@@ -128,7 +128,7 @@ pub fn encode_region_key(key: &[u8]) -> Vec<u8> {
 }
 
 /// Go `newPeerMeta`.
-pub(crate) fn new_peer_meta(peer_id: u64, store_id: u64) -> metapb::Peer {
+pub fn new_peer_meta(peer_id: u64, store_id: u64) -> metapb::Peer {
     metapb::Peer {
         id: peer_id,
         store_id,
@@ -358,27 +358,36 @@ pub struct InProcessRegionManager {
     state: Mutex<State>,
 }
 
-impl Default for InProcessRegionManager {
-    /// [`Self::new`]: the bootstrapped single-store cluster.
-    fn default() -> Self {
-        Self::new()
+#[cfg(test)]
+impl InProcessRegionManager {
+    /// The tikv tests' fixture: store 1 (`store1`), region 2 over the whole
+    /// keyspace, peer 3 -- the region the root's `BootstrapWithSingleStore`
+    /// builds (Go's tikv tests set up their regions by hand).
+    pub(crate) fn single_store() -> Self {
+        let manager = Self::new_mock_region_manager();
+        let (store_id, region_id, peer_id) =
+            (manager.alloc_id(), manager.alloc_id(), manager.alloc_id());
+        manager.bootstrap(
+            vec![metapb::Store {
+                id: store_id,
+                address: format!("store{store_id}"),
+                ..metapb::Store::default()
+            }],
+            metapb::Region {
+                id: region_id,
+                region_epoch: Some(metapb::RegionEpoch {
+                    conf_ver: 1,
+                    version: 1,
+                }),
+                peers: vec![new_peer_meta(peer_id, store_id)],
+                ..metapb::Region::default()
+            },
+        );
+        manager
     }
 }
 
 impl InProcessRegionManager {
-    /// Go `NewMockRegionManager` followed by `BootstrapWithSingleStore`, the
-    /// cluster TiDB's unistore starts with: store 1 (`store1`), region 2 over
-    /// the whole keyspace, peer 3.
-    #[must_use]
-    pub fn new() -> Self {
-        let manager = Self::new_mock_region_manager();
-        let (store_id, peer_id, region_id) = crate::cluster::bootstrap_with_single_store(&manager);
-        debug_assert_eq!(
-            (store_id, region_id, peer_id),
-            (STORE_ID, BOOTSTRAP_REGION_ID, BOOTSTRAP_PEER_ID)
-        );
-        manager
-    }
 
     /// Go `NewMockRegionManager`: no store, no region, ids from zero.
     #[must_use]
@@ -685,7 +694,6 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::{bootstrap_with_multi_regions, bootstrap_with_multi_stores};
 
     // WRITTEN: mock_region.go's coverage in Go rides the store suites.
 
@@ -720,7 +728,7 @@ mod tests {
     /// memcomparable-encoded as a TiKV store keeps them.
     #[test]
     fn bootstraps_and_splits_like_go_mock_region_manager() {
-        let manager = InProcessRegionManager::new();
+        let manager = InProcessRegionManager::single_store();
         assert_eq!(manager.get_all_stores()[0].address, "store1");
         let (whole, leader) = manager.get_region_by_key(&encode_region_key(b"x")).unwrap();
         assert_eq!(id_version_peer(&whole), (2, 1, 3));
@@ -762,7 +770,7 @@ mod tests {
     /// region as the store holds it now.
     #[test]
     fn get_region_from_ctx_answers_tikvs_region_errors() {
-        let manager = InProcessRegionManager::new();
+        let manager = InProcessRegionManager::single_store();
         let region = manager.get_region_from_ctx(&ctx(2, 1, 1)).unwrap();
         assert!(region.raw_start().is_empty());
         assert_eq!(region.raw_end(), INTERNAL_KEY_PREFIX);
@@ -798,7 +806,7 @@ mod tests {
     /// Go `GetStoreInfoFromCtx`: the peer's store, else the checked store.
     #[test]
     fn get_store_info_from_ctx_resolves_the_peers_store() {
-        let manager = InProcessRegionManager::new();
+        let manager = InProcessRegionManager::single_store();
         assert_eq!(
             manager.get_store_info_from_ctx(&ctx(2, 1, 1)).unwrap(),
             ("store1".to_owned(), 1)
@@ -824,7 +832,7 @@ mod tests {
     /// so one request cuts each region its keys fall in.
     #[test]
     fn one_split_request_cuts_every_region_its_keys_fall_in() {
-        let manager = InProcessRegionManager::new();
+        let manager = InProcessRegionManager::single_store();
         manager.split_region(&split_request(ctx(2, 1, 1), &[b"m"]));
         let resp = manager.split_region(&split_request(ctx(2, 1, 2), &[b"c", b"p"]));
         let bounds: Vec<_> = resp
@@ -841,32 +849,5 @@ mod tests {
                 (8, encode_region_key(b"p"), Vec::new()),
             ]
         );
-    }
-
-    /// Go `BootstrapWithMultiRegions` and `BootstrapWithMultiStores`.
-    #[test]
-    fn bootstraps_multi_region_and_multi_store_clusters() {
-        let manager = InProcessRegionManager::new_mock_region_manager();
-        let (store_id, region_ids, peer_ids) =
-            bootstrap_with_multi_regions(&manager, &[b"b".to_vec(), b"d".to_vec()]);
-        assert_eq!(
-            (store_id, region_ids, peer_ids),
-            (1, vec![2, 4, 5], vec![3, 6, 7])
-        );
-        let ranges: Vec<_> = manager
-            .scan_regions(b"", b"", 0)
-            .iter()
-            .map(|(region, leader)| (region.id, leader.id))
-            .collect();
-        assert_eq!(ranges, vec![(2, 3), (4, 3), (5, 6)]);
-
-        let manager = InProcessRegionManager::new_mock_region_manager();
-        let (store_ids, peer_ids, region_id, leader) = bootstrap_with_multi_stores(&manager, 3);
-        assert_eq!(store_ids, vec![1, 2, 3]);
-        assert_eq!(peer_ids, vec![4, 5, 6]);
-        assert_eq!((region_id, leader), (7, 4));
-        assert_eq!(manager.get_all_stores().len(), 3);
-        let (region, _) = manager.get_region_by_key(&encode_region_key(b"")).unwrap();
-        assert_eq!(region.peers.len(), 3);
     }
 }

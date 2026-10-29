@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_unistore_tikv::mvcc_store::MvccStore;
 use super::*;
 use std::io::Read;
 use tidb_proto::{KvrpcMutation, KvrpcOp};
@@ -31,7 +32,7 @@ fn hex(s: &[u8]) -> String {
 fn region_group_matches_go_coprocessor_responses() {
     let mut data = String::new();
     flate2::read::GzDecoder::new(
-        include_bytes!("../../testdata/region-group-go.tsv.gz").as_slice(),
+        include_bytes!("../testdata/region-group-go.tsv.gz").as_slice(),
     )
     .read_to_string(&mut data)
     .unwrap();
@@ -50,7 +51,7 @@ fn region_group_matches_go_coprocessor_responses() {
                 continue;
             }
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),
@@ -59,7 +60,7 @@ fn region_group_matches_go_coprocessor_responses() {
                     }],
                     primary_lock: key.clone(),
                     start_version: 10,
-                    ..crate::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .unwrap();
             store.commit(&[key], 10, 11).unwrap();

@@ -1,0 +1,30 @@
+[package]
+name = "tidb-unistore-cophandler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/cophandler: the unistore coprocessor (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-unistore-dbreader = { path = "../tidb-unistore-dbreader" }
+tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }
+tidb-rowcodec = { path = "../tidb-rowcodec" }
+chrono-tz.workspace = true
+tidb-codec = { path = "../tidb-codec" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-proto = { path = "../tidb-proto" }
+prost.workspace = true
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-model = { path = "../tidb-model" }
+
+[dev-dependencies]
+tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
+flate2 = { workspace = true }

@@ -30,15 +30,15 @@ use tikv_client::TimestampExt;
 struct Store {
     tikv_store: TikvStore<StorePdClient>,
     runtime: Arc<tokio::runtime::Runtime>,
-    regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    regions: Arc<tidb_unistore_tikv::region_manager::InProcessRegionManager>,
 }
 impl Store {
     fn new() -> Self {
-        let oracle = Arc::new(tidb_unistore::tso::Tso::new());
-        let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
+        let oracle = Arc::new(tidb_unistore_tikv::tso::Tso::new());
+        let regions = Arc::new(tidb_unistore::cluster::new_region_manager());
         let handler = Arc::new(std::sync::Mutex::new(
-            tidb_unistore::kv_handler::KvHandler::new(
-                tidb_unistore::mvcc_store::MvccStore::with_pd(Arc::clone(&oracle)),
+            tidb_unistore_tikv::kv_handler::KvHandler::new(
+                tidb_unistore_tikv::mvcc_store::MvccStore::with_pd(Arc::clone(&oracle)),
                 Arc::clone(&regions),
             ),
         ));

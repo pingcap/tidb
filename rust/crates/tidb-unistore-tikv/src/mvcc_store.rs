@@ -53,6 +53,9 @@
 //! `reqCtx.buf` (Go's per-request lock-buffer reuse) is an allocation
 //! detail with no observable content.
 
+use tidb_unistore_dbreader::KvPair;
+use tidb_unistore_dbreader::ScanReq;
+use tidb_unistore_kverrors::KvError;
 use std::collections::BTreeMap;
 
 use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp, KvrpcTxnAction};
@@ -198,102 +201,6 @@ pub fn gc_compaction_filter(
         _ => {}
     }
     GcDecision::Keep
-}
-
-/// The `kverrors` subset the optimistic slice raises, each Go error by name.
-#[derive(Clone, Debug, PartialEq)]
-pub enum KvError {
-    /// `kverrors.ErrAlreadyRollback`.
-    AlreadyRollback,
-    /// `kverrors.ErrLockNotFound`.
-    LockNotFound,
-    /// `kverrors.ErrReplaced`.
-    Replaced,
-    /// `kverrors.ErrCommitExpire`.
-    CommitExpire {
-        /// `StartTs`.
-        start_ts: u64,
-        /// `CommitTs`.
-        commit_ts: u64,
-        /// `MinCommitTs`.
-        min_commit_ts: u64,
-        /// `Key`.
-        key: Vec<u8>,
-    },
-    /// `kverrors.ErrConflict`, carrying Go's `kvrpcpb.WriteConflict` reason.
-    Conflict {
-        /// `Reason`, the proto's `write_conflict::Reason`.
-        reason: tidb_proto::kvrpcpb::write_conflict::Reason,
-        /// `StartTS`.
-        start_ts: u64,
-        /// `ConflictTS` — the conflicting version's START ts, Go's choice.
-        conflict_ts: u64,
-        /// `ConflictCommitTS`.
-        conflict_commit_ts: u64,
-        /// `Key`.
-        key: Vec<u8>,
-    },
-    /// `kverrors.ErrKeyAlreadyExists`.
-    KeyAlreadyExists {
-        /// `Key`.
-        key: Vec<u8>,
-    },
-    /// `kverrors.ErrAssertionFailed`.
-    AssertionFailed {
-        /// `StartTS`.
-        start_ts: u64,
-        /// `Key`.
-        key: Vec<u8>,
-        /// `Assertion`, the `kvrpcpb.Assertion` value that failed.
-        assertion: i32,
-        /// `ExistingStartTS` — zero when the key does not exist.
-        existing_start_ts: u64,
-        /// `ExistingCommitTS` — zero when the key does not exist.
-        existing_commit_ts: u64,
-    },
-    /// `kverrors.ErrAlreadyCommitted(commitTS)`.
-    AlreadyCommitted(u64),
-    /// `kverrors.BuildLockErr(key, lock)`: the blocking lock, kvrpcpb-shaped.
-    Locked(Box<KvrpcLockInfo>),
-    /// `kverrors.ErrPrimaryMismatch`: the checked key carries a lock whose
-    /// primary is a DIFFERENT key.
-    PrimaryMismatch {
-        /// `Key`.
-        key: Vec<u8>,
-        /// `Lock`, kvrpcpb-shaped.
-        lock: Box<KvrpcLockInfo>,
-    },
-    /// `kverrors.ErrTxnNotFound`.
-    TxnNotFound {
-        /// `PrimaryKey`.
-        primary_key: Vec<u8>,
-        /// `StartTS`.
-        start_ts: u64,
-    },
-    /// Go `kverrors.ErrInvalidOp`: `Op_CheckNotExists` inside a pessimistic
-    /// prewrite.
-    InvalidOp,
-    /// Go's literal `errors.New("pessimistic lock not found")`.
-    PessimisticLockNotFound,
-    /// `kverrors.ErrDeadlock`: waiting for the lock would close a cycle.
-    Deadlock {
-        /// `LockKey`.
-        lock_key: Vec<u8>,
-        /// `LockTS`.
-        lock_ts: u64,
-        /// `DeadlockKeyHash`.
-        deadlock_key_hash: u64,
-        /// `WaitChain`.
-        wait_chain: Vec<tidb_unistore_lockwaiter::WaitForEntry>,
-    },
-    /// Go's literal `errors.New("lock type not match")`.
-    LockTypeNotMatch,
-    /// A refusal: the named Go symbol is a later course of this port.
-    Unported(&'static str),
-    /// Go raises `errors.Errorf` with a formatted message; the rendered text
-    /// rides here (e.g. the for-update-ts constraint range check,
-    /// `mvcc.go:857`).
-    Message(String),
 }
 
 /// The `PrewriteRequest` fields the optimistic path reads.
@@ -1418,40 +1325,6 @@ fn append_scanned_lock(locks: &mut Vec<KvrpcLockInfo>, key: &[u8], value: &[u8],
     if lock.hdr.start_ts <= max_ts {
         locks.push(lock.to_lock_info(key.to_vec()));
     }
-}
-
-/// One `kvrpcpb.KvPair` reduced to what this slice produces: a key with a
-/// value, or a key with the blocking lock as its error.
-#[derive(Clone, Debug, PartialEq)]
-pub struct KvPair {
-    /// The key.
-    pub key: Vec<u8>,
-    /// The committed value; empty when `error` carries the answer.
-    pub value: Vec<u8>,
-    /// Go `Error *kvrpcpb.KeyError`, carried as the store error it converts
-    /// from — a blocking lock under SI, an `RcCheckTs` conflict otherwise.
-    pub error: Option<Box<KvError>>,
-    /// The version's commit ts, answered only when the request sets
-    /// `NeedCommitTs` (Go `requestCtx.returnCommitTS`).
-    pub commit_ts: u64,
-}
-
-/// The `ScanRequest` fields Go's `Scan` reads.
-#[derive(Clone, Debug, Default)]
-pub struct ScanReq {
-    /// `StartKey`.
-    pub start_key: Vec<u8>,
-    /// `EndKey`; empty falls to [`INTERNAL_KEY_PREFIX`] (the region-bound
-    /// fallback is a narrowing: no region context in this slice).
-    pub end_key: Vec<u8>,
-    /// `Limit`.
-    pub limit: u32,
-    /// `Version`.
-    pub version: u64,
-    /// `SampleStep`.
-    pub sample_step: u32,
-    /// `Reverse`.
-    pub reverse: bool,
 }
 
 /// Go `kvrpcpb.MvccWrite`, native: the trimmed `tidb-proto` carries no
@@ -2795,6 +2668,12 @@ fn build_prewrite_lock(
         value: mutation.value.clone(),
         secondaries: req.secondaries.clone(),
     })
+}
+
+impl tidb_unistore_dbreader::DbReader for MvccStore {
+    fn scan(&self, req: &ScanReq) -> Vec<KvPair> {
+        MvccStore::scan(self, req)
+    }
 }
 
 #[cfg(test)]

@@ -220,10 +220,10 @@ impl tidb_txnkv::Client for CapturingRegion {
         let data = metadata.data.clone().expect("a DAG request");
         let dag = DagRequest::decode(data.as_slice()).map_err(|error| error.to_string())?;
         self.captured.lock().unwrap().push(dag);
-        let mut store = tidb_unistore::mvcc_store::MvccStore::new();
+        let mut store = tidb_unistore_tikv::mvcc_store::MvccStore::new();
         if let Some((primary, _)) = self.data.first() {
             store
-                .prewrite(&tidb_unistore::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: self
                         .data
                         .iter()
@@ -236,16 +236,16 @@ impl tidb_txnkv::Client for CapturingRegion {
                         .collect(),
                     primary_lock: primary.clone(),
                     start_version: 1,
-                    ..tidb_unistore::mvcc_store::PrewriteReq::default()
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
                 })
                 .map_err(|error| format!("{error:?}"))?;
             let keys: Vec<Vec<u8>> = self.data.iter().map(|(key, _)| key.clone()).collect();
             store.commit(&keys, 1, 2).map_err(|error| format!("{error:?}"))?;
         }
-        let response = tidb_unistore::cophandler::handle_cop_request(
+        let response = tidb_unistore_cophandler::handle_cop_request(
             &mut store,
             &tidb_proto::coprocessor::Request {
-                tp: tidb_unistore::cophandler::REQ_TYPE_DAG,
+                tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
                 data,
                 ranges: metadata
                     .key_ranges

@@ -7,7 +7,6 @@ Done (each is its Go package's crate now): every `tidb-util` entry (one crate pe
 Blocked on a behavior-level change, not a move:
 - `planner/property` (`physical_property`, `stats_info`, `task_type`) and `planner/cardinality`: the planner's `stats_info::HistColl` reimplements Go `statistics.HistColl`, and cardinality reads planner core (`access_path`, logical plans).
 - `planner/util/path.go` (`access_path`) and `domainmisc`: read planner core, which Go's `planner/util` reaches only through `core/base`, still inside the planner crate.
-- unistore's `cophandler` reads `tikv`'s `MvccStore` (Go's reads `dbreader`); `tikv` (`mvcc_store`, `kv_handler`, `detector`, `region_manager`) and the root (`cluster`, `tso`, `mock_pd`, `rpc`) reference each other in cycles.
 - `tidb-error`'s `catalog`: done except `infosync` (each package's prototypes are its crate's `<package>_errors`); `infosync`'s `ErrHTTPServiceError` is raised by tidb-txnkv's `cluster_http`, Go `store/driver` woven into txnkv -- the txnkv / store-driver split below.
 - tidb-txnkv holds Go `pkg/kv` plus `store/driver` and `store/driver/txn`, and 20 crates below the store driver hold the concrete transaction opener where Go's go through `kv.Storage`: the storage-seam redesign (ExecPlan). codec's `table_key` (Go `tablecodec`) waits on it too.
 - txnkv's `mpp_probe`, `key_ranges`, `range_diagnostics` (Go `store/copr`): tidb-copr depends on tidb-distsql, the reverse of Go's `distsql -> copr`.

@@ -11,26 +11,21 @@ description = "TiDB pkg/store/mockstore/unistore: the in-process TiKV and PD (Ru
 workspace = true
 
 [dependencies]
-tidb-rowcodec = { path = "../tidb-rowcodec" }
+tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
+tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }
+tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }
 tidb-unistore-lockstore = { path = "../tidb-unistore-lockstore" }
-tidb-unistore-lockwaiter = { path = "../tidb-unistore-lockwaiter" }
-tidb-unistore-mvcc = { path = "../tidb-unistore-mvcc" }
 regex = { workspace = true }
 chrono.workspace = true
 chrono-tz.workspace = true
 # `tikv.go`'s value encodings are built from `pkg/util/codec`'s primitives.
 tidb-codec = { path = "../tidb-codec" }
-tidb-log = { path = "../tidb-log" }
-tidb-chunk = { path = "../tidb-chunk" }
-tidb-expr = { path = "../tidb-expr" }
 # `Lock.ToLockInfo` answers the real `kvrpcpb.LockInfo`.
 tidb-proto = { path = "../tidb-proto" }
 prost.workspace = true
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-stats = { path = "../tidb-stats" }
-tidb-model = { path = "../tidb-model" }
 # Go's unistore implements client-go's `tikv.Client` and `pd.Client`; this
 # crate implements client-rust's.
 tikv-client.workspace = true

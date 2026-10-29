@@ -18,7 +18,7 @@ use super::*;
 use tidb_datatype::Datum;
 use tidb_stats::row_sample_collector::{RowSampleCollector, SamplePolicy, ScannedRow, SlotValue};
 
-pub(super) fn handle(store: &mut MvccStore, req: &coprocessor::Request) -> coprocessor::Response {
+pub(super) fn handle(store: &dyn tidb_unistore_dbreader::DbReader, req: &coprocessor::Request) -> coprocessor::Response {
     match execute(store, req) {
         Ok(data) => coprocessor::Response {
             data: data.into(),
@@ -29,7 +29,7 @@ pub(super) fn handle(store: &mut MvccStore, req: &coprocessor::Request) -> copro
 }
 
 fn execute(
-    store: &mut MvccStore,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
 ) -> Result<Vec<u8>, coprocessor::Response> {
     if req.ranges.is_empty() {
@@ -72,7 +72,7 @@ fn execute(
         }
         let mut cursor = range.start.clone();
         loop {
-            let pairs = store.scan(&crate::mvcc_store::ScanReq {
+            let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
                 start_key: cursor,
                 end_key: range.end.clone(),
                 limit: 1024,
@@ -88,7 +88,7 @@ fn execute(
             for pair in pairs {
                 if let Some(error) = pair.error {
                     return Err(match *error {
-                        crate::mvcc_store::KvError::Locked(lock) => coprocessor::Response {
+                        tidb_unistore_kverrors::KvError::Locked(lock) => coprocessor::Response {
                             locked: Some(*lock),
                             ..Default::default()
                         },
@@ -276,7 +276,7 @@ fn execute(
 // The NDV subtask uses one bucket and no TopN/CMS. Refuse broader index
 // requests until their full histogram builder is implemented here.
 fn execute_index_ndv(
-    store: &mut MvccStore,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
     request: &tipb::AnalyzeReq,
 ) -> Result<Vec<u8>, coprocessor::Response> {
@@ -305,7 +305,7 @@ fn execute_index_ndv(
         }
         let mut cursor = range.start.clone();
         loop {
-            let pairs = store.scan(&crate::mvcc_store::ScanReq {
+            let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
                 start_key: cursor,
                 end_key: range.end.clone(),
                 limit: 1024,
@@ -321,7 +321,7 @@ fn execute_index_ndv(
             for pair in pairs {
                 if let Some(error) = pair.error {
                     return Err(match *error {
-                        crate::mvcc_store::KvError::Locked(lock) => coprocessor::Response {
+                        tidb_unistore_kverrors::KvError::Locked(lock) => coprocessor::Response {
                             locked: Some(*lock),
                             ..Default::default()
                         },
@@ -394,6 +394,7 @@ fn execute_index_ndv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_unistore_tikv::mvcc_store::MvccStore;
     #[test]
     fn index_ndv_reads_encoded_prefix_keys() {
         check_index_ndv(false, false);
@@ -423,7 +424,7 @@ mod tests {
                 .unwrap(),
             );
             store
-                .prewrite(&crate::mvcc_store::PrewriteReq {
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
                         op: KvrpcOp::Put as i32,
                         key: key.clone(),

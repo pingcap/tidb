@@ -349,7 +349,7 @@ impl NodeConn {
             .map_err(|_| "kv handler poisoned".to_owned())?;
         handler
             .store
-            .prewrite(&tidb_unistore::mvcc_store::PrewriteReq {
+            .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![KvrpcMutation {
                     op: KvrpcOp::Del as i32,
                     key: key.to_vec(),
@@ -358,7 +358,7 @@ impl NodeConn {
                 primary_lock: key.to_vec(),
                 start_version: start,
                 lock_ttl: 3000,
-                ..tidb_unistore::mvcc_store::PrewriteReq::default()
+                ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
             })
             .map_err(|error| format!("prewrite: {error:?}"))?;
         handler

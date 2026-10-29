@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use tidb_ddl::ddl_delete_range::DelRangeTask;
 use tidb_unistore::cluster::{bootstrap_with_multi_stores, Cluster};
 use tidb_unistore::mock::StorePdClient;
-use tidb_unistore::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};
+use tidb_unistore_tikv::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};
 use tikv_client::oracle::oracles::MockOracle;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta};
 use tikv_client::proto::{kvrpcpb, metapb};
@@ -407,7 +407,7 @@ impl Suite {
     }
 
     /// The embedded store's PD.
-    fn mock_pd(&self) -> Arc<tidb_unistore::mock_pd::MockPd> {
+    fn mock_pd(&self) -> Arc<tidb_unistore_tikv::mock_pd::MockPd> {
         Arc::clone(self.pd.mock_pd())
     }
 

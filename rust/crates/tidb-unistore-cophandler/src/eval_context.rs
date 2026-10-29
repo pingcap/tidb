@@ -110,7 +110,10 @@ pub struct SharedExpression {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{convert_expr_with_context, eval_datum, RegionAggregator, TopNSpec};
+    use super::super::convert_expr_with_context;
+    use super::super::eval_datum;
+    use super::super::RegionAggregator;
+    use super::super::TopNSpec;
     use super::*;
     use tidb_proto::tipb;
 
@@ -483,7 +486,7 @@ mod next_boundary_audit {
         use std::io::Read;
         let mut input = String::new();
         flate2::read::GzDecoder::new(
-            include_bytes!("../../../../docs/planner/pb-boundary-audit-20260929/go.tsv.gz")
+            include_bytes!("../../../docs/planner/pb-boundary-audit-20260929/go.tsv.gz")
                 .as_slice(),
         )
         .read_to_string(&mut input)
@@ -550,7 +553,7 @@ mod next_boundary_audit {
             out
         }
         let input = include_str!(
-            "../../../../docs/planner/pb-systematic-audit-20260928/pb-systematic-go.tsv"
+            "../../../docs/planner/pb-systematic-audit-20260928/pb-systematic-go.tsv"
         );
         let mut differences = Vec::new();
         for line in input.lines() {
