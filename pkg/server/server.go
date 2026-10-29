@@ -700,6 +700,8 @@ func (s *Server) closeListener() {
 	}
 	// Closing the listener also interrupts cmux's pending protocol reads. Join
 	// startup and serving before reading the final HTTP/gRPC/AutoID pointers.
+	// TODO: Make AutoID startup cancelable before this wait. Its initial etcd
+	// lease request has no deadline and can block shutdown during an outage.
 	s.statusWG.Wait()
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
