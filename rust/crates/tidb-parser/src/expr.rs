@@ -36,7 +36,8 @@ use tidb_ast::{
     GetFormatSelector, IsTarget, MatchModifier, SysVarScope, TrimDirection, UnaryOp,
     WeightStringType, WindowDef, WindowFrame, WindowOver, WindowSpec,
 };
-use tidb_lexer::{canonical_charset, canonical_collation, canonical_legacy_charset, TokenKind};
+use tidb_charset::{collation_name, known_charset_name};
+use tidb_lexer::{canonical_legacy_charset, TokenKind};
 
 use crate::{prec, PResult, Parser};
 
@@ -126,7 +127,7 @@ impl Parser {
                 }
                 self.bump(); // COLLATE
                 let raw = self.parse_using_charset_name()?;
-                let collation = canonical_collation(&raw)
+                let collation = collation_name(&raw)
                     .ok_or_else(|| {
                         self.err_coded(
                             &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,

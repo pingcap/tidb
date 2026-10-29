@@ -750,10 +750,10 @@ fn charset_lookup_folds_non_ascii_with_gos_simple_case_mapping() {
     // Go folds the introducer/charset name with strings.ToLower before the
     // table lookup, and strings.ToLower maps U+0130 to a plain ASCII `i`.
     // An ASCII-only fold would reject a name Go accepts.
-    assert_eq!(crate::canonical_charset("UTF8MB4"), Some("utf8mb4"));
-    assert_eq!(crate::canonical_charset("utf8mb3"), Some("utf8"));
-    assert_eq!(crate::canonical_charset("nosuchcharset"), None);
-    assert_eq!(crate::canonical_charset("LAT\u{130}N1"), Some("latin1"));
+    assert_eq!(tidb_charset::known_charset_name("UTF8MB4"), Some("utf8mb4"));
+    assert_eq!(tidb_charset::known_charset_name("utf8mb3"), Some("utf8"));
+    assert_eq!(tidb_charset::known_charset_name("nosuchcharset"), None);
+    assert_eq!(tidb_charset::known_charset_name("LAT\u{130}N1"), Some("latin1"));
 }
 
 /// Divergence item 9: under ANSI_QUOTES, Go flips only the token kind and

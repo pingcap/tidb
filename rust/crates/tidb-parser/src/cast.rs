@@ -23,7 +23,8 @@
 //! type.
 
 use tidb_ast::{CastExpr, CastStyle, CastType, Expr};
-use tidb_lexer::{canonical_charset, TokenKind};
+use tidb_charset::known_charset_name;
+use tidb_lexer::TokenKind;
 
 use crate::{prec, PResult, Parser};
 
@@ -59,7 +60,7 @@ impl Parser {
             // Go `parseConvertFunc`: a name `charset.GetCharsetInfo` cannot
             // resolve is `ErrUnknownCharacterSet` (`[parser:1115]`) naming
             // the token, not a positional syntax error.
-            let charset = canonical_charset(&raw)
+            let charset = known_charset_name(&raw)
                 .ok_or_else(|| {
                     self.err_coded(
                         &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
@@ -167,7 +168,7 @@ impl Parser {
                 // parse time (`charset.GetDefaultCollation`, parser.y:9971):
                 // an unknown name refuses the statement.
                 if let Some(name) = &charset {
-                    if canonical_charset(name).is_none() {
+                    if known_charset_name(name).is_none() {
                         return Err(
                             self.err_here(&format!("Get collation error for charset: {name}"))
                         );

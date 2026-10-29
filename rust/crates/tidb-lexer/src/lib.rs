@@ -25,8 +25,6 @@
 //! Phase 0 of the rewrite is safe Rust end-to-end (`unsafe` is forbidden in the
 //! workspace) and depends on no external crates.
 
-mod charset;
-mod collation;
 mod keyword_catalog;
 mod keywords;
 mod reader;
@@ -34,8 +32,6 @@ mod reserved;
 mod token;
 
 /// Canonicalizes a recognized charset name from the generated TiDB charset table.
-pub use charset::canonical_charset;
-pub use collation::canonical_collation;
 use tidb_parser_util::unescape_char;
 pub use keyword_catalog::{Keyword, KEYWORDS};
 
@@ -43,10 +39,10 @@ pub use keyword_catalog::{Keyword, KEYWORDS};
 /// `charset.GetDefaultCollationLegacy`. The scanner intentionally recognizes
 /// every name in TiDB's charset table so the parser can report the same
 /// unsupported-introducer error boundary; only these five canonical names
-/// (plus the `utf8mb3` alias normalized by [`canonical_charset`]) may carry an
+/// (plus the `utf8mb3` alias normalized by [`tidb_charset::known_charset_name`]) may carry an
 /// underscore introducer through the expression grammar.
 pub fn canonical_legacy_charset(name: &str) -> Option<&'static str> {
-    let canonical = canonical_charset(name)?;
+    let canonical = tidb_charset::known_charset_name(name)?;
     match canonical {
         "utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" => Some(canonical),
         _ => None,
@@ -397,7 +393,7 @@ impl<'a> Lexer<'a> {
                 kind = TokenKind::Keyword;
                 introducer = Some("NULL");
             } else if let Some(rest) = raw.strip_prefix('_') {
-                if let Some(canon) = charset::canonical_charset(rest) {
+                if let Some(canon) = tidb_charset::known_charset_name(rest) {
                     kind = TokenKind::CharsetIntroducer;
                     introducer = Some(canon);
                 }

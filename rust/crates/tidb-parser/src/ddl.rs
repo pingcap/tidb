@@ -23,7 +23,8 @@ use tidb_ast::{
     RecoverTableStmt, RenameTableStmt, RepairTableStmt, SplitOption, SplitRegionStmt, SplitTarget,
     Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
-use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
+use tidb_charset::{collation_name, known_charset_name};
+use tidb_lexer::TokenKind;
 
 use crate::{prec, PResult, Parser};
 
@@ -328,7 +329,7 @@ impl Parser {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let collation = canonical_collation(&raw).ok_or_else(|| {
+                let collation = collation_name(&raw).ok_or_else(|| {
                     self.err_coded(
                         &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                         &format!("Unknown collation: '{raw}'"),
@@ -1635,7 +1636,7 @@ impl Parser {
             // A known one is stored as Go's `charset.GetCharsetInfo(...).Name`
             // (`utf8mb3` folds to `utf8`); restore uppercases it.
             let raw = self.parse_table_option_word()?;
-            Ok(Some(match canonical_charset(&raw) {
+            Ok(Some(match known_charset_name(&raw) {
                 Some(canonical) => canonical.to_owned(),
                 None => raw,
             }))
@@ -1648,7 +1649,7 @@ impl Parser {
         }
         self.bump();
         let raw = self.parse_table_option_word()?;
-        let collation = canonical_collation(&raw).ok_or_else(|| {
+        let collation = collation_name(&raw).ok_or_else(|| {
             self.err_coded(
                 &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                 &format!("Unknown collation: '{raw}'"),

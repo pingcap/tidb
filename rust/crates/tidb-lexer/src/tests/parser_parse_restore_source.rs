@@ -437,13 +437,13 @@ fn underscore_charset_introducer_classification() {
                 "_{cs} must be an introducer"
             );
             assert!(
-                crate::canonical_charset(cs).is_some(),
+                tidb_charset::known_charset_name(cs).is_some(),
                 "{cs} must be in CHARSET_NAMES"
             );
         } else {
             assert_eq!(kind, TokenKind::Ident, "_{cs} must stay an identifier");
             assert!(
-                crate::canonical_charset(cs).is_none(),
+                tidb_charset::known_charset_name(cs).is_none(),
                 "{cs} must not be a recognized charset"
             );
         }
@@ -589,7 +589,7 @@ fn charset_introducer_gbk_is_recognized_name() {
         );
         assert_eq!(token.text, "gbk", "{sql} canonical name");
     }
-    assert_eq!(crate::canonical_charset("gbk"), Some("gbk"));
+    assert_eq!(tidb_charset::known_charset_name("gbk"), Some("gbk"));
     assert_eq!(crate::canonical_legacy_charset("gbk"), None);
 }
 

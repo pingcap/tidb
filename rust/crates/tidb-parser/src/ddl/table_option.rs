@@ -15,7 +15,8 @@
 //! Shared CREATE and ALTER table-option parsing.
 
 use tidb_ast::TableOption;
-use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
+use tidb_charset::{collation_name, known_charset_name};
+use tidb_lexer::TokenKind;
 
 use crate::{prec, PResult, Parser};
 
@@ -69,7 +70,7 @@ impl Parser {
                 self.expect_kw("SET")?;
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let charset = canonical_charset(&raw).ok_or_else(|| {
+                let charset = known_charset_name(&raw).ok_or_else(|| {
                     self.err_coded(
                         &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unknown character set: '{raw}'"),
@@ -81,7 +82,7 @@ impl Parser {
                 self.bump();
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let charset = canonical_charset(&raw).ok_or_else(|| {
+                let charset = known_charset_name(&raw).ok_or_else(|| {
                     self.err_coded(
                         &crate::parser_errors::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unknown character set: '{raw}'"),
@@ -93,7 +94,7 @@ impl Parser {
                 self.bump();
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let collation = canonical_collation(&raw).ok_or_else(|| {
+                let collation = collation_name(&raw).ok_or_else(|| {
                     self.err_coded(
                         &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                         &format!("Unknown collation: '{raw}'"),

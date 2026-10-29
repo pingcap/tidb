@@ -12,8 +12,8 @@
 // limitations under the License.
 
 //! Go-derived tests for the charset/collation lookup boundaries this crate
-//! owns (`pkg/parser/charset`), against [`crate::canonical_charset`] /
-//! [`crate::canonical_collation`] / [`crate::canonical_legacy_charset`].
+//! owns (`pkg/parser/charset`), against [`tidb_charset::known_charset_name`] /
+//! [`tidb_charset::collation_name`] / [`crate::canonical_legacy_charset`].
 
 // ---------------------------------------------------------------------------
 // pkg/parser/charset/charset_test.go ports
@@ -45,7 +45,7 @@ fn valid_charset_and_collation(cs: &str, co: &str) -> bool {
     if co.is_empty() {
         return true;
     }
-    match crate::canonical_collation(co) {
+    match tidb_charset::collation_name(co) {
         Some(collation) => collation_in_charset(collation, charset),
         None => false,
     }
@@ -125,9 +125,7 @@ fn test_get_default_collation() {
     for charset in supported {
         let desc = default_collation(charset).expect("supported charset");
         assert!(
-            crate::collation::COLLATION_NAMES
-                .binary_search(&desc)
-                .is_ok(),
+            tidb_charset::collation_name(desc).is_some(),
             "default collation {desc} missing from catalog"
         );
         charset_num += 1;
@@ -149,7 +147,7 @@ fn test_get_charset_desc() {
         ("", "utf8_bin", false),
     ];
     for (cs, result, succ) in tests {
-        match crate::canonical_charset(cs) {
+        match tidb_charset::known_charset_name(cs) {
             None => assert!(!succ, "charset={cs:?}"),
             Some(name) => {
                 assert!(succ, "charset={cs:?}");
@@ -157,25 +155,6 @@ fn test_get_charset_desc() {
             }
         }
     }
-}
-
-/// Go: pkg/parser/charset/charset_test.go::TestGetCollationByName
-///
-/// Go asserts each entry of its `collations` table resolves to itself and
-/// that an unknown name fails with `[ddl:1273]Unknown collation: 'non_exist'`.
-/// This crate stores names rather than `*Collation` records, so identity of
-/// resolution is pinned through the canonicalizer; the error text is a Go
-/// error-string boundary not carried here.
-#[test]
-fn test_get_collation_by_name() {
-    for name in crate::collation::COLLATION_NAMES {
-        assert_eq!(
-            crate::canonical_collation(name),
-            Some(*name),
-            "collation={name}"
-        );
-    }
-    assert_eq!(crate::canonical_collation("non_exist"), None);
 }
 
 /// Go: pkg/parser/charset/charset_test.go::TestUTF8MB3
@@ -187,7 +166,7 @@ fn test_utf8_mb3() {
         Some("utf8_bin")
     );
     // GetCharsetInfo("utf8mb3").Name == "utf8".
-    assert_eq!(crate::canonical_charset("utf8mb3"), Some("utf8"));
+    assert_eq!(tidb_charset::known_charset_name("utf8mb3"), Some("utf8"));
 
     let tests = [
         ("utf8mb3_bin", "utf8_bin"),
@@ -195,6 +174,6 @@ fn test_utf8_mb3() {
         ("utf8mb3_unicode_ci", "utf8_unicode_ci"),
     ];
     for (name, alias) in tests {
-        assert_eq!(crate::canonical_collation(name), Some(alias), "name={name}");
+        assert_eq!(tidb_charset::collation_name(name), Some(alias), "name={name}");
     }
 }

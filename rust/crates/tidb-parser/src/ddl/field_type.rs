@@ -15,7 +15,8 @@
 //! Field-type parsing shared by CREATE and ALTER column definitions.
 
 use tidb_ast::{ColumnType, ColumnTypeArg};
-use tidb_lexer::{canonical_charset, TokenKind};
+use tidb_charset::known_charset_name;
+use tidb_lexer::TokenKind;
 
 use crate::{PResult, Parser};
 
@@ -500,7 +501,7 @@ pub(super) fn type_rejects_charset(name: &str) -> bool {
 /// The supported half of Go `charset.GetCharsetInfo`: TiDB recognizes many
 /// MySQL charset names lexically, but field DDL accepts only these seven.
 pub(super) fn canonical_field_charset(name: &str) -> Option<&'static str> {
-    match canonical_charset(name)? {
+    match known_charset_name(name)? {
         charset @ ("utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" | "gbk" | "gb18030") => {
             Some(charset)
         }

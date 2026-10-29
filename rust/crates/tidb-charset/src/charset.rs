@@ -744,6 +744,25 @@ pub fn get_charset_info_by_id(id: i32) -> (String, String, Option<CharsetError>)
     )
 }
 
+/// Go `GetCharsetInfo(cs)`'s charset name when it returns a charset: a
+/// supported one, or a known one it also reports as unsupported (`cs, _ :=`,
+/// as the lexer's `_charset` introducer reads it). `utf8mb3` is `utf8`.
+#[must_use]
+pub fn known_charset_name(cs: &str) -> Option<&'static str> {
+    let lower = go_simple_lowercase(cs);
+    let lower = if lower == "utf8mb3" { "utf8" } else { lower.as_str() };
+    KNOWN_CHARSETS.iter().find(|charset| charset.name == lower).map(|charset| charset.name)
+}
+
+/// Go `GetCollationByName(name)`'s collation name when it finds one, over
+/// every collation Go declares (`collationsNameMap`).
+#[must_use]
+pub fn collation_name(name: &str) -> Option<&'static str> {
+    let lower = go_simple_lowercase(name);
+    let alias = utf8_alias(&lower);
+    ALL_COLLATIONS.iter().find(|collation| collation.name == alias).map(|collation| collation.name)
+}
+
 /// Looks up any registered collation name.
 pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> {
     registry()
@@ -944,4 +963,53 @@ pub fn is_bin_collation(name: &str) -> bool {
         name,
         "ascii_bin" | "latin1_bin" | "utf8_bin" | "utf8mb4_bin" | "binary" | "utf8mb4_0900_bin"
     )
+}
+
+#[cfg(test)]
+mod collation_name_tests {
+    use super::collation_name as canonical_collation;
+
+    #[test]
+    fn canonical_collation_matches_go_lookup_boundary() {
+        assert_eq!(
+            canonical_collation("UTF8MB4_0900_AI_CI"),
+            Some("utf8mb4_0900_ai_ci")
+        );
+        assert_eq!(
+            canonical_collation("utf8mb3_general_ci"),
+            Some("utf8_general_ci")
+        );
+        assert_eq!(canonical_collation("UTF8MB3_BIN"), Some("utf8_bin"));
+        assert_eq!(canonical_collation("utf8bin"), None);
+    }
+
+    /// Go folds the name with strings.ToLower before the table lookup, and
+    /// strings.ToLower maps U+0130 to a plain ASCII `i`. An ASCII-only fold
+    /// would leave the name unrecognized where Go accepts it.
+    #[test]
+    fn lookup_folds_non_ascii_with_gos_simple_case_mapping() {
+        assert_eq!(
+            canonical_collation("UTF8MB4_B\u{130}N"),
+            Some("utf8mb4_bin")
+        );
+    }
+
+    /// Go: pkg/parser/charset/charset_test.go::TestGetCollationByName
+    ///
+    /// Go asserts each entry of its `collations` table resolves to itself and
+    /// that an unknown name fails with `[ddl:1273]Unknown collation: 'non_exist'`.
+    /// This crate stores names rather than `*Collation` records, so identity of
+    /// resolution is pinned through the canonicalizer; the error text is a Go
+    /// error-string boundary not carried here.
+    #[test]
+    fn test_get_collation_by_name() {
+        for name in super::ALL_COLLATIONS.iter().map(|collation| collation.name) {
+            assert_eq!(
+                super::collation_name(name),
+                Some(name),
+                "collation={name}"
+            );
+        }
+        assert_eq!(super::collation_name("non_exist"), None);
+    }
 }

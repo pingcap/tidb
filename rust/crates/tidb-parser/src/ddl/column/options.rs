@@ -20,7 +20,8 @@
 //! copying their grammar into a broad table parser.
 
 use tidb_ast::{AutoRandomOption, ColumnFormat, ColumnOption, ColumnStorage, InlineKeyOption};
-use tidb_lexer::{canonical_collation, TokenKind};
+use tidb_charset::collation_name;
+use tidb_lexer::TokenKind;
 
 use crate::{is_ident_like_name, PResult, Parser};
 
@@ -101,7 +102,7 @@ impl Parser {
                 } else {
                     self.parse_charset_name()?
                 };
-                let collation = canonical_collation(&name).ok_or_else(|| {
+                let collation = collation_name(&name).ok_or_else(|| {
                     self.err_coded(
                         &tidb_charset::charset_errors::ERR_UNKNOWN_COLLATION,
                         &format!("Unknown collation: '{name}'"),

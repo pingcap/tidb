@@ -18,7 +18,8 @@ use tidb_ast::{
     ColumnOrUserVar, LoadDataFields, LoadDataLines, LoadDataOnDuplicate, LoadDataOption,
     LoadDataStmt,
 };
-use tidb_lexer::{canonical_charset, TokenKind};
+use tidb_charset::known_charset_name;
+use tidb_lexer::TokenKind;
 
 use crate::{PResult, Parser};
 
@@ -72,7 +73,7 @@ impl Parser {
             self.expect_kw("SET")?;
             let name = self.parse_charset_name()?;
             Some(
-                canonical_charset(&name)
+                known_charset_name(&name)
                     .map(str::to_owned)
                     .ok_or_else(|| self.err_here("unknown LOAD DATA character set"))?,
             )
