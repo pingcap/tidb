@@ -17,7 +17,7 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_planner::logical::{data_source::DataSource, BaseLogicalPlan};
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 /// GO PORT of `pkg/planner/core/logical_plans_test.go:761 TestAllocID`.
 ///

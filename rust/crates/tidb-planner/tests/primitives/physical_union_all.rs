@@ -20,7 +20,7 @@
 use tidb_planner::logical::{BaseLogicalPlan, LogicalUnionAll};
 use tidb_planner::physical::{exhaust_physical_plans_4_logical_union_all, PhysicalPlan};
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 #[test]
 fn mpp_child_requirement_is_rejected() {

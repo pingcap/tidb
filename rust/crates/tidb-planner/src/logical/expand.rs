@@ -65,7 +65,7 @@ use tidb_expr::simple_expr::extract_cor_columns;
 
 use tidb_planner_cascades_base::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
 use crate::logical::{schema_producer, BaseLogicalPlan};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Go `tipb.GroupingMode`, which `LogicalExpand.GroupingMode` carries.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -109,7 +109,7 @@ pub struct LogicalExpand {
     /// Their ORDER is the bit order of every grouping id.
     pub distinct_group_by_col: Vec<Column>,
     /// Go `DistinctGbyColNames`, as bare names — `types.FieldName` is carried
-    /// by [`crate::plan_base::BasePlan`] elsewhere, and this list is used only
+    /// by [`tidb_planner_core_base::BasePlan`] elsewhere, and this list is used only
     /// for building output names.
     pub distinct_gby_col_names: Vec<String>,
     /// Go `DistinctGbyExprs`: the ORIGINAL group-by expressions, kept so
@@ -191,7 +191,7 @@ impl LogicalExpand {
     /// Go deletes from `p.Schema()` and `p.OutputNames()` in lockstep, walking
     /// backwards so the indices stay valid. Returns the removed positions, in
     /// descending order, so the driver can delete the matching output names —
-    /// the names live on [`crate::plan_base::BasePlan`], not here.
+    /// the names live on [`tidb_planner_core_base::BasePlan`], not here.
     ///
     /// Note that the level projections are NOT rebuilt: Go's comment says they
     /// are generated after column pruning, "so when do the rule_column_pruning

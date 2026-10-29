@@ -1512,7 +1512,7 @@ fn find_node_for_column_nodes(
 mod tests {
     use super::*;
     use crate::logical::data_source::DataSource;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{

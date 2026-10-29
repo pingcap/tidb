@@ -40,7 +40,7 @@ use tidb_planner::logical::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
 use tidb_planner::physical::PhysicalPlan;
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_infoschema::table_source::TableSource;
 use super::{CatalogStatisticsLoad, PlannerCatalogContext};
@@ -325,7 +325,7 @@ fn locate_list_columns_condition(
     condition: &Expression,
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
-) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+) -> Result<ListColumnsLocated, tidb_planner_core_base::PlanError> {
     let tidb_table::partition_routing::PartitionKind::ListColumns {
         values,
         default_partition,
@@ -365,7 +365,7 @@ fn locate_list_columns_condition(
                         context.ranger_options(),
                     )
                     .map_err(|error| {
-                        tidb_planner::plan_base::PlanError::internal(format!(
+                        tidb_planner_core_base::PlanError::internal(format!(
                             "LIST COLUMNS range detachment failed: {error:?}"
                         ))
                     })?;
@@ -377,7 +377,7 @@ fn locate_list_columns_condition(
                     column_index,
                 )
                 .map_err(|error| {
-                    tidb_planner::plan_base::PlanError::internal(format!(
+                    tidb_planner_core_base::PlanError::internal(format!(
                         "LIST COLUMNS location failed: {error:?}"
                     ))
                 })?;
@@ -395,7 +395,7 @@ fn locate_list_columns_cnf(
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
-) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+) -> Result<ListColumnsLocated, tidb_planner_core_base::PlanError> {
     let mut location = None;
     for condition in conditions {
         match locate_list_columns_condition(partition, condition, columns, context)? {
@@ -417,7 +417,7 @@ fn locate_list_columns_dnf(
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
-) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
+) -> Result<ListColumnsLocated, tidb_planner_core_base::PlanError> {
     if conditions.is_empty() {
         return Ok(ListColumnsLocated::Full);
     }
@@ -438,7 +438,7 @@ fn list_columns_pruned_ids(
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
-) -> Result<Option<Vec<i64>>, tidb_planner::plan_base::PlanError> {
+) -> Result<Option<Vec<i64>>, tidb_planner_core_base::PlanError> {
     Ok(
         match locate_list_columns_cnf(partition, conditions, columns, context)? {
             ListColumnsLocated::Full => None,
@@ -461,7 +461,7 @@ fn partition_indices_for_spec(
     source: &tidb_planner::logical::DataSource,
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
     context: &crate::StmtContext,
-) -> Result<Vec<usize>, tidb_planner::plan_base::PlanError> {
+) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
     let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
     // Go's hash pruning has no empty-condition shortcut (only the list pruner
     // does): a full range still reaches the BIT-column branch, which drops
@@ -573,7 +573,7 @@ fn partition_indices_for_spec(
     };
     let pruned =
         tidb_planner_rule::pruned_ids_from_ranger(partition, &detached.ranges, context)
-            .map_err(|error| tidb_planner::plan_base::PlanError::internal(format!("{error:?}")))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(format!("{error:?}")))?;
     if let Some(ids) = pruned {
         surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
     }
@@ -759,7 +759,7 @@ pub(super) fn logical_from_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     in_dml: bool,
-) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_statement_hypo_state(ctx)
@@ -907,14 +907,14 @@ pub(crate) fn logical_from_scope(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<FromScope, tidb_planner::plan_base::PlanError> {
+) -> Result<FromScope, tidb_planner_core_base::PlanError> {
     let plan = logical_from_plan(join, None, catalog, current_database, ctx, false)?;
     let schema = plan.schema().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal("FROM logical plan has no schema")
+        tidb_planner_core_base::PlanError::internal("FROM logical plan has no schema")
     })?;
     let names = plan.output_names();
     if schema.columns.len() != names.len() {
-        return Err(tidb_planner::plan_base::PlanError::internal(
+        return Err(tidb_planner_core_base::PlanError::internal(
             "FROM logical schema and output names have different widths",
         ));
     }
@@ -925,7 +925,7 @@ pub(crate) fn logical_from_scope(
             continue;
         }
         let field_type = column.ret_type.clone().ok_or_else(|| {
-            tidb_planner::plan_base::PlanError::internal("FROM column has no field type")
+            tidb_planner_core_base::PlanError::internal("FROM column has no field type")
         })?;
         let database = &name.names.database.original;
         let visible_table = &name.names.table.original;
@@ -1008,7 +1008,7 @@ impl OwnedRewrite for StampIndexForce {
 }
 
 struct InitStats<'a> {
-    error: Option<tidb_planner::plan_base::PlanError>,
+    error: Option<tidb_planner_core_base::PlanError>,
     catalog: &'a Catalog,
     /// Go's statistics demand for this statement (`statistics_demand`), once
     /// `CollectPredicateColumnsPoint` has seen the plan: the columns and
@@ -1166,7 +1166,7 @@ impl InitStats<'_> {
     fn initialize_source(
         &mut self,
         node: &mut LogicalPlan,
-    ) -> Result<Descend<(), ()>, tidb_planner::plan_base::PlanError> {
+    ) -> Result<Descend<(), ()>, tidb_planner_core_base::PlanError> {
         let LogicalPlan::DataSource(source) = node else {
             return Ok(Descend::Children(vec![(); node.children().len()]));
         };
@@ -1283,7 +1283,7 @@ fn planner_physical_select(
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
     let query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
     let (logical, plan_ids, column_ids) = planner_optimized_query(
         &query,
@@ -1302,7 +1302,7 @@ fn planner_physical_query(
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     planner_physical_query_with_allocators(
@@ -1324,7 +1324,7 @@ fn planner_physical_query_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
     planner_physical_query_with_registry(
         query,
         catalog,
@@ -1350,7 +1350,7 @@ fn planner_physical_query_with_registry(
     column_ids: &ColumnIdAllocator,
 ) -> Result<
     (LogicalPlan, PhysicalPlan, Vec<RegisteredScalarSubquery>),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let registry = ScalarSubqueryRegistry::default();
     let logical = planner_optimized_query_with_allocators(
@@ -1375,7 +1375,7 @@ pub(crate) fn physical_plan_for_logical(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     physical_plan_for_logical_with_update_refs(
         logical,
         plan_ids,
@@ -1394,7 +1394,7 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     column_ids: &ColumnIdAllocator,
     ctx: &crate::StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     tidb_planner::optimize::optimize_physical(
         logical,
         plan_ids,
@@ -1424,13 +1424,13 @@ impl tidb_planner::logical::rule::CteOptimizer for DriverCteOptimizer<'_> {
         class: &Rc<RefCell<CteClass>>,
         seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
         rule_context: &RuleContext<'_>,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
         if class.borrow().seed_part_physical_plan.is_some() {
             return Ok(());
         }
         let identity = Rc::as_ptr(class) as usize;
         if !self.visiting.borrow_mut().insert(identity) {
-            return Err(tidb_planner::plan_base::PlanError::internal(
+            return Err(tidb_planner_core_base::PlanError::internal(
                 "LogicalCTE.DeriveStats: cyclic CTE class optimization",
             ));
         }
@@ -1446,14 +1446,14 @@ impl DriverCteOptimizer<'_> {
         class: &Rc<RefCell<CteClass>>,
         seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
         rule_context: &RuleContext<'_>,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
         let (mut seed, mut opt_flag, predicates) = {
             let class = class.borrow();
             let seed = class
                 .seed_part_logical_plan
                 .as_deref()
                 .ok_or_else(|| {
-                    tidb_planner::plan_base::PlanError::internal(
+                    tidb_planner_core_base::PlanError::internal(
                         "LogicalCTE.DeriveStats: seed logical plan is nil",
                     )
                 })?
@@ -1517,7 +1517,7 @@ impl DriverCteOptimizer<'_> {
         plan: LogicalPlan,
         opt_flag: u64,
         rule_context: &RuleContext<'_>,
-    ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+    ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
         let context = self
             .ctx
             .clone()
@@ -1569,7 +1569,7 @@ pub(crate) fn physical_select_plan(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     planner_physical_select(select, catalog, current_database, ctx, false)
         .map(|(_, physical)| physical)
 }
@@ -1582,7 +1582,7 @@ pub(crate) fn physical_query_plan(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     planner_physical_query(query, catalog, current_database, ctx, false)
         .map(|(_, physical)| physical)
 }
@@ -1595,7 +1595,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner::plan_base::PlanError> {
+) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     planner_physical_query_with_registry(
@@ -1622,7 +1622,7 @@ pub(crate) fn physical_query_plan_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     planner_physical_query_with_allocators(
         query,
         catalog,
@@ -1660,19 +1660,19 @@ pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<RegisteredScalarSubquery
 ///
 /// Go's `EvalSubqueryFirstRow` returns a plain error, so the typed identities
 /// the driver layer owns have to survive the round trip through
-/// [`tidb_planner::plan_base::PlanError`]; `planner_error_to_driver` maps them
+/// [`tidb_planner_core_base::PlanError`]; `planner_error_to_driver` maps them
 /// back when the statement unwinds.
-fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::PlanError {
+fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner_core_base::PlanError {
     match error {
         // Go's `EvalSubqueryFirstRow` returns the executor's error as it is.
-        crate::DriverError::Mysql(error) => tidb_planner::plan_base::PlanError::from(error),
+        crate::DriverError::Mysql(error) => tidb_planner_core_base::PlanError::from(error),
         crate::DriverError::MemTableRetrievalNeeded => {
-            tidb_planner::plan_base::PlanError::mem_table_retrieval_needed()
+            tidb_planner_core_base::PlanError::mem_table_retrieval_needed()
         }
         crate::DriverError::Exec(crate::ExecError::Eval(eval)) => {
-            tidb_planner::plan_base::PlanError::eval(eval)
+            tidb_planner_core_base::PlanError::eval(eval)
         }
-        other => tidb_planner::plan_base::PlanError::internal(other.to_string()),
+        other => tidb_planner_core_base::PlanError::internal(other.to_string()),
     }
 }
 
@@ -1764,7 +1764,7 @@ fn subquery_evaluator<'a>(
     tidb_planner::plan_builder::SubqueryKind,
     u64,
 )
-    -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner::plan_base::PlanError>
+    -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner_core_base::PlanError>
 + 'a {
     let registry = Rc::clone(registry);
     move |inner, _kind, opt_flag| {
@@ -1852,7 +1852,7 @@ fn planner_optimized_query(
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-) -> Result<(LogicalPlan, PlanIdAllocator, ColumnIdAllocator), tidb_planner::plan_base::PlanError> {
+) -> Result<(LogicalPlan, PlanIdAllocator, ColumnIdAllocator), tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -1879,7 +1879,7 @@ fn planner_optimized_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
-) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
     // `DurationRewrite` is the time `builder.Build` took.
     ctx.phase_durations().reset_rewrite_phase_info();
@@ -1925,7 +1925,7 @@ pub(crate) fn physical_show_plan(
         tidb_planner::common_plans::Plan,
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
     ),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -1972,7 +1972,7 @@ pub(crate) fn set_plan(
         tidb_planner::common_plans::Set,
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
     ),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -2008,7 +2008,7 @@ pub(crate) fn statement_plan(
         tidb_planner::common_plans::Plan,
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
     ),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -2037,7 +2037,7 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2082,7 +2082,7 @@ fn planner_built_query_with_allocators(
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
     building_view: Option<(&str, &str)>,
-) -> Result<(LogicalPlan, u64), tidb_planner::plan_base::PlanError> {
+) -> Result<(LogicalPlan, u64), tidb_planner_core_base::PlanError> {
     let parts = QueryBuilderParts {
         catalog,
         current_database,
@@ -2111,7 +2111,7 @@ pub(crate) fn build_create_view(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<Vec<tidb_datatype::FieldType>, tidb_planner::plan_base::PlanError> {
+) -> Result<Vec<tidb_datatype::FieldType>, tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2156,8 +2156,8 @@ impl QueryBuilderParts<'_> {
         building_view: Option<(&str, &str)>,
         build: impl FnOnce(
             &mut PlanBuilder<'_, tidb_infoschema::PlannerCatalog, crate::StmtContext>,
-        ) -> Result<R, tidb_planner::plan_base::PlanError>,
-    ) -> Result<R, tidb_planner::plan_base::PlanError> {
+        ) -> Result<R, tidb_planner_core_base::PlanError>,
+    ) -> Result<R, tidb_planner_core_base::PlanError> {
         let (catalog, current_database, ctx) = (self.catalog, self.current_database, self.ctx);
         let (plan_ids, column_ids) = (self.plan_ids, self.column_ids);
         let source = catalog
@@ -2242,7 +2242,7 @@ pub(crate) fn view_column_types(
     columns: &[String],
     catalog: &Catalog,
     ctx: &crate::StmtContext,
-) -> Result<Vec<Option<tidb_datatype::FieldType>>, tidb_planner::plan_base::PlanError> {
+) -> Result<Vec<Option<tidb_datatype::FieldType>>, tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2262,7 +2262,7 @@ pub(crate) fn view_column_types(
             .find_view(database, view_name)
             .cloned()
             .ok_or_else(|| {
-                tidb_planner::plan_base::PlanError::from(
+                tidb_planner_core_base::PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .fast_generate_by_args(&[database.into(), view_name.into()]),
                 )
@@ -2386,7 +2386,7 @@ pub(crate) fn plan_insert_expressions(
         Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
         Vec<Option<Expression>>,
     ),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
@@ -2468,7 +2468,7 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-) -> Result<(PhysicalPlan, Vec<tidb_datatype::FieldName>), tidb_planner::plan_base::PlanError> {
+) -> Result<(PhysicalPlan, Vec<tidb_datatype::FieldName>), tidb_planner_core_base::PlanError> {
     planner_physical_query_with_allocators(
         query,
         catalog,
@@ -2494,7 +2494,7 @@ pub(crate) fn single_update_assignments(
     ctx: &crate::StmtContext,
 ) -> Result<
     Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>,
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
@@ -2514,7 +2514,7 @@ pub(crate) fn insert_on_duplicate_columns(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<Vec<String>, tidb_planner::plan_base::PlanError> {
+) -> Result<Vec<String>, tidb_planner_core_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_statement_hypo_state(ctx)
@@ -2535,7 +2535,7 @@ pub(crate) fn insert_target(
     ctx: &crate::StmtContext,
 ) -> Result<
     tidb_planner::plan_builder::insert_values::InsertTarget,
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
@@ -2568,7 +2568,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     operator: &str,
     delete_prune_has_fk: Option<bool>,
     delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
-) -> Result<DmlSourcePlan, tidb_planner::plan_base::PlanError> {
+) -> Result<DmlSourcePlan, tidb_planner_core_base::PlanError> {
     // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
     // `buildDelete` run the read plan's `DoOptimize` themselves), so its
     // `DurationRewrite` covers the read plan's optimization too, and the
@@ -2721,11 +2721,11 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         &col_ref_from_update_plan,
     )?;
     let schema = physical.schema().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal("physical DML source has no schema")
+        tidb_planner_core_base::PlanError::internal("physical DML source has no schema")
     })?;
     for expression in update_expressions.iter_mut().flatten() {
         tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
-            tidb_planner::plan_base::PlanError::internal(
+            tidb_planner_core_base::PlanError::internal(
                 "UPDATE assignment does not resolve in its physical source",
             )
         })?;
@@ -2773,7 +2773,7 @@ pub(crate) fn point_update_ordered_list(
     ctx: &crate::StmtContext,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-) -> Result<Vec<Option<Expression>>, tidb_planner::plan_base::PlanError> {
+) -> Result<Vec<Option<Expression>>, tidb_planner_core_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_statement_hypo_state(ctx)
@@ -2786,7 +2786,7 @@ pub(crate) fn point_update_ordered_list(
     let mut list = builder.build_point_ordered_list(table_ref, schema, assignments)?;
     for expression in list.iter_mut().flatten() {
         tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
-            tidb_planner::plan_base::PlanError::internal(
+            tidb_planner_core_base::PlanError::internal(
                 "a fast UPDATE assignment does not resolve in its point plan",
             )
         })?;
@@ -2802,7 +2802,7 @@ pub(crate) fn delete_targets(
     ctx: &crate::StmtContext,
 ) -> Result<
     Vec<tidb_planner::plan_builder::delete_pruning::DeleteTarget>,
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
@@ -2826,7 +2826,7 @@ fn optimize_built_logical(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     _session_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     struct PlannerStatisticsLoad<'a> {
         catalog: &'a Catalog,
         context: &'a crate::StmtContext,
@@ -2875,7 +2875,7 @@ fn optimize_built_logical(
         fn request(
             &self,
             usage: &tidb_stats::table_statistics::ColumnStatsUsage,
-        ) -> Result<(), tidb_planner::plan_base::PlanError> {
+        ) -> Result<(), tidb_planner_core_base::PlanError> {
             self.context.set_operator_num(usage.operator_count);
             self.context
                 .update_col_stats_usage(usage.predicate_columns.keys().copied());
@@ -2890,14 +2890,14 @@ fn optimize_built_logical(
             self.catalog.request_statistics_load(usage, self.context)
         }
 
-        fn wait(&self) -> Result<(), tidb_planner::plan_base::PlanError> {
+        fn wait(&self) -> Result<(), tidb_planner_core_base::PlanError> {
             self.catalog.wait_statistics_load(self.context)
         }
 
         fn initialize(
             &self,
             plan: LogicalPlan,
-        ) -> Result<LogicalPlan, (LogicalPlan, tidb_planner::plan_base::PlanError)> {
+        ) -> Result<LogicalPlan, (LogicalPlan, tidb_planner_core_base::PlanError)> {
             let demanded = self.demanded.borrow();
             let mut initializer = InitStats {
                 error: None,
@@ -2936,17 +2936,17 @@ fn optimize_built_logical(
         fn partition_indices(
             &self,
             source: &tidb_planner::logical::DataSource,
-        ) -> Result<Vec<usize>, tidb_planner::plan_base::PlanError> {
+        ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
             let table = self
                 .catalog
                 .kv_table_by_id(source.table_id)
                 .ok_or_else(|| {
-                    tidb_planner::plan_base::PlanError::internal(
+                    tidb_planner_core_base::PlanError::internal(
                         "partitioned logical table is absent from the catalog",
                     )
                 })?;
             let partition = table.partition().ok_or_else(|| {
-                tidb_planner::plan_base::PlanError::internal(
+                tidb_planner_core_base::PlanError::internal(
                     "partition processor received an unpartitioned table",
                 )
             })?;
@@ -3299,7 +3299,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         tidb_stats::table_statistics::ColumnStatsUsage,
         tidb_stats::table_statistics::ColumnStatsUsage,
     ),
-    tidb_planner::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -3818,7 +3818,7 @@ mod statistics_initialization_tests {
                     tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
                     tidb_ranger::points::PointBuilderError::Unsupported(message) => {
                         assert!(message.ends_with("is not evaluated"));
-                        tidb_planner::plan_base::PlanError::from(
+                        tidb_planner_core_base::PlanError::from(
                             tidb_plannererrors::ERR_UNSUPPORTED_TYPE
                                 .generate_with_stack(message),
                         )

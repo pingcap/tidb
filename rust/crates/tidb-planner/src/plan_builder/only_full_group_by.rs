@@ -80,7 +80,7 @@ use tidb_datatype::{FieldName, FieldTypeFlags};
 
 use tidb_infoschema::table_source::TableSource;
 use super::{find_field_name, PlanBuilder, ProjectionField};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_exprctx::Columns;
 
 /// The clause an offending expression was written in, as Go names it in the

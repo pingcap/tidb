@@ -30,7 +30,7 @@ use super::visit_info::VisitAuthError;
 use super::{PlanBuilder, SubqueryKind};
 use crate::common_plans::{Plan, Set, VarAssignment};
 use crate::logical::{LogicalPlan, LogicalTableDual};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildSet`.

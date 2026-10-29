@@ -19,7 +19,7 @@ use crate::access_path::index_merge::{
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::logical::DataSource;
 use crate::physical::PhysicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::task::Task;
 use tidb_expr::expression::Expression;
 use crate::cardinality::derive_stats::StatsInfoScale;
@@ -1219,7 +1219,7 @@ mod tests {
             all_conds: ds.pushed_down_conds.clone(),
             ..ds
         };
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let derivation = crate::access_path::AccessPathDerivationContext {
             opt_prefix_index_single_scan: true,
             expr_pushdown_blacklist: &Default::default(),

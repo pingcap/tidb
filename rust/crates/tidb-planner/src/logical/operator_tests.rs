@@ -76,7 +76,7 @@ use super::window::{
 };
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
+use tidb_planner_core_base::{PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner_property::stats_info::StatsInfo;
 
 fn column(unique_id: i64) -> Column {
@@ -644,7 +644,7 @@ fn aggregation_possible_properties_keep_prefix_orders() {
         vec![],
         vec![col_expr(1), col_expr(2)],
     );
-    let child = crate::plan_base::PossiblePropertiesInfo {
+    let child = tidb_planner_core_base::PossiblePropertiesInfo {
         orders: vec![
             vec![column(1), column(2), column(3)],
             vec![column(3), column(1)],
@@ -980,11 +980,11 @@ fn join_derive_stats_by_join_type() {
 /// side of an outer join loses its orders.
 #[test]
 fn join_possible_properties_drop_the_null_filled_side() {
-    let left = crate::plan_base::PossiblePropertiesInfo {
+    let left = tidb_planner_core_base::PossiblePropertiesInfo {
         orders: vec![vec![column(1)]],
         has_tiflash: true,
     };
-    let right = crate::plan_base::PossiblePropertiesInfo {
+    let right = tidb_planner_core_base::PossiblePropertiesInfo {
         orders: vec![vec![column(11)]],
         has_tiflash: true,
     };
@@ -1003,7 +1003,7 @@ fn join_possible_properties_drop_the_null_filled_side() {
     assert!(outer.base.has_tiflash());
     // Both children must report TiFlash for the join to.
     let mut mixed = LogicalJoin::new(BaseLogicalPlan::default(), LogicalJoinType::Inner);
-    let no_tiflash = crate::plan_base::PossiblePropertiesInfo::default();
+    let no_tiflash = tidb_planner_core_base::PossiblePropertiesInfo::default();
     assert!(
         !mixed
             .prepare_possible_properties(&left, &no_tiflash)

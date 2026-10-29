@@ -53,7 +53,7 @@ use tidb_expr::simple_expr::{
 use crate::access_path::DataSourceAccessPath;
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `model.ExtraHandleID`: the id of the implicit `_tidb_rowid` column.

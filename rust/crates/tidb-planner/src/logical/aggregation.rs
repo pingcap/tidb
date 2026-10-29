@@ -37,7 +37,7 @@ use tidb_exprctx::NoColumns;
 use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::{
+use tidb_planner_core_base::{
     hash_possible_properties, possible_properties_equal, PossiblePropertiesInfo,
 };
 use tidb_planner_property::stats_info::StatsInfo;

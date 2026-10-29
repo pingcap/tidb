@@ -149,7 +149,7 @@ use crate::logical::max_one_row::LogicalMaxOneRow;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::table_dual::LogicalTableDual;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** planbuilder.go: the two small enums the rewriter is keyed on *****
 

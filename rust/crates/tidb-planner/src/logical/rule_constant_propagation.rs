@@ -19,7 +19,7 @@ use tidb_expr::expression::Expression;
 use super::rule::{LogicalOptRule, RuleContext};
 use super::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 enum Task {
     Enter(LogicalPlan),

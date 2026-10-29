@@ -374,10 +374,10 @@ pub(super) fn run_physical_set_opr_stmt(
     )
 }
 
-pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
+pub(super) fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) -> DriverError {
     match error.kind() {
-        tidb_planner::plan_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
-        tidb_planner::plan_base::PlanErrorKind::Aggregation(aggregate) => {
+        tidb_planner_core_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
+        tidb_planner_core_base::PlanErrorKind::Aggregation(aggregate) => {
             use tidb_expression_aggregation::AggDescError;
             match aggregate {
                 AggDescError::ApproxPercentileOutOfRange(value) => {
@@ -392,25 +392,25 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 other => DriverError::unsupported(other.to_string()),
             }
         }
-        tidb_planner::plan_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
+        tidb_planner_core_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
             DriverError::from(
                 tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE
                     .generate_with_stack_by_args(&[]),
             )
         }
-        tidb_planner::plan_base::PlanErrorKind::Eval(
+        tidb_planner_core_base::PlanErrorKind::Eval(
             tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(index),
         ) => DriverError::from(
             tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
                 .generate_with_stack_by_args(&[format!("#{}", *index).into()]),
         ),
-        tidb_planner::plan_base::PlanErrorKind::Eval(eval) => {
+        tidb_planner_core_base::PlanErrorKind::Eval(eval) => {
             DriverError::Exec(ExecError::Eval(eval.clone()))
         }
-        tidb_planner::plan_base::PlanErrorKind::Internal => {
+        tidb_planner_core_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())
         }
-        tidb_planner::plan_base::PlanErrorKind::MemTableRetrievalNeeded => {
+        tidb_planner_core_base::PlanErrorKind::MemTableRetrievalNeeded => {
             DriverError::MemTableRetrievalNeeded
         }
     }

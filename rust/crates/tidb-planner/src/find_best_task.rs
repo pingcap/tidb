@@ -53,7 +53,7 @@
 //!
 use crate::logical::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
 
 /// `base.JoinType`, the subset a root-task join enumeration branches on.

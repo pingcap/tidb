@@ -115,7 +115,7 @@ use tidb_expr::expr_util::predicates::{is_const_null, maybe_over_optimized_4_pla
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 use super::selection::LogicalSelection;
 use super::table_dual::LogicalTableDual;

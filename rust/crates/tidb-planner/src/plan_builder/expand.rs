@@ -78,7 +78,7 @@ use crate::logical::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Go `expression.DeduplicateGbyExpression(gbyItems)`: the distinct group-by
 /// expressions, plus for each ORIGINAL item the position of its representative.

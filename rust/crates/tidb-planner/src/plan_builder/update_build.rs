@@ -33,7 +33,7 @@ use super::{
 };
 use crate::logical::{LogicalPlan, LogicalProjection};
 use crate::physical::{DeleteHandle, UpdateAssign, UpdateTablePos};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Go's message for writing `_tidb_rowid` without `tidb_opt_write_row_id`,
 /// raised as a plain error and so reaching the client as 1105.

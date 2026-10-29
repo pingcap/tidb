@@ -28,7 +28,7 @@ use super::{
     BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
 };
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 fn bind(expr: &mut Expression, schema: &Schema) -> Result<(), PlanError> {
     resolve_indices_in_place(expr, schema).map_err(|error| PlanError::internal(error.to_string()))

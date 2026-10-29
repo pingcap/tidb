@@ -38,7 +38,7 @@ use crate::logical::sort::LogicalSort;
 use crate::common_plans::{Plan, ShowNextRowID};
 use crate::logical::show_ddl_jobs::LogicalShowDDLJobs;
 use crate::logical::{LogicalPlan, LogicalShow, ShowContents, ShowPredicateExtractor};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::show_predicate_extractor::ShowBaseExtractor;
 use crate::show_schema::{build_show_ddl_jobs_fields, build_show_next_row_id, build_show_schema};
 

@@ -22,7 +22,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::dml_source::{dml_source_select, single_table_join};
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Everything Go's `buildInsert` appends to `b.visitInfo`: `InsertPriv` on

@@ -66,7 +66,7 @@ use super::{
     find_field_name, lower_name_matches, snapshot_schema_and_names, PlanBuilder, ProjectionField,
 };
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// The writes Go's `buildSelect` makes into one `*ast.SelectStmt` while it
 /// builds a `CREATE VIEW` body.

@@ -15,7 +15,7 @@
 //! Go `core/plan.go` shuffle selection for window, stream aggregation and merge join.
 use super::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
 use tidb_planner_property::PhysicalProperty;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::{attach_plan_to_task, Task};
 use tidb_expr::expression::Expression;
 

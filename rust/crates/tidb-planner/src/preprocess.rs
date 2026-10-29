@@ -22,7 +22,7 @@ use std::any::Any;
 use tidb_ast::{Visitable, Visitor};
 use tidb_hack::go_to_lower;
 
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Query-local CTE visibility shared by physical-table admission and PREPARE
 /// database pinning. Go's preprocessWith publishes ordinary names after their

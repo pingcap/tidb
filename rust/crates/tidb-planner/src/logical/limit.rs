@@ -168,7 +168,7 @@ impl LogicalLimit {
     /// Go allocates a fresh plan through `Init(p.SCtx(), p.QueryBlockOffset())`.
     /// Go does NOT carry `PartitionBy` across, which is why it is absent below.
     #[must_use]
-    pub fn convert_to_topn(&self, allocator: &crate::plan_base::PlanIdAllocator) -> LogicalTopN {
+    pub fn convert_to_topn(&self, allocator: &tidb_planner_core_base::PlanIdAllocator) -> LogicalTopN {
         let base = BaseLogicalPlan::new(
             allocator,
             LogicalTopN::TYPE,

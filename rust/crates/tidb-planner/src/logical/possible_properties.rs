@@ -19,7 +19,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
 use crate::access_path::PossiblePath;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::LogicalPlan;

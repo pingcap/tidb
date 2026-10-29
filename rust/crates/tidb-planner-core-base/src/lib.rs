@@ -407,12 +407,6 @@ impl PlanError {
     }
 }
 
-impl From<tidb_planner_util_domainmisc::DomainNotFound> for PlanError {
-    fn from(error: tidb_planner_util_domainmisc::DomainNotFound) -> Self {
-        Self::internal(error.to_string())
-    }
-}
-
 impl From<tidb_terror::MysqlError> for PlanError {
     fn from(error: tidb_terror::MysqlError) -> Self {
         Self {
@@ -458,7 +452,7 @@ pub struct PossiblePropertiesInfo {
 /// cannot represent Go's nil-vs-empty slice distinction, so the owned vector
 /// is encoded as a present list and each column uses the same identity triple
 /// used by the planner schema hash.
-pub(crate) fn hash_possible_properties(
+pub fn hash_possible_properties(
     hasher: &mut impl tidb_planner_cascades_base::Hasher,
     properties: &PossiblePropertiesInfo,
 ) {
@@ -479,7 +473,7 @@ pub(crate) fn hash_possible_properties(
 /// Go `PossiblePropertiesInfo.Equals` over the representable Rust shape.
 /// `HasTiFlash` is intentionally ignored because it is not plan identity.
 #[must_use]
-pub(crate) fn possible_properties_equal(
+pub fn possible_properties_equal(
     left: &PossiblePropertiesInfo,
     right: &PossiblePropertiesInfo,
 ) -> bool {
@@ -582,5 +576,24 @@ mod tests {
         derived.set_output_names_shared(copy.output_names_shared().cloned());
         assert_eq!(derived.schema().map(|schema| schema.columns.len()), Some(1));
         assert_eq!(derived.output_names().len(), 1);
+    }
+}
+
+/// An unknown column is Go's typed `plannererrors.ErrUnknownColumn`, not a
+/// generic evaluation failure, so it keeps the clause the resolver named.
+/// Without this arm the clause survives only inside the debug-formatted
+/// message and the executor lifts the error as `Exec(Eval(..))`, losing the
+/// typed variant the plan-time resolution path produces.
+impl From<EvalError> for PlanError {
+    fn from(error: EvalError) -> Self {
+        match error {
+            EvalError::UnknownColumnInClause(column, clause) => Self::from(
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(column).into(),
+                    clause.into(),
+                ]),
+            ),
+            other => Self::eval(other),
+        }
     }
 }

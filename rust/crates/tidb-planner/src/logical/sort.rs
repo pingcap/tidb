@@ -46,7 +46,7 @@ use tidb_expr::expression::CorrelatedColumn;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
 
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `logicalop.LogicalSort` (`logical_sort.go:28`).
 #[derive(Clone, Debug, Default)]

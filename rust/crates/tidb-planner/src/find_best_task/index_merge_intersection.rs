@@ -19,7 +19,7 @@ use crate::find_best_task::dispatch::DispatchContext;
 use crate::find_best_task::index_merge_union::merge_scan_stats;
 use crate::logical::DataSource;
 use crate::physical::PhysicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::task::Task;
 use crate::cardinality::derive_stats::StatsInfoScale;
 

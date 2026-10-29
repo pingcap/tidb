@@ -57,7 +57,7 @@ use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::selection::SELECTION_FACTOR;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalJoin` (`logical_join.go:45`).

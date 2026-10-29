@@ -25,7 +25,7 @@
 //! The generation itself is [`super::expand::LogicalExpand::gen_level_projections`];
 //! all this rule adds is Go's traversal.
 
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};

@@ -318,7 +318,7 @@ fn flags_and_plan_ids_hash_round_trip() {
 
 #[test]
 fn predicate_push_down_returns_the_predicates_unpushed_at_a_leaf() {
-    let allocator = crate::plan_base::PlanIdAllocator::new();
+    let allocator = tidb_planner_core_base::PlanIdAllocator::new();
     let ctx = crate::logical::rule_tests::test_context(&allocator);
     let leaf = source(1, &[1]);
     let (rest, root) = leaf

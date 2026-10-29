@@ -21,7 +21,7 @@ use tidb_planner::physical::{
     find_best_task_4_logical_show, find_best_task_4_logical_show_ddl_jobs, PhysicalPlan,
 };
 use tidb_planner_property::{PhysicalProperty, SortItem};
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 #[test]
 fn regular_show_uses_pseudo_one_row_stats() {

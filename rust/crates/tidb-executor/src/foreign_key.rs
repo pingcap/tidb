@@ -811,7 +811,7 @@ fn cascade_triggers(
         ctx,
         if deleting { "Delete" } else { "Update" },
         &spec,
-        &tidb_planner::plan_base::PlanIdAllocator::new(),
+        &tidb_planner_core_base::PlanIdAllocator::new(),
     )
 }
 

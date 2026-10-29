@@ -128,7 +128,7 @@ use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceView;
@@ -1940,7 +1940,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.outer_ctes = saved_ctes;
         self.building_cte = saved_building_cte;
         let plan = built.map_err(|error| {
-            use crate::plan_base::PlanErrorKind;
+            use tidb_planner_core_base::PlanErrorKind;
             use tidb_plannererrors as pe;
             // Go BuildDataSourceFromView preserves these planner errors;
             // ordinary missing dependencies instead invalidate the view.

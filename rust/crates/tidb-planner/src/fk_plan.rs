@@ -21,7 +21,7 @@
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 use crate::physical::{FkTriggerKind, FkTriggerNode};
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 /// Go `model.ReferOptionType`, as a foreign key's `ON DELETE` / `ON UPDATE`
 /// action.

@@ -49,7 +49,7 @@ use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::logical::window::{BoundType, FrameType, LogicalWindow};
 use crate::logical::LogicalPlan;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 // ***** the harness *****
 

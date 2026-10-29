@@ -18,7 +18,7 @@ use crate::logical::{
     BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
     LogicalUnionScan,
 };
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::rule::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn storage_hints_are_resolved_per_static_partition() {
         use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let ctx = crate::logical::rule_tests::test_context(&allocator);
         let source = DataSource {
             prefer_store_type: PREFER_TIKV,

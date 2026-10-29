@@ -39,7 +39,7 @@ use crate::logical::rule_partition_processor::PartitionPruning;
 use crate::logical::{prepare_possible_properties, LogicalPlan};
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 /// Go `base.PlanContext` as the optimizer reads it: the statement's session
 /// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).

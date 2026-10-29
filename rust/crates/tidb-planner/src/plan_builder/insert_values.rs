@@ -28,7 +28,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};
 use crate::logical::{LogicalPlan, LogicalTableDual};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// The columns of an INSERT's target the statement writes, resolved as Go's
 /// `getAffectCols` does over the table's visible columns.

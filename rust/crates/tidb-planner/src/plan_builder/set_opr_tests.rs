@@ -39,7 +39,7 @@ use super::set_opr::union_join_field_type;
 use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::logical::LogicalPlan;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 // ***** the catalogue *****
 

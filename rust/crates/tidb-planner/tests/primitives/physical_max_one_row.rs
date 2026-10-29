@@ -21,7 +21,7 @@
 use tidb_planner::logical::{BaseLogicalPlan, LogicalMaxOneRow};
 use tidb_planner::physical::{exhaust_physical_plans_4_logical_max_one_row, PhysicalPlan};
 use tidb_planner_property::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 #[test]
 fn unsupported_sort_or_flash_requirements_do_not_emit_a_plan() {

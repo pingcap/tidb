@@ -17,7 +17,7 @@
 
 use super::AccessPathDerivationContext;
 use crate::logical::DataSource;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_expr::expression::Expression;
 
 /// Go `isInIndexMergeHints`. Go passes the index's `Name.L` and compares

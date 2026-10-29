@@ -37,7 +37,7 @@
 //!   `GetActualProbeCnt` need `utilfuncp.GetEstimatedProbeCntFromProbeParents`
 //!   and the runtime stats collector, neither of which is here.
 //! * `MemoryUsage` returns a source-shaped estimate over the Rust layout; see
-//!   [`crate::plan_base`].
+//!   [`tidb_planner_core_base`].
 
 mod memory;
 pub mod part_info;
@@ -61,7 +61,7 @@ use tidb_planner_property::{
 use crate::physical_table_reader::{
     MissingTableDescriptorError, ReadReqType, StoreType, TableScanCountError,
 };
-use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{BasePlan, PlanError, PlanIdAllocator};
 use tidb_planner_property::stats_info::StatsInfo;
 use crate::task::{RootTask, Task};
 
@@ -1469,7 +1469,7 @@ impl PhysicalTableScan {
 /// file): the physical operator of dual — `RowCount` rows (0 or 1) from no
 /// table. Go's private `names` field ("Dual may be inited when building
 /// point get plan. So it needs to hold names for itself") is this port's
-/// [`crate::plan_base::BasePlan`] `output_names`, which every operator
+/// [`tidb_planner_core_base::BasePlan`] `output_names`, which every operator
 /// already carries — `OutputNames`/`SetOutputNames` are its accessors, not
 /// a second field. `MemoryUsage` follows the enum's standing narrowing.
 #[derive(Clone, Debug, Default)]

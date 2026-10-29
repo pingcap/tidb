@@ -4345,7 +4345,7 @@ mod tests {
     #[test]
     fn index_join_inner_field_names_its_child_like_go_regardless_of_the_childs_stored_base_type() {
         use tidb_planner::physical::{BasePhysicalPlan, PhysicalIndexJoin};
-        use tidb_planner::plan_base::BasePlan;
+        use tidb_planner_core_base::BasePlan;
 
         let mut inner_base = BasePhysicalPlan::default();
         inner_base.base = BasePlan::with_id(7, "Join", 0);

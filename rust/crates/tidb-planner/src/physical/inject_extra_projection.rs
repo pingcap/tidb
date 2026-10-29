@@ -54,7 +54,7 @@ use tidb_exprctx::NoColumns;
 
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// The allocators and stats context Go reaches through `plan.SCtx()`.
@@ -607,7 +607,7 @@ impl DisjointSet {
 mod tests {
     use super::*;
     use crate::physical::{BasePhysicalPlan, PhysicalTableDual};
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};

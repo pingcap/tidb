@@ -55,7 +55,7 @@ use crate::enforce::enforce_property_in;
 use crate::logical::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
 use tidb_planner_property::PhysicalProperty;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::Task;
 use tidb_planner_property::task_type::TaskType;
 use crate::cardinality::derive_stats::StatsInfoScale;
@@ -2832,7 +2832,7 @@ mod cross_estimate_dispatch_tests {
     use crate::find_best_task::coster::Ver2Coster;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::{BaseLogicalPlan, DataSource};
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -7243,7 +7243,7 @@ mod tests {
     fn a_global_aggregate_costs_stream_and_hash_over_the_same_child() {
         use crate::access_path::PossiblePath;
         use crate::logical::{DataSource, LogicalAggregation};
-        use crate::plan_base::PossiblePropertiesInfo;
+        use tidb_planner_core_base::PossiblePropertiesInfo;
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();

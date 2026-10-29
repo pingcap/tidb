@@ -42,7 +42,7 @@
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::MppPartitionType;
 use crate::physical_table_reader::{ReadReqType, StoreType};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
 use crate::cardinality::derive_stats::StatsInfoScale;
@@ -332,14 +332,14 @@ impl MppTask {
     /// `GenerateRootMPPTasks` path.
     pub fn into_root_task(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         self.into_root_task_in(allocator, &tidb_ranger::points::evaluate_static)
     }
 
     fn into_root_task_in(
         mut self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let mut plan = self
@@ -593,7 +593,7 @@ impl CopTask {
     fn handle_root_task_conds(
         conds: Vec<Expression>,
         mut root: RootTask,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         stats_context: TaskStatsContext,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> RootTask {
@@ -644,7 +644,7 @@ impl CopTask {
     /// already holds a pushed partial aggregate.
     fn build_index_look_up_task(
         mut self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         let mut index_plan = self
             .index_plan
@@ -682,7 +682,7 @@ impl CopTask {
         if index_lookup_push_down {
             fn reset_plan_ids(
                 plan: &mut PhysicalPlan,
-                allocator: &crate::plan_base::PlanIdAllocator,
+                allocator: &tidb_planner_core_base::PlanIdAllocator,
             ) {
                 plan.base_mut().base.set_id(allocator.alloc());
                 for child in plan.base_mut().children_mut() {
@@ -694,7 +694,7 @@ impl CopTask {
                 mut table_subtree: PhysicalPlan,
                 index_subtree: PhysicalPlan,
                 index_handle_offsets: Vec<u32>,
-                allocator: &crate::plan_base::PlanIdAllocator,
+                allocator: &tidb_planner_core_base::PlanIdAllocator,
                 query_block_offset: i32,
             ) -> Result<PhysicalPlan, PlanError> {
                 if matches!(table_subtree, PhysicalPlan::TableScan(_)) {
@@ -817,14 +817,14 @@ impl CopTask {
 
     pub fn convert_to_root_task_impl(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         self.convert_to_root_task_impl_in(allocator, &tidb_ranger::points::evaluate_static)
     }
 
     fn convert_to_root_task_impl_in(
         mut self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         // Go calls `FinishIndexPlan` first, for every branch: a double read
@@ -855,7 +855,7 @@ impl CopTask {
     fn project_origin_schema(
         plan: PhysicalPlan,
         schema: Option<tidb_expr::schema::Schema>,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<PhysicalPlan, PlanError> {
         let schema = schema.ok_or_else(|| {
             PlanError::internal("NeedExtraProj requires the cop task's OriginSchema")
@@ -880,7 +880,7 @@ impl CopTask {
 
     fn convert_expanded_to_root_task(
         mut self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let stats_context = self.stats_context.clone();
@@ -1221,7 +1221,7 @@ impl Task {
     /// keeps its definition; callers that already own the task can move it.
     pub fn convert_to_root_task(
         &self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         self.copy().into_root_task(allocator)
     }
@@ -1229,7 +1229,7 @@ impl Task {
     /// Borrowed conversion using the current statement evaluator.
     pub(crate) fn convert_to_root_task_in(
         &self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         self.copy().into_root_task_in(allocator, evaluate)
@@ -1238,7 +1238,7 @@ impl Task {
     /// Owned conversion using the current statement evaluator.
     pub(crate) fn into_root_task_in(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         match self {
@@ -1251,7 +1251,7 @@ impl Task {
     /// Owned form of conversion: no extra plan-tree copy at task attachment.
     pub fn into_root_task(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         self.into_root_task_in(allocator, &tidb_ranger::points::evaluate_static)
     }
@@ -1280,7 +1280,7 @@ impl Task {
 mod tests {
     use super::*;
     use crate::physical::PhysicalPlan;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     // All WRITTEN: Go's coverage of the task layer is exercised through
     // planner integration suites; `task_base.go` has no unit tests of its
@@ -1290,7 +1290,7 @@ mod tests {
         let allocator = PlanIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::default();
         base.base =
-            crate::plan_base::BasePlan::new(&allocator, crate::logical::LogicalTableDual::TYPE, 0);
+            tidb_planner_core_base::BasePlan::new(&allocator, crate::logical::LogicalTableDual::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         base.base
             .set_schema(Some(tidb_expr::schema::Schema::new(vec![
@@ -1409,7 +1409,7 @@ mod tests {
     fn table_scan_with_rows(rows: f64) -> PhysicalPlan {
         let allocator = PlanIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::default();
-        base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+        base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
             base,
@@ -1713,7 +1713,7 @@ mod tests {
         // ride the deferred copy onto the fresh root task.
         let allocator = PlanIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::default();
-        base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+        base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
         base.base.set_stats(Some(StatsInfo::new(42.0, [])));
         let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
             base,
@@ -2658,7 +2658,7 @@ fn attach_hash_agg_to_mpp(
     mut plan: PhysicalPlan,
     mpp: MppTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     group_ndv_skew_ratio: f64,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -2978,7 +2978,7 @@ fn finish_scalar_aggregate_output(
     task: Task,
     avg_projection: Option<crate::physical::PhysicalProjection>,
     original_schema: Option<&tidb_expr::schema::Schema>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
     if let Some(projection) = avg_projection {
         return Ok(attach_plan_to_task(
@@ -3031,7 +3031,7 @@ fn finish_scalar_aggregate_output(
 fn sink_into_index_look_up(
     limit: &crate::physical::PhysicalLimit,
     task: &mut Task,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> bool {
     let Task::Root(root) = task else {
         return false;
@@ -3145,7 +3145,7 @@ fn sink_into_index_look_up(
 fn sink_into_index_merge(
     limit: &crate::physical::PhysicalLimit,
     task: &mut Task,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> bool {
     let Task::Root(root) = task else { return false };
     let Some(mut plan) = root.take_plan() else {
@@ -3217,7 +3217,7 @@ fn sink_into_index_merge(
 fn attach_limit_to_index_merge(
     plan: PhysicalPlan,
     mut cop: CopTask,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     let PhysicalPlan::Limit(limit) = &plan else {
@@ -3270,7 +3270,7 @@ fn attach_limit_to_index_merge(
 fn attach_advisory_topn_to_index_merge(
     topn: &crate::physical::PhysicalTopN,
     mut cop: CopTask,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     let order = cop
@@ -3336,7 +3336,7 @@ fn attach_advisory_topn_to_index_merge(
 fn merge_partial_topn(
     topn: &crate::physical::PhysicalTopN,
     child: PhysicalPlan,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> PhysicalPlan {
     let count = topn.offset.wrapping_add(topn.count);
     let mut pushed = topn.clone();
@@ -3380,7 +3380,7 @@ fn can_push_to_index_plan(
 fn push_limit_down_to_tidb_cop(
     topn: &crate::physical::PhysicalTopN,
     mut cop: CopTask,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Result<Task, CopTask>, PlanError> {
     if cop.index_plan.is_some() || cop.table_plan.is_none() {
@@ -3505,7 +3505,7 @@ fn attach_agg_over_cop(
     plan: PhysicalPlan,
     mut cop: CopTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
@@ -3729,7 +3729,7 @@ fn heavy_topn_split(
     child_plan: &PhysicalPlan,
     store_type: StoreType,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Option<(
     crate::physical::PhysicalProjection,
     crate::physical::PhysicalTopN,
@@ -3811,7 +3811,7 @@ pub fn attach2_task(
     plan: PhysicalPlan,
     tasks: Vec<Task>,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
     attach2_task_with_group_ndv_skew_ratio(
         plan,
@@ -3827,7 +3827,7 @@ pub fn attach2_task_with_group_ndv_skew_ratio(
     plan: PhysicalPlan,
     tasks: Vec<Task>,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
 ) -> Result<Task, PlanError> {
     attach2_task_in(
@@ -3846,7 +3846,7 @@ pub(crate) fn attach2_task_in(
     plan: PhysicalPlan,
     mut tasks: Vec<Task>,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -4699,7 +4699,7 @@ pub(crate) fn attach2_task_in(
 mod attach_tests {
     use super::*;
     use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expr::schema::Schema;
 
@@ -4708,7 +4708,7 @@ mod attach_tests {
     fn op_with_stats(tp: &str, rows: f64) -> BasePhysicalPlan {
         let allocator = PlanIdAllocator::new();
         let mut base = BasePhysicalPlan::default();
-        base.base = crate::plan_base::BasePlan::new(&allocator, tp, 0);
+        base.base = tidb_planner_core_base::BasePlan::new(&allocator, tp, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         base
     }
@@ -5867,7 +5867,7 @@ mod attach_tests {
         let scan = {
             let allocator = PlanIdAllocator::new();
             let mut base = crate::physical::BasePhysicalPlan::default();
-            base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+            base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
             base.base.set_stats(Some(StatsInfo::new(9.0, [])));
             PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                 base,

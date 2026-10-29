@@ -43,7 +43,7 @@
 //! sequences Go leaves in place.
 
 use crate::base_arms;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};

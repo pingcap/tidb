@@ -51,13 +51,13 @@ use tidb_expr::schema::Schema;
 use crate::logical::schema_producer;
 use crate::logical::topn::LogicalTopN;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalUnionAll` (`logical_union_all.go:30`).
 ///
 /// Go's body is the embedded `LogicalSchemaProducer` and nothing else; the
-/// schema it produces lives on [`crate::plan_base::BasePlan`] here, so this
+/// schema it produces lives on [`tidb_planner_core_base::BasePlan`] here, so this
 /// struct is its base alone. That is the operator, not a stub.
 #[derive(Clone, Debug, Default)]
 pub struct LogicalUnionAll {
@@ -163,7 +163,7 @@ impl LogicalUnionAll {
     #[must_use]
     pub fn push_down_topn_for_child(
         topn: &LogicalTopN,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> LogicalTopN {
         let base = BaseLogicalPlan::new(
             allocator,

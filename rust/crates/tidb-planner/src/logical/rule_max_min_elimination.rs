@@ -30,7 +30,7 @@ use super::{
 };
 use crate::access_path::{AccessPathStore, DataSourceAccessPath};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 fn check_column_can_use_index(
     ctx: &RuleContext<'_>,
@@ -472,7 +472,7 @@ mod tests {
     use super::*;
     use crate::logical::rule_tests::test_context;
     use crate::logical::DataSource;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
 
     fn column(id: i64, nullable: bool) -> Column {
         let mut field_type = FieldType::new(FieldTypeCode::Long);

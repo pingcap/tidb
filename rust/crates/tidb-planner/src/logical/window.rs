@@ -58,7 +58,7 @@ use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
 use tidb_planner_cascades_base::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `ast.FrameType`, as `WindowFrame.Type` uses it.

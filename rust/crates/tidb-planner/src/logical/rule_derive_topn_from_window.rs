@@ -69,7 +69,7 @@ use tidb_expression_aggregation::ByItems;
 use tidb_expr::expr_util::extract::find_upper_bound;
 use tidb_expr::expression::Expression;
 
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};

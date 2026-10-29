@@ -327,7 +327,7 @@ fn physical_dml_plan_with_cache_mode(
         }
     }
 
-    let plan_ids = tidb_planner::plan_base::PlanIdAllocator::new();
+    let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
     let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
     let mut update_expressions = Vec::new();
     let mut delete_col_pos = None;
@@ -2518,7 +2518,7 @@ fn fast_update_ordered_list(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     column_ids: &tidb_planner::expression_rewriter::ColumnIdAllocator,
 ) -> Result<Vec<Option<Expression>>, DriverError> {
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
@@ -3379,7 +3379,7 @@ fn run_update_with_physical(
             catalog,
             current_db,
             ctx,
-            &tidb_planner::plan_base::PlanIdAllocator::new(),
+            &tidb_planner_core_base::PlanIdAllocator::new(),
         );
         ctx.truncate_warnings(warning_bookmark);
         fast.ok().flatten().map(|mut fast| {

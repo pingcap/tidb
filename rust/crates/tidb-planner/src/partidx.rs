@@ -241,7 +241,7 @@ mod tests {
     use crate::access_path::PossiblePath;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::{BaseLogicalPlan, DataSource};
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndex;
 
     fn integer_column(id: i64) -> Expression {

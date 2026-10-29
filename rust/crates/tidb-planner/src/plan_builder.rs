@@ -88,7 +88,7 @@
 //! `u64`, over [`crate::logical::rule::flags`]' already-ported bit values, and
 //! [`PlanBuilder::build_select`] returns `(LogicalPlan, u64)`.
 //!
-//! It is deliberately NOT a field on [`BasePlan`](crate::plan_base::BasePlan):
+//! It is deliberately NOT a field on [`BasePlan`](tidb_planner_core_base::BasePlan):
 //! that struct's layout is load-bearing (`PLAN_SIZE`, the memo's hashing, the
 //! plan-cache clone), the flag is a property of the BUILD and not of any node,
 //! and Go itself keeps it on the builder.
@@ -236,7 +236,7 @@ use crate::logical::selection::LogicalSelection;
 use crate::logical::sort::LogicalSort;
 use crate::logical::table_dual::LogicalTableDual;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 use tidb_infoschema::table_source::TableSource;
 use handle_col_helper::{HandleColHelper, HandleColMap, PlanHandleCols};
@@ -267,25 +267,6 @@ impl From<RewriteError> for PlanError {
 /// The expression rewriter's own error, which reaches a builder through
 /// [`rewrite_expr_resolved`].
 ///
-/// An unknown column is Go's typed `plannererrors.ErrUnknownColumn`, not a
-/// generic evaluation failure, so it keeps the clause the resolver named.
-/// Without this arm the clause survives only inside the debug-formatted
-/// message and the executor lifts the error as `Exec(Eval(..))`, losing the
-/// typed variant the plan-time resolution path produces.
-impl From<EvalError> for PlanError {
-    fn from(error: EvalError) -> Self {
-        match error {
-            EvalError::UnknownColumnInClause(column, clause) => Self::from(
-                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
-                    tidb_hack::go_to_lower(column).into(),
-                    clause.into(),
-                ]),
-            ),
-            other => Self::eval(other),
-        }
-    }
-}
-
 /// Go `cteInfo` (`planbuilder.go:190`), the per-CTE bookkeeping
 /// [`PlanBuilder::outer_ctes`] is a stack of.
 ///

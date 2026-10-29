@@ -19,7 +19,7 @@
 //! SEED of `pkg/planner/core`. Go models this as a struct
 //! (`LogicalSchemaProducer`) embedded between the operator and
 //! `BaseLogicalPlan`, carrying `schema` and `names`. Those two fields already
-//! live on [`crate::plan_base::BasePlan`] in this port (see that module's
+//! live on [`tidb_planner_core_base::BasePlan`] in this port (see that module's
 //! header for why), so what is left of the Go type is BEHAVIOUR, and it lands
 //! here as free functions over a [`Schema`] rather than as a third base
 //! struct. Nothing is lost: every Go member is reproduced below.

@@ -32,7 +32,7 @@
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner_property::PhysicalProperty;
-use crate::plan_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::{MppTask, Task};
 use tidb_planner_property::task_type::TaskType;
 

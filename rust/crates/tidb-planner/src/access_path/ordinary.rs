@@ -13,7 +13,7 @@
 
 use super::{AccessPathDerivationContext, PossiblePath};
 use crate::logical::DataSource;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_expr::{column::Column, expression::Expression};
 
 /// Go's detached ranges and the subsequent index/table filter partition.

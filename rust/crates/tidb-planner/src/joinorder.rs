@@ -35,7 +35,7 @@ use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::RuleContext;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_intset::FastIntSet;
 
 /// Go `joinorder.Node`.
@@ -2472,7 +2472,7 @@ mod tests {
     use crate::logical::data_source::DataSource;
     use crate::logical::table_dual::LogicalTableDual;
     use crate::logical::BaseLogicalPlan;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
     use tidb_planner_property::stats_info::StatsInfo;
@@ -2818,7 +2818,7 @@ mod tests {
             selection_conditions: BTreeMap::new(),
         };
 
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let context = crate::logical::rule_tests::test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
@@ -2888,7 +2888,7 @@ mod tests {
             selection_conditions: BTreeMap::new(),
         };
 
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let context = crate::logical::rule_tests::test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
@@ -2901,7 +2901,7 @@ mod tests {
         assert!(connection.connected());
         assert!(!connection.no_equal_edge());
 
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let context = crate::logical::rule_tests::test_context(&allocator);
         let mut greedy_detector = ConflictDetector::default();
         let greedy_nodes = greedy_detector.build(&group, &context).unwrap();

@@ -24,7 +24,7 @@ use tidb_expr::schema::Schema;
 
 use crate::find_best_task::LogicalJoinType;
 use crate::logical::{BaseLogicalPlan, LogicalJoin, LogicalPlan, LogicalProjection};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::rule::{LogicalOptRule, RuleContext};
 

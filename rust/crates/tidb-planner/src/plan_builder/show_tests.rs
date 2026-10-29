@@ -24,7 +24,7 @@ use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::common_plans::Plan;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 /// A catalog with no tables: the SHOW kinds tested here read none.
 struct NoTables;

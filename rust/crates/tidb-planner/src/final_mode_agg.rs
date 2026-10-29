@@ -312,8 +312,8 @@ pub fn adjust_three_stage_single_distinct(
     partial: crate::physical::PhysicalPlan,
     final_agg: crate::physical::PhysicalPlan,
     column_ids: &ColumnIdAllocator,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
-) -> Result<Option<ThreeStageAggSplit>, crate::plan_base::PlanError> {
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
+) -> Result<Option<ThreeStageAggSplit>, tidb_planner_core_base::PlanError> {
     use crate::physical::{PhysicalHashAgg, PhysicalPlan};
 
     let PhysicalPlan::HashAgg(mut final_hash) = final_agg else {
@@ -440,8 +440,8 @@ pub fn adjust_three_stage_multi_distinct(
     child: &crate::physical::PhysicalPlan,
     grouping_sets: &[Vec<Column>],
     column_ids: &ColumnIdAllocator,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
-) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
+) -> Result<Option<MultiDistinctThreeStageAggSplit>, tidb_planner_core_base::PlanError> {
     adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         partial,
         final_agg,
@@ -460,9 +460,9 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
     child: &crate::physical::PhysicalPlan,
     grouping_sets: &[Vec<Column>],
     column_ids: &ColumnIdAllocator,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
-) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
+) -> Result<Option<MultiDistinctThreeStageAggSplit>, tidb_planner_core_base::PlanError> {
     use crate::physical::expand::PhysicalExpand;
     use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalPlan, PhysicalProjection};
     use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
@@ -583,14 +583,14 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
                     )),
                 ],
             )
-            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
         let case_when = builder
             .new_function(
                 "case",
                 argument.static_type().cloned(),
                 vec![condition, argument, Expression::Constant(null)],
             )
-            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
         let mut case_column = Column::new(
             column_ids.alloc(),
             case_when
@@ -813,8 +813,8 @@ fn scale_three_stage_multi_distinct_stats(
 pub fn convert_avg_for_mpp(
     plan: &mut crate::physical::PhysicalPlan,
     alloc: &ColumnIdAllocator,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
-) -> Result<Option<crate::physical::PhysicalProjection>, crate::plan_base::PlanError> {
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
+) -> Result<Option<crate::physical::PhysicalProjection>, tidb_planner_core_base::PlanError> {
     use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
     use tidb_expression_aggregation::names;
     use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
@@ -882,7 +882,7 @@ pub fn convert_avg_for_mpp(
         let zero = Expression::Constant(tidb_expr::constant::Constant::new_zero());
         let condition = builder
             .new_function("eq", None, vec![count_expr.clone(), zero])
-            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
         let denominator = builder
             .new_function(
                 "case",
@@ -893,7 +893,7 @@ pub fn convert_avg_for_mpp(
                     count_expr,
                 ],
             )
-            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
         let quotient = builder
             .new_function(
                 "div",
@@ -905,7 +905,7 @@ pub fn convert_avg_for_mpp(
                 ),
                 vec![Expression::Column(sum_column), denominator],
             )
-            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
         projection_exprs.push(quotient);
     }
     for output_column in original_schema.columns.iter().skip(agg.agg_funcs.len()) {
@@ -1577,14 +1577,14 @@ pub fn new_partial_aggregate(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false, blacklist)
 }
@@ -1597,14 +1597,14 @@ pub fn new_partial_aggregate_mpp(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, true, blacklist)
 }
@@ -1615,14 +1615,14 @@ pub fn new_partial_aggregate_tidb(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiDb, false, blacklist)
 }
@@ -1634,14 +1634,14 @@ pub fn new_partial_aggregate_mpp_tidb(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, false, blacklist)
 }
@@ -1650,7 +1650,7 @@ fn new_partial_aggregate_with_mode(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
@@ -1658,7 +1658,7 @@ fn new_partial_aggregate_with_mode(
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiKv, is_mpp, blacklist)
 }
@@ -1667,7 +1667,7 @@ fn new_partial_aggregate_for_store(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     store: tidb_expr::infer_pushdown::PushDownStore,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -1676,7 +1676,7 @@ fn new_partial_aggregate_for_store(
         Option<crate::physical::PhysicalPlan>,
         crate::physical::PhysicalPlan,
     ),
-    crate::plan_base::PlanError,
+    tidb_planner_core_base::PlanError,
 > {
     use crate::physical::PhysicalPlan;
     let (agg_funcs, group_by_items, is_stream, mpp_run_mode) = match &plan {
@@ -1688,7 +1688,7 @@ fn new_partial_aggregate_for_store(
         ),
         PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true, None),
         _ => {
-            return Err(crate::plan_base::PlanError::internal(
+            return Err(tidb_planner_core_base::PlanError::internal(
                 "NewPartialAggregate over a non-aggregate plan",
             ))
         }
@@ -1939,7 +1939,7 @@ mod tests {
         let input = bigint_col(1);
         let avg = agg(names::AVG, &input, false);
         let output = Column::new(20, avg.base.ret_type.clone());
-        let plan_ids = crate::plan_base::PlanIdAllocator::new();
+        let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
         let column_ids = ColumnIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::new(&plan_ids, "HashAgg", 0);
         base.base

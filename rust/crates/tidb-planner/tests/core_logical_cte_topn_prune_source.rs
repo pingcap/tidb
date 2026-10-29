@@ -47,7 +47,7 @@ use tidb_planner::logical::cte::{CteClass, LogicalCTE};
 use tidb_planner::logical::rule::RuleContext;
 use tidb_planner::logical::table_dual::LogicalTableDual;
 use tidb_planner::logical::topn::LogicalTopN;
-use tidb_planner::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
+use tidb_planner_core_base::{PlanIdAllocator, PossiblePropertiesInfo};
 
 use tidb_planner::logical::{BaseLogicalPlan, LogicalPlan};
 

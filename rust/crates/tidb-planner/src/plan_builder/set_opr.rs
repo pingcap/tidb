@@ -97,7 +97,7 @@ use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
 use crate::logical::union_all::LogicalUnionAll;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, PlanBuilder};

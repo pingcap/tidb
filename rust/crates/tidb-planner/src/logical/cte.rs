@@ -66,7 +66,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_cor_columns;
 
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.CTEClass` (`logical_cte.go:51`): "holds the information and
@@ -219,7 +219,7 @@ impl LogicalCTE {
     #[must_use]
     pub fn push_down_topn(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<crate::logical::LogicalTopN>,
     ) -> LogicalPlan {
         let plan = LogicalPlan::CTE(self);

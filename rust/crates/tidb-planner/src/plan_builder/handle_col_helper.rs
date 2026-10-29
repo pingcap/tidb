@@ -37,7 +37,7 @@
 //! stack — a builder invariant violation. Both return `Option` here, so a
 //! caller that reaches them out of order gets a `None` it must handle rather
 //! than an unwind; the SELECT spine's call sites treat that as
-//! [`PlanError`](crate::plan_base::PlanError).
+//! [`PlanError`](tidb_planner_core_base::PlanError).
 //!
 //! # The element type
 //!

@@ -49,11 +49,11 @@ impl LogicalSelection {
     /// every order its child can provide.
     pub fn prepare_possible_properties(
         &mut self,
-        child: Option<&crate::plan_base::PossiblePropertiesInfo>,
-    ) -> crate::plan_base::PossiblePropertiesInfo {
+        child: Option<&tidb_planner_core_base::PossiblePropertiesInfo>,
+    ) -> tidb_planner_core_base::PossiblePropertiesInfo {
         let Some(child) = child else {
             self.base.set_has_tiflash(false);
-            return crate::plan_base::PossiblePropertiesInfo::default();
+            return tidb_planner_core_base::PossiblePropertiesInfo::default();
         };
         self.base.set_has_tiflash(child.has_tiflash);
         child.clone()

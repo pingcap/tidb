@@ -30,13 +30,13 @@ pub trait CatalogStatisticsLoad {
         &self,
         usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         context: &StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError>;
+    ) -> Result<(), tidb_planner_core_base::PlanError>;
 
     /// Go `SyncWaitStatsLoad`, at the later logical-rule position.
     fn wait_statistics_load(
         &self,
         context: &StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError>;
+    ) -> Result<(), tidb_planner_core_base::PlanError>;
 }
 
 impl CatalogStatisticsLoad for Catalog {
@@ -47,7 +47,7 @@ impl CatalogStatisticsLoad for Catalog {
         &self,
         usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         context: &StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
         let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
         if wait.is_zero() {
             // Go `CollectPredicateColumnsPoint` without sync load queues every
@@ -74,7 +74,7 @@ impl CatalogStatisticsLoad for Catalog {
     fn wait_statistics_load(
         &self,
         context: &StmtContext,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
         use tidb_stats_handle_metrics::{
             SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL,
         };
@@ -154,7 +154,7 @@ impl CatalogStatisticsLoad for Catalog {
             context.append_warning_parts(1105, message);
             return Ok(());
         }
-        Err(tidb_planner::plan_base::PlanError::internal(message))
+        Err(tidb_planner_core_base::PlanError::internal(message))
     }
 
 }

@@ -23,7 +23,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::physical::{IndexJoinCompareFilters, IndexJoinCompareOp};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
 use tidb_ranger::types::{Range, Ranges};
 

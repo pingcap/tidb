@@ -38,7 +38,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 use crate::find_best_task::LogicalJoinType;
 

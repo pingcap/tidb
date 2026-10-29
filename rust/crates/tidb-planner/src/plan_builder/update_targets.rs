@@ -23,7 +23,7 @@ use tidb_hack::go_to_lower;
 use super::PlanBuilder;
 use tidb_infoschema::table_source::TableSource;
 use super::dml_source::{dml_source_select, single_table_join};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// A table column an UPDATE writes, identified by the base table (as the
 /// statement spelled it) and the column's spelling in the read.

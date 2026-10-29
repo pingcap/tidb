@@ -140,7 +140,7 @@ use tidb_expr::schema::Schema;
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
 use crate::physical_table_reader::StoreType;
-use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
+use tidb_planner_core_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.ApplyGenFromXFDeCorrelateRuleFlag` (`base_logical_plan.go:38`).
@@ -867,7 +867,7 @@ impl LogicalPlan {
     pub fn push_down_topn_with(
         self,
         builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
         rewrite::push_down_topn_with_builder(builder, allocator, self, topn)
@@ -879,7 +879,7 @@ impl LogicalPlan {
     #[must_use]
     pub fn push_down_topn(
         self,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
         self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, allocator, topn)

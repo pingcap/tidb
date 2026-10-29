@@ -42,7 +42,7 @@
 use crate::cardinality::row_size::RowSizeColumn;
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use crate::physical::PhysicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::plan_cost_ver2::{
     exchange_receiver_cost, filter_cost, hash_agg_cost, hash_join_cost, index_join_cost,
     merge_join_cost, net_cost, projection_cost, sort_cost, stream_agg_cost, top_n_cost,
@@ -1197,7 +1197,7 @@ mod tests {
         BasePhysicalPlan, PhysicalCTE, PhysicalPlan, PhysicalPointGet, PhysicalTableDual,
         PhysicalUnionAll,
     };
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;

@@ -35,7 +35,7 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT, AGG_FUNC_FIRST_ROW};
 use super::apply::LogicalApply;
@@ -1481,7 +1481,7 @@ impl PartitionPruning for FixedPartitionPruning {
     fn partition_indices(
         &self,
         _source: &DataSource,
-    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+    ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
         Ok(self.0.clone())
     }
 }
@@ -1492,7 +1492,7 @@ impl PartitionPruning for UnexpectedPartitionPruning {
     fn partition_indices(
         &self,
         _source: &DataSource,
-    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+    ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
         panic!("constant-false conditions must become TableDual before partition pruning")
     }
 }

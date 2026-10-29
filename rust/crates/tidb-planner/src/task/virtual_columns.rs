@@ -10,7 +10,7 @@
 // limitations under the License.
 
 use crate::physical::PhysicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Go ExpandVirtualColumn at the cop-to-root boundary. Pass-through nodes
 /// retain their child's expanded schema; projections and aggregates retain

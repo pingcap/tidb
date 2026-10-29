@@ -46,7 +46,7 @@ use crate::cardinality::join::{
 };
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
 
 use super::fold::{Descend, OwnedRewrite, RewriteFailure, fold_owned};
@@ -1572,7 +1572,7 @@ enum PendingTopN {
 
 struct PushDownTopN<'a> {
     stash: Vec<PendingTopN>,
-    allocator: &'a crate::plan_base::PlanIdAllocator,
+    allocator: &'a tidb_planner_core_base::PlanIdAllocator,
     /// Go `SCtx().GetExprCtx()`: the builder the projection arm substitutes
     /// and constant-folds by-items through.
     builder: &'a dyn tidb_expr::expr_util::builder::FunctionBuilder,
@@ -1935,7 +1935,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
 #[cfg(test)]
 #[must_use]
 pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
-    let allocator = crate::plan_base::PlanIdAllocator::new();
+    let allocator = tidb_planner_core_base::PlanIdAllocator::new();
     push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, &allocator, plan, topn)
 }
 
@@ -1944,7 +1944,7 @@ pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> Lo
 #[must_use]
 pub fn push_down_topn_with_builder(
     builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
     plan: LogicalPlan,
     topn: Option<LogicalTopN>,
 ) -> LogicalPlan {
@@ -3587,7 +3587,7 @@ mod access_path_context_tests {
 
     #[test]
     fn logical_range_derivation_uses_current_statement_parameters() {
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let mut ty = FieldType::new(FieldTypeCode::LongLong);
         ty.add_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
         let mut column = tidb_expr::column::Column::new(1, ty.clone());
@@ -3654,7 +3654,7 @@ mod access_path_context_tests {
     fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
         use tidb_stats::table_statistics::ColumnStats;
         use tidb_planner_property::stats_info::HistColl;
-        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let columns = [1, 2].map(|id| {
             let mut column = tidb_expr::column::Column::new(id, ty.clone());

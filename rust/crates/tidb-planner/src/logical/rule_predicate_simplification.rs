@@ -30,7 +30,7 @@ use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition};
 
 use super::rule::{LogicalOptRule, RuleContext};
 use super::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PredicateType {
@@ -737,7 +737,7 @@ mod tests {
 
     use super::*;
     use crate::logical::rule_tests::test_context;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
 
     fn integer_type() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)

@@ -4549,6 +4549,7 @@ dependencies = [
  "tidb-plancodec",
  "tidb-planner",
  "tidb-planner-core-access",
+ "tidb-planner-core-base",
  "tidb-planner-core-cost",
  "tidb-planner-core-metrics",
  "tidb-planner-costusage",
@@ -5788,6 +5789,7 @@ dependencies = [
  "tidb-plancodec",
  "tidb-planner-cascades-base",
  "tidb-planner-core-access",
+ "tidb-planner-core-base",
  "tidb-planner-core-constraint",
  "tidb-planner-core-cost",
  "tidb-planner-coreusage",
@@ -5829,6 +5831,21 @@ name = "tidb-planner-core-access"
 version = "0.0.0"
 dependencies = [
  "tidb-proto",
+]
+
+[[package]]
+name = "tidb-planner-core-base"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-expression-aggregation",
+ "tidb-hack",
+ "tidb-planner-cascades-base",
+ "tidb-planner-property",
+ "tidb-plannererrors",
+ "tidb-terror",
 ]
 
 [[package]]

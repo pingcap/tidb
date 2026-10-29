@@ -41,7 +41,7 @@ use tidb_exprctx::NoColumns;
 
 use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::rule::{LogicalOptRule, RuleContext};
 use super::{
@@ -1124,7 +1124,7 @@ mod tests {
     use crate::logical::data_source::DataSource;
     use crate::logical::rule_tests::test_context;
     use crate::logical::LogicalPartitionUnionAll;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};

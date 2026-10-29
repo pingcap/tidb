@@ -24,7 +24,7 @@
 
 use crate::base_arms;
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
 use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;

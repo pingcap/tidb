@@ -33,7 +33,7 @@ use super::data_source::DataSource;
 use super::fold::{Descend, OwnedRewrite, fold_owned};
 use super::rule::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use tidb_stats::table_statistics::ColumnStatsUsage;
 
@@ -712,7 +712,7 @@ mod tests {
     use crate::logical::rule_tests::{test_context, TEST_BUILDER};
     use crate::logical::selection::LogicalSelection;
     use crate::logical::BaseLogicalPlan;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};

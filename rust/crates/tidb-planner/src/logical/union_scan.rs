@@ -34,7 +34,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_columns_from_expressions};
 
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `model.ExtraPhysTblID` (`pkg/meta/model/column.go`): the `_tidb_tid`
 /// pseudo-column that names the partition a row came from.

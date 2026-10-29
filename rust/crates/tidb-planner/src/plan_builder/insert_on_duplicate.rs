@@ -38,7 +38,7 @@ use super::insert_values::InsertTarget;
 use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};
 use crate::logical::{LogicalPlan, LogicalTableDual};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// What the planner knows of an `INSERT ... SELECT`'s source once it is
 /// built: the names of the (possibly extended) SELECT's outputs, and how many

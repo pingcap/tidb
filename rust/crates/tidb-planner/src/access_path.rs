@@ -171,7 +171,7 @@ pub(crate) fn derive_access_paths(
     no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
-) -> Result<(DerivedAccessPaths, Option<String>), crate::plan_base::PlanError> {
+) -> Result<(DerivedAccessPaths, Option<String>), tidb_planner_core_base::PlanError> {
     let table_path = source
         .enumerated_paths
         .iter()
@@ -1196,7 +1196,7 @@ pub fn get_possible_access_paths(
     connection_id: Option<u64>,
     repeatable_read: bool,
     is_for_update_read: bool,
-) -> Result<Vec<PossiblePath>, crate::plan_base::PlanError> {
+) -> Result<Vec<PossiblePath>, tidb_planner_core_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
     // a table with no explicit handle column is still an int-handle path,
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
@@ -1230,7 +1230,8 @@ pub fn get_possible_access_paths(
         }
         if check_latest_schema && latest_indexes.is_none() {
             let (indexes, changed) =
-                tidb_planner_util_domainmisc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;
+                tidb_planner_util_domainmisc::get_latest_index_info(latest_index_schema, table.table_id, 0)
+                    .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
             latest_indexes = indexes;
             check_latest_schema = changed;
         }
@@ -1296,7 +1297,7 @@ pub fn apply_table_index_hints(
     session: IndexLookupPushDownSession,
     tikv_in_isolation_read: bool,
     isolation_read_engines_value: &str,
-) -> Result<ResolvedIndexPaths, crate::plan_base::PlanError> {
+) -> Result<ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
     let table_path = public_paths
@@ -1431,7 +1432,7 @@ pub fn apply_table_index_hints(
                     result.unknown_comment_indexes.push(name.clone());
                     continue;
                 }
-                return Err(crate::plan_base::PlanError::from(
+                return Err(tidb_planner_core_base::PlanError::from(
                     tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST
                         .generate_with_stack_by_args(&[name.into(), (&table.table_name).into()]),
                 ));
@@ -1461,7 +1462,7 @@ pub fn apply_table_index_hints(
                     result.isolation_read_warnings.push(message);
                     continue;
                 }
-                return Err(crate::plan_base::PlanError::internal(message));
+                return Err(tidb_planner_core_base::PlanError::internal(message));
             }
             has_use_or_force = true;
             match path {

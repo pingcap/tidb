@@ -20,7 +20,7 @@ use tidb_intset::FastIntSet;
 
 use super::ProjectionField;
 use crate::logical::{LogicalPlan, LogicalProjection};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 fn contains_any_value(expr: &Expression) -> bool {
     match expr {

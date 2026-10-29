@@ -35,7 +35,7 @@
 //! though it embeds a `LogicalUnionAll`. So [`super::LogicalPlan::UnionAll`]
 //! alone is matched.
 
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};

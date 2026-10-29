@@ -41,7 +41,7 @@ use crate::logical::rule::flags;
 use crate::logical::rule::logical_optimize;
 use crate::logical::rule_tests::test_context;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** a TableSource implementation, which is what a downstream crate writes *****
 
@@ -578,7 +578,7 @@ fn an_in_subquery_hides_the_join_s_inner_column_name() {
 /// a generic evaluation failure.
 #[test]
 fn an_unknown_column_from_the_rewriter_keeps_its_clause() {
-    let error = crate::plan_base::PlanError::from(EvalError::UnknownColumnInClause(
+    let error = tidb_planner_core_base::PlanError::from(EvalError::UnknownColumnInClause(
         "t.b".to_owned(),
         "having clause",
     ));
@@ -1534,14 +1534,14 @@ fn test_select_offset_follows_the_query_block_stack() {
 #[test]
 fn test_rewrite_error_flattens_into_plan_error() {
     use crate::expression_rewriter::RewriteError;
-    use crate::plan_base::PlanError;
+    use tidb_planner_core_base::PlanError;
 
     // The rewriter's typed errors keep Go's MySQL identity (1241 here); a
     // builder-level message stays flat.
     let error: PlanError = RewriteError::Eval(EvalError::OperandColumns(2)).into();
     assert_eq!(
         error.kind(),
-        &crate::plan_base::PlanErrorKind::Eval(EvalError::OperandColumns(2))
+        &tidb_planner_core_base::PlanErrorKind::Eval(EvalError::OperandColumns(2))
     );
     let error: PlanError = RewriteError::FunctionBuild("cannot build".to_owned()).into();
     assert!(error.message().contains("cannot build"));
@@ -1549,7 +1549,7 @@ fn test_rewrite_error_flattens_into_plan_error() {
 
 #[test]
 fn an_eval_error_keeps_its_typed_plan_kind() {
-    use crate::plan_base::{PlanError, PlanErrorKind};
+    use tidb_planner_core_base::{PlanError, PlanErrorKind};
 
     let eval = EvalError::CollationCharsetMismatch {
         collation: "latin1_bin".to_owned(),

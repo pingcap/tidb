@@ -44,7 +44,7 @@ use tidb_expr::schema::Schema;
 use crate::logical::data_source::DataSource;
 use crate::logical::BaseLogicalPlan;
 use tidb_planner_property::SortItem;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `logicalop.LogicalIndexScan` (`logical_index_scan.go:32`).
 #[derive(Clone, Debug, Default)]

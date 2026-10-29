@@ -286,7 +286,7 @@ mod tests {
     use crate::logical::selection::LogicalSelection;
     use crate::logical::sort::LogicalSort;
     use crate::logical::{BaseLogicalPlan, LogicalPlan};
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
 
     use super::*;
 

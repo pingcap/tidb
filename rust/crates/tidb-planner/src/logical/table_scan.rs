@@ -37,7 +37,7 @@ use tidb_expr::schema::Schema;
 
 use crate::logical::data_source::DataSource;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `logicalop.LogicalTableScan` (`logical_table_scan.go:30`).
 #[derive(Clone, Debug, Default)]

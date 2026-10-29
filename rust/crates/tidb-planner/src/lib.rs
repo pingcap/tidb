@@ -104,7 +104,6 @@ pub mod partidx;
 pub mod physical;
 pub mod physical_plan_cache;
 pub mod physical_table_reader;
-pub mod plan_base;
 pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;

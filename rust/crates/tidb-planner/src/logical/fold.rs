@@ -94,7 +94,7 @@
 //! then returns `Err((plan, err))` — the plan is handed back even on the error
 //! path, which is the by-value equivalent of Go still holding its pointer.
 
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::LogicalPlan;
 

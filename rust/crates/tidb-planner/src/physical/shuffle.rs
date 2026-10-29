@@ -15,7 +15,7 @@
 //! The shuffle boundary from `physicalop/physical_shuffle.go`.
 
 use super::{BasePhysicalPlan, PhysicalPlan};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_expr::expression::Expression;
 
 /// Go `PartitionSplitterType`.
@@ -134,7 +134,7 @@ pub struct PhysicalShuffleReceiverStub {
 /// worker copies for a given source, as in Go buildShuffle.
 pub fn install_receivers(
     plan: &mut PhysicalPlan,
-    allocator: &crate::plan_base::PlanIdAllocator,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<(), PlanError> {
     if let PhysicalPlan::ShuffleReceiver(receiver) = plan {
         return install_receivers(&mut receiver.data_source, allocator);

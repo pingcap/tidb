@@ -328,7 +328,7 @@ mod tests {
     use crate::logical::join::LogicalJoin;
     use crate::logical::topn::LogicalTopN;
     use crate::logical::BaseLogicalPlan;
-    use crate::plan_base::PlanIdAllocator;
+    use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
     use tidb_datatype::{

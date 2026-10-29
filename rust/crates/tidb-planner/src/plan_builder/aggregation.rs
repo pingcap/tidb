@@ -135,7 +135,7 @@ use crate::expression_rewriter::ClauseCode;
 use crate::logical::aggregation::LogicalAggregation;
 use crate::logical::rule::flags;
 use crate::logical::LogicalPlan;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 // ***** the generic AST traversal every resolver below is written over *****
 

@@ -26,7 +26,7 @@ use tidb_planner::logical::aggregation::LogicalAggregation;
 use tidb_planner::logical::expand::{LogicalExpand, RollupGroupingSet};
 use tidb_planner::logical::join::LogicalJoin;
 use tidb_planner::logical::BaseLogicalPlan;
-use tidb_planner::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `&expression.Column{ID: n, Index: i, RetType: TypeLonglong}`.
 fn column(unique_id: i64, index: i64) -> Column {

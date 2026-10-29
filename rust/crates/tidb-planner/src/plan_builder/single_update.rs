@@ -22,7 +22,7 @@ use tidb_exprctx::Columns;
 use tidb_infoschema::table_source::TableSource;
 use super::update_build::WRITE_ROW_ID_REFUSED;
 use super::{find_field_name, PlanBuilder};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// One resolved `SET` item of a single-table UPDATE.
 #[derive(Clone, Debug)]

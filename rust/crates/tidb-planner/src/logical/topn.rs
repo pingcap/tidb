@@ -38,7 +38,7 @@ use crate::logical::limit::LogicalLimit;
 use crate::logical::sort::{get_possible_property_from_by_items, prune_by_items};
 use crate::logical::{schema_producer, BaseLogicalPlan, LogicalPlan};
 use tidb_planner_property::SortItem;
-use crate::plan_base::PossiblePropertiesInfo;
+use tidb_planner_core_base::PossiblePropertiesInfo;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalTopN` (`logical_top_n.go:30`).
@@ -196,7 +196,7 @@ impl LogicalTopN {
     pub fn attach_child(
         self,
         child: LogicalPlan,
-        allocator: &crate::plan_base::PlanIdAllocator,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
     ) -> LogicalPlan {
         if let LogicalPlan::TableDual(mut dual) = child {
             let num_dual_rows = dual.row_count as u64;

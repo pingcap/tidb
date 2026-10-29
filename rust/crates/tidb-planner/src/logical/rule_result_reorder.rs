@@ -56,7 +56,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
 use crate::base_arms;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::rule::{LogicalOptRule, RuleContext};

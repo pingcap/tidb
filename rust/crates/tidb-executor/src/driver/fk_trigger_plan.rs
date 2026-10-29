@@ -21,7 +21,7 @@ use tidb_table::kv_table::FkAction;
 use crate::StmtContext;
 use tidb_planner::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
 use tidb_planner::physical::FkTriggerNode;
-use tidb_planner::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 pub(crate) use tidb_planner::fk_plan::FkPlanSpec;
 

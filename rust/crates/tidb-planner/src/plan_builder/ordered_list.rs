@@ -26,7 +26,7 @@ use tidb_exprctx::Columns;
 use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
 use super::PlanBuilder;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// Go `buildOrderedList`'s `expression.BuildCastFunction` of an assignment to
 /// its target column.

@@ -37,7 +37,7 @@ use super::index_merge::{
 };
 use super::{AccessPathDerivationContext, IndexPathState};
 use crate::logical::DataSource;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;

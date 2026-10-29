@@ -35,7 +35,7 @@ use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::logical::{prepare_possible_properties, LogicalPlan};
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** the catalogue *****
 
@@ -832,7 +832,7 @@ fn grouping_sql_retains_source_validation_errors() {
             .build_select(&parse_select(&sql))
             .unwrap_err();
         assert!(
-            matches!(error.kind(), crate::plan_base::PlanErrorKind::Eval(actual) if *actual == expected),
+            matches!(error.kind(), tidb_planner_core_base::PlanErrorKind::Eval(actual) if *actual == expected),
             "{sql}: {error:?}"
         );
     }
@@ -1492,7 +1492,7 @@ fn multi_table_update_keeps_updated_aliases_and_what_set_reads() {
         let mut builder = harness.builder();
         let (plan, expressions, _) =
             builder.build_multi_update_dml_source(&select, update, false)?;
-        Ok::<_, crate::plan_base::PlanError>((
+        Ok::<_, tidb_planner_core_base::PlanError>((
             plan.schema().map(|schema| schema.columns.len()),
             expressions.len(),
             builder.update_tables,
@@ -1608,7 +1608,7 @@ fn insert_values_are_expressions_over_the_target() {
         let mut builder = harness.builder().with_insert_default_evaluator(&default);
         let target = builder.resolve_insert_target(&insert)?;
         let values = builder.build_insert_values(&insert, &target)?;
-        Ok::<_, crate::plan_base::PlanError>((target, values))
+        Ok::<_, tidb_planner_core_base::PlanError>((target, values))
     };
     let harness = Harness::new();
     let (target, values) = build(&harness, "INSERT INTO t (c, a) VALUES (1 + 1, DEFAULT), (3, 4)").unwrap();

@@ -32,7 +32,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
 use crate::common_plans::{Ddl, Plan, ShowNextRowID, Simple, SqlBindOp, SqlBindPlan};
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 use crate::show_schema::build_show_next_row_id;
 
 /// Go `base.PlanContext` as the statement builders reach the session beyond

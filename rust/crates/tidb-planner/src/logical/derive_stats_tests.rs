@@ -29,7 +29,7 @@ use tidb_expr::schema::Schema;
 
 use tidb_planner_core_cost::SELECTION_FACTOR;
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PlanIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_property::stats_info::StatsInfo;
 
 use super::apply::LogicalApply;
@@ -125,7 +125,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
     );
 }
 
-fn derive(plan: &mut LogicalPlan) -> Result<(StatsInfo, bool), crate::plan_base::PlanError> {
+fn derive(plan: &mut LogicalPlan) -> Result<(StatsInfo, bool), tidb_planner_core_base::PlanError> {
     plan.recursive_derive_stats(&[])
 }
 
@@ -133,7 +133,7 @@ fn derive_with_group_ndv_skew_ratio(
     plan: &mut LogicalPlan,
     ratio: f64,
     allocator: &PlanIdAllocator,
-) -> Result<(StatsInfo, bool), crate::plan_base::PlanError> {
+) -> Result<(StatsInfo, bool), tidb_planner_core_base::PlanError> {
     let mut context = super::rule_tests::test_context(allocator);
     context.group_ndv_skew_ratio = ratio;
     plan.recursive_derive_stats_with_context(&[], &context)

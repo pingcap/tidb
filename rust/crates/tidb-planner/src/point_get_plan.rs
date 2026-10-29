@@ -120,7 +120,7 @@ pub fn try_fast_point_physical_plan(
         catalog,
         current_db,
         ctx,
-        &crate::plan_base::PlanIdAllocator::new(),
+        &tidb_planner_core_base::PlanIdAllocator::new(),
     )?;
     // Go `TryFastPlan`'s deferred check on a SELECT: a session
     // `sql_select_limit` discards the fast plan so the ordinary planner can
@@ -144,7 +144,7 @@ pub fn try_fast_point_physical_plan_with_allocator(
     catalog: &Catalog,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, false,
@@ -159,7 +159,7 @@ pub fn try_fast_dml_point_physical_plan_with_allocator(
     catalog: &Catalog,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, true,
@@ -213,7 +213,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     catalog: &Catalog,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     dml_source: bool,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     let Some(of_warnings) = fast_point_lock_of_warnings(select, current_db) else {
@@ -234,7 +234,7 @@ fn build_fast_point_physical_plan(
     catalog: &Catalog,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
-    plan_ids: &crate::plan_base::PlanIdAllocator,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     dml_source: bool,
 ) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
     if ctx.stable_result_mode()

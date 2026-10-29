@@ -23,7 +23,7 @@ use tidb_hack::go_to_lower;
 use tidb_infoschema::table_source::TableSource;
 use super::delete_pruning::DeleteTarget;
 use super::PlanBuilder;
-use crate::plan_base::PlanError;
+use tidb_planner_core_base::PlanError;
 
 /// What Go's `collectTableName` records for the sources of a `FROM`.
 #[derive(Default)]
