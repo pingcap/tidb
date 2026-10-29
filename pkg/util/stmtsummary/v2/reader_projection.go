@@ -29,6 +29,20 @@ type stmtRecordProjection struct {
 	recordType reflect.Type
 }
 
+// Keep these bits in the same order as projectedTextFields.
+const (
+	projectedNormalizedSQL uint8 = 1 << iota
+	projectedBindingSQL
+	projectedSampleSQL
+	projectedPrevSQL
+	projectedSamplePlan
+	projectedSampleBinaryPlan
+	projectedPlanHint
+	projectedPlanCacheUnqualifiedLastReason
+	projectedAllText = projectedNormalizedSQL | projectedBindingSQL | projectedSampleSQL | projectedPrevSQL |
+		projectedSamplePlan | projectedSampleBinaryPlan | projectedPlanHint | projectedPlanCacheUnqualifiedLastReason
+)
+
 var projectedTextFields = [...]struct {
 	name     string
 	jsonName string
@@ -55,25 +69,25 @@ func makeStmtRecordProjection(columns []*model.ColumnInfo) *stmtRecordProjection
 	for _, column := range columns {
 		switch column.Name.O {
 		case DigestTextStr:
-			selected |= 1 << 0
+			selected |= projectedNormalizedSQL
 		case BindingDigestTextStr:
-			selected |= 1 << 1
+			selected |= projectedBindingSQL
 		case QuerySampleTextStr:
-			selected |= 1 << 2
+			selected |= projectedSampleSQL
 		case PrevSampleTextStr:
-			selected |= 1 << 3
+			selected |= projectedPrevSQL
 		case PlanStr:
 			// PLAN's error diagnostic also includes the sample SQL.
-			selected |= 1<<4 | 1<<2
+			selected |= projectedSamplePlan | projectedSampleSQL
 		case BinaryPlan:
-			selected |= 1 << 5
+			selected |= projectedSampleBinaryPlan
 		case PlanHint:
-			selected |= 1 << 6
+			selected |= projectedPlanHint
 		case PlanCacheUnqualifiedLastReasonStr:
-			selected |= 1 << 7
+			selected |= projectedPlanCacheUnqualifiedLastReason
 		}
 	}
-	if selected == 255 {
+	if selected == projectedAllText {
 		return nil
 	}
 	cached := &stmtRecordProjections[selected]
