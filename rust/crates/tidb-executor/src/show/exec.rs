@@ -734,7 +734,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             if !self.has_any_scoped_privilege(
                 &database,
                 &table_name,
-                tidb_privilege::column_privs_mask(),
+                tidb_privilege::all_column_privs_mask(),
             ) {
                 return Err(DriverError::from(
                     tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(

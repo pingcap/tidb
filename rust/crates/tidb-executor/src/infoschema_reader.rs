@@ -118,7 +118,7 @@ impl SchemaVisibility {
             table,
             match mask {
                 PrivMask::Any => tidb_privilege::any_priv_mask(),
-                PrivMask::Column => tidb_privilege::column_privs_mask(),
+                PrivMask::Column => tidb_privilege::all_column_privs_mask(),
                 PrivMask::Select => tidb_mysql::SelectPriv.bit(),
             },
         )

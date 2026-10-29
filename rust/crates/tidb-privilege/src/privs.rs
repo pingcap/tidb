@@ -101,19 +101,6 @@ pub fn show_tables_priv_mask() -> u64 {
     any_priv_mask() & !tidb_mysql::CreateTMPTablePriv.bit()
 }
 
-/// Go `mysql.AllColumnPrivs`, the four privileges
-/// `information_schema.COLUMNS` accepts (`infoschema_reader.go` around line
-/// 1095).
-#[must_use]
-pub fn column_privs_mask() -> u64 {
-    mask_of(&[
-        tidb_mysql::SelectPriv,
-        tidb_mysql::InsertPriv,
-        tidb_mysql::UpdatePriv,
-        tidb_mysql::ReferencesPriv,
-    ])
-}
-
 /// Go's `globalDBVisible` (`privileges/cache.go` line 60): the GLOBAL
 /// privileges that alone make every schema appear in `SHOW DATABASES`.
 ///
@@ -228,7 +215,8 @@ pub(crate) fn all_db_privs_mask() -> u64 {
         .fold(0u64, |mask, priv_| mask | priv_.bit())
 }
 
-/// The mask with every privilege in [`tidb_mysql::ALL_COLUMN_PRIVS`] set -- what
+/// The mask with every privilege in [`tidb_mysql::ALL_COLUMN_PRIVS`] set (Go
+/// `mysql.AllColumnPrivs`): what `information_schema.COLUMNS` accepts and what
 /// `GRANT ALL (col) ON db.t` expands to (captured: `ALL (a)` is accepted and
 /// prints as all four column privileges on `a`).
 pub fn all_column_privs_mask() -> u64 {
@@ -286,3 +274,4 @@ pub fn is_dynamic_privilege(name: &str) -> bool {
     let upper = tidb_hack::go_to_upper(name);
     DYNAMIC_PRIVS.iter().any(|registered| *registered == upper)
 }
+
