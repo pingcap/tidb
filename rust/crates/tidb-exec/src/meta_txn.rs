@@ -51,7 +51,7 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::{NewTxnError, NewTxnStorage, NewTxnTransaction, OptionKey, TxnOptionValue};
 
-use crate::cluster_catalog::prefix_scan_end;
+use tidb_cluster::cluster_catalog::prefix_scan_end;
 
 type LiveTransaction<S> = RealTransaction<S>;
 

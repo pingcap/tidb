@@ -1529,7 +1529,7 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
     if crate::domain::isolate_process_globals() {
         return;
     }
-    use tidb_exec::txn_summary::RECORDER;
+    use tidb_executor::txn_summary::RECORDER;
     RECORDER.set_min_duration(std::time::Duration::ZERO);
     for binary in [false, true] {
         for fail_commit in [false, true] {

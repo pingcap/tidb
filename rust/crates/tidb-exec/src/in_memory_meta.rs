@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
-use crate::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 /// An ordered in-memory image of the meta keys.
 #[derive(Clone, Debug, Default)]

@@ -28,7 +28,7 @@ use tidb_executor::load_stats::{
 use tidb_model::table_info::TableInfo;
 use tidb_stats::{JsonPredicateColumn, Table};
 
-use crate::cluster_catalog::ClusterCatalog;
+use tidb_cluster::cluster_catalog::ClusterCatalog;
 use crate::cluster_stats_load::ClusterStatsItem;
 
 /// One parsed LOAD STATS command retained for the cluster route.
@@ -337,7 +337,7 @@ mod tests {
     use tidb_stats::{JsonColumn, JsonHistogram};
 
     use super::*;
-    use crate::cluster_catalog::LoadedDatabase;
+    use tidb_cluster::cluster_catalog::LoadedDatabase;
 
     fn table() -> TableInfo {
         TableInfo {

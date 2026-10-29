@@ -26,14 +26,14 @@ use std::time::Duration;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::StoreClient;
 
-use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
-use crate::cluster_privilege_load::{
+use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
+use tidb_cluster::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
     ClusterPrivileges,
 };
-use crate::cluster_sysvar_load::load_cluster_sysvars;
-use crate::mysql_system_tables::SystemTableError;
-use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_cluster::cluster_sysvar_load::load_cluster_sysvars;
+use tidb_cluster::mysql_system_tables::SystemTableError;
+use tidb_cluster::real_tikv_catalog::TransactionMetaSnapshot;
 
 /// One snapshot's whole answer about who may connect to this cluster.
 #[derive(Clone, Debug)]
@@ -63,7 +63,7 @@ pub struct ClusterStartupVariables {
 ///
 /// The transaction is finished without writes, so the load leaves no locks
 /// behind and consumes exactly one PD timestamp — the same contract
-/// [`crate::real_tikv_catalog::load_catalog_from_cluster`] keeps.
+/// [`tidb_cluster::real_tikv_catalog::load_catalog_from_cluster`] keeps.
 pub fn load_accounts_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
@@ -178,7 +178,7 @@ fn load_sysvars_from_snapshot_with_catalog_cache<S: MetaSnapshot>(
         Some(cache) => {
             // Any DDL moves the schema version, so a catalog loaded at the
             // version this snapshot reads is this snapshot's catalog.
-            let version = crate::cluster_catalog::read_schema_version(snapshot)?;
+            let version = tidb_cluster::cluster_catalog::read_schema_version(snapshot)?;
             let cached = lock_catalog_cache(cache)
                 .as_ref()
                 .filter(|catalog| version != 0 && catalog.schema_version == version)
@@ -211,7 +211,7 @@ fn lock_catalog_cache(
 
 #[cfg(test)]
 mod sysvar_only_tests {
-    use crate::cluster_catalog::{ClusterCatalogError, MetaPairs};
+    use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaPairs};
 
     use super::*;
 

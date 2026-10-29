@@ -40,7 +40,7 @@ use std::collections::BTreeMap;
 use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{AnalyzeOptions, analyze_physical_table, analyze_table};
-use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 use tidb_exec::table_info_build::build_table_info;
 use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;

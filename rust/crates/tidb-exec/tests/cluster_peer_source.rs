@@ -17,7 +17,7 @@ use prost::Message;
 use std::sync::{mpsc, Arc, Mutex};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_domain::serverinfo::ServerInfo;
-use tidb_exec::cluster_peer::{peer_addresses, ClusterPeerClient};
+use tidb_executor::cluster_peer::{peer_addresses, ClusterPeerClient};
 use tidb_executor::StmtContext;
 use tidb_proto::{
     coprocessor,

@@ -31,7 +31,7 @@ use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use crate::system_row_write::{
+use tidb_cluster::system_row_write::{
     defaults_row, insert_row, store_clustered_row, RowEncodeError, NO, YES,
 };
 

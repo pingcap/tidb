@@ -119,7 +119,7 @@ impl Settings {
             update_global(|config| {
                 config.trx_summary.transaction_summary_capacity = capacity as usize
             });
-            tidb_exec::txn_summary::RECORDER.resize(capacity as usize);
+            tidb_executor::txn_summary::RECORDER.resize(capacity as usize);
         }
         if let Some(value) = get("transaction_id_digest_min_duration") {
             let duration = integer(value).map_err(|_| "illegal argument")?;
@@ -132,7 +132,7 @@ impl Settings {
             update_global(|config| {
                 config.trx_summary.transaction_id_digest_min_duration = duration as usize
             });
-            tidb_exec::txn_summary::RECORDER
+            tidb_executor::txn_summary::RECORDER
                 .set_min_duration(std::time::Duration::from_millis(duration as u64));
         }
         Ok(())
@@ -328,7 +328,7 @@ mod tests {
         if crate::isolate_process_globals() {
             return;
         }
-        use tidb_exec::txn_summary::RECORDER;
+        use tidb_executor::txn_summary::RECORDER;
         let settings = Settings::new(GlobalSysvars::default(), Arc::new(|_, _| Ok(())));
         settings
             .apply(

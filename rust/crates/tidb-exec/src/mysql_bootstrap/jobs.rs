@@ -25,7 +25,7 @@
 //! schema version and diff, and ends as a `mysql.tidb_ddl_history` row.
 //!
 //! This planner runs those statements through the same job planners a live
-//! owner uses ([`crate::cluster_ddl`]'s submission, `plan_insert_attempt` and
+//! owner uses ([`tidb_ddl::cluster_ddl`]'s submission, `plan_insert_attempt` and
 //! `plan_persisted_ddl_job_step`), against an overlay of the bootstrap's own
 //! writes, and returns the net write set. The one difference from Go is the
 //! transaction boundary: Go commits each job on its own and this node
@@ -48,14 +48,14 @@ use super::{
     BootstrapLayout, BootstrapSplits, BootstrapWrite, BOOTSTRAP_VIEWS, SYSTEM_DB,
     SYSTEM_DB_CHARSET, SYSTEM_DB_COLLATION, SYS_DB,
 };
-use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
-use crate::cluster_ddl::add_index::AddIndexSubmission;
-use crate::cluster_ddl::{
+use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
+use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, DdlStatement,
     PersistedDdlJobPlan, ResourceGroupUpdate,
 };
-use crate::ddl_job_submit::{plan_insert_attempt, JobSpec};
-use crate::real_tikv_ddl::prepare_persisted_job_submission;
+use tidb_ddl::ddl_job_submit::{plan_insert_attempt, JobSpec};
+use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 
@@ -339,7 +339,7 @@ fn parse_statement(sql: &str, default_schema: &str) -> Result<DdlStatement, Boot
     lower_ddl_with_context(
         &parsed,
         default_schema,
-        &(std::sync::Arc::new(bootstrap_context(sql)) as crate::cluster_ddl::DdlContext),
+        &(std::sync::Arc::new(bootstrap_context(sql)) as tidb_ddl::cluster_ddl::DdlContext),
     )
         .map_err(|error| BootstrapError::Job {
             statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
@@ -589,7 +589,7 @@ fn plan_with<S: MetaSnapshot>(
     overlay.show_all();
     let mut table_ids = Vec::with_capacity(table_names.len());
     if classic {
-        let stored = crate::cluster_catalog::load_database_tables(&mut overlay, database_id)?;
+        let stored = tidb_cluster::cluster_catalog::load_database_tables(&mut overlay, database_id)?;
         for name in &table_names {
             let info = stored
                 .iter()

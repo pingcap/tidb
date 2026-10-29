@@ -21,9 +21,9 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats::{StatsLockTable, StatsLockTransaction};
 use tidb_txnkv::transaction::BufferMutation;
 
-use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
-use crate::system_row_write::{
+use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_cluster::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use tidb_cluster::system_row_write::{
     defaults_row, delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
 };
 use tidb_hack::GoToLower;
@@ -471,7 +471,7 @@ fn datum_i64(value: Option<&Datum>, column: &str) -> Result<i64, ClusterStatsLoc
 #[cfg(test)]
 mod statement_tests {
     use super::*;
-    use crate::cluster_catalog::{
+    use tidb_cluster::cluster_catalog::{
         load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
     };
     use crate::cluster_stats_load::ClusterStatsLoader;

@@ -596,7 +596,7 @@ pub enum StatsReloadReadResult {
 /// One reload pass's source step.
 ///
 /// Kept as an injectable closure, the same way
-/// [`crate::catalog_watch::ReloadPass`] and `PrivilegeReloadRead` are, so the
+/// [`tidb_cluster::catalog_watch::ReloadPass`] and `PrivilegeReloadRead` are, so the
 /// thread's condvar/shutdown machinery can be tested without PD or TiKV.
 pub type StatsReloadRead =
     Box<dyn FnMut() -> Result<StatsReloadReadResult, String> + Send + 'static>;
@@ -604,7 +604,7 @@ pub type StatsReloadRead =
 /// Re-reads a node's tracked tables' statistics on a plain tick.
 ///
 /// See the module doc for why this has no watch/nudge half the way
-/// [`crate::catalog_watch::CatalogReloader`] does: Go's own stats refresh is
+/// [`tidb_cluster::catalog_watch::CatalogReloader`] does: Go's own stats refresh is
 /// tick-only.
 #[derive(Debug)]
 pub struct StatsReloader {

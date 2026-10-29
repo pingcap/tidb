@@ -33,19 +33,19 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
+use tidb_cluster::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use crate::cluster_stats_write::{
     plan_change_global_stats_id, plan_historical_stats_meta_lock,
     plan_historical_stats_meta_replace, plan_stats_meta_version_refresh, plan_update_stats_version,
 };
-use crate::cluster_table_storage::{
+use tidb_cluster::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::local_now_datetime6;
-use crate::mysql_system_tables::SystemTableError;
-use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_cluster::mysql_system_tables::SystemTableError;
+use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::stats_watch::{SharedStats, StatsSnapshot, TableStatsState};
 
 /// The two startup shapes selected by Go `Domain.initStats`.

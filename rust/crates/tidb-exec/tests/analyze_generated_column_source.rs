@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{analyze_table, AnalyzeOptions};
-use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 use tidb_exec::table_info_build::build_table_info;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::encode_table_row;

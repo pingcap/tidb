@@ -30,7 +30,7 @@ pub struct PeerService {
     session_factory: Arc<dyn Fn() -> Result<Session, String> + Send + Sync>,
     processes: ProcessRegistry,
     privileges: PrivilegeRegistry,
-    cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     broadcast_query: Option<BroadcastQueryRunner>,
 }
@@ -64,7 +64,7 @@ impl PeerService {
     /// Borrows the existing outgoing fleet independently of metadata projection.
     pub(crate) fn with_cluster_peer_client(
         mut self,
-        peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+        peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
     ) -> Self {
         self.cluster_peer = peer;
         self
@@ -845,12 +845,12 @@ mod tests {
     /// The outgoing peer client over an embedded store, whose TiDB requests
     /// cross the real socket through the mock store's redirector, as Go's
     /// mockstore tests reach a peer's status server.
-    fn peer_client() -> tidb_exec::cluster_peer::ClusterPeerClient {
+    fn peer_client() -> tidb_executor::cluster_peer::ClusterPeerClient {
         let (rpc, pd, _cluster) = tidb_unistore::mock::new(Vec::new()).unwrap();
         let store =
             tidb_unistore::mock::new_test_tikv_store(&rpc, pd, tikv_client::Config::default())
                 .unwrap();
-        tidb_exec::cluster_peer::ClusterPeerClient::new(store)
+        tidb_executor::cluster_peer::ClusterPeerClient::new(store)
     }
 
     #[derive(Default)]

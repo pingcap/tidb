@@ -111,7 +111,7 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
                     .map(tidb_datatype::Time::from_go_raw_like_go),
                 password_reuse_history: user.password_reuse_history,
                 password_reuse_time: user.password_reuse_time,
-                password_locking: tidb_exec::account_policy::PasswordLocking::from_attributes(
+                password_locking: tidb_privilege::account_policy::PasswordLocking::from_attributes(
                     user.user_attributes.as_deref(),
                 )
                 .expect("registry produces valid policy"),

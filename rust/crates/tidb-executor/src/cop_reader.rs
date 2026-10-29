@@ -1124,7 +1124,7 @@ pub fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // constant this used to hard-code; a string column's is its own, and it is
     // what tells TiKV which collator to compare and case-fold with. The
     // predicate lowering reads this very field back
-    // (`tidb_exec::wide_scan_selection`), so the leaf and the scan descriptor
+    // (`tidb_executor::wide_scan_selection`), so the leaf and the scan descriptor
     // cannot disagree about the collator by construction.
     let collation = if matches!(
         code,

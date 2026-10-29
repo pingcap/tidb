@@ -596,9 +596,9 @@ pub struct Session {
     /// session -- and reads back as an empty table.
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
-    cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
-    cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
-    cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
+    cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
+    cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
     /// The domain identity getter shared with server-info publication.
     server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
@@ -1331,7 +1331,7 @@ impl Session {
     /// Installs the process's shared internal HTTP configuration retriever.
     pub fn set_cluster_config_client(
         &mut self,
-        client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
+        client: Arc<tidb_executor::cluster_config::ClusterConfigClient>,
     ) {
         self.cluster_config = Some(client);
     }
@@ -1340,7 +1340,7 @@ impl Session {
     /// server-info and log cluster tables read through.
     pub fn set_cluster_diagnostics_client(
         &mut self,
-        client: Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+        client: Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>,
     ) {
         self.cluster_diagnostics = Some(client);
     }
@@ -1348,7 +1348,7 @@ impl Session {
     /// Installs the shared outgoing TiDB coprocessor capability.
     pub fn set_cluster_peer_client(
         &mut self,
-        client: Arc<tidb_exec::cluster_peer::ClusterPeerClient>,
+        client: Arc<tidb_executor::cluster_peer::ClusterPeerClient>,
     ) {
         self.cluster_peer = Some(client);
     }

@@ -17,9 +17,9 @@
 //! Go's `GetGlobalSysVar` reads this table lazily, one row at a time, through
 //! `GlobalVarAccessor`; this node instead reads the whole table once, at
 //! startup, into [`tidb_session::GlobalSysvars`] -- the same one-shot
-//! trade-off `tidb_exec::cluster_privilege_load` already documents for
+//! trade-off `tidb_cluster::cluster_privilege_load` already documents for
 //! accounts. A node that only does this one-shot startup load (no
-//! `tidb_exec::cluster_sysvar_write` seam wired in) never sees a peer's later
+//! `tidb_cluster::cluster_sysvar_write` seam wired in) never sees a peer's later
 //! `SET GLOBAL` until it restarts; the convergence node closes that gap for
 //! its OWN `SET GLOBAL` statements the same way `cluster_account_write`
 //! closes it for account statements -- see `tidb_server::cluster_sysvar_seam`
@@ -31,7 +31,7 @@
 //! `VARIABLE_VALUE` (see
 //! `tidb_metadef::system_tables_def::CREATE_GLOBAL_VARIABLES_TABLE`), the same
 //! shape `mysql.tidb` has -- and this reader is the same shape as
-//! `tidb_exec::cluster_privilege_load::read_bootstrap_state` for exactly that
+//! `tidb_cluster::cluster_privilege_load::read_bootstrap_state` for exactly that
 //! reason.
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};

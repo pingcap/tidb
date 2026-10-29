@@ -15,9 +15,9 @@
 //! A bootstrap is only real if this node's OWN readers can read it back.
 //!
 //! Every assertion here goes through the code paths that serve a live cluster —
-//! [`tidb_exec::cluster_catalog::load_cluster_catalog`],
-//! [`tidb_exec::cluster_privilege_load::read_bootstrap_state`], and
-//! [`tidb_exec::cluster_privilege_load::load_cluster_privileges`] — rather than
+//! [`tidb_cluster::cluster_catalog::load_cluster_catalog`],
+//! [`tidb_cluster::cluster_privilege_load::read_bootstrap_state`], and
+//! [`tidb_cluster::cluster_privilege_load::load_cluster_privileges`] — rather than
 //! inspecting the mutation list. Writing bytes only this test understands would
 //! prove nothing.
 //!
@@ -28,10 +28,10 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
-use tidb_exec::cluster_catalog::{
+use tidb_cluster::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_exec::cluster_privilege_load::{
+use tidb_cluster::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
 };
 use tidb_exec::mysql_bootstrap::{
@@ -294,7 +294,7 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     // The four jobs are the bootstrap's whole history.
     assert_eq!(BOOTSTRAP_VIEW_COUNT, 2);
     let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
-    let history = tidb_exec::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
+    let history = tidb_ddl::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
     assert_eq!(history.load(&mut store).unwrap().len(), 4);
     // Go draws an id per object and per job from 1: the views are 1 and 3,
     // `test` is 5, the jobs are 2, 4, 6 and 7.
@@ -405,7 +405,7 @@ fn the_next_gen_layout_is_what_go_creates() {
         store.pairs[&key::next_global_id_kv_key()],
         go["head"]["next_global_id"].to_string().into_bytes()
     );
-    let history = tidb_exec::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
+    let history = tidb_ddl::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
     let jobs = history.load(&mut store).unwrap();
     let expected = go["jobs"].as_array().unwrap();
     assert_eq!(jobs.len(), expected.len());

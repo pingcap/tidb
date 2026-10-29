@@ -742,15 +742,15 @@ pub fn unistore_cluster_session_stack_from(
         &config.global_config,
         None,
     ))
-    .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
+    .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,
     )))
     .with_cluster_config_client(Arc::new(
-        tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
+        tidb_executor::cluster_config::ClusterConfigClient::new(&config.cluster_security)
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
     .with_cluster_diagnostics_client(Arc::new(
-        tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
+        tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
     .with_stats_owner(stats_owner);

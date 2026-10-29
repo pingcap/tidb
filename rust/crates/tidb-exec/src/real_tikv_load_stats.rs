@@ -29,7 +29,7 @@ use std::time::Duration;
 use tidb_executor::load_stats::JsonTable;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_cluster::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use crate::cluster_load_stats::{
     load_cluster_stats_target, resolve_cluster_load_stats, ClusterLoadStatsTarget,
     LoadedStatsTable, ResolvedClusterLoadStats,
@@ -39,13 +39,13 @@ use crate::cluster_stats_write::{
     loaded_stats_item_statements, plan_delete_table_stats, plan_loaded_stats_item_statement,
     plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
 };
-use crate::cluster_table_storage::{
+use tidb_cluster::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::utc_now_timestamp;
-use crate::pessimistic_lock_error::LockSqlError;
-use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_cluster::pessimistic_lock_error::LockSqlError;
+use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_executor::cluster_storage::MutationBuffer;
 
 /// Go `StatsMetaHistorySourceLoadStats`.
@@ -107,7 +107,7 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
     historical_stats_enabled: bool,
     item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterLoadStatsReport, ClusterLoadStatsCommitError> {
     // One catalog for the whole statement, as Go plans every item against the
     // session's infoschema: the items only locate the `mysql.stats_*` tables,
@@ -177,7 +177,7 @@ fn commit_loaded_table<S: StoreClient>(
     timeout: Duration,
     historical_stats_enabled: bool,
     item_history_initialized: &(impl Fn(i64) -> bool + Sync),
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<usize, ClusterLoadStatsCommitError> {
     let mut item_count = 0;
     for item in table.columns.iter().chain(&table.indexes) {
@@ -319,7 +319,7 @@ fn commit_item<S: StoreClient>(
     table: &LoadedStatsTable,
     item: &ClusterStatsItem,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
@@ -360,7 +360,7 @@ fn commit_usage<S: StoreClient>(
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterLoadStatsCommitError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
@@ -399,7 +399,7 @@ fn commit_final_meta<S: StoreClient>(
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);

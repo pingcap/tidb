@@ -283,7 +283,7 @@ fn initialize_compute_topology(
     config: &tidb_config::config_tree::config::Config,
 ) -> Result<(), RunConfiguredNodeError> {
     if config.disaggregated_tiflash && config.use_auto_scaler {
-        tidb_exec::tiflash_compute::init_global_topo_fetcher(
+        tidb_util::tiflashcompute::init_global_topo_fetcher(
             &config.tiflash_compute_auto_scaler_type,
             &config.tiflash_compute_auto_scaler_addr,
             &config.auto_scaler_cluster_id,
@@ -300,8 +300,8 @@ struct StatementObservationCleanup;
 
 fn start_statement_observation() -> StatementObservationCleanup {
     let config = tidb_config::config_tree::config::get_global_config();
-    tidb_exec::txn_summary::RECORDER.resize(config.trx_summary.transaction_summary_capacity);
-    tidb_exec::txn_summary::RECORDER.set_min_duration(std::time::Duration::from_millis(
+    tidb_executor::txn_summary::RECORDER.resize(config.trx_summary.transaction_summary_capacity);
+    tidb_executor::txn_summary::RECORDER.set_min_duration(std::time::Duration::from_millis(
         config.trx_summary.transaction_id_digest_min_duration as u64,
     ));
     let instance = &config.instance;

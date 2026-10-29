@@ -39,14 +39,14 @@
 //! * **New row format.** Go's bootstrap DML runs before
 //!   `tidb_row_format_version` takes effect, so a real cluster's seed rows are
 //!   in the OLD (v1) format. This writes v2, which every reader — Go's own and
-//!   [`crate::mysql_system_tables`] — already handles, because there is no
+//!   [`tidb_cluster::mysql_system_tables`] — already handles, because there is no
 //!   reason to reproduce an accident of Go's startup ordering.
 //!
 //! **Idempotence is refusal, not merge.** If the `mysql` database is already
 //! present (found by name: no id is reserved for it under the classic kernel),
 //! [`plan_mysql_bootstrap`] fails and writes nothing: deciding what to do with
 //! a half-bootstrapped or already-bootstrapped cluster is
-//! [`crate::cluster_privilege_load::read_bootstrap_state`]'s job, and it reads
+//! [`tidb_cluster::cluster_privilege_load::read_bootstrap_state`]'s job, and it reads
 //! exactly the `mysql.tidb` marker this writes.
 
 use std::fmt;
@@ -62,9 +62,9 @@ use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
 use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
-use crate::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
-use crate::mysql_system_tables::SYSTEM_DB;
-use crate::system_row_write::codec_table_info;
+use tidb_cluster::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
+use tidb_cluster::mysql_system_tables::SYSTEM_DB;
+use tidb_cluster::system_row_write::codec_table_info;
 use crate::table_info_build::{build_table_info_with_context, DdlAdmissionError};
 
 mod jobs;
@@ -112,7 +112,7 @@ pub fn find_system_table<S: MetaSnapshot>(
             continue;
         }
         return Ok(
-            crate::cluster_catalog::load_database_tables(snapshot, database.id)?
+            tidb_cluster::cluster_catalog::load_database_tables(snapshot, database.id)?
                 .into_iter()
                 .find(|table| table.name.lowercase() == table_name),
         );
@@ -166,9 +166,9 @@ impl AdvisoryLockTable {
                 .ok_or_else(|| {
                     BootstrapError::Encode("advisory_locks has no lock_name column".to_owned())
                 })?;
-            let mut values = crate::system_row_write::RowValues::new();
+            let mut values = tidb_cluster::system_row_write::RowValues::new();
             values.insert(column.read().id, Datum::new_string(lock_name));
-            return crate::system_row_write::clustered_record_key(&self.info, &values)
+            return tidb_cluster::system_row_write::clustered_record_key(&self.info, &values)
                 .map_err(encode_error);
         }
         let primary = &self.codec_info.indices[self.primary_position];
@@ -295,7 +295,7 @@ pub struct BootstrapWrite {
     /// default BACKGROUND=(TASK_TYPES='stats')` (`onAlterResourceGroup`'s
     /// `infosync.ModifyResourceGroup`), which the committing caller makes
     /// before the meta record it pairs with is published.
-    pub resource_group_update: crate::cluster_ddl::ResourceGroupUpdate,
+    pub resource_group_update: tidb_ddl::cluster_ddl::ResourceGroupUpdate,
 }
 
 /// Plans the whole `mysql` schema, its seed rows, and the bootstrap marker.
@@ -369,7 +369,7 @@ pub fn plan_mysql_bootstrap_with_layout<S: MetaSnapshot>(
 fn bootstrap_default_resource_group() -> Result<
     (
         tidb_model::ResourceGroupInfo,
-        crate::cluster_ddl::ResourceGroupUpdate,
+        tidb_ddl::cluster_ddl::ResourceGroupUpdate,
     ),
     BootstrapError,
 > {
@@ -391,7 +391,7 @@ fn bootstrap_default_resource_group() -> Result<
     .map_err(encode_error)?;
     Ok((
         group,
-        crate::cluster_ddl::ResourceGroupUpdate::Modify(Box::new(proto)),
+        tidb_ddl::cluster_ddl::ResourceGroupUpdate::Modify(Box::new(proto)),
     ))
 }
 
@@ -597,7 +597,7 @@ mod source_tests {
     use tidb_datatype::{Time, TimeType};
 
     use super::*;
-    use crate::cluster_catalog::MetaPairs;
+    use tidb_cluster::cluster_catalog::MetaPairs;
 
     #[derive(Default)]
     struct Snapshot {
@@ -703,7 +703,7 @@ mod source_tests {
             stored(key::resource_group_kv_key(1)),
             vec![value::attach_magic_byte(GO_DEFAULT_GROUP.as_bytes())]
         );
-        let crate::cluster_ddl::ResourceGroupUpdate::Modify(proto) = &write.resource_group_update
+        let tidb_ddl::cluster_ddl::ResourceGroupUpdate::Modify(proto) = &write.resource_group_update
         else {
             panic!("the bootstrap modifies the resource manager's default group");
         };

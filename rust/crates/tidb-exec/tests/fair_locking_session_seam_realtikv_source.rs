@@ -33,9 +33,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
-use tidb_exec::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
-use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
-use tidb_exec::session_commit_protocol::bootstrap_commit_protocol;
+use tidb_cluster::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
+use tidb_cluster::real_tikv_read::ProductionReadProcessAuthority;
+use tidb_cluster::session_commit_protocol::bootstrap_commit_protocol;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const TABLE_ID: i64 = 528_492;

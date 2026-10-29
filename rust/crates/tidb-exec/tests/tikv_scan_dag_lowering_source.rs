@@ -16,7 +16,7 @@
 
 use prost::Message;
 use tidb_distsql::EncodeType as DistSqlEncodeType;
-use tidb_exec::dag_request::{
+use tidb_executor::dag_request::{
     construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
     DEFAULT_DIV_PRECISION_INCREMENT,
 };
@@ -102,7 +102,7 @@ fn timezone_and_empty_table_scan_match_go_wire() {
 
 #[test]
 fn aggregate_dag_accepts_global_functions_or_group_only_dedup() {
-    use tidb_exec::dag_request::construct_grouped_aggregate_read_only_dag_req_with_conditions;
+    use tidb_executor::dag_request::construct_grouped_aggregate_read_only_dag_req_with_conditions;
     use tidb_proto::tipb::{Expr, ExprType};
 
     let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));

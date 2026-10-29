@@ -38,7 +38,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_exec::cop_client::CopClient;
-use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_cluster::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };

@@ -380,7 +380,7 @@ impl Session {
             binding_digest: String::new(),
             kv_exec_counter: Default::default(),
             cop_stats: Arc::new(
-                tidb_exec::statement_cop_stats::StatementCopStats::with_ru_details(Arc::clone(
+                tidb_executor::statement_cop_stats::StatementCopStats::with_ru_details(Arc::clone(
                     &ru_details,
                 )),
             ),

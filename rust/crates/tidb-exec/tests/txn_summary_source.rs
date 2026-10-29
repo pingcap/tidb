@@ -14,7 +14,7 @@
 
 //! Source-backed tests for transaction-history summary metadata.
 
-use tidb_exec::txn_summary::TransactionSummaryCache;
+use tidb_executor::txn_summary::TransactionSummaryCache;
 
 #[test]
 fn transaction_summary_cache_preserves_fnv_and_lru_contract() {
@@ -64,7 +64,7 @@ fn transaction_summary_cache_resize_and_zero_capacity_match_source() {
 #[test]
 fn transaction_summary_recorder_preserves_duration_boundary_and_json_order() {
     use std::time::{Duration, UNIX_EPOCH};
-    use tidb_exec::txn_summary::TransactionHistoryRecorder;
+    use tidb_executor::txn_summary::TransactionHistoryRecorder;
     let recorder = TransactionHistoryRecorder::new(2, Duration::from_millis(500));
     let start = 1000 << 18;
     let values = vec![
@@ -116,7 +116,7 @@ fn transaction_summary_recorder_preserves_duration_boundary_and_json_order() {
 fn transaction_summary_recorder_serializes_concurrent_completion_and_resize() {
     use std::sync::Arc;
     use std::time::{Duration, UNIX_EPOCH};
-    use tidb_exec::txn_summary::TransactionHistoryRecorder;
+    use tidb_executor::txn_summary::TransactionHistoryRecorder;
     let recorder = Arc::new(TransactionHistoryRecorder::new(8, Duration::ZERO));
     std::thread::scope(|scope| {
         for i in 0..8 {

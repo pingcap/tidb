@@ -16,7 +16,7 @@
 //! constants, `FormatDuration` and `RuntimeStatsWithConcurrencyInfo`: what an
 //! executor registers on the statement's `RuntimeStatsColl`
 //! ([`crate::executor::ExecutorRuntimeStatsSource::register_stats`]). The
-//! collection itself and the cop-side stats live in `tidb_exec::runtime_stats`.
+//! collection itself and the cop-side stats live in `tidb_util::execdetails::runtime_stats`.
 
 pub mod exec_details;
 pub mod runtime_stats;

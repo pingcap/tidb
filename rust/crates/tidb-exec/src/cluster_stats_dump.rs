@@ -23,10 +23,10 @@ use tidb_executor::load_stats::{blocks_to_json_table, gen_json_table_from_stats,
 use tidb_model::table_info::TableInfo;
 use tidb_stats::{JsonPredicateColumn, JsonTable, Table, TIDB_GLOBAL_STATS};
 
-use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_predicate_column::load_column_stats_usage_for_table;
 use crate::cluster_stats_load::{column_types_of, ClusterStatsLoader};
-use crate::mysql_system_tables::{
+use tidb_cluster::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
 

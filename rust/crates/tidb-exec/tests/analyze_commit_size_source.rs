@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, Time, TimeType};
-use tidb_exec::cluster_catalog::{
+use tidb_cluster::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_predicate_column::ColumnStatsTimeInfo;
@@ -64,7 +64,7 @@ use tidb_exec::cluster_stats_write::{
     InsertTableStatsStatement, LoadedStatsItemStatement, StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
-use tidb_exec::mysql_system_tables::{
+use tidb_cluster::mysql_system_tables::{
     scan_system_table, SystemRow, SystemTableError, SystemTableView,
 };
 use tidb_exec::real_tikv_stats::{
@@ -132,7 +132,7 @@ fn apply_mutations(store: &mut MetaStore, mutations: &[tidb_txnkv::transaction::
 
 fn apply_historical_stats_meta_statements(
     store: &mut MetaStore,
-    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     table_id: i64,
     version: u64,
     source: &str,
@@ -159,7 +159,7 @@ fn apply_historical_stats_meta_statements(
 
 fn apply_historical_stats_data_statements(
     store: &mut MetaStore,
-    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     table_id: i64,
     json: &JsonTable,
     now: Time,
@@ -178,7 +178,7 @@ fn apply_historical_stats_data_statements(
 
 fn apply_stats_delta_statements(
     store: &mut MetaStore,
-    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     updates: &[DeltaUpdate],
     version: u64,
     now: Time,
@@ -194,7 +194,7 @@ fn apply_stats_delta_statements(
 
 fn apply_loaded_stats_item(
     store: &mut MetaStore,
-    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     table_id: i64,
     count: i64,
     item: &ClusterStatsItem,
@@ -238,7 +238,7 @@ fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
 /// The id the bootstrap gave `mysql.<name>`, read by name from the catalog
 /// (it is a reserved id under the next-gen kernel and an ordinary one under
 /// the classic kernel).
-fn system_table_id(catalog: &tidb_exec::cluster_catalog::ClusterCatalog, name: &str) -> i64 {
+fn system_table_id(catalog: &tidb_cluster::cluster_catalog::ClusterCatalog, name: &str) -> i64 {
     catalog
         .find_table("mysql", name)
         .unwrap_or_else(|| panic!("mysql.{name} exists"))

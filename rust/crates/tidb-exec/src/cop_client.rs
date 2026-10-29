@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_txnkv::RequestTypeSupportedChecker;
 
-use crate::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_cluster::real_tikv_read::RealTiKvSessionTransportFactory;
 
 /// Go `copr.CopClient` over the node's transport factory.
 pub struct CopClient<F> {

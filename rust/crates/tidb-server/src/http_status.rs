@@ -315,7 +315,7 @@ mod tests {
         let mut session = tidb_session::Session::new();
         session.set_server_info_syncer(syncer);
         session.set_cluster_diagnostics_client(Arc::new(
-            tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient::new(&Default::default())
+            tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient::new(&Default::default())
                 .unwrap(),
         ));
         let rows = |session: &mut tidb_session::Session, sql: &str| -> Vec<Vec<String>> {

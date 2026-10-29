@@ -48,7 +48,7 @@ use crate::cluster_analyze::{
     analyze_independent_index_with_progress, lower_analyze, resolve_analyze_options,
     AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
-use crate::cluster_catalog::load_cluster_catalog;
+use tidb_cluster::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
@@ -59,13 +59,13 @@ use crate::cluster_stats_write::{
     plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta,
     AnalyzeStatsWriteScope, StatsWritePlan,
 };
-use crate::cluster_table_storage::{
+use tidb_cluster::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
 };
 use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
-use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
-use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_cluster::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use tidb_cluster::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_hack::GoToLower;
 pub use tidb_executor::analyze::{sample_rate_reason, ApproximateTableCountProvider};
 
@@ -207,7 +207,7 @@ fn fail_analyze_jobs(jobs: &dyn AnalyzeJobLifecycle, pending: &[AnalyzeJobHandle
 /// `None` means the statement is not one -- including when it does not parse
 /// at all, so an unparsable statement is still reported by the query path
 /// that owns the same text. This mirrors
-/// [`crate::real_tikv_ddl::prepare_cluster_ddl_with_context`]: the server never parses SQL
+/// [`tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_with_context`]: the server never parses SQL
 /// itself, so the dependency direction stays
 /// `tidb-server -> tidb-exec -> tidb-txnkv`.
 pub fn prepare_cluster_analyze(
@@ -742,7 +742,7 @@ fn select_index_tasks(
 /// missing fails later in its own way; it keeps the flush.
 #[must_use]
 pub fn analyze_builds_column_task(
-    catalog: &crate::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     statement: &AnalyzeStatement,
 ) -> bool {
     let Ok(table) = find_statement_table(catalog, statement) else {
@@ -842,7 +842,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     if !resolved.statement.persist_options {
         return Ok(());
@@ -884,7 +884,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
 }
 
 fn find_statement_table<'catalog>(
-    catalog: &'catalog crate::cluster_catalog::ClusterCatalog,
+    catalog: &'catalog tidb_cluster::cluster_catalog::ClusterCatalog,
     statement: &AnalyzeStatement,
 ) -> Result<&'catalog tidb_model::table_info::TableInfo, ClusterAnalyzeError> {
     catalog
@@ -1006,7 +1006,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
         Vec::new()
@@ -1369,7 +1369,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
     stats_lease: Duration,
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -1591,7 +1591,7 @@ fn record_analyze_history<S: StoreClient>(
     table_id: i64,
     version: u64,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) {
     let result = (|| -> Result<(), ClusterAnalyzeError> {
         let transaction = SessionTransaction::begin_pessimistic(
@@ -1673,7 +1673,7 @@ struct AsyncGlobalItem<'a> {
     partitions: Vec<&'a AsyncGlobalPartition>,
 }
 
-fn prepare_async_global_partitions<S: crate::cluster_catalog::MetaSnapshot>(
+fn prepare_async_global_partitions<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
     loader: &ClusterStatsLoader,
     definitions: impl IntoIterator<Item = (i64, String)>,
@@ -1739,7 +1739,7 @@ fn merge_global_items_async<S, TZ>(
     killer: &SqlKiller,
 ) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
 where
-    S: crate::cluster_catalog::MetaSnapshot,
+    S: tidb_cluster::cluster_catalog::MetaSnapshot,
     TZ: TimeZone + Sync,
 {
     let mut items = Vec::with_capacity(column_ids.len() + index_ids.len());
@@ -2181,7 +2181,7 @@ fn commit_global_stats_item<S: StoreClient>(
     item: ClusterStatsItem,
     timeout: Duration,
     stats_lease: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2254,7 +2254,7 @@ fn refresh_stats_meta_version<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2297,7 +2297,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     killer: &SqlKiller,
     resource_group: &str,
     build_diagnostics: &[(bool, u16, String)],
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin()
@@ -2502,7 +2502,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2596,7 +2596,7 @@ fn finish_analyze_save<S: StoreClient>(
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
         refresh_stats_meta_version(opener, table_id, timeout, row_ids)
@@ -2607,9 +2607,9 @@ fn finish_analyze_save<S: StoreClient>(
     Ok(version)
 }
 
-fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
+fn selected_columns<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &crate::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>
@@ -2650,9 +2650,9 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
     }
 }
 
-fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
+fn selected_columns_for_choice<S: tidb_cluster::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &crate::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_cluster::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     choice: &AnalyzeColumnChoice,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), crate::cluster_stats_write::StatsWriteError>

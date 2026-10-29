@@ -31,19 +31,19 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 use tidb_datatype::{Time, TimeType};
-use tidb_exec::cluster_catalog::{
+use tidb_cluster::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_exec::cluster_ddl::add_index::AddIndexSubmission;
-use tidb_exec::cluster_ddl::{
+use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
+use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, PersistedDdlJobPlan,
 };
-use tidb_exec::ddl_history_table::DdlHistoryTable;
-use tidb_exec::ddl_job_submit::{plan_insert_attempt, JobSpec};
+use tidb_ddl::ddl_history_table::DdlHistoryTable;
+use tidb_ddl::ddl_job_submit::{plan_insert_attempt, JobSpec};
 use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapLayout, BootstrapWrite,
 };
-use tidb_exec::real_tikv_ddl::prepare_persisted_job_submission;
+use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_meta::key;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
@@ -377,7 +377,7 @@ fn the_first_user_table_is_117() {
 /// the tables the DDL owner and the advisory locks use.
 #[test]
 fn a_keyspace_of_either_layout_is_served_by_name() {
-    use tidb_exec::cluster_privilege_load::{
+    use tidb_cluster::cluster_privilege_load::{
         load_cluster_privileges, read_bootstrap_state, read_system_tz,
     };
 
@@ -396,7 +396,7 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
             panic!("a bootstrap seeds exactly one account");
         };
         assert_eq!((root.user.as_str(), root.host.as_str()), ("root", "%"));
-        tidb_exec::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
+        tidb_ddl::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
         DdlHistoryTable::locate(&catalog).expect("mysql.tidb_ddl_history");
 
         let advisory = tidb_exec::mysql_bootstrap::AdvisoryLockTable::locate(&mut store)
@@ -465,6 +465,6 @@ fn a_second_classic_bootstrap_is_refused() {
 }
 
 /// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
-fn ddl_context(context: &tidb_executor::StmtContext) -> tidb_exec::cluster_ddl::DdlContext {
+fn ddl_context(context: &tidb_executor::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
     std::sync::Arc::new(context.clone())
 }

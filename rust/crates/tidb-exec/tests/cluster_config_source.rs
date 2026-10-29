@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 use tidb_domain::cluster_topology::ClusterServer;
-use tidb_exec::cluster_config::ClusterConfigClient;
+use tidb_executor::cluster_config::ClusterConfigClient;
 
 // Accept every expected concurrent request before responding in reverse order.
 // The deadline makes an accidentally serial fetch fail instead of hanging.

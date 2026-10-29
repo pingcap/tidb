@@ -803,7 +803,7 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
     info.static_info.status_port = usize::from(address.port());
     let syncer = Arc::new(Syncer::new(info, None));
     let client =
-        Arc::new(tidb_exec::cluster_config::ClusterConfigClient::new(&Default::default()).unwrap());
+        Arc::new(tidb_executor::cluster_config::ClusterConfigClient::new(&Default::default()).unwrap());
     let mut session = Session::new();
     session.set_server_info_syncer(syncer.clone());
     session.set_cluster_config_client(client.clone());

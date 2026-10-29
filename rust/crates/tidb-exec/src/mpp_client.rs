@@ -215,12 +215,12 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
         &self,
         auto_scaler: bool,
         memory: &Arc<dyn MppContext>,
-    ) -> Result<Vec<String>, crate::tiflash_compute::TopologyError> {
+    ) -> Result<Vec<String>, tidb_util::tiflashcompute::TopologyError> {
         let mut budget = RegionBackoffBudget::new(std::time::Duration::from_secs(20));
         loop {
             mpp_memory_error(memory.as_ref()).map_err(|error| error.to_string())?;
             let stores = if auto_scaler {
-                crate::tiflash_compute::global_topo_fetcher()
+                tidb_util::tiflashcompute::global_topo_fetcher()
                     .ok_or_else(|| {
                         "TiFlash compute topology fetcher is not initialized".to_owned()
                     })?
@@ -438,10 +438,10 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
 fn compute_region_tasks(
     regions: Vec<tidb_proto::coprocessor::RegionInfo>,
     stores: &[String],
-    policy: crate::tiflash_compute::DispatchPolicy,
+    policy: tidb_util::tiflashcompute::DispatchPolicy,
     start: usize,
 ) -> Result<Vec<MppStoreTask>, String> {
-    use crate::tiflash_compute::DispatchPolicy;
+    use tidb_util::tiflashcompute::DispatchPolicy;
     if stores.is_empty() {
         return Err("tiflash_compute node is unavailable".into());
     }
@@ -2107,7 +2107,7 @@ mod mpp_read_batch_tests {
 #[cfg(test)]
 mod compute_topology_batch_tests {
     use super::*;
-    use crate::tiflash_compute::DispatchPolicy;
+    use tidb_util::tiflashcompute::DispatchPolicy;
 
     #[test]
     fn compute_topology_batch_region_grouping() {

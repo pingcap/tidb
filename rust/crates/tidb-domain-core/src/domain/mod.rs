@@ -673,9 +673,9 @@ pub struct Domain {
     /// (auto-analyze's `NextConnID`).
     connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
     pub cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
-    pub cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
-    pub cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
-    pub cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    pub cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
+    pub cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
+    pub cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     pub global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -774,7 +774,7 @@ pub struct Domain {
 
 impl Domain {
     /// The outgoing peer fleet, when the node has one.
-    pub fn cluster_peer(&self) -> Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>> {
+    pub fn cluster_peer(&self) -> Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>> {
         self.cluster_peer.clone()
     }
 
@@ -1856,7 +1856,7 @@ impl Domain {
     /// Binds outgoing cluster administration to the process RPC owner.
     pub fn with_cluster_peer_client(
         mut self,
-        client: Arc<tidb_exec::cluster_peer::ClusterPeerClient>,
+        client: Arc<tidb_executor::cluster_peer::ClusterPeerClient>,
     ) -> Self {
         self.cluster_peer = Some(client);
         self
@@ -1866,7 +1866,7 @@ impl Domain {
     #[must_use]
     pub fn with_cluster_config_client(
         mut self,
-        client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
+        client: Arc<tidb_executor::cluster_config::ClusterConfigClient>,
     ) -> Self {
         self.cluster_config = Some(client);
         self
@@ -1877,7 +1877,7 @@ impl Domain {
     #[must_use]
     pub fn with_cluster_diagnostics_client(
         mut self,
-        client: Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+        client: Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>,
     ) -> Self {
         self.cluster_diagnostics = Some(client);
         self

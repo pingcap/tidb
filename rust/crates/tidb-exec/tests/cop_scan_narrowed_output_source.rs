@@ -26,7 +26,7 @@ use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_exec::cop_client::CopClient;
 use tidb_executor::cop_reader::open_cop_scan;
-use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
+use tidb_cluster::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_executor::remote_scan::{
     PushdownScanColumn, PushdownScanRequest, PushdownStatementContext,
 };

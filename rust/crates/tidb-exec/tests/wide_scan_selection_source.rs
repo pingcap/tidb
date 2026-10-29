@@ -18,12 +18,12 @@
 use prost::Message;
 use tidb_datatype::{Datum, Decimal, FieldType, FieldTypeCode, Time, TimeType};
 use tidb_distsql::EncodeType as DistSqlEncodeType;
-use tidb_exec::dag_request::{
+use tidb_executor::dag_request::{
     construct_aggregate_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
-use tidb_exec::wide_scan_selection::{
+use tidb_executor::wide_scan_selection::{
     accepts, wide_scan_selection_conditions, WideScanSelectionError,
 };
 use tidb_executor::predicate_pushdown::{
@@ -1324,13 +1324,13 @@ fn timestamp_constants_follow_the_request_zone_through_nested_predicates() {
     )
     .unwrap();
     let predicate = ScanPredicate::Not(Box::new(ScanPredicate::Builtin(call)));
-    assert!(tidb_exec::wide_scan_selection::accepts_in(
+    assert!(tidb_executor::wide_scan_selection::accepts_in(
         &predicate,
         &[],
         &zone
     ));
     let encoded =
-        tidb_exec::wide_scan_selection::wide_scan_selection_conditions_in(&[predicate], &[], &zone)
+        tidb_executor::wide_scan_selection::wide_scan_selection_conditions_in(&[predicate], &[], &zone)
             .unwrap();
     let literal = &encoded[0].children[0].children[0];
     assert_eq!(

@@ -84,7 +84,7 @@ fn add_statement_summary(digest: &str, normalized_sql: &str) {
         compile_latency: Duration::ZERO,
         stmt_ctx: Arc::new(stmt_ctx),
         cop_tasks: None,
-        exec_detail: tidb_exec::exec_details::ExecDetails::default(),
+        exec_detail: tidb_util::execdetails::exec_details::ExecDetails::default(),
         mem_max: 0,
         mem_arbitration: 0.0,
         disk_max: 0,

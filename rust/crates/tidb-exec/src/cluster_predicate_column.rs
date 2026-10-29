@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use tidb_datatype::{Datum, SessionTimeZone, Time, TimeType, DEFAULT_FSP};
 use tidb_model::TableItemID;
 
-use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::mysql_system_tables::{
+use tidb_cluster::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_cluster::mysql_system_tables::{
     scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
 
