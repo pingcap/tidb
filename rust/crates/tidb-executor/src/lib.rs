@@ -120,7 +120,6 @@ use tidb_distsql::split_ranges_across_int64_boundary;
 #[cfg(test)]
 mod hash_agg_spill_tests;
 pub mod index_merge_reader;
-pub mod join;
 pub mod import_into_options;
 pub mod kv_table;
 pub mod limit;
@@ -135,7 +134,6 @@ pub mod mem_table_retrieval;
 use tidb_kv::mpp_query;
 #[cfg(test)]
 mod tests_mpp_query;
-pub(crate) mod merge_join_plan;
 use tidb_table::partition_routing;
 mod physical_cte;
 pub mod select_lock;
@@ -234,7 +232,7 @@ use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
-pub use join::{JoinExec, JoinKind};
+use tidb_executor_join::join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
 use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_table::kv_table::{FkAction, KvColumn, KvTable, RowDecodeContext, TableCharset};

@@ -31,7 +31,7 @@ use tidb_expr::schema::Schema;
 
 use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
-use crate::join::{IndexLookupPlan, JoinExec, JoinKind};
+use tidb_executor_join::join::{IndexLookupPlan, JoinExec, JoinKind};
 use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::KvIndex;
 use tidb_table::kv_table::KvColumn;
@@ -256,7 +256,7 @@ fn both_ways(
             lookup_is_left: false,
             probe_keys,
             probe_key_domains: Vec::new(),
-            source: crate::join::IndexLookupSource::Leaf(lookup_source(table, object, inner_width)),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(table, object, inner_width))),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
@@ -393,7 +393,7 @@ fn a_complete_common_handle_probe_reads_one_record() {
         LookupProbePart::Dynamic(1),
     ]);
     source
-        .set_probes(crate::access_path::IndexJoinProbes {
+        .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1), Datum::Int(2)]],
             bound_values: Vec::new(),
         })
@@ -414,7 +414,7 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
     source
-        .set_probes(crate::access_path::IndexJoinProbes {
+        .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1)]],
             bound_values: Vec::new(),
         })
@@ -438,7 +438,7 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
     source
-        .set_probes(crate::access_path::IndexJoinProbes {
+        .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1)]],
             bound_values: Vec::new(),
         })
@@ -526,7 +526,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
             lookup_is_left: false,
             probe_keys: vec![0],
             probe_key_domains: Vec::new(),
-            source: crate::join::IndexLookupSource::Leaf(source),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(source)),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
@@ -568,7 +568,7 @@ fn index_join_static_templates_preserve_tuple_identity() {
         LookupProbePart::Dynamic(0),
     ]);
     source
-        .set_probes(crate::access_path::IndexJoinProbes {
+        .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(9)]],
             bound_values: vec![],
         })

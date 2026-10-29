@@ -56,6 +56,7 @@ use crate::KvTableReader;
 #[allow(unused_imports)]
 use crate::RowDecodeContextExt;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use tidb_executor_join::index_lookup::{IndexJoinProbes, LookupProbeBound, SharedIndexJoinProbes};
 use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
@@ -125,21 +126,6 @@ impl PointLock {
     }
 }
 
-/// Probe values shared by a composite index-join inner subtree and its
-/// target table leaf. The outer join publishes one batch at a time; the leaf
-/// refreshes its lookup source lazily when the generation changes.
-#[derive(Debug, Default)]
-pub(crate) struct SharedIndexJoinProbes {
-    probes: IndexJoinProbes,
-    generation: u64,
-}
-
-impl SharedIndexJoinProbes {
-    pub(crate) fn publish(&mut self, probes: IndexJoinProbes) {
-        self.probes = probes;
-        self.generation = self.generation.wrapping_add(1);
-    }
-}
 
 /// What a statement declares about its whole read, before its first read
 /// happens.
@@ -4955,26 +4941,7 @@ impl LookupProbeBoundOp {
     }
 }
 
-/// One outer-derived comparison against the object-key column just past the
-/// probe prefix -- Go's `ColWithCmpFuncManager` row. Where Go rebuilds a
-/// dynamic range for the compared key column per lookup content
-/// (`BuildRangesByRow` -> the range's last slot), this tier evaluates `arg`
-/// over each outer row and extends that probe's point range with the result.
-#[derive(Clone, Debug)]
-pub(crate) struct LookupProbeBound {
-    /// The compared expression, evaluated over one OUTER child's output row:
-    /// every `Column.index` is already an outer-child offset.
-    pub(crate) arg: Expression,
-}
 
-/// One outer batch's deduped probes plus the per-probe bound values the join
-/// evaluated alongside them. `bound_values` is empty when the decision carries
-/// no bounds; otherwise it aligns 1:1 with `keys`.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct IndexJoinProbes {
-    pub(crate) keys: Vec<Vec<Datum>>,
-    pub(crate) bound_values: Vec<Vec<Datum>>,
-}
 
 /// What a lane thread needs to rebuild one forked common-handle lookup task
 /// for an outer batch: the immutable lookup description without the
@@ -5429,9 +5396,9 @@ impl IndexJoinLookupExec {
             return Ok(());
         };
         let shared = shared.lock().unwrap();
-        if self.shared_generation != shared.generation {
-            self.set_probes(shared.probes.clone())?;
-            self.shared_generation = shared.generation;
+        if self.shared_generation != shared.generation() {
+            self.set_probes(shared.probes().clone())?;
+            self.shared_generation = shared.generation();
         }
         Ok(())
     }
@@ -8944,5 +8911,30 @@ pub(crate) fn aggregate_admits(
         Agg::Global { functions, .. } => functions.iter().all(|function| {
             admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
         }),
+    }
+}
+
+impl tidb_executor_join::index_lookup::IndexJoinLookup for IndexJoinLookupExec {
+    fn set_probes(&mut self, probes: IndexJoinProbes) -> Result<(), ExecError> {
+        IndexJoinLookupExec::set_probes(self, probes)
+    }
+
+    fn fork_template(&self) -> Option<Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>> {
+        IndexJoinLookupExec::fork_template(self)
+            .map(|template| Box::new(template) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>)
+    }
+
+    fn add_produced(&self, rows: u64) {
+        IndexJoinLookupExec::add_produced(self, rows)
+    }
+}
+
+impl tidb_executor_join::index_lookup::IndexJoinLookupFork for LookupForkTemplate {
+    fn open(
+        &self,
+        probes: IndexJoinProbes,
+    ) -> Result<Result<Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>, IndexJoinProbes>, ExecError> {
+        Ok(LookupForkTemplate::open(self, probes)?
+            .map(|task| Box::new(task) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>))
     }
 }

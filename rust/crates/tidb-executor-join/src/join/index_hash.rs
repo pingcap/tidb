@@ -16,7 +16,7 @@ use super::*;
 type OuterHashMap = std::collections::HashMap<
     u64,
     OuterBucket,
-    std::hash::BuildHasherDefault<tidb_executor_join::hash_join::IdentityU64Hasher>,
+    std::hash::BuildHasherDefault<crate::hash_join::IdentityU64Hasher>,
 >;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,7 +109,7 @@ impl Iterator for OuterRows<'_> {
 }
 
 #[derive(Clone)]
-pub(super) struct IndexHashOutput {
+pub struct IndexHashOutput {
     pub kind: JoinKind,
     pub outer_is_left: bool,
     pub ordered: bool,
@@ -122,7 +122,7 @@ pub(super) struct IndexHashOutput {
     pub output_types: Vec<FieldType>,
 }
 
-pub(super) struct IndexHashState {
+pub struct IndexHashState {
     buckets: OuterHash,
     ordered: Option<Vec<Vec<RowPtr>>>,
     matched: Vec<bool>,
@@ -212,7 +212,7 @@ impl IndexHashOutput {
         state.scratch.append_partial_row(left.len(), right);
         Ok(super::fold_verdict(
             self.kind,
-            tidb_executor_join::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?,
+            crate::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?,
         ))
     }
 
@@ -592,7 +592,7 @@ impl IndexHashState {
     }
 }
 
-pub(super) struct IndexHashChunk {
+pub struct IndexHashChunk {
     pub chunk: Chunk,
     pub row: usize,
     bytes: i64,
@@ -627,7 +627,7 @@ impl Drop for IndexHashChunk {
 
 /// A bounded result channel transfers each filled chunk instead of retaining
 /// an entire task's fanout. Dropping the consumer releases blocked senders.
-pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
+pub fn send_index_task<C: Columns + Send + Sync + 'static>(
     shared: &Arc<IndexTaskShared<C>>,
     outer: OuterBatch,
     sender: IndexResultSender,
@@ -661,7 +661,7 @@ pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
         reader = Some(task);
         let (inner, inner_rows, done) = fetch_index_inner(
             shared,
-            reader.as_mut().expect("opened reader"),
+            reader.as_mut().expect("opened reader").as_mut(),
             shared
                 .hash_output
                 .as_ref()
@@ -686,14 +686,14 @@ pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
         outcome,
         sender,
         Some(built),
-        reader.as_mut().map(|reader| reader as &mut dyn Executor),
+        reader.as_mut().map(|reader| reader.as_mut() as &mut dyn Executor),
     );
     if let Some(reader) = reader.as_mut() {
         let _ = reader.close();
     }
 }
 
-pub(super) fn send_prepared_index_task<C: Columns>(
+pub fn send_prepared_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
     outcome: IndexTaskOutcome,
     sender: IndexResultSender,
@@ -701,7 +701,7 @@ pub(super) fn send_prepared_index_task<C: Columns>(
     send_prepared_with_hash(shared, outcome, sender, None, None);
 }
 
-pub(super) fn send_prepared_with_hash<C: Columns>(
+pub fn send_prepared_with_hash<C: Columns>(
     shared: &IndexTaskShared<C>,
     outcome: IndexTaskOutcome,
     sender: IndexResultSender,
@@ -1023,7 +1023,7 @@ mod tests {
 
 /// Go's shared resultCh. Task completion, not chunk delivery, releases an
 /// admission slot and its outer-row charge.
-pub(super) struct IndexUnordered {
+pub struct IndexUnordered {
     results: std::sync::mpsc::Receiver<(i64, IndexTaskOutcome)>,
     sender: std::sync::mpsc::SyncSender<(i64, IndexTaskOutcome)>,
     pub active: usize,
@@ -1121,7 +1121,7 @@ enum IndexResultTarget {
     },
 }
 
-pub(super) struct IndexResultSender {
+pub struct IndexResultSender {
     target: IndexResultTarget,
     terminal: Cell<bool>,
 }

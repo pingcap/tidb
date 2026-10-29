@@ -214,7 +214,7 @@ mod tests {
     use crate::driver::{build_prepared_select_plan, run_select_on, PreparedPlanCacheEnvironment};
     use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
     use tidb_executor_internal_exec::{Executor, ExecutorMeta};
-    use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
+    use tidb_executor_join::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use tidb_table::kv_table::TableHandle;
     use tidb_table::kv_table::KvTable;
     use tidb_table::kv_table::KvIndex;
@@ -1267,7 +1267,7 @@ mod tests {
         // Rust split, which opened multiple independent scan sessions and
         // made TPC-H q21 associate an incomplete inner set with the task.
         source
-            .set_probes(crate::access_path::IndexJoinProbes {
+            .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
                 keys: (1..=4097).map(|probe| vec![Datum::Int(probe)]).collect(),
                 bound_values: Vec::new(),
             })
@@ -1380,7 +1380,7 @@ mod tests {
                 lookup_is_left: false,
                 probe_keys: vec![0],
                 probe_key_domains: Vec::new(),
-                source: IndexLookupSource::Leaf(lookup),
+                source: IndexLookupSource::Leaf(Box::new(lookup)),
                 outer_not_null: Vec::new(),
                 inner_not_null: Vec::new(),
                 probe_bounds: Vec::new(),

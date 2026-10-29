@@ -19,10 +19,10 @@ use tidb_chunk::{chunk::Chunk, chunk_util::copy_rows, row::Row};
 use tidb_datatype::Datum;
 
 use super::JoinKind;
-use crate::ExecError;
+use tidb_driver_error::ExecError;
 
 #[derive(Clone)]
-pub(super) struct JoinOutput {
+pub struct JoinOutput {
     left: Vec<usize>,
     right: Vec<usize>,
     left_width: usize,
@@ -31,7 +31,7 @@ pub(super) struct JoinOutput {
 }
 
 impl JoinOutput {
-    pub(super) fn all(kind: JoinKind, left: usize, right: usize) -> Self {
+    pub fn all(kind: JoinKind, left: usize, right: usize) -> Self {
         Self {
             left: (0..left).collect(),
             right: if matches!(kind, JoinKind::Inner | JoinKind::Left | JoinKind::Right) {
@@ -45,7 +45,7 @@ impl JoinOutput {
         }
     }
 
-    pub(super) fn resolved(
+    pub fn resolved(
         offsets: &[usize],
         kind: JoinKind,
         left_width: usize,
@@ -73,11 +73,11 @@ impl JoinOutput {
         Ok(output)
     }
 
-    pub(super) fn width(&self) -> usize {
+    pub fn width(&self) -> usize {
         self.left.len() + self.right.len()
     }
 
-    pub(super) fn set_default(&mut self, left: bool, values: &[Datum]) -> Result<(), ExecError> {
+    pub fn set_default(&mut self, left: bool, values: &[Datum]) -> Result<(), ExecError> {
         let target = if left {
             &mut self.left_default
         } else {
@@ -92,7 +92,7 @@ impl JoinOutput {
         Ok(())
     }
 
-    pub(super) fn padded(&self, outer_left: bool, outer: &[Datum]) -> Vec<Datum> {
+    pub fn padded(&self, outer_left: bool, outer: &[Datum]) -> Vec<Datum> {
         if outer_left {
             outer.iter().chain(&self.right_default).cloned().collect()
         } else {
@@ -112,7 +112,7 @@ impl JoinOutput {
         req.set_num_virtual_rows(req.num_virtual_rows() + rows);
     }
 
-    pub(super) fn datums(&self, req: &mut Chunk, joined: &[Datum]) {
+    pub fn datums(&self, req: &mut Chunk, joined: &[Datum]) {
         for (dest, source) in self
             .left
             .iter()
@@ -125,19 +125,19 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    pub(super) fn datum_side(&self, req: &mut Chunk, left: bool, row: &[Datum]) {
+    pub fn datum_side(&self, req: &mut Chunk, left: bool, row: &[Datum]) {
         let (start, columns) = self.side(left);
         for (dest, source) in columns.iter().enumerate() {
             req.append_datum(start + dest, &row[*source]);
         }
     }
 
-    pub(super) fn chunk_side(&self, req: &mut Chunk, left: bool, row: Row<'_>) {
+    pub fn chunk_side(&self, req: &mut Chunk, left: bool, row: Row<'_>) {
         let (start, columns) = self.side(left);
         req.append_partial_row_by_col_idxs(start, row, Some(columns));
     }
 
-    pub(super) fn datum_pair(
+    pub fn datum_pair(
         &self,
         req: &mut Chunk,
         outer_left: bool,
@@ -149,7 +149,7 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    pub(super) fn datum_chunk(
+    pub fn datum_chunk(
         &self,
         req: &mut Chunk,
         outer_left: bool,
@@ -161,7 +161,7 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    pub(super) fn chunks(&self, req: &mut Chunk, probe_left: bool, probe: Row<'_>, build: Row<'_>) {
+    pub fn chunks(&self, req: &mut Chunk, probe_left: bool, probe: Row<'_>, build: Row<'_>) {
         self.chunk_side(req, probe_left, probe);
         self.chunk_side(req, !probe_left, build);
         Self::finish(req, 1);
@@ -175,7 +175,7 @@ impl JoinOutput {
     /// chain itself, not a selection over the whole build chunk: Go's join
     /// only ever copies the matched rows, and a chunk-wide selection vector
     /// would cost every probe row a scan of the build chunk per column.
-    pub(super) fn selected_chunk_matches(
+    pub fn selected_chunk_matches(
         &self,
         req: &mut Chunk,
         probe_left: bool,
@@ -218,7 +218,7 @@ impl JoinOutput {
 
     /// Go CopySelectedJoinRowsDirect: copy candidate column ranges, with
     /// the output projection independent of the full condition-row layout.
-    pub(super) fn joined_selected(&self, req: &mut Chunk, input: &Chunk, selected: &[bool]) {
+    pub fn joined_selected(&self, req: &mut Chunk, input: &Chunk, selected: &[bool]) {
         let mut start = 0;
         while start < selected.len() {
             if !selected[start] {
@@ -243,12 +243,12 @@ impl JoinOutput {
         }
     }
 
-    pub(super) fn preserved(&self, req: &mut Chunk, row: Row<'_>) {
+    pub fn preserved(&self, req: &mut Chunk, row: Row<'_>) {
         self.chunk_side(req, true, row);
         Self::finish(req, 1);
     }
 
-    pub(super) fn unmatched(
+    pub fn unmatched(
         &self,
         req: &mut Chunk,
         probe_left: bool,
@@ -268,21 +268,21 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    pub(super) fn side_range(&self, req: &mut Chunk, left: bool, input: &Chunk) {
+    pub fn side_range(&self, req: &mut Chunk, left: bool, input: &Chunk) {
         let (start, columns) = self.side(left);
         for (dest, source) in columns.iter().enumerate() {
             req.append_column_range_from(start + dest, input, *source, 0, input.num_rows());
         }
     }
 
-    pub(super) fn key_range(&self, req: &mut Chunk, left: bool, input: &Chunk, key: usize) {
+    pub fn key_range(&self, req: &mut Chunk, left: bool, input: &Chunk, key: usize) {
         let (start, columns) = self.side(left);
         for dest in start..start + columns.len() {
             req.append_column_range_from(dest, input, key, 0, input.num_rows());
         }
     }
 
-    pub(super) fn finish_range(&self, req: &mut Chunk, rows: usize) {
+    pub fn finish_range(&self, req: &mut Chunk, rows: usize) {
         Self::finish(req, rows);
     }
 }

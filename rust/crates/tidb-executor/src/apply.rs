@@ -598,7 +598,7 @@ fn inner_relation_bytes(rows: &[Vec<Datum>]) -> i64 {
 
 /// One value's retained size, the same measure the join's drain charges.
 fn datum_bytes(value: &Datum) -> i64 {
-    crate::join::row_bytes(std::slice::from_ref(value))
+    tidb_executor_join::join::row_bytes(std::slice::from_ref(value))
 }
 
 #[cfg(test)]

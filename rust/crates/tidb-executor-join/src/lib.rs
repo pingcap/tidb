@@ -14,8 +14,9 @@
 
 //! Go `pkg/executor/join`: the hash joins (v1's key analysis and build side in
 //! [`hash_join`], v2 at this root), the joiners, the v2 row tables and the
-//! index-lookup-join statistics. The nested-loop and index joins over the
-//! executor's readers (`tidb_executor::join`) are not here yet.
+//! index-lookup-join statistics, and the nested-loop, merge and index joins
+//! ([`join`]), which reach the inner side's reader through [`index_lookup`]
+//! as Go's do through the executor builder's interface.
 //!
 //! This root is Go hash-join V2's row-table build stages and probe state
 //! machines.
@@ -30,7 +31,10 @@
 //! opens/closes children and shares the built table with those workers. SQL
 //! builder selection, full probe accounting and spill restoration remain open.
 
+pub mod merge_join_plan;
 pub mod hash_join;
+pub mod index_lookup;
+pub mod join;
 pub mod base_join_probe;
 pub mod joiner;
 pub mod row_table_builder;

@@ -56,8 +56,8 @@
 //! `join_table_meta.go` and `tagged_ptr.go` already live in `tidb-exec`.
 //!
 //! REUSE. The pairing engine this crate already ships is
-//! `tidb_executor::join::JoinExec`, which inlines a fused subset of these semantics
-//! (`tidb_executor::join::JoinKind`, `emit_outer_row`) for the five join kinds its
+//! `crate::join::JoinExec`, which inlines a fused subset of these semantics
+//! (`crate::join::JoinKind`, `emit_outer_row`) for the five join kinds its
 //! driver can build. That executor is untouched: this module is the faithful
 //! `joiner.go` surface, and it is the one a v2 probe or a full `hash_join_v1`
 //! port would be written against. The two are deliberately not merged yet --
@@ -67,7 +67,7 @@
 //! NARROWINGS, each named:
 //!
 //! - `sessionctx.Context` is replaced by a [`Columns`] evaluation context,
-//!   which is the same substitution `tidb_executor::join::JoinExec` makes. The
+//!   which is the same substitution `crate::join::JoinExec` makes. The
 //!   session-variable reads Go does inside the joiner
 //!   (`MaxChunkSize`, `InitChunkSize`, `EnableVectorizedExpression`) become
 //!   explicit constructor arguments, because no `SessionVars` is reachable

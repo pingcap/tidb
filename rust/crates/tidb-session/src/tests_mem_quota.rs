@@ -431,7 +431,7 @@ fn a_hash_join_with_room_answers_what_go_answers() {
 /// Below ~192 KiB Go has already cancelled for a reason this tier does not
 /// model; above it, 5000 build rows fit and nothing spills. So the spill's
 /// correctness is pinned by the executor-level tests
-/// (`tidb_executor::join::spill_tests`), which compare a spilled run against
+/// (`tidb_executor_join::join::spill_tests`), which compare a spilled run against
 /// both an unspilled run AND the nested loop, and by the row set below being
 /// Go's own. What this test pins is THIS TIER's behaviour, deliberately, so
 /// the divergence cannot drift unnoticed.

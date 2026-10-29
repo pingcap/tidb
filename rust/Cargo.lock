@@ -4686,6 +4686,7 @@ name = "tidb-executor-join"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
+ "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
@@ -4694,15 +4695,19 @@ dependencies = [
  "tidb-driver-error",
  "tidb-execdetails",
  "tidb-executor-internal-exec",
+ "tidb-executor-internal-vecgroupchecker",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-goruntime",
  "tidb-kv",
  "tidb-memory",
  "tidb-mysql",
+ "tidb-planner",
  "tidb-serialization",
  "tidb-spill-storage",
  "tidb-sqlkiller",
+ "tidb-tablecodec",
+ "tidb-vardef",
  "tracing",
 ]
 

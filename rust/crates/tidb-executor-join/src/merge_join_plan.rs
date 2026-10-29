@@ -16,22 +16,22 @@
 
 /// A join key as a pair of column offsets, one in each side's own row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct MergeJoinKey {
+pub struct MergeJoinKey {
     /// Column offset within the left child's row.
-    pub(crate) left: usize,
+    pub left: usize,
     /// Column offset within the right child's row.
-    pub(crate) right: usize,
+    pub right: usize,
     /// Go `GetCmpFunction(lhs, rhs)`'s string collation: the one
     /// `CheckAndDeriveCollationFromExprs` derives from BOTH keys, which is
     /// what decides whether two keys of different collations are equal.
-    pub(crate) collation: tidb_charset::Collation,
+    pub collation: tidb_charset::Collation,
 }
 
 /// The key order retained by Go's `PhysicalMergeJoin`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MergeJoinPlan {
+pub struct MergeJoinPlan {
     /// The key pairs, in the order both sides are sorted by.
-    pub(crate) keys: Vec<MergeJoinKey>,
+    pub keys: Vec<MergeJoinKey>,
     /// Whether both sides run descending.
-    pub(crate) desc: bool,
+    pub desc: bool,
 }

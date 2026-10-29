@@ -29,7 +29,7 @@
 //! # Algorithm: hash, with the nested loop as the stated fallback
 //!
 //! When the `ON` clause carries at least one `col = col` conjunct this module
-//! can index (see [`tidb_executor_join::hash_join`] for the encoding and the classes it
+//! can index (see [`crate::hash_join`] for the encoding and the classes it
 //! refuses), the join builds a hash table on the costed build side and streams
 //! the other side through it: O(build + probe x fanout) instead of
 //! O(build x probe). Everything else -- a cross join, a join whose only
@@ -39,7 +39,7 @@
 //!
 //! Which path a join takes is therefore decided before it gets here, by what
 //! is in its condition list -- and for a comma join that is decided by
-//! [`crate::driver::predicate_push_down`], whose whole purpose is to put the
+//! `tidb_executor::driver::predicate_push_down`, whose whole purpose is to put the
 //! `WHERE` equality where this dispatch can see it. Without it a tree of
 //! comma joins is a tree of nested loops and its cost is the product of every
 //! input's row count.
@@ -154,7 +154,7 @@
 
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_executor_join::hash_join::{
+use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
     row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
     Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
@@ -601,7 +601,7 @@ impl MergeInnerGroup {
 
 /// Go `DefIndexJoinBatchSize` / `tidb_index_join_batch_size`: the default
 /// largest number of outer rows one index-join probe batch may hold.
-pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
+pub const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 
 /// Go resolves the unset `tidb_index_lookup_join_concurrency` through
 /// `tidb_executor_concurrency`, whose default is five inner workers.
@@ -619,26 +619,26 @@ const INDEX_LOOKUP_JOIN_CONCURRENCY: usize = 5;
 /// (`range: decided by [...]` in `EXPLAIN`), and the rows that come back are
 /// indexed by the join's OWN equality keys, so this strategy and the hash
 /// strategy answer "does this pair match?" with the same bytes.
-pub(crate) enum IndexLookupSource {
+pub enum IndexLookupSource {
     /// The lookup side is one base-table leaf.
-    Leaf(crate::access_path::IndexJoinLookupExec),
+    Leaf(Box<dyn crate::index_lookup::IndexJoinLookup>),
     /// The lookup side is a full subtree whose target leaf consumes the
     /// shared probe channel published by the enclosing join.
     Composite {
         exec: Box<dyn Executor>,
-        probes: std::sync::Arc<std::sync::Mutex<crate::access_path::SharedIndexJoinProbes>>,
+        probes: std::sync::Arc<std::sync::Mutex<crate::index_lookup::SharedIndexJoinProbes>>,
     },
 }
 
 impl IndexLookupSource {
     fn executor(&mut self) -> &mut dyn Executor {
         match self {
-            Self::Leaf(source) => source,
+            Self::Leaf(source) => source.as_mut(),
             Self::Composite { exec, .. } => exec.as_mut(),
         }
     }
 
-    fn set_probes(&mut self, probes: crate::access_path::IndexJoinProbes) -> Result<(), ExecError> {
+    fn set_probes(&mut self, probes: crate::index_lookup::IndexJoinProbes) -> Result<(), ExecError> {
         match self {
             Self::Leaf(source) => source.set_probes(probes),
             Self::Composite {
@@ -678,18 +678,18 @@ impl IndexLookupSource {
 /// datum and cuts prefix-index values before sorting and deduplicating lookup
 /// contents (`constructDatumLookupKey` / `sortAndDedupLookUpContents`).
 #[derive(Clone)]
-pub(crate) struct IndexProbeKeyDomain {
-    pub(crate) field_type: FieldType,
-    pub(crate) prefix_length: i64,
+pub struct IndexProbeKeyDomain {
+    pub field_type: FieldType,
+    pub prefix_length: i64,
 }
 
-pub(crate) struct IndexLookupPlan {
+pub struct IndexLookupPlan {
     /// Whether the LOOKED-UP side is this join's left child.
     ///
     /// It is never the outer-join-preserved side: a `LEFT JOIN` may only look
     /// up its right child and a `RIGHT JOIN` only its left, which is what
     /// lets [`JoinExec::outer_is_left`] answer for both strategies at once.
-    pub(crate) lookup_is_left: bool,
+    pub lookup_is_left: bool,
     /// Offsets into [`JoinExec::keys`] of the equalities that decide the
     /// probe range, in the looked-up object's own key-column order.
     ///
@@ -697,23 +697,23 @@ pub(crate) struct IndexLookupPlan {
     /// range is built from while `HashCols` are every equality, and a join
     /// whose index covers only the first of two keys still probes on one
     /// column and matches on both.
-    pub(crate) probe_keys: Vec<usize>,
+    pub probe_keys: Vec<usize>,
     /// Inner key domains aligned with `probe_keys`. The shared physical
     /// builder fills these from `PhysicalIndexJoin.IdxColLens` and the
     /// selected lookup object's columns.
-    pub(crate) probe_key_domains: Vec<IndexProbeKeyDomain>,
+    pub probe_key_domains: Vec<IndexProbeKeyDomain>,
     /// The re-seedable inner source.
-    pub(crate) source: IndexLookupSource,
+    pub source: IndexLookupSource,
     /// Outer-child columns a null-rejecting join predicate proves non-NULL.
-    pub(crate) outer_not_null: Vec<usize>,
+    pub outer_not_null: Vec<usize>,
     /// Lookup-result columns the same predicate proves non-NULL, evaluated
     /// after a retained derived aggregation.
-    pub(crate) inner_not_null: Vec<usize>,
+    pub inner_not_null: Vec<usize>,
     /// Outer-derived comparisons on the object-key column just past the probe
     /// prefix -- Go's `CompareFilters`. Each is evaluated over one OUTER row
     /// per batch and extends that probe's range past its key prefix. The
     /// arguments are already indexed onto the outer child's output row.
-    pub(crate) probe_bounds: Vec<crate::access_path::LookupProbeBound>,
+    pub probe_bounds: Vec<crate::index_lookup::LookupProbeBound>,
 }
 
 /// The index strategy's live state: one outer batch and the inner rows its
@@ -840,7 +840,7 @@ enum PendingIndexLookupSource {
 struct IndexProbePlan {
     probe_keys: Vec<usize>,
     probe_key_domains: Vec<IndexProbeKeyDomain>,
-    probe_bounds: Vec<crate::access_path::LookupProbeBound>,
+    probe_bounds: Vec<crate::index_lookup::LookupProbeBound>,
     /// Immutable encodings used to sort and deduplicate every outer batch.
     /// Go constructs these from the worker's lookup shape once and reuses the
     /// shape for each task; keeping them in the shared plan avoids rebuilding
@@ -854,7 +854,7 @@ impl IndexProbePlan {
         keys: &[EquiKey],
         probe_keys: Vec<usize>,
         probe_key_domains: Vec<IndexProbeKeyDomain>,
-        probe_bounds: Vec<crate::access_path::LookupProbeBound>,
+        probe_bounds: Vec<crate::index_lookup::LookupProbeBound>,
     ) -> Result<Self, ExecError> {
         // A probe key is a position among the join's equality keys; one
         // whose equality has no comparable encoding cannot drive a lookup.
@@ -910,7 +910,7 @@ struct IndexTaskShared<C: Columns> {
     hash_output: Option<IndexHashOutput>,
     /// The forkable lookup, when the inner side is a common-handle prefix
     /// leaf; `None` keeps every task on the session's own reader.
-    template: Option<crate::access_path::LookupForkTemplate>,
+    template: Option<Box<dyn crate::index_lookup::IndexJoinLookupFork>>,
     probe_plan: IndexProbePlan,
     outer_is_left: bool,
     keys: Vec<EquiKey>,
@@ -923,7 +923,7 @@ struct IndexTaskShared<C: Columns> {
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     /// Go `innerWorker.stats`.
-    stats: Option<Arc<tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats>>,
+    stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
 }
 
 /// What the pool worker of one index task hands back.
@@ -991,7 +991,7 @@ fn fetch_index_task<C: Columns>(
         Ok(task) => task,
         Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
     };
-    let fetched = fetch_index_inner(shared, &mut task, None, None);
+    let fetched = fetch_index_inner(shared, task.as_mut(), None, None);
     let (inner, inner_rows, _) = fetched?;
     Ok(FetchedIndexTask::Prepared { inner, inner_rows })
 }
@@ -999,7 +999,7 @@ fn fetch_index_task<C: Columns>(
 fn open_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
     outer: &OuterBatch,
-) -> Result<Result<crate::access_path::IndexJoinLookupExec, Vec<IndexTaskProbe>>, ExecError> {
+) -> Result<Result<Box<dyn crate::index_lookup::IndexJoinLookup>, Vec<IndexTaskProbe>>, ExecError> {
     let construct_started = std::time::Instant::now();
     let probes = index_task_probes(
         &shared.ctx,
@@ -1019,7 +1019,7 @@ fn open_index_task<C: Columns>(
         .into_iter()
         .map(|probe| (probe.key, probe.bounds))
         .unzip();
-    let task = match template.open(crate::access_path::IndexJoinProbes { keys, bound_values }) {
+    let task = match template.open(crate::index_lookup::IndexJoinProbes { keys, bound_values }) {
         Ok(Ok(task)) => task,
         Ok(Err(probes)) => {
             let probes = probes
@@ -1088,7 +1088,7 @@ fn index_task_probes<C: Columns>(
                     continue;
                 }
                 let Some(converted) =
-                    crate::driver::point_get_key::point_get_value(&domain.field_type, value)
+                    tidb_planner::point_get_value::point_get_value(&domain.field_type, value)
                 else {
                     valid = false;
                     break;
@@ -1379,7 +1379,7 @@ pub struct JoinExec<C: Columns> {
     /// its `indexLookUpJoinRuntimeStats` on at Close.
     index_join_runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `IndexLookUpJoin.stats`, created with the first task.
-    index_join_stats: Option<Arc<tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats>>,
+    index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1392,7 +1392,7 @@ pub struct JoinExec<C: Columns> {
     /// that no longer describes a projected join row.
     residual_conditions: Vec<Expression>,
     /// Whether some conjunct equates the two sides -- Go would KEY this
-    /// join (`updateEQCond`); see [`tidb_executor_join::hash_join::has_cross_side_equality`].
+    /// join (`updateEQCond`); see [`crate::hash_join::has_cross_side_equality`].
     cross_side_equality: bool,
     /// The joined left-then-right row types the residual conditions read. Semi joins
     /// return only their left child, so this cannot be derived from `meta`.
@@ -1419,7 +1419,7 @@ pub struct JoinExec<C: Columns> {
     keys: Vec<EquiKey>,
     /// Go `HashContext.NaKeyColIdx`: the null-aware key conjuncts a `NOT IN`
     /// / `!= ALL` rewrite marked `IsEQCondFromIn` (see
-    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`]). Disjoint from `keys` in
+    /// [`crate::joiner::is_eq_cond_from_in`]). Disjoint from `keys` in
     /// practice -- Go's own NAAJ conversion only fires when
     /// `EqualConditions` is empty -- and, unlike an ordinary equality, a
     /// build row whose key holds a NULL is not dropped: it is indexed into
@@ -1526,12 +1526,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let left_width = left_types.len();
-        let split = tidb_executor_join::hash_join::split_equi(&conditions, left_width);
+        let split = crate::hash_join::split_equi(&conditions, left_width);
         let cross_side_equality =
-            tidb_executor_join::hash_join::has_cross_side_equality(&conditions, left_width);
+            crate::hash_join::has_cross_side_equality(&conditions, left_width);
         let flattened = conditions
             .iter()
-            .flat_map(tidb_executor_join::hash_join::split_conjuncts)
+            .flat_map(crate::hash_join::split_conjuncts)
             .collect::<Vec<_>>();
         let residual_conditions: Vec<Expression> = flattened
             .into_iter()
@@ -1546,7 +1546,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let output = JoinOutput::all(kind, left_width, right_types.len());
         let native_hash = matches!(kind, JoinKind::AntiSemi | JoinKind::AntiLeftOuterSemi)
-            && conditions.iter().any(tidb_executor_join::joiner::is_eq_cond_from_in);
+            && conditions.iter().any(crate::joiner::is_eq_cond_from_in);
         JoinExec {
             meta,
             output,
@@ -1604,7 +1604,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// The inner physical subtree is represented by `plan.source` and is
     /// reseeded for every outer lookup task.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_index_lookup(
+    pub fn new_index_lookup(
         meta: ExecutorMeta,
         kind: JoinKind,
         conditions: Vec<Expression>,
@@ -1643,7 +1643,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// setter is called.
     /// Go `e.RuntimeStats() != nil` for an index join: collect and register
     /// `indexLookUpJoinRuntimeStats` on `plan_id`.
-    pub(crate) fn set_index_join_runtime_stats(
+    pub fn set_index_join_runtime_stats(
         &mut self,
         source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         plan_id: i64,
@@ -1651,14 +1651,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.index_join_runtime_stats = source.map(|source| (source, plan_id));
     }
 
-    pub(crate) fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
+    pub fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
         self.index_lookup_concurrency = concurrency.max(1);
     }
 
     /// Sets Go's per-statement `IndexJoinBatchSize` after the executor has
     /// been built. A zero or negative session value is not valid in Go; the
     /// clamp keeps standalone callers from constructing an empty batch loop.
-    pub(crate) fn set_index_join_batch_size(&mut self, batch_size: usize) {
+    pub fn set_index_join_batch_size(&mut self, batch_size: usize) {
         self.index_join_batch_size = batch_size.max(1);
     }
 
@@ -1686,12 +1686,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .expect("an ordinary join always has a right child")
     }
 
-    pub(crate) fn set_default_values(&mut self, values: Vec<Datum>) -> Result<(), ExecError> {
+    pub fn set_default_values(&mut self, values: Vec<Datum>) -> Result<(), ExecError> {
         self.output
             .set_default(self.kind == JoinKind::Right, &values)
     }
 
-    pub(crate) fn set_output_offsets(&mut self, offsets: Vec<usize>) -> Result<(), ExecError> {
+    pub fn set_output_offsets(&mut self, offsets: Vec<usize>) -> Result<(), ExecError> {
         self.output = JoinOutput::resolved(
             &offsets,
             self.kind,
@@ -1701,7 +1701,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(())
     }
 
-    pub(crate) fn set_parallelism(&mut self, parallelism: usize) {
+    pub fn set_parallelism(&mut self, parallelism: usize) {
         self.concurrency = parallelism.max(1);
     }
 
@@ -1715,14 +1715,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// the ordinary `ON` clause) -- so, unlike a scheme that recovers these
     /// from a shared list, nothing here depends on where in that list they
     /// would have been, or on re-deriving eligibility from
-    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`] (a marker that survives on an
+    /// [`crate::joiner::is_eq_cond_from_in`] (a marker that survives on an
     /// expression whether or not the planner's NAAJ conversion actually
     /// fired for it).
-    pub(crate) fn set_na_conditions(&mut self, na_conditions: Vec<Expression>) {
+    pub fn set_na_conditions(&mut self, na_conditions: Vec<Expression>) {
         let left_width = self.left_types.len();
         let keys = na_conditions
             .iter()
-            .map(|condition| tidb_executor_join::hash_join::na_equi_key(condition, left_width))
+            .map(|condition| crate::hash_join::na_equi_key(condition, left_width))
             .collect::<Option<Vec<_>>>();
         match keys {
             Some(keys) => {
@@ -1786,7 +1786,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// Outer and semi joins accept both orientations because the hash path
     /// tracks matched preserved build rows and emits the appropriate matched
     /// or unmatched rows after probe.
-    pub(crate) fn set_hash_build_is_left(&mut self, build_is_left: bool) {
+    pub fn set_hash_build_is_left(&mut self, build_is_left: bool) {
         if matches!(
             self.kind,
             JoinKind::Inner
@@ -1940,7 +1940,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = chunk.get_row(0);
         Ok(fold_verdict(
             self.kind,
-            tidb_executor_join::joiner::eval_bool(&self.ctx, conditions, row)?,
+            crate::joiner::eval_bool(&self.ctx, conditions, row)?,
         ))
     }
 
@@ -1968,7 +1968,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = scratch.get_row(0);
         Ok(fold_verdict(
             kind,
-            tidb_executor_join::joiner::eval_bool(ctx, conditions, row)?,
+            crate::joiner::eval_bool(ctx, conditions, row)?,
         ))
     }
 
@@ -2088,7 +2088,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let row = scratch.get_row(0);
         Ok(fold_verdict(
             self.kind,
-            tidb_executor_join::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
+            crate::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
         ))
     }
 
@@ -2165,7 +2165,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.index_lookup.is_some()
     }
 
-    pub(crate) fn set_index_hash_join(&mut self, keep_outer_order: bool) {
+    pub fn set_index_hash_join(&mut self, keep_outer_order: bool) {
         self.index_hash = Some(keep_outer_order);
     }
 
@@ -2188,7 +2188,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         })
     }
 
-    pub(crate) fn set_vectorized_expression(&mut self, enabled: bool) {
+    pub fn set_vectorized_expression(&mut self, enabled: bool) {
         self.vectorized = enabled;
     }
 
@@ -2298,7 +2298,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 memory: self.memory.clone(),
                 stats: self.index_join_runtime_stats.as_ref().map(|_| {
                     Arc::clone(self.index_join_stats.get_or_insert_with(|| {
-                        Arc::new(tidb_executor_join::join_stats::IndexLookUpJoinRuntimeStats::new(
+                        Arc::new(crate::join_stats::IndexLookUpJoinRuntimeStats::new(
                             self.index_lookup_concurrency,
                         ))
                     }))
@@ -2411,7 +2411,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .map(|probe| (probe.key, probe.bounds))
                 .unzip();
             plan.source
-                .set_probes(crate::access_path::IndexJoinProbes {
+                .set_probes(crate::index_lookup::IndexJoinProbes {
                     keys: keys_seeded,
                     bound_values,
                 })?;
@@ -2896,7 +2896,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
 
     /// Install the order selected by physical planning. Both children must
     /// deliver it; their sort/index choice belongs to the planner.
-    pub(crate) fn set_merge_plan(&mut self, plan: crate::merge_join_plan::MergeJoinPlan) {
+    pub fn set_merge_plan(&mut self, plan: crate::merge_join_plan::MergeJoinPlan) {
         // Go `MergeJoinExec` runs every join type through the shared `Joiner`
         // (`merge_join.go:381,396`), so a `PhysicalMergeJoin` the planner
         // chose for a marker kind is executed as one, not silently rerouted
@@ -2919,9 +2919,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 self.residual_conditions =
                     self.conditions
                         .iter()
-                        .flat_map(tidb_executor_join::hash_join::split_conjuncts)
+                        .flat_map(crate::hash_join::split_conjuncts)
                         .filter(|condition| {
-                            !tidb_executor_join::hash_join::equi_key(condition, width).is_some_and(|key| {
+                            !crate::hash_join::equi_key(condition, width).is_some_and(|key| {
                                 !key.null_safe
                                     && plan.keys.iter().any(|merge| {
                                         merge.left == key.left && merge.right == key.right
@@ -2943,7 +2943,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     }
 
     #[cfg(test)]
-    pub(super) fn merge_inner_container_chunks(&self) -> usize {
+    pub fn merge_inner_container_chunks(&self) -> usize {
         self.merge_state
             .as_ref()
             .and_then(|state| state.inner_group.as_ref())
@@ -2980,7 +2980,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             side.selected.clear();
             for index in 0..side.chunk.num_rows() {
                 side.selected
-                    .push(tidb_executor_join::joiner::eval_bool(ctx, filters, side.chunk.get_row(index))?.0);
+                    .push(crate::joiner::eval_bool(ctx, filters, side.chunk.get_row(index))?.0);
             }
             side.group_checker.split_into_groups(ctx, &side.chunk)?;
         }
@@ -4781,7 +4781,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             if !self.outer_filter.is_empty() && self.filter_is_left == build_is_left {
                 let selected = (0..chunk.num_rows())
                     .map(|index| {
-                        tidb_executor_join::joiner::eval_bool(
+                        crate::joiner::eval_bool(
                             &self.ctx,
                             &self.outer_filter,
                             chunk.get_row(index),
@@ -4888,7 +4888,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         {
             (0..chunk.num_rows())
                 .map(|index| {
-                    tidb_executor_join::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index))
+                    crate::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index))
                         .map(|result| result.0)
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -5411,9 +5411,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// marker).
     ///
     /// Deliberately a plain truthy check, never [`Self::matches`]: Go's
-    /// `EvalBool` (ported as [`tidb_executor_join::joiner::eval_bool`]) forgives a NULL
+    /// `EvalBool` (ported as [`crate::joiner::eval_bool`]) forgives a NULL
     /// into `has_null` only for a condition itself marked
-    /// [`tidb_executor_join::joiner::is_eq_cond_from_in`], and `Self::matches` turns that
+    /// [`crate::joiner::is_eq_cond_from_in`], and `Self::matches` turns that
     /// into an outright match for `JoinKind::AntiSemi`
     /// (`matched || has_null`) -- but Go's own `nullAwareAntiSemiJoiner` /
     /// `nullAwareAntiLeftOuterSemiJoiner.TryToMatchInners` call `EvalBool`
@@ -5892,7 +5892,7 @@ fn filter_index_inner_chunk(chunk: &mut Chunk, offsets: &[usize]) -> Result<(), 
 
 /// What one materialized row costs: the `Vec` header plus each datum's own
 /// estimate, which is Go `Datum.MemUsage` summed the same way.
-pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
+pub fn row_bytes(row: &[Datum]) -> i64 {
     let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
     for datum in row {
         bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);

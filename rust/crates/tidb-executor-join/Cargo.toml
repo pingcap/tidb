@@ -11,6 +11,9 @@ description = "TiDB pkg/executor/join (Rust)."
 workspace = true
 
 [dependencies]
+tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
+tidb-planner = { path = "../tidb-planner" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
@@ -30,3 +33,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
 tracing = "0.1"
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-vardef = { path = "../tidb-vardef" }

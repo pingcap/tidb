@@ -1094,7 +1094,7 @@ fn eq_on_typed(lhs: usize, rhs: usize, left_width: usize, code: FieldTypeCode) -
 /// distinct keys, probe each once. One key column takes the exact-integer
 /// table; two take the serialised-key table every composite join uses.
 fn bench_hash_join_probe() {
-    use tidb_executor::join::{JoinExec, JoinKind};
+    use tidb_executor_join::join::{JoinExec, JoinKind};
     let rows: usize = std::env::var("BENCH_ROWS")
         .ok()
         .and_then(|value| value.parse().ok())

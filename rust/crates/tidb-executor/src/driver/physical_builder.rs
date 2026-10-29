@@ -27,9 +27,9 @@ use std::time::{Duration, Instant};
 
 use crate::access_path::{
     HandleOutputColumn, HandleSourceExec, IndexJoinLookupExec, IndexRangeSourceExec, LookupObject,
-    LookupProbeBound, LookupProbeBoundOp, LookupProbePart, LookupProbeTail, SharedIndexJoinProbes,
-    UniqueIndexPointSourceExec,
+    LookupProbeBoundOp, LookupProbePart, LookupProbeTail, UniqueIndexPointSourceExec,
 };
+use tidb_executor_join::index_lookup::{LookupProbeBound, SharedIndexJoinProbes};
 use crate::apply::NestedLoopApplyExec;
 use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
@@ -44,7 +44,7 @@ use crate::index_merge_reader::{
     PartialHandleColumns, PartialHandleSource, PartitionedHandleSource,
     PushedDownLimit as ExecutorPushedDownLimit,
 };
-use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
+use tidb_executor_join::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
 use tidb_executor_join::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::TableScanExec;
 use tidb_table::kv_table::TableHandle;
@@ -3694,7 +3694,7 @@ fn build_index_lookup_source(
             None,
             &state.reader_storage,
         )
-        .map(IndexLookupSource::Leaf);
+        .map(|leaf| IndexLookupSource::Leaf(Box::new(leaf)));
     }
     let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
     let exec = build_index_inner_subtree(inner, join, probe_parts, &probes, catalog, ctx, state)?;
@@ -4512,7 +4512,7 @@ fn join_key_offsets(
     right_keys: &[Column],
     left_schema: &Schema,
     right_schema: &Schema,
-) -> Result<Vec<crate::merge_join_plan::MergeJoinKey>, DriverError> {
+) -> Result<Vec<tidb_executor_join::merge_join_plan::MergeJoinKey>, DriverError> {
     left_keys
         .iter()
         .zip(right_keys)
@@ -4548,7 +4548,7 @@ fn join_key_offsets(
             .ok()
             .and_then(|derived| tidb_charset::Collation::from_name(&derived.collation))
             .unwrap_or(fallback);
-            Ok(crate::merge_join_plan::MergeJoinKey {
+            Ok(tidb_executor_join::merge_join_plan::MergeJoinKey {
                 left,
                 right,
                 collation,
@@ -7082,7 +7082,7 @@ fn build_with_state(
                 ctx,
                 state,
             )?;
-            executor.set_merge_plan(crate::merge_join_plan::MergeJoinPlan {
+            executor.set_merge_plan(tidb_executor_join::merge_join_plan::MergeJoinPlan {
                 keys,
                 desc: join.desc,
             });
