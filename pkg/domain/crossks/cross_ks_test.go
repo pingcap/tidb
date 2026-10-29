@@ -475,12 +475,6 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		ksMgr.CloseKS(targetKS)
 	})
 	require.Same(t, targetStore, handle.Store())
-
-	crossKSMgr := sysKSDom.GetCrossKSMgr()
-	sessMgr, ok := crossKSMgr.Get(targetKS)
-	require.True(t, ok)
-	require.Same(t, sessMgr.Store(), handle.Store())
-	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
 	t.Run("info schema has an auto-ID client", func(t *testing.T) {
 		mgr := storage.NewTaskManager(handle.SysSessionPool())
 		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -489,6 +483,12 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			return nil
 		}))
 	})
+
+	crossKSMgr := sysKSDom.GetCrossKSMgr()
+	sessMgr, ok := crossKSMgr.Get(targetKS)
+	require.True(t, ok)
+	require.Same(t, sessMgr.Store(), handle.Store())
+	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
