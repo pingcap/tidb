@@ -694,8 +694,8 @@ impl StatementLifecycle<'_> {
     /// Go `decideTxnMode` for an autocommit DML's implicit transaction.
     pub fn autocommit_write_is_pessimistic(&self, retrying: bool) -> bool {
         let vars = self.session.vars();
-        tidb_planner::txn_mode::txn_mode_for_statement(
-            tidb_planner::txn_mode::StatementTxnModeInputs {
+        crate::txn_mode::txn_mode_for_statement(
+            crate::txn_mode::StatementTxnModeInputs {
                 txn_mode_var: &vars.get_system("tidb_txn_mode").unwrap_or_default(),
                 retrying,
                 autocommit: true,

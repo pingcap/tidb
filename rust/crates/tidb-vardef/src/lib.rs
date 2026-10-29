@@ -257,6 +257,7 @@ pub mod global_sysvar_initial;
 pub mod modes;
 pub mod option_values;
 pub mod tidb_vars;
+pub mod txn_mode;
 
 /// `tidb_mem_oom_action`: what a statement that exceeds
 /// `tidb_mem_quota_query` does.

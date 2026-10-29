@@ -24,7 +24,7 @@ pub enum TransactionControl {
     /// `mode` is the statement's own `OPTIMISTIC`/`PESSIMISTIC` keyword, which
     /// outranks `@@tidb_txn_mode`; `TransactionMode::Default` means the
     /// variable decides. Resolve it with
-    /// [`crate::txn_mode::txn_mode_for_begin`].
+    /// the session's `txn_mode_for_begin`.
     Begin {
         /// The mode named by the statement itself.
         mode: TransactionMode,

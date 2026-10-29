@@ -39,9 +39,8 @@ use tidb_infoschema::Catalog;
 use tidb_driver_error::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
-use tidb_planner::txn_mode::{
-    txn_mode_for_begin, SessionTxnMode, PESSIMISTIC_TXN_MODE,
-};
+use txn_mode::txn_mode_for_begin;
+use tidb_vardef::txn_mode::{SessionTxnMode, PESSIMISTIC_TXN_MODE};
 
 /// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
 /// parser memory with the global memory arbitrator.
@@ -1145,6 +1144,7 @@ pub mod lazy_transaction;
 pub mod statement_lifecycle;
 pub mod store_session;
 pub mod txn_manager;
+pub mod txn_mode;
 mod txn;
 pub use txn::{
     HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider, StatementTxnActivator,

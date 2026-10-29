@@ -2294,7 +2294,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
         body: impl FnOnce(&mut crate::Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError>;
     /// Session primitive.
-    fn statement_txn_mode(&self) -> tidb_planner::txn_mode::SessionTxnMode;
+    fn statement_txn_mode(&self) -> tidb_vardef::txn_mode::SessionTxnMode;
     /// Whether the open transaction is a stale read (Go `TxnCtx.IsStaleness`).
     fn txn_is_stale_read(&self) -> bool;
     /// Session primitive.

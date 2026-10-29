@@ -21,54 +21,7 @@
 //! point of the autocommit rule below.
 
 use tidb_ast::TransactionMode;
-
-/// Go `vardef.PessimisticTxnMode`.
-pub const PESSIMISTIC_TXN_MODE: &str = "pessimistic";
-/// Go `vardef.OptimisticTxnMode`.
-pub const OPTIMISTIC_TXN_MODE: &str = "optimistic";
-
-/// The mode a transaction actually runs in, once every default is resolved.
-///
-/// Go carries this as a string that may also be empty; every consumer treats
-/// the empty string as optimistic, so the resolved form has only two states.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SessionTxnMode {
-    /// No read-time locks; conflicts are detected by the two-phase commit.
-    Optimistic,
-    /// Locking statements take TiKV pessimistic locks at `for_update_ts`.
-    Pessimistic,
-}
-
-impl SessionTxnMode {
-    /// Whether locking statements in this mode acquire pessimistic locks.
-    #[must_use]
-    pub const fn is_pessimistic(self) -> bool {
-        matches!(self, Self::Pessimistic)
-    }
-
-    /// Go's string spelling, as `@@tidb_txn_mode` reports it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Optimistic => OPTIMISTIC_TXN_MODE,
-            Self::Pessimistic => PESSIMISTIC_TXN_MODE,
-        }
-    }
-}
-
-/// Reads `@@tidb_txn_mode` the way every Go consumer reads it.
-///
-/// Go compares against `ast.Pessimistic` and sends everything else -- the
-/// empty string included, which `SET tidb_txn_mode = ''` really can store
-/// because the variable is `AllowEmptyAll` -- down the optimistic path.
-#[must_use]
-pub fn txn_mode_variable(value: &str) -> SessionTxnMode {
-    if value == PESSIMISTIC_TXN_MODE {
-        SessionTxnMode::Pessimistic
-    } else {
-        SessionTxnMode::Optimistic
-    }
-}
+use tidb_vardef::txn_mode::{txn_mode_variable, SessionTxnMode};
 
 /// Go `newProviderWithRequest`: the mode an explicit `BEGIN` opens in.
 ///
@@ -141,10 +94,8 @@ pub fn txn_mode_for_statement(inputs: StatementTxnModeInputs<'_>) -> SessionTxnM
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        txn_mode_for_begin, txn_mode_for_statement, txn_mode_variable, SessionTxnMode,
-        StatementTxnModeInputs,
-    };
+    use super::{txn_mode_for_begin, txn_mode_for_statement, StatementTxnModeInputs};
+    use tidb_vardef::txn_mode::SessionTxnMode;
     use tidb_ast::TransactionMode;
 
     fn statement(txn_mode_var: &str) -> StatementTxnModeInputs<'_> {
@@ -155,18 +106,6 @@ mod tests {
             pessimistic_auto_commit: false,
             is_dml: true,
         }
-    }
-
-    #[test]
-    fn only_the_exact_pessimistic_spelling_is_pessimistic() {
-        assert_eq!(
-            txn_mode_variable("pessimistic"),
-            SessionTxnMode::Pessimistic
-        );
-        assert_eq!(txn_mode_variable("optimistic"), SessionTxnMode::Optimistic);
-        // `SET tidb_txn_mode = ''` stores the empty string, which Go reads as
-        // optimistic rather than as the pessimistic default.
-        assert_eq!(txn_mode_variable(""), SessionTxnMode::Optimistic);
     }
 
     #[test]

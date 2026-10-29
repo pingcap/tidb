@@ -113,7 +113,6 @@ pub mod point_get_value;
 pub mod preprocess;
 pub mod pushdown;
 pub mod transaction_control;
-pub mod txn_mode;
 pub mod show_predicate_extractor;
 pub mod show_schema;
 pub mod task;

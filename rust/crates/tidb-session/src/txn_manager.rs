@@ -180,7 +180,7 @@ impl TxnManager {
     fn is_pessimistic(session: &Session) -> bool {
         match session.txn_mode() {
             Some(mode) => mode.is_pessimistic(),
-            None => tidb_planner::txn_mode::txn_mode_variable(
+            None => tidb_vardef::txn_mode::txn_mode_variable(
                 &session
                     .vars()
                     .get_system("tidb_txn_mode")
