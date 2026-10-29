@@ -37,7 +37,7 @@ use tidb_table::cluster_sequence::ClusterSequenceCounter;
 use tidb_table::sequence::SequenceDef;
 use tidb_autoid::DEFAULT_AUTO_ID_STEP;
 use tidb_table::kv_table::TableAutoId;
-use tidb_table::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
+use tidb_table::sequence::SequenceAllocator;
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -125,15 +125,7 @@ where
             .as_ref()
             .map(|shared| shared.read().clone())
             .unwrap_or_default();
-        let info = SeqCounterInfo {
-            start: stored_sequence.start,
-            increment: stored_sequence.increment,
-            min_value: stored_sequence.min_value,
-            max_value: stored_sequence.max_value,
-            cache_value: stored_sequence.cache_value,
-            cache: stored_sequence.cache,
-            cycle: stored_sequence.cycle,
-        };
+        let info = stored_sequence.clone();
         let counter =
             ClusterSequenceCounter::new(self.opener.clone(), db_id, table.id, self.timeout);
         let def = SequenceDef {

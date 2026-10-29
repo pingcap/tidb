@@ -18,7 +18,7 @@
 //! `model.TableInfo` with `Sequence` set), so `CREATE SEQUENCE` over an
 //! existing table name is 1050 and `SHOW TABLES` lists it -- both captured.
 
-use tidb_table::sequence::SequenceInfo;
+use tidb_model::table::SequenceInfo;
 use tidb_terror::MysqlError;
 
 use tidb_ast::SequenceOption;
@@ -145,6 +145,7 @@ fn build_sequence_info(
         cache_value: DEFAULT_CACHE_VALUE,
         cache: true,
         cycle: false,
+        comment: String::new(),
     };
     let info = apply_sequence_options(base, options, true);
     if !sequence_options_are_valid(&info) {

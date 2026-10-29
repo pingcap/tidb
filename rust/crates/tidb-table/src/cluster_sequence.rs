@@ -35,11 +35,12 @@
 //! and commits it as one optimistic mutation, losing prewrite races to a
 //! re-read -- which is what keeps two nodes' ranges disjoint.
 
+use tidb_model::table::SequenceInfo;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::sequence::{
-    calc_sequence_batch_size, sequence_offset, SequenceCounter, SequenceError, SequenceInfo,
+    calc_sequence_batch_size, sequence_offset, SequenceCounter, SequenceError,
 };
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};

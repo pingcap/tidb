@@ -22,6 +22,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+/// Go's option-free `CREATE SEQUENCE` (captured from `SHOW CREATE SEQUENCE`:
+/// `start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1
+/// cache 1000 nocycle`).
+fn option_free() -> SequenceInfo {
+    use tidb_model::table as model;
+    SequenceInfo {
+        start: model::DEFAULT_POSITIVE_SEQUENCE_START_VALUE,
+        increment: model::DEFAULT_SEQUENCE_INCREMENT_VALUE,
+        min_value: model::DEFAULT_POSITIVE_SEQUENCE_MIN_VALUE,
+        max_value: model::DEFAULT_POSITIVE_SEQUENCE_MAX_VALUE,
+        cache_value: model::DEFAULT_SEQUENCE_CACHE_VALUE,
+        cache: model::DEFAULT_SEQUENCE_CACHE_BOOL,
+        cycle: model::DEFAULT_SEQUENCE_CYCLE_BOOL,
+        comment: String::new(),
+    }
+}
+
 /// Reads `n` values, reporting an exhausted sequence as `None` so a whole
 /// captured run (values then error) is one assertion.
 fn take(alloc: &SequenceAllocator, n: usize) -> Vec<Option<i64>> {
@@ -40,6 +57,7 @@ fn test_sequence_autoid() {
         max_value: 10,
         increment: 2,
         cache_value: 3,
+        comment: String::new(),
     };
     let allocator = SequenceAllocator::new(info);
     let mut state = allocator.state.lock().unwrap();
@@ -111,6 +129,7 @@ fn test_concurrent_alloc_sequence() {
         max_value: 100,
         increment: -2,
         cache_value: 3,
+        comment: String::new(),
     });
     let seen = Arc::new(Mutex::new(HashSet::new()));
 
@@ -154,7 +173,7 @@ fn test_concurrent_alloc_sequence() {
 /// `SHOW CREATE SEQUENCE` prints for an option-free sequence.
 #[test]
 fn a_default_sequence_counts_from_one() {
-    let info = SequenceInfo::default();
+    let info = option_free();
     assert_eq!(info.start, 1);
     assert_eq!(info.increment, 1);
     assert_eq!(info.min_value, 1);
@@ -180,6 +199,7 @@ fn start_with_is_the_congruence_offset() {
         cache_value: 2,
         cache: true,
         cycle: false,
+        comment: String::new(),
     });
     assert_eq!(take(&alloc, 2), [Some(5), Some(8)]);
 }
@@ -191,7 +211,7 @@ fn cycle_wraps_to_minvalue_and_nocycle_runs_out() {
     let cycling = SequenceAllocator::new(SequenceInfo {
         max_value: 3,
         cycle: true,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(
         take(&cycling, 4),
@@ -202,7 +222,7 @@ fn cycle_wraps_to_minvalue_and_nocycle_runs_out() {
     let bounded = SequenceAllocator::new(SequenceInfo {
         max_value: 3,
         cycle: false,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(
         take(&bounded, 4),
@@ -223,9 +243,10 @@ fn a_descending_sequence_counts_down_from_start() {
         increment: -1,
         min_value: -3,
         max_value: 10,
-        cache_value: DEFAULT_SEQUENCE_CACHE,
+        cache_value: tidb_model::table::DEFAULT_SEQUENCE_CACHE_VALUE,
         cache: true,
         cycle: false,
+        comment: String::new(),
     });
     assert_eq!(
         take(&alloc, 6),
@@ -254,13 +275,13 @@ fn alter_sequence_reseeks_from_the_batch_end_not_the_last_value() {
     let mut alloc = SequenceAllocator::new(SequenceInfo {
         increment: 3,
         cache_value: 2,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(take(&alloc, 2), [Some(1), Some(4)]);
     alloc.alter(SequenceInfo {
         increment: 5,
         cache_value: 2,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(take(&alloc, 3), [Some(6), Some(11), Some(16)]);
 }
@@ -273,7 +294,7 @@ fn a_cache_batch_is_clamped_at_maxvalue() {
     let alloc = SequenceAllocator::new(SequenceInfo {
         max_value: 5,
         cache_value: 4,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(
         take(&alloc, 6),
@@ -293,7 +314,7 @@ fn a_cache_batch_is_clamped_at_maxvalue() {
 /// ```
 #[test]
 fn setval_only_moves_a_sequence_forward() {
-    let alloc = SequenceAllocator::new(SequenceInfo::default());
+    let alloc = SequenceAllocator::new(option_free());
     assert_eq!(alloc.set_val(100), Ok(Some(100)));
     assert_eq!(alloc.next_val(), Ok(101));
     // Backwards: NULL, and the sequence keeps its place.
@@ -307,7 +328,7 @@ fn setval_only_moves_a_sequence_forward() {
 /// which would otherwise let the lower value through.
 #[test]
 fn a_lower_setval_reports_null_even_with_no_cache_yet() {
-    let alloc = SequenceAllocator::new(SequenceInfo::default());
+    let alloc = SequenceAllocator::new(option_free());
     assert_eq!(alloc.set_val(100), Ok(Some(100)));
     assert_eq!(alloc.set_val(50), Ok(None));
     assert_eq!(alloc.next_val(), Ok(101));
@@ -316,7 +337,7 @@ fn a_lower_setval_reports_null_even_with_no_cache_yet() {
 /// `ALTER SEQUENCE ... RESTART WITH n` puts the next value back at `n`.
 #[test]
 fn restart_with_resets_the_next_value() {
-    let mut alloc = SequenceAllocator::new(SequenceInfo::default());
+    let mut alloc = SequenceAllocator::new(option_free());
     assert_eq!(take(&alloc, 2), [Some(1), Some(2)]);
     alloc.restart(10);
     assert_eq!(take(&alloc, 2), [Some(10), Some(11)]);
@@ -326,7 +347,7 @@ fn restart_with_resets_the_next_value() {
 /// same counter -- a value handed out can never be re-issued by a clone.
 #[test]
 fn a_cloned_allocator_shares_the_counter() {
-    let alloc = SequenceAllocator::new(SequenceInfo::default());
+    let alloc = SequenceAllocator::new(option_free());
     let staged = alloc.clone();
     assert_eq!(alloc.next_val(), Ok(1));
     assert_eq!(staged.next_val(), Ok(2));
@@ -344,7 +365,7 @@ fn nocache_yields_the_same_values_one_at_a_time() {
         increment: 3,
         cache: false,
         cache_value: 1,
-        ..SequenceInfo::default()
+        ..option_free()
     });
     assert_eq!(take(&alloc, 3), [Some(1), Some(4), Some(7)]);
 }

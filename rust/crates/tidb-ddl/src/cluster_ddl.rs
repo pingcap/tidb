@@ -7806,46 +7806,14 @@ fn is_ttl_table_option(option: &tidb_ast::TableOption) -> bool {
 /// `Sequence` set: a column-less `TableInfo` of the current version.
 fn build_sequence_table_info(
     name: &str,
-    info: tidb_table::sequence::SequenceInfo,
+    info: tidb_model::table::SequenceInfo,
     comment: String,
 ) -> TableInfo {
     TableInfo {
         name: CiString::new(name.to_owned()),
         version: tidb_model::table_info::CURR_LATEST_TABLE_INFO_VERSION,
-        sequence: Some(GoShared::new(stored_sequence_info(info, comment))),
+        sequence: Some(GoShared::new(tidb_model::table::SequenceInfo { comment, ..info })),
         ..TableInfo::default()
-    }
-}
-
-/// Go `model.SequenceInfo` from the options that decide values.
-fn stored_sequence_info(
-    info: tidb_table::sequence::SequenceInfo,
-    comment: String,
-) -> tidb_model::table::SequenceInfo {
-    tidb_model::table::SequenceInfo {
-        start: info.start,
-        cache: info.cache,
-        cycle: info.cycle,
-        min_value: info.min_value,
-        max_value: info.max_value,
-        increment: info.increment,
-        cache_value: info.cache_value,
-        comment,
-    }
-}
-
-/// The options of a stored `model.SequenceInfo` that decide values.
-fn sequence_options_of(
-    stored: &tidb_model::table::SequenceInfo,
-) -> tidb_table::sequence::SequenceInfo {
-    tidb_table::sequence::SequenceInfo {
-        start: stored.start,
-        increment: stored.increment,
-        min_value: stored.min_value,
-        max_value: stored.max_value,
-        cache_value: stored.cache_value,
-        cache: stored.cache,
-        cycle: stored.cycle,
     }
 }
 

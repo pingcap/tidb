@@ -650,7 +650,7 @@ fn build_alter_sequence_job(
         ));
     };
     // Validate the options over a copy of the stored ones.
-    tidb_ddl_build::sequence::alter_sequence_options(sequence_options_of(&old), options, schema, name)
+    tidb_ddl_build::sequence::alter_sequence_options(tidb_model::table::SequenceInfo::clone(&old), options, schema, name)
         .map_err(DdlPlanError::from_mysql_error)?;
     let mut job = session_job(job_context, ActionType::ACTION_ALTER_SEQUENCE);
     job.schema_id = database.info.id;
@@ -716,13 +716,13 @@ pub(super) fn plan_persisted_alter_sequence_job_step(
         ));
     };
     let (altered, restart) = tidb_ddl_build::sequence::alter_sequence_options(
-        sequence_options_of(&old),
+        tidb_model::table::SequenceInfo::clone(&old),
         &options,
         ident.schema.original(),
         ident.name.original(),
     )
     .map_err(|error| cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)))?;
-    let altered = stored_sequence_info(altered, old.comment.clone());
+    // The options apply over the stored ones, so the comment rides along.
     // Go: nothing changes and nothing restarts -- done, nothing published.
     if altered == old && restart.is_none() {
         active.job.state = JobState::DONE;

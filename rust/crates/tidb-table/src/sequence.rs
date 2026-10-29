@@ -48,6 +48,7 @@
 //! matching two TiDB nodes whose table objects independently reserve batches
 //! from the same meta key.
 
+use tidb_model::table::SequenceInfo;
 use std::sync::{Arc, Mutex};
 
 /// Go `autoid.EncodeIntToCmpUint`: maps the signed domain onto the unsigned
@@ -84,52 +85,6 @@ impl std::fmt::Display for SequenceError {
 }
 
 impl std::error::Error for SequenceError {}
-
-/// Go `model.SequenceInfo`, reduced to the fields that decide values.
-///
-/// The non-value `Comment` is retained by [`SequenceDef`],
-/// because the allocator is copied into session snapshots and therefore must
-/// remain `Copy` for the value path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SequenceInfo {
-    /// `START WITH`.
-    pub start: i64,
-    /// `INCREMENT BY`; never zero (Go rejects that with 4136).
-    pub increment: i64,
-    /// `MINVALUE`.
-    pub min_value: i64,
-    /// `MAXVALUE`.
-    pub max_value: i64,
-    /// `CACHE n`; `1` when `NOCACHE` was written.
-    pub cache_value: i64,
-    /// Whether `CACHE` (rather than `NOCACHE`) is in effect. Go keeps this
-    /// separate from `cache_value` and forces a batch of 1 when it is false.
-    pub cache: bool,
-    /// `CYCLE`.
-    pub cycle: bool,
-}
-
-/// Go's defaults for an option-free `CREATE SEQUENCE`, captured from
-/// `SHOW CREATE SEQUENCE`:
-/// `start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1
-/// cache 1000 nocycle` -- note `maxvalue` is `i64::MAX - 1`, not `i64::MAX`.
-pub(crate) const DEFAULT_SEQUENCE_MAX_VALUE: i64 = i64::MAX - 1;
-/// See [`DEFAULT_SEQUENCE_MAX_VALUE`].
-pub(crate) const DEFAULT_SEQUENCE_CACHE: i64 = 1000;
-
-impl Default for SequenceInfo {
-    fn default() -> Self {
-        SequenceInfo {
-            start: 1,
-            increment: 1,
-            min_value: 1,
-            max_value: DEFAULT_SEQUENCE_MAX_VALUE,
-            cache_value: DEFAULT_SEQUENCE_CACHE,
-            cache: true,
-            cycle: false,
-        }
-    }
-}
 
 /// Go `autoid.SeekToFirstSequenceValue`: the first value in `[minv, maxv]`
 /// strictly beyond `base` that is congruent to `offset` modulo `increment`.
@@ -434,7 +389,7 @@ impl SequenceAllocator {
     #[must_use]
     pub fn peer(&self) -> Self {
         SequenceAllocator {
-            info: self.info,
+            info: self.info.clone(),
             store: Arc::clone(&self.store),
             state: Arc::new(Mutex::new(SequenceState {
                 base: 0,
@@ -446,7 +401,7 @@ impl SequenceAllocator {
     /// The sequence's options, for `SHOW CREATE SEQUENCE`.
     #[must_use]
     pub fn info(&self) -> SequenceInfo {
-        self.info
+        self.info.clone()
     }
 
     /// Go `ddl.AlterSequence`: the new options replace the old, and the cached
