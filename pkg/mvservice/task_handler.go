@@ -1,0 +1,46 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mvservice
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	basic "github.com/pingcap/tidb/pkg/util"
+)
+
+var (
+	// ErrMVRefreshHandlerNotRegistered means refresh logic has not been wired in yet.
+	ErrMVRefreshHandlerNotRegistered = errors.New("mv refresh handler is not registered")
+	// ErrMVLogPurgeHandlerNotRegistered means purge logic has not been wired in yet.
+	ErrMVLogPurgeHandlerNotRegistered = errors.New("mvlog purge handler is not registered")
+	errMVTaskCanceledManually         = errors.New("materialized view task canceled manually")
+)
+
+// MVTaskHandler defines all task operations needed by MVService.
+type MVTaskHandler interface {
+	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mviewID int64) (nextRefresh time.Time, err error)
+	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) (nextPurge time.Time, err error)
+	TryBackoffRefreshManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mviewID int64, nextRefresh time.Time) (applied bool, appliedNext time.Time, err error)
+	TryBackoffPurgeManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64, nextPurge time.Time) (applied bool, appliedNext time.Time, err error)
+	LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogPurgeTask, error)
+	LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error)
+}
+
+func isMVTaskCanceledManually(err error) bool {
+	return err != nil && (errors.Is(err, errMVTaskCanceledManually) || strings.Contains(err.Error(), errMVTaskCanceledManually.Error()))
+}
