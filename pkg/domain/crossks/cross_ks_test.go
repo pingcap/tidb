@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -435,11 +437,13 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
 		return nil
 	}
+	etcdClis := make(map[string]*clientv3.Client, len(keyspaceIDs))
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {
 			id, ok := keyspaceIDs[ks]
 			require.True(t, ok)
 			*cliP = getETCDCli(ks, id)
+			etcdClis[ks] = *cliP
 		},
 	)
 
@@ -481,6 +485,55 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+	t.Run("read global variables of target keyspace", func(t *testing.T) {
+		// A runtime that has not read a global variable does not refresh them.
+		require.False(t, sessMgr.GlobalVarRefreshStarted())
+		tk := testkit.NewTestKit(t, targetStore)
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Put(resource)
+		vars := resource.(sessionctx.Context).GetSessionVars()
+		requireGlobalVar := func(name, expected string) {
+			var (
+				value string
+				err   error
+			)
+			require.Eventually(t, func() bool {
+				value, err = vars.GlobalVarsAccessor.GetGlobalSysVar(name)
+				return err == nil && value == expected
+			}, 10*time.Second, 50*time.Millisecond, "last value %q, error %v", value, err)
+		}
+		notify := func() {
+			_, err := etcdClis[targetKS].Put(context.Background(), ddlutil.SysVarCacheKey, "")
+			require.NoError(t, err)
+		}
+		tk.MustExec("set global cte_max_recursion_depth = 7")
+		defer tk.MustExec("set global cte_max_recursion_depth = default")
+		notify()
+		requireGlobalVar(vardef.CTEMaxRecursionDepth, "7")
+		require.True(t, sessMgr.GlobalVarRefreshStarted())
+		// A value that does not fit the variable takes the default.
+		tk.MustExec("update mysql.global_variables set variable_value = 'abc' where variable_name = 'cte_max_recursion_depth'")
+		notify()
+		requireGlobalVar(vardef.CTEMaxRecursionDepth, "1000")
+
+		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBGCLifetime)
+		require.NoError(t, err)
+		require.Equal(t, "10m0s", value)
+		require.ErrorContains(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.CTEMaxRecursionDepth, "8"), "cannot set")
+
+		// A variable with a GetGlobal hook reads the value of this instance.
+		tk.MustExec("set global tidb_enable_check_constraint = on")
+		defer tk.MustExec("set global tidb_enable_check_constraint = default")
+		vardef.EnableCheckConstraint.Store(false)
+		defer vardef.EnableCheckConstraint.Store(vardef.DefTiDBEnableCheckConstraint)
+		notify()
+		requireGlobalVar(vardef.TiDBEnableCheckConstraint, vardef.On)
+		value, err = vars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableCheckConstraint)
+		require.NoError(t, err)
+		require.Equal(t, vardef.Off, value)
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

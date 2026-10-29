@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -337,6 +338,8 @@ func (*Manager) createSessionManager(
 		ddlClient:         ddlClient,
 	}
 
+	mgr.globalVarCache = newGlobalVarCache(ctx, ks, sessPool, etcdCli)
+	mgr.wg.RunWithLog(mgr.globalVarCache.refreshLoop)
 	mgr.wg.RunWithLog(func() {
 		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
 	})
@@ -491,6 +494,7 @@ type SessionManager struct {
 	infoCache         *infoschema.InfoCache
 	isSyncer          *issyncer.Syncer
 	sessPool          util.DestroyableSessionPool
+	globalVarCache    *globalVarCache
 	coordinator       *schemaCoordinator
 	isValidator       validatorapi.Validator
 	svrInfoSyncer     *serverinfo.Syncer
@@ -505,6 +509,12 @@ func (m *SessionManager) Store() kv.Storage {
 // InfoCache returns the InfoCache instance used by the session manager.
 func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
+}
+
+// GlobalVarAccessor returns the global variable accessor of the sessions of
+// the runtime.
+func (m *SessionManager) GlobalVarAccessor() variable.GlobalVarAccessor {
+	return m.globalVarCache
 }
 
 // SysSessionPool returns the session pool used by the session manager.

@@ -4502,3 +4502,38 @@ func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
 	}
 	return nil
 }
+
+// SysVarCacheValues returns the values that a sysvar cache keeps for new
+// sessions and for the global scope, given the rows of mysql.global_variables.
+// A sysvar initialized from config keeps the value of this instance. On Starter,
+// it also replaces max_allowed_packet in tableContents with the config value.
+func SysVarCacheValues(tableContents map[string]string) (session, global map[string]string) {
+	if deploymode.IsStarter() {
+		overrideSysVarWithConfig(tableContents)
+	}
+	session = make(map[string]string)
+	global = make(map[string]string)
+	for _, sv := range GetSysVars() {
+		value := sv.Value
+		if tableValue, ok := tableContents[sv.Name]; ok && !sv.IsInitedFromConfig {
+			value = tableValue
+		}
+		// session cache stores non-skippable variables, which essentially means session scope.
+		// for historical purposes there are some globals, but these should eventually be removed.
+		if !sv.SkipInit() {
+			session[sv.Name] = value
+		}
+		if sv.HasGlobalScope() {
+			global[sv.Name] = value
+		}
+	}
+	return session, global
+}
+
+// overrideSysVarWithConfig replaces the sysvars in tableContents that the config
+// owns on Starter, where max_allowed_packet is set by config instead of SET GLOBAL.
+func overrideSysVarWithConfig(tableContents map[string]string) {
+	if _, ok := tableContents[vardef.MaxAllowedPacket]; ok {
+		tableContents[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
+	}
+}
