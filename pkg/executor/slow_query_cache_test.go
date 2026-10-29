@@ -258,7 +258,7 @@ func TestSlowQueryCacheLookupRespectsContext(t *testing.T) {
 func TestSlowQueryCacheAsyncReadWrite(t *testing.T) {
 	cache := newSlowQueryCache()
 	cache.start()
-	// An empty cache returns without queueing a read.
+	// An empty cache still answers through the worker: one empty string per key.
 	missing := slowQueryKeyOf(1, 1, "missing")
 	got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{missing})
 	require.NoError(t, err)
@@ -282,17 +282,8 @@ func TestSlowQueryCacheEntrypointsWithoutWorker(t *testing.T) {
 
 	values, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
 	require.NoError(t, err)
-	require.Equal(t, []string{""}, values)
+	require.Nil(t, values)
 	require.False(t, cache.running)
-
-	// running is set without a worker. A missing empty-cache check would enqueue
-	// the read and then wait until the context ends.
-	cache.running = true
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	values, err = cache.getUnredactedQueries(ctx, []slowQueryKey{key})
-	require.NoError(t, err)
-	require.Equal(t, []string{""}, values)
 	require.Zero(t, len(cache.readCh))
 }
 

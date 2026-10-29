@@ -176,6 +176,9 @@ func (e *slowQueryRetriever) close() error {
 
 type parsedSlowLog struct {
 	rows [][]types.Datum
+	// keys is the slow-query cache lookup for rows. keys[i] identifies rows[i]
+	// by Txn_start_ts, Query_time, and the digest prefix. parseLog appends them
+	// together, and a limit truncates both slices to the same length.
 	keys []slowQueryKey
 	err  error
 }
@@ -292,16 +295,18 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 
 		// Diagnostic mode does not read the cache; in_memory_original_query stays at the
 		// zero value set while parsing. Lookups do not consult tidb_redact_log.
-		// An empty cache returns the parsed rows without waiting on the worker.
-		// A successful lookup returns one string per key, and parseLog keeps keys
-		// aligned with rows.
+		// A nil result also leaves that zero value in place. A successful lookup
+		// returns one string per key, and parseLog keeps keys aligned with rows.
 		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 {
 			unredactedQueries, err := globalSlowQueryCache.getUnredactedQueries(ctx, result.keys)
 			if err != nil {
 				return nil, err
 			}
-			for i := range rows {
-				rows[i][e.inMemoryOriginalQueryIndex] = types.NewStringDatum(unredactedQueries[i])
+
+			if unredactedQueries != nil {
+				for i := range rows {
+					rows[i][e.inMemoryOriginalQueryIndex] = types.NewStringDatum(unredactedQueries[i])
+				}
 			}
 		}
 

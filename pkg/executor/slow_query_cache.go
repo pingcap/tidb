@@ -46,11 +46,11 @@ type slowQueryKey struct {
 	digest     string
 }
 
-// SlowQuery is one cached slow query. Only the unredacted SQL is retained;
+// slowQuery is one cached slow query. Only the unredacted SQL is retained;
 // the key is kept so the slot can be removed from the index when it is reused.
 // Every element of slowQueries is occupied. A slot that no longer holds its
 // original key is identified by comparing Key with the lookup key.
-type SlowQuery struct {
+type slowQuery struct {
 	Key           slowQueryKey
 	UnredactedSQL string
 }
@@ -80,7 +80,7 @@ type slowQueryCache struct {
 	readCh  chan *slowQueryCacheReadTask
 	running bool
 
-	slowQueries []SlowQuery
+	slowQueries []slowQuery
 	writePos    int
 	locations   map[slowQueryKey]int
 	memoryUsage int64
@@ -100,7 +100,7 @@ func newSlowQueryCacheWithLimits(capacity int, maxMem int64, chanSize int) *slow
 	return &slowQueryCache{
 		writeCh:     make(chan slowQueryCacheWriteTask, chanSize),
 		readCh:      make(chan *slowQueryCacheReadTask, chanSize),
-		slowQueries: make([]SlowQuery, 0, capacity),
+		slowQueries: make([]slowQuery, 0, capacity),
 		locations:   make(map[slowQueryKey]int),
 		maxMemUsage: maxMem,
 	}
@@ -200,21 +200,19 @@ func (c *slowQueryCache) tryToCache(task slowQueryCacheWriteTask) bool {
 }
 
 func (c *slowQueryCache) getUnredactedQueries(ctx context.Context, keys []slowQueryKey) ([]string, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if diagnosticmode.Enabled() {
+
+	if len(keys) == 0 || diagnosticmode.Enabled() || !c.checkRunning() {
 		return nil, nil
 	}
-	if !c.checkRunning() {
-		return make([]string, len(keys)), nil
-	}
 
+	// Share the caller's keys. handleRead only reads them, and the caller does
+	// not modify the slice while the task is queued. On cancel the task keeps
+	// the slice until the worker finishes.
 	task := &slowQueryCacheReadTask{
-		keys:   append([]slowQueryKey(nil), keys...),
+		keys:   keys,
 		values: make([]string, len(keys)),
 		done:   make(chan struct{}),
 	}
@@ -289,7 +287,7 @@ func (c *slowQueryCache) appendSlowQuery(key slowQueryKey, sql string) {
 	// A repeated key leaves the older slot in place until the ring reuses it.
 	// The map always refers to the latest insert and is not part of memoryUsage.
 	c.memoryUsage += getSlowQueryValueMemUsage(key, sql)
-	c.slowQueries = append(c.slowQueries, SlowQuery{Key: key, UnredactedSQL: sql})
+	c.slowQueries = append(c.slowQueries, slowQuery{Key: key, UnredactedSQL: sql})
 	c.locations[key] = len(c.slowQueries) - 1
 }
 
@@ -303,7 +301,7 @@ func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 		delete(c.locations, old.Key)
 	}
 
-	*old = SlowQuery{Key: key, UnredactedSQL: sql}
+	*old = slowQuery{Key: key, UnredactedSQL: sql}
 	c.locations[key] = index
 	c.memoryUsage += delta
 	c.advanceWritePos()
@@ -330,7 +328,7 @@ func (c *slowQueryCache) advanceWritePos() {
 	}
 }
 
-var slowQueryStructSize = int64(unsafe.Sizeof(SlowQuery{}))
+var slowQueryStructSize = int64(unsafe.Sizeof(slowQuery{}))
 
 func slowQueryKeyOf(txnStartTS uint64, queryTime float64, digest string) slowQueryKey {
 	if len(digest) > 10 {
