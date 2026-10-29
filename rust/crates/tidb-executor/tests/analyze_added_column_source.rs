@@ -1,0 +1,268 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! A column added by `ALTER TABLE` is not NULL in the rows that predate it.
+//!
+//! `ALTER TABLE t ADD COLUMN c INT DEFAULT 5` rewrites no rows: every row
+//! already stored simply has no entry for `c`, and TiDB substitutes the
+//! column's `OriginDefaultValue` when it reads one. Go's `ANALYZE` gets that
+//! substitution from the coprocessor -- `pkg/executor/builder.go:3246` calls
+//! `tables.SetPBColumnsDefaultValue`, which encodes
+//! `GetColOriginDefaultValueWithoutStrictSQLMode` into the scan request -- so
+//! the sample carries `5`, not NULL.
+//!
+//! Captured from a real TiDB (100 rows, `ADD COLUMN c INT DEFAULT 5`,
+//! `tidb_analyze_version=2`, `ANALYZE TABLE zzd`):
+//!
+//! ```text
+//! mysql.stats_histograms (hist_id 2): distinct_count 1, null_count 0
+//! SHOW STATS_TOPN:                    c  value 5  count 100
+//! SHOW STATS_BUCKETS:                 no buckets for c -- all of it is TopN
+//! ```
+//!
+//! Reading those rows as NULL instead would give `c` a `null_count` of every
+//! old row and no bucket covering `5`, so `WHERE c = 5` would estimate ~0
+//! rows.
+
+use std::collections::BTreeMap;
+
+use tidb_codec::encode_row_key;
+use tidb_datatype::Datum;
+use tidb_executor::cluster_analyze::{AnalyzeOptions, analyze_physical_table, analyze_table};
+use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_ddl_build::table_info_build::build_table_info;
+use tidb_model::column::ColumnDefaultValue;
+use tidb_model::table_info::TableInfo;
+use tidb_tablecodec::encode_table_row;
+
+#[derive(Default)]
+struct RowStore {
+    pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+impl MetaSnapshot for RowStore {
+    fn get(&mut self, raw_key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+        Ok(self.pairs.get(raw_key).cloned())
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        Ok(self
+            .pairs
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
+    }
+}
+
+impl PagedMetaSnapshot for RowStore {
+    fn scan_page(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<MetaPairs, ClusterCatalogError> {
+        Ok(self
+            .pairs
+            .range(start.to_vec()..end.to_vec())
+            .take(limit)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
+    }
+}
+
+/// `CREATE TABLE zzd (a INT)` followed by
+/// `ALTER TABLE zzd ADD COLUMN c INT DEFAULT 5`, as the catalog records it:
+/// the added column is public and carries the origin default the DDL
+/// computed.
+fn table_after_add_column() -> TableInfo {
+    let statement = tidb_parser::parse("CREATE TABLE zzd (a INT, c INT DEFAULT 5)")
+        .expect("the fixture parses");
+    let tidb_ast::Stmt::Ddl(ddl) = statement else {
+        panic!("the fixture is a CREATE TABLE");
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("the fixture is a CREATE TABLE");
+    };
+    let mut table = build_table_info(create, "utf8mb4", "utf8mb4_bin")
+        .expect("the fixture is a table this node can express");
+    table.id = 4242;
+    let added = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
+        .expect("the fixture declares c");
+    added
+        .write()
+        .set_origin_default_value(Some(ColumnDefaultValue::str("5")))
+        .expect("an INT origin default is valid");
+    table
+}
+
+/// One hundred rows written before `c` existed: each carries `a` only.
+fn rows_predating_the_added_column(table: &TableInfo) -> RowStore {
+    rows_predating_the_added_column_at(table, table.id)
+}
+
+fn rows_predating_the_added_column_at(table: &TableInfo, physical_id: i64) -> RowStore {
+    let column_a = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "a")
+        .expect("the fixture declares a");
+    let column_a_id = column_a.read().id;
+    let mut store = RowStore::default();
+    for handle in 1..=100_i64 {
+        let value = encode_table_row(None, &[Datum::Int(handle)], &[column_a_id], true, None)
+            .expect("a one-column row encodes");
+        let key = encode_row_key(
+            physical_id,
+            &tidb_codec::encode_key(&[Datum::Int(handle)]).expect("a handle encodes"),
+        );
+        store.pairs.insert(key, value);
+    }
+    store
+}
+
+#[test]
+fn a_partition_scan_uses_its_physical_id_and_the_logical_schema() {
+    let table = table_after_add_column();
+    let partition_id = 5252;
+    let mut store = rows_predating_the_added_column_at(&table, partition_id);
+    let report = analyze_physical_table(
+        &mut store,
+        &table,
+        partition_id,
+        &AnalyzeOptions::default(),
+        None,
+        440_000_000_000_000_001,
+        None,
+    )
+    .expect("a physical partition analyzes through the logical table schema");
+
+    assert_eq!(report.stats.table_id, partition_id);
+    assert_eq!(report.scanned_rows, 100);
+    assert_eq!(report.stats.row_count, 100);
+}
+
+#[test]
+fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
+    let table = table_after_add_column();
+    let mut store = rows_predating_the_added_column(&table);
+    let report = analyze_table(
+        &mut store,
+        &table,
+        &AnalyzeOptions::default(),
+        // Go getAdjustedSampleRate scans all rows for this known small table;
+        // an unknown row count instead selects the 0.001 fallback rate.
+        Some(100),
+        440_000_000_000_000_000,
+        None,
+    )
+    .expect("a table whose added column has a materialisable default analyzes");
+    assert_eq!(report.scanned_rows, 100);
+    assert_eq!(report.stats.snapshot, 440_000_000_000_000_000);
+    let added = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
+        .expect("the fixture declares c");
+    let added_id = added.read().id;
+    let stats = report
+        .stats
+        .column(added_id)
+        .expect("the added column gets a histogram");
+    assert_eq!(
+        stats.histogram.null_count, 0,
+        "every row predating the added column was analyzed as NULL"
+    );
+    assert_eq!(stats.histogram.ndv, 1);
+    let topn = stats.topn.as_ref().expect("the one value is a TopN entry");
+    assert_eq!(topn.num(), 1);
+    let entry = topn.entries().first().expect("one entry");
+    assert_eq!(entry.count, 100);
+    assert_eq!(
+        entry.encoded,
+        tidb_codec::encode_key(&[Datum::Int(5)]).expect("the default encodes"),
+        "the TopN entry is not the column's default value 5"
+    );
+}
+
+#[test]
+fn virtual_index_samples_are_materialized_from_stored_base_columns() {
+    let statement =
+        tidb_parser::parse("CREATE TABLE t(a INT, v INT AS (a+1), KEY iv(v), KEY ie((a+2)))")
+            .unwrap();
+    let tidb_ast::Stmt::Ddl(ddl) = statement else {
+        panic!("DDL")
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("CREATE TABLE")
+    };
+    let mut table =
+        build_table_info(create, "utf8mb4", "utf8mb4_bin").unwrap();
+    table.id = 4242;
+    let a = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "a")
+        .unwrap()
+        .read()
+        .id;
+    let mut store = RowStore::default();
+    for (handle, value) in [1, 2, 2, 3].into_iter().enumerate() {
+        let key = encode_row_key(
+            table.id,
+            &tidb_codec::encode_key(&[Datum::Int(handle as i64)]).unwrap(),
+        );
+        let value = encode_table_row(None, &[Datum::Int(value)], &[a], true, None).unwrap();
+        store.pairs.insert(key, value);
+    }
+    let report = analyze_table(
+        &mut store,
+        &table,
+        &AnalyzeOptions::default(),
+        Some(4),
+        100,
+        None,
+    )
+    .unwrap();
+    assert_eq!(report.stats.columns.len(), 1);
+    assert_eq!(report.stats.columns[0].id, a);
+    assert_eq!(report.stats.indexes.len(), 2);
+    for index in &report.stats.indexes {
+        let metadata = table
+            .indices
+            .iter_deref()
+            .find(|metadata| metadata.read().id == index.id)
+            .unwrap();
+        let increment = if metadata.read().name.lowercase() == "iv" {
+            1
+        } else {
+            2
+        };
+        assert_eq!(index.histogram.ndv, 3);
+        assert_eq!(index.histogram.null_count, 0);
+        let mut topn = index.topn.clone().unwrap();
+        topn.sort();
+        for (value, count) in [(1, 1), (2, 2), (3, 1)] {
+            assert_eq!(
+                topn.query_bytes(
+                    &tidb_codec::encode_key(&[Datum::Int(value + increment)]).unwrap()
+                ),
+                Some(count)
+            );
+        }
+    }
+}

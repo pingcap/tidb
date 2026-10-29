@@ -117,7 +117,7 @@ pub(super) fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
 /// after the classic bootstrap's 116 ids, 8 after the next-gen one's seven).
 #[test]
 fn a_node_serves_a_store_of_either_layout_by_name() {
-    use tidb_exec::mysql_bootstrap::BootstrapLayout;
+    use crate::mysql_bootstrap::BootstrapLayout;
     if crate::domain::isolate_process_globals() {
         return;
     }
@@ -125,7 +125,7 @@ fn a_node_serves_a_store_of_either_layout_by_name() {
         (BootstrapLayout::Classic, "117"),
         (BootstrapLayout::NextGen, "8"),
     ] {
-        tidb_exec::bootstrap_publish::override_layout_on_this_thread(Some(layout));
+        crate::bootstrap_publish::override_layout_on_this_thread(Some(layout));
         let (stack, _users) = cop_backed_stack();
         let mut session = stack.factory.open_session(session_context(130)).unwrap();
         assert_eq!(
@@ -187,7 +187,7 @@ fn a_node_serves_a_store_of_either_layout_by_name() {
         rows(&mut session, "drop user layout_u");
         rows(&mut session, "set global max_connections = default");
     }
-    tidb_exec::bootstrap_publish::override_layout_on_this_thread(None);
+    crate::bootstrap_publish::override_layout_on_this_thread(None);
 }
 
 #[test]
@@ -2604,7 +2604,7 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
         .stats()
         .load()
         .get(&temporary_id)
-        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
         .is_none());
     rows(
         &mut session,
@@ -2627,7 +2627,7 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
     let snapshot = stack.factory.stats().load();
     let analyzed = snapshot
         .get(&temporary_id)
-        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
         .expect("explicit ANALYZE publishes a real GLOBAL temporary cache object");
     assert_eq!(analyzed.hist_coll.column_count(), 1);
     assert!(!analyzed.hist_coll.pseudo);
@@ -2722,13 +2722,13 @@ struct ObservedSystemAnalyze {
 impl crate::domain::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
     fn execute(
         &self,
-        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
-        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
-        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+        jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
     {
         let process = self
             .processes
@@ -2781,13 +2781,13 @@ struct KillingSystemAnalyze {
 impl crate::domain::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
     fn execute(
         &self,
-        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
-        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
-        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+        jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
     {
         let process_id = self
             .processes
@@ -3657,7 +3657,7 @@ fn ddl_after_loaded_statistics_matches_go() {
         .stats()
         .load()
         .get(&table_id)
-        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
         .is_some_and(|stats| !stats.hist_coll.pseudo));
 
     let values = (0..1000)
@@ -3674,7 +3674,7 @@ fn ddl_after_loaded_statistics_matches_go() {
         .stats()
         .load()
         .get(&table_id)
-        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
         .is_some_and(|stats| !stats.hist_coll.pseudo));
 
     // Go keeps Domain.StatsHandle independently of an InfoSchema refresh.
@@ -3700,7 +3700,7 @@ fn ddl_after_loaded_statistics_matches_go() {
         }
         snapshot.insert(
             table_id,
-            tidb_exec::stats_watch::TableStatsState::Loaded(Arc::new(table)),
+            tidb_stats_handle_syncload::stats_watch::TableStatsState::Loaded(Arc::new(table)),
         );
         stack.factory.stats().store_after_analyze(snapshot);
         assert!(peer_catalog
@@ -5083,7 +5083,7 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
         )),
         [["test", "stats_analyze_job", "", "2", "finished", "1"]]
     );
-    let cutoff = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+    let cutoff = tidb_datatype::current_time::utc_now_timestamp()
         .add_duration(MySqlDuration::from_nanoseconds(1_000_000_000, 0).unwrap())
         .unwrap();
     stack
@@ -5197,7 +5197,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     );
 
     rows(&mut session, "DELETE FROM mysql.analyze_jobs");
-    let started_at = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+    let started_at = tidb_datatype::current_time::utc_now_timestamp()
         .add_duration(MySqlDuration::from_nanoseconds(-60_000_000_000, 0).unwrap())
         .unwrap();
     let handle = ClusterHistoricalStatsHandle {
@@ -5209,7 +5209,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     let mut job_id = 0;
     handle
         .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+            let (created_job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 "test",
@@ -5228,7 +5228,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .expect("pending job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 job_id,
@@ -5240,7 +5240,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .expect("running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_update_analyze_job_progress(
+            tidb_stats_handle_storage::cluster_stats_write::plan_update_analyze_job_progress(
                 snapshot,
                 &stack.factory.catalog.load(),
                 job_id,
@@ -5292,7 +5292,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         )))
     );
     rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
-    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let now = tidb_datatype::current_time::utc_now_timestamp();
     let started_at = now
         .add_duration(MySqlDuration::from_nanoseconds(-2_000_000_000, 0).unwrap())
         .unwrap();
@@ -5305,7 +5305,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
     let mut job_id = 0;
     handle
         .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+            let (created_job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 "test",
@@ -5324,7 +5324,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .expect("pending job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 job_id,
@@ -5336,7 +5336,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .expect("running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 job_id,
@@ -5396,7 +5396,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         local.static_info.port,
     );
     let local_instance = local_instance.as_str();
-    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let now = tidb_datatype::current_time::utc_now_timestamp();
     let old = now
         .add_duration(MySqlDuration::from_nanoseconds(-660_000_000_000, 0).unwrap())
         .unwrap();
@@ -5417,7 +5417,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     ] {
         handle
             .commit_stats_plan(|snapshot, _| {
-                let (_, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                let (_, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
                     snapshot,
                     &stack.factory.catalog.load(),
                     "test",
@@ -5437,7 +5437,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     for id in [2, 3, 4] {
         handle
             .commit_stats_plan(|snapshot, _| {
-                tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
                     snapshot,
                     &stack.factory.catalog.load(),
                     id,
@@ -5450,7 +5450,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     }
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 2,
@@ -5464,7 +5464,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .expect("temporary finish commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 2,
@@ -5476,7 +5476,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .expect("NULL-process running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 5,
@@ -5555,7 +5555,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         [[
             "failed",
             "1",
-            tidb_exec::cluster_stats_write::CORRUPTED_ANALYZE_JOB_FAILURE,
+            tidb_stats_handle_storage::cluster_stats_write::CORRUPTED_ANALYZE_JOB_FAILURE,
         ]]
     );
 }
@@ -17552,13 +17552,13 @@ struct FailingStatsCacheUpdate {
 impl crate::domain::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
     fn execute(
         &self,
-        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
-        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
-        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+        jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
     {
         self.inner.execute(
             statement,

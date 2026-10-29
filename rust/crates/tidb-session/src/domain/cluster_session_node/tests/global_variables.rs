@@ -93,7 +93,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
         node.accounts.live.clone(),
         globals,
         Arc::new(
-            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+            SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
         Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),

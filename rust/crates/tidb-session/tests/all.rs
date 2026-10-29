@@ -378,3 +378,6 @@ mod virtual_generated_dependency_source;
 mod week_specifier_source;
 mod wide_in_list_source;
 mod write_order_limit_source;
+mod mysql_bootstrap_classic_source;
+mod mysql_bootstrap_source;
+mod mysql_bootstrap_tableinfo_source;

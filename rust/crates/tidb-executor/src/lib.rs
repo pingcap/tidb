@@ -55,7 +55,6 @@ pub use sessionctx::StmtOutput;
 pub mod admin;
 pub mod ddl_exec;
 pub mod lock;
-pub mod lock_stats;
 pub mod stats_exec;
 pub mod record_set;
 pub mod stmt_ctx_build;
@@ -119,6 +118,8 @@ pub fn worker_pool_available() -> bool {
 pub mod agg_spill;
 pub mod aggfuncs;
 pub mod analyze;
+pub mod cluster_analyze;
+pub mod real_tikv_analyze;
 pub mod apply;
 pub(crate) mod apply_cache;
 mod approx_count_distinct;

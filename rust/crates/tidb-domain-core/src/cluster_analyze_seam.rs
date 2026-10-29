@@ -21,7 +21,7 @@
 //! registry, because the driver is what knows that `GRANT SELECT ON *.*`
 //! means. Nothing in the driver knows what `ANALYZE TABLE` means -- the
 //! statement's whole meaning is reading rows and building histograms, which
-//! is [`tidb_exec::cluster_analyze`]'s -- so the seam is one method that runs
+//! is [`tidb_executor::cluster_analyze`]'s -- so the seam is one method that runs
 //! it, exactly as the DDL seam is one method that applies a catalog change.
 //!
 //! # The order, and what a failure leaves behind
@@ -43,26 +43,26 @@
 //! `RealClusterDdl::refresh_catalog` treats the same situation.
 //!
 //! `RealClusterDdl::refresh_catalog`: crate::domain::cluster_session_node::RealClusterDdl
-//! [`SharedStats`]: tidb_exec::stats_watch::SharedStats
+//! [`SharedStats`]: tidb_stats_handle_syncload::stats_watch::SharedStats
 
 use std::sync::Arc;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_exec::cluster_analyze::AnalyzeStatement;
+use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
-use tidb_exec::cluster_stats_load::ClusterStatsLoader;
-use tidb_exec::real_tikv_analyze::{
+use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
+use tidb_executor::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
     ClusterAnalyzeReport,
 };
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_exec::real_tikv_load_stats::{
+use tidb_stats_handle_storage::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
 };
-use tidb_exec::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
-use tidb_exec::stats_watch::SharedStats;
+use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
+use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_util::sqlkiller::SqlKiller;
 
@@ -235,7 +235,7 @@ where
                 .stats
                 .load()
                 .get(&logical_table_id)
-                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                 .is_some_and(|table| table.is_initialized());
             record_global_history_enabled(record_history(), initialized)
         };
@@ -282,7 +282,7 @@ where
             |table_id| {
                 current
                     .get(&table_id)
-                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                     .is_some()
             },
             0,
@@ -298,7 +298,7 @@ where
     }
 
     fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), SqlQueryError> {
-        tidb_exec::real_tikv_load_stats::commit_cluster_drop_stats(
+        tidb_stats_handle_storage::real_tikv_load_stats::commit_cluster_drop_stats(
             &self.opener,
             physical_ids,
             self.timeout,

@@ -51,7 +51,7 @@
 //! [`delete_clustered_row`].
 //!
 //! Which set a caller needs is therefore a question about the *cluster's*
-//! `TableInfo`, never about the table's name; `tidb_exec::cluster_stats_write`
+//! `TableInfo`, never about the table's name; `tidb_stats_handle_storage::cluster_stats_write`
 //! asks [`crate::mysql_system_tables::HandleLayout::of`] per table for exactly
 //! that reason.
 

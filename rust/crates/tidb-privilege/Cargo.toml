@@ -25,3 +25,7 @@ tidb-util = { path = "../tidb-util" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-meta = { path = "../tidb-meta" }
+tidb-session = { path = "../tidb-session" }

@@ -46,7 +46,7 @@ pub trait StatsStatementService {
     /// Go appends (empty for none).
     fn lock_stats(
         &self,
-        statement: &crate::lock_stats::ClusterStatsLockStatement,
+        statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
     ) -> Result<String, DriverError>;
     /// Go `LoadStatsFromJSON` for one parsed, non-null dump.
     fn load_stats(
@@ -245,7 +245,7 @@ pub trait StatsExec: AnalyzeExec {
     /// privileges before any lock row changes.
     fn run_stats_lock(
         &mut self,
-        statement: &crate::lock_stats::ClusterStatsLockStatement,
+        statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
         service: &dyn StatsStatementService,
     ) -> Result<(), DriverError> {
         self.begin_routed_statement_warnings();

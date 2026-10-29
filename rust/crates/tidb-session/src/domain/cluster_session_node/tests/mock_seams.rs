@@ -697,11 +697,11 @@ impl ClusterAnalyze for MockAnalyze {
         &self,
         statement: &AnalyzeStatement,
         _: &str,
-        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
-        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
+        _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",
             statement.schema, statement.table
@@ -717,8 +717,8 @@ pub(super) struct MockStatsLock;
 impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
     fn execute(
         &self,
-        _: &tidb_exec::cluster_stats_lock::ClusterStatsLockStatement,
-    ) -> Result<tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport, SqlQueryError> {
-        Ok(tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport::default())
+        _: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
+    ) -> Result<tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport, SqlQueryError> {
+        Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport::default())
     }
 }

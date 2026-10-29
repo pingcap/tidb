@@ -71,7 +71,7 @@ pub struct ClusterStack {
     /// The boot catalog's refusals, rendered for the ready event.
     pub skipped: String,
     /// The statistics the node booted with.
-    pub stats_receipt: tidb_exec::stats_watch::StatsReceipt,
+    pub stats_receipt: tidb_stats_handle_syncload::stats_watch::StatsReceipt,
     /// The domain loops, retired in this order after the listeners drain:
     /// each reload thread holds its own PD handle, so each is joined before
     /// the authority's shutdown drain, and a watch is dropped before the
@@ -164,22 +164,22 @@ pub fn cluster_session_stack(
             if !accounts.bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
                 let (outcome, schema_version, bootstrap_splits) =
-                    tidb_exec::bootstrap_publish::publish_bootstrap_with_splits(
+                    crate::bootstrap_publish::publish_bootstrap_with_splits(
                         opener,
                         COPROCESSOR_QUERY_TIMEOUT,
                     )
                     .map_err(|error| error.to_string())?;
-                tidb_exec::bootstrap_publish::notify_committed_bootstrap(
+                crate::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
                     schema_version,
                     None,
                 )
                 .map_err(|error| error.to_string())?;
-                tidb_exec::bootstrap_publish::log_bootstrap_successful(started);
+                crate::bootstrap_publish::log_bootstrap_successful(started);
                 // Go `EnableSplitTableRegion`: the bootstrap cut every system
                 // table's region (re-cutting an existing boundary is a no-op).
                 if tidb_config::config_tree::config::get_global_config().split_table {
-                    tidb_exec::pre_split::split_bootstrap_tables(
+                    tidb_ddl::pre_split::split_bootstrap_tables(
                         region_store.as_ref(),
                         &bootstrap_splits,
                     );
@@ -474,7 +474,7 @@ pub fn cluster_session_stack(
             Arc::clone(&schema_validator),
             config.run_ddl,
             min_job_id_refresher,
-            Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::new(crate::ddl_session_pool::ExecutorDdlSessionPool),
             Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {

@@ -50,7 +50,7 @@ use tidb_privilege::cluster_account_write::{plan_account_write, AccountWriteErro
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
-use tidb_exec::mysql_bootstrap::utc_now_timestamp;
+use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;

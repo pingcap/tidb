@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go's store bootstrap (`pkg/session/bootstrap.go`) runs on the node
-//! (`tidb_exec::mysql_bootstrap`): a store is bootstrapped once, before any
+//! (`crate::mysql_bootstrap`): a store is bootstrapped once, before any
 //! session opens on it, and every session consumes the bootstrapped
 //! infoschema as Go's `createSessionWithOpt` does.
 

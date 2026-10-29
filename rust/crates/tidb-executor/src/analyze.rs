@@ -21,7 +21,7 @@
 //! tiers that both run `ANALYZE`, and a table analyzed by one must estimate
 //! identically to the same table analyzed by the other.
 //!
-//! * The cluster tier (`tidb_exec::cluster_analyze`) scans a table's record
+//! * The cluster tier (`crate::cluster_analyze`) scans a table's record
 //!   range through a transaction's snapshot and writes `mysql.stats_*` rows a
 //!   Go TiDB reads back.
 //! * The in-process tier ([`kv::analyze_kv_table`]) scans a
@@ -680,7 +680,7 @@ impl AnalyzedColumn {
     ///
     /// Under a new collation only the collation key orders the column
     /// correctly, so it -- not the text -- is what Go samples, stores and
-    /// compares. That is also why `tidb_exec::cluster_stats_load` reads a
+    /// compares. That is also why `tidb_stats_handle_storage::cluster_stats_load` reads a
     /// string bound back as raw bytes rather than at the column's declared
     /// type: the stored bound may not even be valid in the column's charset.
     fn stored_value(&self, value: &Datum) -> Datum {

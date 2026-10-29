@@ -49,7 +49,7 @@ use tidb_txnkv::transaction::StoreClient;
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
 use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
-use tidb_exec::mysql_bootstrap::utc_now_timestamp;
+use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;

@@ -64,10 +64,10 @@ tokio = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 fail = { version = "0.4", optional = true }
 [dev-dependencies]
+tidb-session = { path = "../tidb-session", features = ["failpoints"] }
 tidb-planner = { path = "../tidb-planner" }
 chrono-tz.workspace = true
 fail = { version = "0.4", features = ["failpoints"] }
-tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
 # The tests build sessions and data checks over the executor, as the node does.
 tidb-executor = { path = "../tidb-executor" }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }

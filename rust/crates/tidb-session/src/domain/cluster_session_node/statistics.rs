@@ -11,11 +11,11 @@
 //! below).
 
 use std::sync::Arc;
-use tidb_exec::cluster_analyze::AnalyzeStatement;
-use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
-use tidb_exec::cluster_stats_write::StatsWritePlan;
-use tidb_exec::mysql_bootstrap::utc_now_timestamp;
-use tidb_exec::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
+use tidb_executor::cluster_analyze::AnalyzeStatement;
+use tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement;
+use tidb_stats_handle_storage::cluster_stats_write::StatsWritePlan;
+use tidb_datatype::current_time::utc_now_timestamp;
+use tidb_executor::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::exec::AnalyzeExec as _;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::stats_exec::StatsExec as _;
@@ -83,7 +83,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
             let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
-            let (job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+            let (job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
                 &mut snapshot,
                 &catalog,
                 &spec.schema,
@@ -119,7 +119,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 
     fn start(&self, job_id: u64) {
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
                 snapshot,
                 catalog,
                 job_id,
@@ -139,7 +139,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 
     fn update_progress(&self, job_id: u64, processed_rows: i64) {
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_exec::cluster_stats_write::plan_update_analyze_job_progress(
+            tidb_stats_handle_storage::cluster_stats_write::plan_update_analyze_job_progress(
                 snapshot,
                 catalog,
                 job_id,
@@ -170,7 +170,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             AnalyzeJobKind::GlobalStatsMerge => 0,
         };
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
                 snapshot,
                 catalog,
                 job_id,
@@ -443,14 +443,14 @@ impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
     }
 
     fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool {
-        tidb_exec::real_tikv_analyze::analyze_builds_column_task(&self.catalog.load(), statement)
+        tidb_executor::real_tikv_analyze::analyze_builds_column_task(&self.catalog.load(), statement)
     }
 
     fn execute(
         &self,
         statement: &AnalyzeStatement,
         historical_stats_enabled: bool,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, tidb_executor::DriverError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_executor::DriverError>
     {
         let jobs = PersistedAnalyzeJobs {
             transactions: Arc::clone(&self.transactions),

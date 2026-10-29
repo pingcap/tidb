@@ -1233,7 +1233,7 @@ where
     /// `mysql.advisory_locks`, located by name the first time a lock is
     /// taken (the table is never recreated, so its key shape is fixed for
     /// the life of the cluster).
-    advisory_lock_table: Arc<Mutex<Option<tidb_exec::mysql_bootstrap::AdvisoryLockTable>>>,
+    advisory_lock_table: Arc<Mutex<Option<tidb_syssession::advisory_locks::AdvisoryLockTable>>>,
 }
 
 /// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
@@ -1300,7 +1300,7 @@ where
     /// the stored schema whichever layout the bootstrap gave it.
     fn advisory_lock_table(
         &self,
-    ) -> Result<tidb_exec::mysql_bootstrap::AdvisoryLockTable, AdvisoryLockError> {
+    ) -> Result<tidb_syssession::advisory_locks::AdvisoryLockTable, AdvisoryLockError> {
         let mut cached = self
             .advisory_lock_table
             .lock()
@@ -1317,7 +1317,7 @@ where
                 &mut transaction,
                 self.timeout,
             );
-            tidb_exec::mysql_bootstrap::AdvisoryLockTable::locate(&mut snapshot)
+            tidb_syssession::advisory_locks::AdvisoryLockTable::locate(&mut snapshot)
         };
         let _ = transaction.rollback(&UnaryCallContext::with_timeout(self.timeout));
         let table = located.map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;

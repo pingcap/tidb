@@ -28,7 +28,7 @@
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
-pub use tidb_exec::bootstrap_publish;
+pub use tidb_session::bootstrap_publish;
 pub use tidb_session::domain::cluster_account_seam;
 pub use tidb_session::domain::cluster_analyze_seam;
 pub use tidb_session::domain::cluster_auto_id_seam;

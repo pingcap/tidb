@@ -1,0 +1,30 @@
+[package]
+name = "tidb-stats-handle-lockstats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics locks: Go pkg/statistics/handle/lockstats (Rust rewrite)."
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-store-driver = { path = "../tidb-store-driver" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tidb-session = { path = "../tidb-session" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }

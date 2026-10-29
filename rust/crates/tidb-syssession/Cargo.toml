@@ -30,5 +30,6 @@ tidb-util = { path = "../tidb-util" }
 tidb-parser = { path = "../tidb-parser" }
 
 [dev-dependencies]
+tidb-session = { path = "../tidb-session" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 serde_json = { workspace = true }

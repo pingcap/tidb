@@ -40,7 +40,7 @@
 //! `PutKVToEtcdMono` need, and prefix watches as an event stream. The
 //! production adapter is `tidb_pd_client::etcd::{EtcdClient, EtcdWatcher}`
 //! (PD embeds etcd and serves the full v3 surface on its client port, see
-//! `crates/tidb-exec/src/catalog_watch.rs`'s module doc); tests drive a
+//! `crates/tidb-infoschema-issyncer/src/catalog_watch.rs`'s module doc); tests drive a
 //! recording fake, the same tier convention `serverinfo_syncer.rs` uses.
 //!
 //! Go's `concurrency.Session` (a granted lease PLUS an automatic keepalive

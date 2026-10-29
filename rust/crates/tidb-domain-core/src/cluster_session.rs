@@ -38,7 +38,7 @@
 
 use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
-use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
+use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, ViewDef};

@@ -43,7 +43,7 @@ impl StatsMaintenanceWorker {
         factory: &Arc<Domain>,
         stats_lease: StatsLease,
         schema_lease: Duration,
-        initialization: tidb_exec::stats_watch::AsyncStatsLoaderInit,
+        initialization: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoaderInit,
     ) -> Result<Option<Self>, String> {
         let StatsLease::Positive(lease) = stats_lease else {
             return Ok(None);

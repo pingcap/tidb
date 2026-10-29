@@ -14,6 +14,11 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-copr = { path = "../tidb-copr" }
@@ -96,6 +101,8 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-session = { path = "../tidb-session" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }
 tidb-kv = { path = "../tidb-kv", features = ["test-util"] }
 tidb-table = { path = "../tidb-table", features = ["test-util"] }

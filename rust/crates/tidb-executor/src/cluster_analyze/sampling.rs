@@ -1,0 +1,958 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Schema projection for Go master buildAnalyzeSamplingPushdown.
+use tidb_datatype::CollationCollator;
+use super::{AnalyzeError, AnalyzeOptions, AnalyzePlan};
+use crate::remote_scan::PushdownScanColumn;
+use tidb_model::table_info::TableInfo;
+use tidb_proto::tipb;
+
+pub(super) struct SamplingSchema {
+    pub columns: Vec<PushdownScanColumn>,
+    pub handle_positions: Vec<usize>,
+    pub common_handle: bool,
+    /// The handle ranges the sampling request reads; see
+    /// [`analyze_handle_ranges`].
+    pub ranges: Vec<tidb_distsql::DatumRange>,
+    primary_ids: Vec<i64>,
+    primary_prefix_ids: Vec<i64>,
+    primary_lengths: Vec<i64>,
+}
+
+impl SamplingSchema {
+    pub fn new(table: &TableInfo, plan: &AnalyzePlan) -> Result<Self, AnalyzeError> {
+        let integer_pk = table
+            .pk_is_handle
+            .then(|| table.get_pk_col_info())
+            .flatten()
+            .map(|column| column.read().id);
+        let mut columns: Vec<_> = plan
+            .columns()
+            .iter()
+            .map(|column| PushdownScanColumn {
+                id: column.id,
+                field_type: column.field_type.clone(),
+                is_handle: integer_pk == Some(column.id),
+                origin_default: Some(column.absent_value.clone()),
+            })
+            .collect();
+        let mut primary_ids = Vec::new();
+        let mut primary_prefix_ids = Vec::new();
+        let mut primary_lengths = Vec::new();
+        if table.is_common_handle {
+            let primary = table.get_primary_key().ok_or_else(|| {
+                AnalyzeError::unsupported("common handle has no primary index".to_owned())
+            })?;
+            for part in primary.read().columns.iter_deref() {
+                let part = part.read();
+                let source = table.cols().get(part.offset as usize).ok_or_else(|| {
+                    AnalyzeError::unsupported("primary index offset is invalid".to_owned())
+                })?;
+                let source = source.read();
+                primary_ids.push(source.id);
+                primary_lengths.push(part.length);
+                if part.length != tidb_datatype::UNSPECIFIED_LENGTH {
+                    primary_prefix_ids.push(source.id);
+                }
+            }
+        } else if let Some(id) = integer_pk {
+            primary_ids.push(id);
+        } else {
+            columns.push(PushdownScanColumn {
+                id: -1,
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                is_handle: true,
+                origin_default: None,
+            });
+            primary_ids.push(-1);
+        }
+        let mut handle_positions = Vec::new();
+        for id in &primary_ids {
+            if !columns.iter().any(|column| column.id == *id) {
+                let column = table
+                    .cols()
+                    .iter_deref()
+                    .find(|column| column.read().id == *id)
+                    .ok_or_else(|| {
+                        AnalyzeError::unsupported("handle column is missing".to_owned())
+                    })?;
+                let column = column.read();
+                columns.push(PushdownScanColumn {
+                    id: *id,
+                    field_type: column.field_type.clone(),
+                    is_handle: integer_pk == Some(*id),
+                    origin_default: Some(
+                        super::origin_default(&column, table.name.original())
+                            .map_err(|e| AnalyzeError::unsupported(e.to_string()))?,
+                    ),
+                });
+            }
+            handle_positions.push(columns.iter().position(|column| column.id == *id).unwrap());
+        }
+        Ok(Self {
+            columns,
+            handle_positions,
+            common_handle: table.is_common_handle,
+            ranges: analyze_handle_ranges(table),
+            primary_ids,
+            primary_prefix_ids,
+            primary_lengths,
+        })
+    }
+
+    pub fn statistics_slots(&self, plan: &AnalyzePlan) -> Vec<usize> {
+        (0..plan.columns().len())
+            .chain(
+                plan.indexes()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, index)| index.needs_own_slot())
+                    .map(|(i, _)| self.columns.len() + i),
+            )
+            .collect()
+    }
+
+    pub fn decode_handle(
+        &self,
+        row: &mut Vec<tidb_datatype::Datum>,
+        timezone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<tidb_txnkv::Handle, crate::analyze::AnalyzeError> {
+        use tidb_datatype::Datum;
+        use crate::analyze::AnalyzeError as Error;
+        if row.len() != self.columns.len() {
+            return Err(Error::Unsupported(
+                "ANALYZE sample column count mismatch".to_owned(),
+            ));
+        }
+        for (datum, column) in row.iter_mut().zip(&self.columns) {
+            let Datum::Bytes(bytes) = datum else {
+                return Err(Error::Unsupported(
+                    "ANALYZE sample is not encoded".to_owned(),
+                ));
+            };
+            *datum =
+                tidb_tablecodec::decode_column_value(bytes, &column.field_type, Some(timezone))
+                    .map_err(|e| Error::Encode(e.to_string()))?;
+        }
+        if !self.common_handle {
+            return match row[self.handle_positions[0]] {
+                Datum::Int(value) => Ok(tidb_txnkv::IntHandle::new(value).into()),
+                Datum::UInt(value) => Ok(tidb_txnkv::IntHandle::new(value as i64).into()),
+                _ => Err(Error::Unsupported(
+                    "ANALYZE integer handle is not an integer".to_owned(),
+                )),
+            };
+        }
+        let mut values = Vec::with_capacity(self.handle_positions.len());
+        for (key_position, position) in self.handle_positions.iter().copied().enumerate() {
+            let column = &self.columns[position];
+            let mut value = row[position].clone();
+            tidb_tablecodec::truncate_index_value(
+                &mut value,
+                &tidb_tablecodec::IndexColumn {
+                    offset: position,
+                    length: self.primary_lengths[key_position],
+                    use_changing_type: false,
+                },
+                &tidb_tablecodec::TableColumn {
+                    id: column.id,
+                    offset: position,
+                    field_type: column.field_type.clone(),
+                    primary_key: true,
+                    changing_field_type: None,
+                },
+            )
+            .map_err(|e| Error::Encode(e.to_string()))?;
+            if let Some(collation) = crate::analyze::AnalyzedColumn::sampling_collation(
+                &column.field_type,
+                "primary key",
+            )? {
+                value = match value {
+                    Datum::Bytes(bytes) => Datum::Bytes(collation.key(&bytes)),
+                    Datum::String(string) => Datum::Bytes(collation.key(string.bytes())),
+                    other => other,
+                };
+            }
+            values.push(value);
+        }
+        let bytes = tidb_codec::encode_key(&values).map_err(|e| Error::Encode(e.to_string()))?;
+        tidb_txnkv::CommonHandle::new(bytes)
+            .map(Into::into)
+            .map_err(|e| Error::Encode(e.to_string()))
+    }
+
+    pub fn project_collector(
+        &self,
+        plan: &AnalyzePlan,
+        collector: tipb::RowSampleCollector,
+    ) -> Result<tidb_stats::row_sample_collector::RowSampleCollectorProto, AnalyzeError> {
+        let expected = self.columns.len() + plan.indexes().len();
+        if collector.null_counts.len() != expected
+            || collector.total_size.len() != expected
+            || collector.fm_sketch.len() != expected
+            || collector
+                .samples
+                .iter()
+                .any(|sample| sample.row.len() != self.columns.len())
+            || collector.count.unwrap_or_default() < 0
+        {
+            return Err(AnalyzeError::unsupported(
+                "TiKV ANALYZE collector does not match requested schema".to_owned(),
+            ));
+        }
+        let slots = self.statistics_slots(plan);
+        Ok(tidb_stats::row_sample_collector::RowSampleCollectorProto {
+            count: collector.count.unwrap_or_default(),
+            null_counts: slots.iter().map(|i| collector.null_counts[*i]).collect(),
+            total_sizes: slots.iter().map(|i| collector.total_size[*i]).collect(),
+            fm_sketches: slots
+                .iter()
+                .map(|i| {
+                    Some(tidb_stats::FmSketchProto {
+                        mask: collector.fm_sketch[*i].mask.unwrap_or_default(),
+                        hashset: collector.fm_sketch[*i].hashset.clone(),
+                    })
+                })
+                .collect(),
+            samples: collector
+                .samples
+                .into_iter()
+                .map(|sample| tidb_stats::row_sample_collector::RowSampleProto {
+                    row: sample.row,
+                    weight: sample.weight.unwrap_or_default(),
+                })
+                .collect(),
+        })
+    }
+
+    pub fn request(
+        &self,
+        plan: &AnalyzePlan,
+        options: &AnalyzeOptions,
+        rate: f64,
+        flags: u64,
+        offset: i64,
+    ) -> Result<tipb::AnalyzeReq, AnalyzeError> {
+        let columns_info = self
+            .columns
+            .iter()
+            .map(|column| {
+                crate::cop_reader::scan_column(column)
+                    .map(|column| crate::dag_request::column_to_pb(&column))
+                    .ok_or_else(|| {
+                        AnalyzeError::unsupported(format!(
+                            "ANALYZE cannot encode column {}",
+                            column.id
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tipb::AnalyzeReq {
+            tp: Some(tipb::AnalyzeType::TypeFullSampling as i32),
+            flags: Some(flags),
+            time_zone_offset: Some(offset),
+            col_req: Some(tipb::AnalyzeColumnsReq {
+                bucket_size: Some(options.num_buckets as i64),
+                sample_size: Some(options.num_samples as i64),
+                sketch_size: Some(tidb_stats::MAX_SKETCH_SIZE as i64),
+                sample_rate: Some(if options.num_samples > 0 { 0.0 } else { rate }),
+                columns_info,
+                primary_column_ids: if self.common_handle {
+                    self.primary_ids.clone()
+                } else {
+                    Vec::new()
+                },
+                primary_prefix_column_ids: self.primary_prefix_ids.clone(),
+                column_groups: plan
+                    .indexes()
+                    .iter()
+                    .map(|index| tipb::AnalyzeColumnGroup {
+                        column_offsets: index
+                            .column_positions
+                            .iter()
+                            .map(|position| *position as i64)
+                            .collect(),
+                        prefix_lengths: Vec::new(),
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+}
+
+/// Go `analyzeColumnsPushDown`'s full handle ranges, as `open` splits them
+/// with `SplitRangesAcrossInt64Boundary(ranges, false, false,
+/// !hasPkHist(e.handleCols))`: `FullIntRange` over an integer primary key --
+/// one merged list, the unsigned half first -- `FullNotNullRange` over a
+/// common handle, and the signed `FullIntRange` when `BuildHandleColsForAnalyze`
+/// gives no handle columns (`_tidb_rowid`).
+///
+/// These are not the record prefix and its successor: TiKV's table scan reads
+/// a range whose end is its start's `PrefixNext` as a point get of the start,
+/// and no row key is the bare `t{id}_r`, so that range samples no rows.
+fn analyze_handle_ranges(table: &TableInfo) -> Vec<tidb_distsql::DatumRange> {
+    use tidb_planner::ranger::points::{full_int_range, full_not_null_range};
+    let unsigned_pk = table
+        .pk_is_handle
+        .then(|| table.get_pk_col_info())
+        .flatten()
+        .map(|column| column.read().field_type.is_unsigned());
+    let ranges = match unsigned_pk {
+        Some(unsigned) => full_int_range(unsigned),
+        None if table.is_common_handle => full_not_null_range(),
+        None => full_int_range(false),
+    }
+    .into_iter()
+    .map(|range| crate::IndexRange {
+        low: range.low_val,
+        high: range.high_val,
+        low_exclusive: range.low_exclude,
+        high_exclusive: range.high_exclude,
+    })
+    .collect::<Vec<_>>();
+    let ranges = if unsigned_pk.is_some() {
+        crate::split_ranges_across_int64_boundary(ranges, false, false).0
+    } else {
+        ranges
+    };
+    ranges
+        .into_iter()
+        .map(|range| tidb_distsql::DatumRange {
+            low: range.low,
+            high: range.high,
+            low_exclude: range.low_exclusive,
+            high_exclude: range.high_exclusive,
+        })
+        .collect()
+}
+
+fn concurrency_for_stores(stores: u64) -> u64 {
+    match stores {
+        0..=5 => tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY as u64,
+        6..=10 => stores,
+        11..=20 => stores.saturating_mul(2),
+        21..=50 => stores.saturating_mul(3),
+        _ => stores.saturating_mul(4),
+    }
+}
+
+/// Go `adaptiveAnlayzeDistSQLConcurrency`: the store count comes from
+/// `helper.TryGetPDHTTPClient` (the store's PD HTTP client, caller ID
+/// `tidb-store-helper`) and `GetStores`.
+pub(crate) fn scan_concurrency(
+    configured: i64,
+    pd_http_client: Option<tikv_client::pd_http::Client>,
+    timeout: std::time::Duration,
+) -> u64 {
+    if configured > 0 {
+        return configured as u64;
+    }
+    let Some(pd_cli) = pd_http_client else {
+        tidb_util::logutil::bg_logger().warn(
+            "fail to TryGetPDHTTPClient",
+            &[tidb_log::Field::new(
+                "error",
+                tidb_log::Value::Str("pd http client unavailable".to_owned()),
+            )],
+        );
+        return concurrency_for_stores(0);
+    };
+    let pd_cli = pd_cli.with_caller_id("tidb-store-helper");
+    let count = (|| -> Result<u64, String> {
+        let stores_stat = tidb_txnkv::cluster_http::block_on_pd_http(async {
+            tokio::time::timeout(timeout, pd_cli.get_stores())
+                .await
+                .unwrap_or_else(|_| {
+                    Err(tikv_client::Error::StringError(
+                        "PD stores request timed out".to_owned(),
+                    ))
+                })
+        })?;
+        u64::try_from(stores_stat.count).map_err(|error| error.to_string())
+    })();
+    match count {
+        Ok(count) => concurrency_for_stores(count),
+        Err(error) => {
+            tidb_util::logutil::bg_logger().warn(
+                "fail to get stores info",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+            );
+            concurrency_for_stores(0)
+        }
+    }
+}
+
+struct SamplingCancellation {
+    done: crossbeam_channel::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SamplingCancellation {
+    fn start(
+        killer: &tidb_util::sqlkiller::SqlKiller,
+        cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+    ) -> Result<Self, AnalyzeError> {
+        let killed = killer.get_kill_event_chan();
+        let (done, finished) = crossbeam_channel::bounded(1);
+        let worker = std::thread::Builder::new()
+            .name("analyze-cancel".to_owned())
+            .spawn(move || {
+                crossbeam_channel::select! {
+                    recv(killed) -> _ => cancellation.cancel(),
+                    recv(finished) -> _ => {},
+                }
+            })
+            .map_err(|e| AnalyzeError::unsupported(e.to_string()))?;
+        Ok(Self {
+            done,
+            worker: Some(worker),
+        })
+    }
+}
+
+impl Drop for SamplingCancellation {
+    fn drop(&mut self) {
+        let _ = self.done.try_send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+pub(crate) fn analyze_table<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
+    table: &TableInfo,
+    physical_id: i64,
+    statement: &super::AnalyzeStatement,
+    realtime_count: Option<i64>,
+    snapshot: u64,
+    selected_columns: Option<&std::collections::HashSet<i64>>,
+    concurrency: u64,
+    timeout: std::time::Duration,
+    killer: &tidb_util::sqlkiller::SqlKiller,
+    resource_group: &str,
+    progress: &dyn Fn(i64),
+) -> Result<super::AnalyzeReport, AnalyzeError>
+where
+    S: tidb_txnkv::transaction::StoreClient,
+{
+    let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+    let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
+    let plan = super::cluster_analyze_plan(table, selected_columns)?
+        .with_time_zone(statement.eval_context.session_zone());
+    let virtuals =
+        super::virtual_samples::VirtualSamples::new(table, &plan, &statement.eval_context)?;
+    let schema = SamplingSchema::new(table, &plan)?;
+    let options = &statement.options;
+    let rate = options.sample_rate.unwrap_or_else(|| {
+        tidb_stats::row_sample_collector::adjusted_sample_rate(realtime_count, None)
+    });
+    let request = schema.request(
+        &plan,
+        options,
+        rate,
+        statement.eval_context.push_down_flags(),
+        statement.eval_context.session_zone().dag_zone().1,
+    )?;
+    let mut collector = collect_regions(
+        opener,
+        &schema,
+        &plan,
+        request,
+        physical_id,
+        snapshot,
+        statement.analyze_snapshot,
+        options,
+        concurrency,
+        statement.store_batch_size,
+        timeout,
+        cancellation.clone(),
+        resource_group,
+        progress,
+    )?;
+    for (position, index) in plan.indexes().iter().enumerate() {
+        if !index_requires_ndv_scan(table, &plan, index) {
+            continue;
+        }
+        let primary = table.is_common_handle
+            && table
+                .get_primary_key()
+                .is_some_and(|primary| primary.read().id == index.id);
+        let (null_count, sketch) = collect_index_ndv(
+            opener,
+            physical_id,
+            index,
+            primary,
+            statement,
+            snapshot,
+            concurrency,
+            timeout,
+            cancellation.clone(),
+            resource_group,
+        )?;
+        collector.replace_special_index_stats(plan.index_slot(position), null_count, sketch);
+    }
+    finish_samples(
+        &virtuals,
+        physical_id,
+        statement,
+        realtime_count,
+        snapshot,
+        &plan,
+        &schema,
+        collector,
+    )
+}
+
+pub(super) fn finish_samples(
+    virtuals: &super::virtual_samples::VirtualSamples,
+    physical_id: i64,
+    statement: &super::AnalyzeStatement,
+    realtime_count: Option<i64>,
+    snapshot: u64,
+    plan: &AnalyzePlan,
+    schema: &SamplingSchema,
+    collector: tidb_stats::row_sample_collector::RowSampleCollector,
+) -> Result<super::AnalyzeReport, AnalyzeError> {
+    let run = crate::analyze::AnalyzeRun::start(plan, &statement.options, realtime_count)?;
+    let timezone = statement.eval_context.session_zone();
+    let analyzed = run.finish_collector(collector, |row| {
+        let handle = schema.decode_handle(row, &timezone)?;
+        virtuals.materialize(row, &statement.eval_context)?;
+        Ok(handle)
+    })?;
+    Ok(super::report_from_analyzed(analyzed, physical_id, snapshot))
+}
+
+/// Go analyzes NDV from stored index keys whenever row sampling cannot
+/// reproduce the encoded key's distribution in TiKV.
+pub(super) fn index_requires_ndv_scan(
+    table: &TableInfo,
+    plan: &AnalyzePlan,
+    index: &crate::analyze::AnalyzedIndex,
+) -> bool {
+    index
+        .prefix_lengths
+        .iter()
+        .any(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
+        || index.column_positions.iter().any(|position| {
+            let id = plan.columns()[*position].id;
+            table.cols().iter_deref().any(|column| {
+                let column = column.read();
+                column.id == id && column.is_virtual_generated()
+            })
+        })
+}
+
+fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::IsolationLevel) {
+    if snapshot_enabled {
+        (snapshot, tidb_distsql::IsolationLevel::Snapshot)
+    } else {
+        (u64::MAX, tidb_distsql::IsolationLevel::ReadCommitted)
+    }
+}
+
+/// Go `AnalyzeColumnsExec.buildResp`: store batching at the session's
+/// `AnalyzeStoreBatchSize`, with merged responses accepted and the batch
+/// tasks executed serially whenever batching is on.
+fn set_analyze_store_batch(
+    builder: &mut tidb_distsql::RequestBuilder,
+    store_batch_size: i64,
+) -> &mut tidb_distsql::RequestBuilder {
+    let enable_store_batch = store_batch_size > 0;
+    builder
+        .set_store_batch_size(isize::try_from(store_batch_size).unwrap_or(isize::MAX))
+        .set_allow_batch_task_data_merge(enable_store_batch)
+        .set_execute_batch_tasks_serially(enable_store_batch)
+}
+
+/// Uses the process-owned region cache and lock recovery; only sampled
+/// collector responses cross the TiKV boundary.
+pub(super) fn collect_regions<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
+    schema: &SamplingSchema,
+    plan: &AnalyzePlan,
+    request: tipb::AnalyzeReq,
+    physical_id: i64,
+    snapshot: u64,
+    snapshot_enabled: bool,
+    options: &AnalyzeOptions,
+    concurrency: u64,
+    store_batch_size: i64,
+    timeout: std::time::Duration,
+    cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+    resource_group: &str,
+    progress: &dyn Fn(i64),
+) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
+where
+    S: tidb_txnkv::transaction::StoreClient,
+{
+    use prost::Message;
+    use tidb_stats::row_sample_collector::{RowSampleCollector, SamplePolicy};
+    let error = |e: String| AnalyzeError::unsupported(e);
+    let rate = request
+        .col_req
+        .as_ref()
+        .and_then(|r| r.sample_rate)
+        .unwrap_or_default();
+    let policy = SamplePolicy::choose(options.num_samples, rate)
+        .ok_or_else(|| error("invalid ANALYZE sample policy".to_owned()))?;
+    let transport = native_transport(opener, timeout).map_err(error)?;
+    let (read_ts, isolation) = read_policy(snapshot_enabled, snapshot);
+    let mut builder = tidb_distsql::RequestBuilder::new();
+    builder
+        .set_handle_ranges(physical_id, schema.common_handle, &schema.ranges)
+        .set_analyze_request(request.encode_to_vec(), isolation)
+        .set_paging(false)
+        .set_start_ts(read_ts)
+        .set_concurrency(concurrency);
+    set_analyze_store_batch(&mut builder, store_batch_size).set_resource_group_name(resource_group);
+    let request = builder
+        .build_transport_request(cancellation)
+        .map_err(|e| error(format!("{e:?}")))?;
+    let mut runtime = tidb_distsql::InjectedQueryRuntime::new(transport);
+    let mut result = runtime
+        .analyze(&request, true)
+        .map_err(|e| error(e.to_string()))?;
+    let mut merged =
+        RowSampleCollector::with_memory_quota(plan.slot_count(), policy, options.memory_quota);
+    let outcome = (|| {
+        while let Some(bytes) = result.next_raw().map_err(|e| error(e.to_string()))? {
+            let response = tipb::AnalyzeColumnsResp::decode(bytes.as_slice())
+                .map_err(|e| error(e.to_string()))?;
+            let raw = response
+                .row_collector
+                .ok_or_else(|| error("TiKV ANALYZE response has no row collector".to_owned()))?;
+            let projected = schema.project_collector(plan, raw)?;
+            progress(projected.count);
+            let fragment = RowSampleCollector::from_proto(&projected, policy, options.memory_quota)
+                .map_err(|e| error(e.to_string()))?;
+            merged.merge(fragment);
+            if options
+                .memory_quota
+                .bytes()
+                .is_some_and(|limit| merged.consumed_memory_bytes() > limit)
+            {
+                return Err(error(
+                    "ANALYZE merged samples exceed tidb_mem_quota_analyze".to_owned(),
+                ));
+            }
+        }
+        Ok(merged)
+    })();
+    result.close();
+    outcome
+}
+
+/// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
+/// column's NULL range has a separate histogram and never enters its sketch.
+/// Go `analyzeIndexNDVPushDown`'s key ranges, encoded as `EncodeIndexKey`
+/// does (`[low, PrefixNext(high))` for an inclusive high): a single-column
+/// index reads `FullNotNullRange` -- `[MinNotNull, MaxValue]`, the codec's
+/// `bytesFlag` (1) through `maxFlag` (250) -- and then `NullRange`
+/// (`[NULL, NULL]`, `NilFlag` 0) for its NULL count (`AnalyzeIndexExec.open`);
+/// any other index reads `FullRange`, `[NULL, MaxValue]`. Each entry is
+/// `(is_null_range, start, end)` in Go's request order.
+fn index_ndv_key_ranges(prefix: &[u8], single_column: bool) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+    const NIL_FLAG: u8 = 0;
+    const BYTES_FLAG: u8 = 1;
+    const MAX_FLAG: u8 = 250;
+    let key = |flag: u8| [prefix, &[flag]].concat();
+    if single_column {
+        vec![
+            (false, key(BYTES_FLAG), key(MAX_FLAG + 1)),
+            (true, key(NIL_FLAG), key(NIL_FLAG + 1)),
+        ]
+    } else {
+        vec![(false, key(NIL_FLAG), key(MAX_FLAG + 1))]
+    }
+}
+
+fn collect_index_ndv<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
+    physical_id: i64,
+    index: &crate::analyze::AnalyzedIndex,
+    common_handle: bool,
+    statement: &super::AnalyzeStatement,
+    snapshot: u64,
+    concurrency: u64,
+    timeout: std::time::Duration,
+    cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+    resource_group: &str,
+) -> Result<(i64, tidb_stats::FmSketch), AnalyzeError>
+where
+    S: tidb_txnkv::transaction::StoreClient,
+{
+    use prost::Message;
+    let error = |e: String| AnalyzeError::unsupported(e);
+    let prefix = if common_handle {
+        tidb_codec::table_key::gen_table_record_prefix(physical_id)
+    } else {
+        tidb_codec::table_key::encode_index_seek_key(physical_id, index.id, &[])
+    };
+    let ranges = index_ndv_key_ranges(&prefix, index.column_positions.len() == 1);
+    let request = tipb::AnalyzeReq {
+        tp: Some(if common_handle {
+            tipb::AnalyzeType::TypeCommonHandle
+        } else {
+            tipb::AnalyzeType::TypeIndex
+        } as i32),
+        flags: Some(statement.eval_context.push_down_flags()),
+        time_zone_offset: Some(statement.eval_context.session_zone().dag_zone().1),
+        idx_req: Some(tipb::AnalyzeIndexReq {
+            bucket_size: Some(1),
+            num_columns: Some(index.column_positions.len() as i32),
+            cmsketch_depth: Some(0),
+            cmsketch_width: Some(0),
+            top_n_size: Some(0),
+            version: Some(2),
+            sketch_size: Some(tidb_stats::MAX_SKETCH_SIZE as i64),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let transport = native_transport(opener, timeout).map_err(error)?;
+    let mut runtime = tidb_distsql::InjectedQueryRuntime::new(transport);
+    let (read_ts, isolation) = read_policy(statement.analyze_snapshot, snapshot);
+    let mut sketch = tidb_stats::FmSketch::new(tidb_stats::MAX_SKETCH_SIZE);
+    let mut null_count = 0;
+    for (is_null, start, end) in ranges {
+        let mut builder = tidb_distsql::RequestBuilder::new();
+        builder
+            .set_analyze_request(request.encode_to_vec(), isolation)
+            .set_paging(false)
+            .set_start_ts(read_ts)
+            .set_keep_order(true)
+            .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
+                start_key: start.into(),
+                end_key: end.into(),
+            }])
+            .set_concurrency(concurrency)
+            .set_resource_group_name(resource_group);
+        let transport_request = builder
+            .build_transport_request(cancellation.clone())
+            .map_err(|e| error(format!("{e:?}")))?;
+        let mut result = runtime
+            .analyze(&transport_request, true)
+            .map_err(|e| error(e.to_string()))?;
+        let outcome: Result<(), AnalyzeError> = (|| {
+            while let Some(bytes) = result.next_raw().map_err(|e| error(e.to_string()))? {
+                let response = tipb::AnalyzeIndexResp::decode(bytes.as_slice())
+                    .map_err(|e| error(e.to_string()))?;
+                if is_null {
+                    null_count += response
+                        .hist
+                        .as_ref()
+                        .and_then(|hist| hist.buckets.last())
+                        .map_or(0, |bucket| bucket.count());
+                } else {
+                    let fm = response
+                        .collector
+                        .and_then(|collector| collector.fm_sketch)
+                        .ok_or_else(|| {
+                            error("TiKV index ANALYZE response has no FM sketch".to_owned())
+                        })?;
+                    sketch.merge(&tidb_stats::FmSketch::from_raw_parts(
+                        fm.mask.unwrap_or_default(),
+                        tidb_stats::MAX_SKETCH_SIZE,
+                        fm.hashset,
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        result.close();
+        outcome?;
+    }
+    Ok((null_count, sketch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// Go `EncodeIndexKey` over `FullNotNullRange`/`NullRange` (single
+    /// column) and `FullRange`: the high bound is `PrefixNext` of the
+    /// `maxFlag` byte, `prefix\xfb`, never `PrefixNext(prefix)`.
+    #[test]
+    fn index_ndv_key_ranges_match_go_encode_index_key() {
+        let prefix = b"t\x80\x00\x00\x00\x00\x00\x00\x01_i\x80\x00\x00\x00\x00\x00\x00\x02";
+        let key = |flag: u8| [&prefix[..], &[flag]].concat();
+        assert_eq!(
+            super::index_ndv_key_ranges(prefix, true),
+            vec![(false, key(0x01), key(0xfb)), (true, key(0x00), key(0x01))]
+        );
+        assert_eq!(
+            super::index_ndv_key_ranges(prefix, false),
+            vec![(false, key(0x00), key(0xfb))]
+        );
+    }
+
+    /// Go `buildResp`'s `SetStoreBatchSize(AnalyzeStoreBatchSize)`,
+    /// `SetAllowBatchTaskDataMerge` and `SetExecuteBatchTasksSerially`, both
+    /// true exactly when the size is positive.
+    #[test]
+    fn full_sampling_request_batches_by_store_like_go() {
+        for (size, enabled) in [(4, true), (0, false)] {
+            let mut builder = tidb_distsql::RequestBuilder::new();
+            builder
+                .set_analyze_request(Vec::new(), tidb_distsql::IsolationLevel::ReadCommitted)
+                .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
+                    start_key: b"a".to_vec().into(),
+                    end_key: b"b".to_vec().into(),
+                }]);
+            let metadata = super::set_analyze_store_batch(&mut builder, size)
+                .build()
+                .unwrap();
+            assert_eq!(metadata.store_batch_size, size as isize);
+            assert_eq!(metadata.allow_batch_task_data_merge, enabled);
+            assert_eq!(metadata.execute_batch_tasks_serially, enabled);
+        }
+    }
+
+    #[test]
+    fn adaptive_concurrency_matches_go_store_count_boundaries() {
+        for (stores, expected) in [
+            (0, 4),
+            (5, 4),
+            (6, 6),
+            (10, 10),
+            (11, 22),
+            (20, 40),
+            (21, 63),
+            (50, 150),
+            (51, 204),
+        ] {
+            assert_eq!(super::concurrency_for_stores(stores), expected);
+        }
+    }
+
+    #[test]
+    fn kill_cancels_sampling_and_completed_guard_does_not_wait_for_kill() {
+        let killer = tidb_util::sqlkiller::SqlKiller::default();
+        let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+        let guard = super::SamplingCancellation::start(&killer, cancellation.clone()).unwrap();
+        killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        for _ in 0..100 {
+            if cancellation.is_cancelled() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(cancellation.is_cancelled());
+        drop(guard);
+        killer.reset();
+        let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+        drop(super::SamplingCancellation::start(&killer, cancellation.clone()).unwrap());
+        assert!(!cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn analyze_snapshot_controls_both_timestamp_and_isolation() {
+        assert_eq!(
+            super::read_policy(false, 123),
+            (u64::MAX, tidb_distsql::IsolationLevel::ReadCommitted)
+        );
+        assert_eq!(
+            super::read_policy(true, 123),
+            (123, tidb_distsql::IsolationLevel::Snapshot)
+        );
+    }
+
+    #[test]
+    fn sample_decoding_restores_unsigned_integer_handle() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        let mut schema = SamplingSchema::new(
+            &TableInfo::default(),
+            &AnalyzePlan::new(Vec::new(), Vec::new(), "t").unwrap(),
+        )
+        .unwrap();
+        schema.columns[0].field_type = FieldType::new(FieldTypeCode::LongLong)
+            .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        let mut row = vec![Datum::Bytes(
+            tidb_codec::encode_value(&[Datum::UInt(u64::MAX)]).unwrap(),
+        )];
+        let handle = schema
+            .decode_handle(&mut row, &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(handle.encoded(), tidb_txnkv::IntHandle::new(-1).encoded());
+        assert_eq!(row, vec![Datum::UInt(u64::MAX)]);
+    }
+
+    #[test]
+    fn collector_projection_skips_handle_stats_and_preserves_index_stats() {
+        let plan = AnalyzePlan::new(
+            vec![crate::analyze::AnalyzedColumn {
+                id: 7,
+                name: "a".to_owned(),
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                absent_value: tidb_datatype::Datum::Null,
+                collation: None,
+            }],
+            vec![crate::analyze::AnalyzedIndex {
+                id: 3,
+                column_positions: vec![0],
+                prefix_lengths: vec![-1],
+                single_column_unique: false,
+            }],
+            "t",
+        )
+        .unwrap();
+        let schema = SamplingSchema::new(&TableInfo::default(), &plan).unwrap();
+        let raw = tipb::RowSampleCollector {
+            count: Some(100),
+            null_counts: vec![2, 0, 3],
+            total_size: vec![800, 999, 700],
+            fm_sketch: vec![tipb::FmSketch::default(); 3],
+            samples: vec![tipb::RowSample {
+                row: vec![vec![0], vec![8, 2]],
+                weight: Some(91),
+            }],
+            ..Default::default()
+        };
+        let projected = schema.project_collector(&plan, raw.clone()).unwrap();
+        assert_eq!(projected.count, 100);
+        assert_eq!(projected.null_counts, vec![2]);
+        assert_eq!(projected.total_sizes, vec![800]);
+        assert_eq!(projected.samples[0].weight, 91);
+        assert_eq!(projected.samples[0].row.len(), 2);
+        let mut malformed = raw;
+        malformed.fm_sketch.pop();
+        assert!(schema.project_collector(&plan, malformed).is_err());
+    }
+}
+
+/// Go's ANALYZE sends its sampling and index requests through the store's
+/// coprocessor client (`copr.CopClient` over the `KVStore`): here the node's
+/// client-rust store, which the opener carries.
+fn native_transport<S: tidb_txnkv::transaction::StoreClient>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
+    timeout: std::time::Duration,
+) -> Result<
+    tidb_distsql::cop_paging::NativeCopTransport<dyn tidb_txnkv::driver::cop_store::NativeCopStore>,
+    String,
+> {
+    let store = opener
+        .cop_store()
+        .ok_or_else(|| "ANALYZE needs the node's store".to_owned())?;
+    Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+        std::sync::Arc::clone(store),
+        tidb_distsql::CopRuntimeConfig {
+            default_timeout: timeout,
+            ..Default::default()
+        },
+    ))
+}

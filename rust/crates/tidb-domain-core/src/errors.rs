@@ -18,9 +18,9 @@
 
 use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_store_driver::sql_query_error::{lock_sql_error, SqlQueryError};
-use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
-use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
+use tidb_stats_handle_lockstats::cluster_stats_lock::ClusterStatsLockError;
+use tidb_executor::real_tikv_analyze::ClusterAnalyzeError;
+use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 
 pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {

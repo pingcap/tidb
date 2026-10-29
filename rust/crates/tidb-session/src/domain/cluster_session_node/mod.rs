@@ -186,14 +186,14 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_ddl::cluster_ddl::DdlStatement;
-use tidb_exec::cluster_analyze::AnalyzeStatement;
-use tidb_exec::cluster_load_stats::prepare_cluster_load_stats_parsed;
-use tidb_exec::cluster_stats_load::ClusterStatsLoader;
-use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
-use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
-use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
-use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_exec::stats_watch::SharedStats;
+use tidb_executor::cluster_analyze::AnalyzeStatement;
+use tidb_stats_handle_storage::cluster_load_stats::prepare_cluster_load_stats_parsed;
+use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
+use tidb_stats_handle_lockstats::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
+use tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement;
+use tidb_executor::real_tikv_analyze::prepare_cluster_analyze_parsed;
+use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
+use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
@@ -1162,7 +1162,7 @@ impl<'s> ClusterServerSession<'s> {
                         "this node runs ANALYZE TABLE for a named table only",
                     )),
                     Err(error) => Err(crate::domain::session_api::cluster_analyze_error(
-                        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
+                        tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
                     )),
                 }
             }
@@ -1395,7 +1395,7 @@ impl<'s> ClusterServerSession<'s> {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         for &new_id in inserted_ids {
             for statement in
-                tidb_exec::cluster_stats_write::insert_table_stats_statements(table, new_id)
+                tidb_stats_handle_storage::cluster_stats_write::insert_table_stats_statements(table, new_id)
             {
                 let now =
                     system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?;
@@ -1406,7 +1406,7 @@ impl<'s> ClusterServerSession<'s> {
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
-                            tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
+                            tidb_stats_handle_storage::cluster_stats_write::plan_insert_table_stats_statement(
                                 &mut snapshot,
                                 &catalog,
                                 &statement,
@@ -1463,7 +1463,7 @@ impl<'s> ClusterServerSession<'s> {
                 &self.node.buffer,
             );
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let locked = tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+            let locked = tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(
                 &mut snapshot,
                 &catalog,
             )
@@ -1477,7 +1477,7 @@ impl<'s> ClusterServerSession<'s> {
                 },
                 is_locked: locked.contains(&logical_table_id),
             };
-            for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&[update]) {
+            for statement in tidb_stats_handle_storage::cluster_stats_write::stats_delta_statements(&[update]) {
                 let now =
                     system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?;
                 transactions::stage_pessimistic_statement(
@@ -1486,7 +1486,7 @@ impl<'s> ClusterServerSession<'s> {
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
+                        let plan = tidb_stats_handle_storage::cluster_stats_write::plan_stats_delta_statement(
                             &mut snapshot,
                             &catalog,
                             &statement,
@@ -1520,7 +1520,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                    let plan = tidb_stats_handle_storage::cluster_stats_write::plan_stats_meta_version_refresh(
                         &mut snapshot,
                         &catalog,
                         physical_id,
@@ -1594,7 +1594,7 @@ impl<'s> ClusterServerSession<'s> {
             return Ok(());
         }
         let locked =
-            tidb_exec::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
+            tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?
                 .contains(&global_table_id);
         let version = transaction.start_ts();
@@ -1604,7 +1604,7 @@ impl<'s> ClusterServerSession<'s> {
             self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
+                let plan = tidb_stats_handle_storage::cluster_stats_write::plan_exchange_partition_stats_update(
                     &mut snapshot,
                     &catalog,
                     global_table_id,
@@ -1672,7 +1672,7 @@ impl<'s> ClusterServerSession<'s> {
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let (inserted, plan) =
-                            tidb_exec::cluster_stats_write::plan_insert_column_stats(
+                            tidb_stats_handle_storage::cluster_stats_write::plan_insert_column_stats(
                                 &mut snapshot,
                                 &catalog,
                                 physical_id,
@@ -1697,7 +1697,7 @@ impl<'s> ClusterServerSession<'s> {
                             &self.node.buffer, self.session.lock_wait_timeout(),
                             |snapshot, _| {
                                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
+                                let plan = tidb_stats_handle_storage::cluster_stats_write::plan_insert_column_default_bucket(
                                     &mut snapshot,
                                     &catalog,
                                     physical_id,
@@ -1722,7 +1722,7 @@ impl<'s> ClusterServerSession<'s> {
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
+                        let plan = tidb_stats_handle_storage::cluster_stats_write::plan_stats_meta_version_refresh(
                             &mut snapshot,
                             &catalog,
                             physical_id,
@@ -1753,14 +1753,14 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
         let catalog = self.node.domain.catalog.load();
-        for target in tidb_exec::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
+        for target in tidb_stats_handle_storage::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
             transactions::stage_pessimistic_statement(
                 transaction,
                 &self.node.buffer,
                 self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_table_id(
+                    let plan = tidb_stats_handle_storage::cluster_stats_write::plan_change_global_stats_table_id(
                         &mut snapshot,
                         &catalog,
                         target,
@@ -1780,14 +1780,14 @@ impl<'s> ClusterServerSession<'s> {
         let transaction = self.notifier_transaction()?;
         let catalog = self.node.domain.catalog.load();
         let version = transaction.start_ts();
-        for target in tidb_exec::cluster_stats_write::STATS_VERSION_TABLES {
+        for target in tidb_stats_handle_storage::cluster_stats_write::STATS_VERSION_TABLES {
             transactions::stage_pessimistic_statement(
                 transaction,
                 &self.node.buffer,
                 self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    let plan = tidb_exec::cluster_stats_write::plan_update_stats_table_version(
+                    let plan = tidb_stats_handle_storage::cluster_stats_write::plan_update_stats_table_version(
                         &mut snapshot,
                         &catalog,
                         target,
@@ -1825,7 +1825,7 @@ impl<'s> ClusterServerSession<'s> {
                 .stats
                 .load()
                 .get(&physical_id)
-                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                 .is_some_and(|stats| stats.is_initialized())
         {
             return Ok(());
@@ -1837,7 +1837,7 @@ impl<'s> ClusterServerSession<'s> {
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let (counts, plan) =
-                    tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
+                    tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_lock(
                         &mut snapshot,
                         catalog,
                         physical_id,
@@ -1847,14 +1847,14 @@ impl<'s> ClusterServerSession<'s> {
                 Ok((counts, plan.mutations))
             },
         )?;
-        let now = tidb_exec::mysql_bootstrap::local_now_datetime6();
+        let now = tidb_datatype::current_time::local_now_datetime6();
         transactions::stage_pessimistic_statement(
             transaction,
             staged,
             self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
+                let plan = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_replace(
                     &mut snapshot,
                     catalog,
                     physical_id,
@@ -1972,7 +1972,7 @@ impl<'s> ClusterServerSession<'s> {
                 .flat_map(|database| database.tables.iter())
                 .find(|table| table.id == *id);
             if let Some(table) = found {
-                tidb_exec::pre_split::pre_split_and_scatter(
+                tidb_ddl::pre_split::pre_split_and_scatter(
                     regions.as_ref(),
                     table,
                     &scatter_scope,

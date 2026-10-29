@@ -14,7 +14,7 @@
 
 //! Go-authoritative index entries for the `mysql.*` writer.
 //!
-//! The metadata is the real thing: `tidb-exec/tests/data/mysql_bootstrap_tableinfos.json`
+//! The metadata is the real thing: `tidb-session/tests/data/mysql_bootstrap_tableinfos.json`
 //! is the JSON of the `*model.TableInfo` values Go's own
 //! `ddl.BuildTableInfoFromAST` builds for the bootstrap tables. The expected
 //! bytes come from
@@ -37,7 +37,7 @@ use tidb_syssession::system_row_write::{insert_row, insert_row_with_collation, R
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-const GO_TABLE_INFOS: &str = include_str!("../../tidb-exec/tests/data/mysql_bootstrap_tableinfos.json");
+const GO_TABLE_INFOS: &str = include_str!("../../tidb-session/tests/data/mysql_bootstrap_tableinfos.json");
 const FIXTURE: &str =
     include_str!("../../../difftests/transaction-tests/fixtures/index_entries.hex");
 

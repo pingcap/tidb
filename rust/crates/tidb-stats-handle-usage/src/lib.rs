@@ -777,3 +777,5 @@ mod tests {
         verify(5, 5);
     }
 }
+
+pub mod cluster_predicate_column;

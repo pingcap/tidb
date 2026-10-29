@@ -238,16 +238,16 @@ mod transaction_buffer_tests {
 pub struct UnistoreClusterStack {
     pub factory: Arc<crate::domain::cluster_session_node::Domain>,
     pub schema_version: i64,
-    pub stats: Arc<tidb_exec::stats_watch::SharedStats>,
+    pub stats: Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>,
     pub _stats_maintenance:
         Option<tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub _reloader: tidb_infoschema_issyncer::catalog_watch::CatalogReloader,
     pub _sysvar_reloader: crate::domain::cluster_sysvar_seam::SysvarReloader,
-    pub _stats_reloader: tidb_exec::stats_watch::StatsReloader,
+    pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
     pub _binding_reloader: crate::domain::cluster_binding_seam::BindingReloader,
-    pub _async_stats_loader: tidb_exec::stats_watch::AsyncStatsLoader,
+    pub _async_stats_loader: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
     /// Go `initResourceGroupsController` over unistore's mock PD client.
@@ -313,7 +313,7 @@ pub struct BootstrapImage {
     /// The schema version the bootstrap published.
     pub schema_version: i64,
     /// The region splits the bootstrap's tables owe.
-    pub splits: tidb_exec::mysql_bootstrap::BootstrapSplits,
+    pub splits: tidb_ddl::pre_split::BootstrapSplits,
     /// The resource manager write the bootstrap made.
     pub resource_group_update: tidb_ddl::cluster_ddl::ResourceGroupUpdate,
 }
@@ -327,11 +327,11 @@ impl BootstrapImage {
         // The bootstrap's resource group write lands in the mock resource
         // manager, as the stack's own boot initializes it.
         tidb_domain::resource_manager_client::init_resource_manager_client(None);
-        let published = tidb_exec::bootstrap_publish::publish_bootstrap_with_effects(
+        let published = crate::bootstrap_publish::publish_bootstrap_with_effects(
             &stack.opener,
             IN_PROCESS_TIMEOUT,
         )?;
-        tidb_exec::bootstrap_publish::notify_committed_bootstrap(
+        crate::bootstrap_publish::notify_committed_bootstrap(
             &published.outcome,
             published.schema_version,
             None,
@@ -464,7 +464,7 @@ impl BootstrapImage {
         Ok(Self {
             data,
             schema_version,
-            splits: tidb_exec::mysql_bootstrap::BootstrapSplits {
+            splits: tidb_ddl::pre_split::BootstrapSplits {
                 global_batches,
                 table_ids,
             },
@@ -546,18 +546,18 @@ pub fn unistore_cluster_session_stack_from(
         None => {
             let bootstrap_started = std::time::Instant::now();
             let (outcome, schema_version, bootstrap_splits) =
-                tidb_exec::bootstrap_publish::publish_bootstrap_with_splits(
+                crate::bootstrap_publish::publish_bootstrap_with_splits(
                     &opener,
                     IN_PROCESS_TIMEOUT,
                 )
                 .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-            let schema_version = tidb_exec::bootstrap_publish::notify_committed_bootstrap(
+            let schema_version = crate::bootstrap_publish::notify_committed_bootstrap(
                 &outcome,
                 schema_version,
                 None,
             )
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-            tidb_exec::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
+            crate::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
             (schema_version, bootstrap_splits)
         }
         Some(image) => {
@@ -571,7 +571,7 @@ pub fn unistore_cluster_session_stack_from(
     // Go `EnableSplitTableRegion` (config `split-table`): the bootstrap cut
     // every system table's region on the fresh store.
     if tidb_config::config_tree::config::get_global_config().split_table {
-        tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), &bootstrap_splits);
+        tidb_ddl::pre_split::split_bootstrap_tables(region_store.as_ref(), &bootstrap_splits);
     }
 
     // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions
@@ -679,7 +679,7 @@ pub fn unistore_cluster_session_stack_from(
             None,
             Arc::clone(&schema_validator),
             config.run_ddl,
-            Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::new(crate::ddl_session_pool::ExecutorDdlSessionPool),
             Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {
@@ -971,7 +971,7 @@ mod startup_schema_lease_tests {
     #[test]
     fn the_startup_load_grants_the_schema_validator_its_first_lease() {
         let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
-        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, lease_grant_ts) =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
@@ -1003,7 +1003,7 @@ mod startup_schema_lease_tests {
     #[test]
     fn the_published_bootstrap_stores_the_default_group_background() {
         let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
-        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .expect("bootstrap publish");
         let (startup, _) =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)

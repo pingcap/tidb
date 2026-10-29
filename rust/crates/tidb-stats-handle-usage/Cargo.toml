@@ -11,6 +11,9 @@ description = "TiDB session statistics and column-usage collection."
 workspace = true
 
 [dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-syssession = { path = "../tidb-syssession" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-model = { path = "../tidb-model" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }

@@ -27,16 +27,16 @@ struct UndeterminedAnalyze;
 impl ClusterAnalyze for UndeterminedAnalyze {
     fn execute(
         &self,
-        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
-        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
-        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+        _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
     {
         Err(crate::domain::session_api::cluster_analyze_error(
-            tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
+            tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
                 "commit response lost".to_owned(),
             ),
         ))
@@ -48,13 +48,13 @@ struct PanickingAnalyze(&'static str);
 impl ClusterAnalyze for PanickingAnalyze {
     fn execute(
         &self,
-        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
-        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
-        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+        _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
     {
         panic!("{}", self.0)
     }
@@ -151,9 +151,9 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
 impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
-        statement: &tidb_exec::cluster_stats_lock::ClusterStatsLockStatement,
+        statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
     ) -> Result<
-        tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport,
+        tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
         crate::domain::session_api::SqlQueryError,
     > {
         assert!(statement.lock);
@@ -161,7 +161,7 @@ impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLo
         assert_eq!(statement.targets[0].schema, "app");
         assert_eq!(statement.targets[0].table, "t");
         self.calls.fetch_add(1, Ordering::AcqRel);
-        Ok(tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport {
+        Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport {
             warning: "skip locking locked table: app.t".to_owned(),
         })
     }
@@ -226,8 +226,8 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
 
 #[test]
 fn stats_lock_planning_keeps_go_error_identities() {
-    use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-    use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
+    use tidb_stats_handle_lockstats::cluster_stats_lock::ClusterStatsLockError;
+    use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 
     let cases = [
         (
@@ -323,7 +323,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     let lock_error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
     let query_error = crate::domain::session_api::cluster_analyze_error(
-        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
+        tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
     );
     assert_eq!(
         query_error.code,
@@ -345,7 +345,7 @@ fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
         .expect("the query-interrupted signal has an error")
         .to_sql_error();
     let query_error = crate::domain::session_api::cluster_analyze_error(
-        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
+        tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
     );
     assert_eq!((query_error.code, query_error.state), (1317, *b"70100"));
 }
@@ -463,7 +463,7 @@ fn open_session_as_with_stats_lock(
         node.accounts.live.clone(),
         node.sysvars.live.clone(),
         Arc::new(
-            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+            SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
         Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),

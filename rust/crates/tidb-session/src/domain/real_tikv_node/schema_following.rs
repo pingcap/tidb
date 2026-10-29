@@ -105,12 +105,12 @@ fn json_string(value: &str) -> String {
 /// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
 /// the argument [`load_stats_snapshot_and_loader`] needs to boot-load
 /// statistics for every table this node serves.
-fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_exec::real_tikv_stats::StatsTarget> {
+fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
     catalog
         .databases
         .iter()
         .flat_map(|database| database.tables.iter())
-        .flat_map(tidb_exec::real_tikv_stats::StatsTarget::for_table)
+        .flat_map(tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table)
         .collect()
 }
 
@@ -118,7 +118,7 @@ fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_exec::real_tikv_stats::St
 /// schema follower. Go's statistics handle does the equivalent on every
 /// cache update: a DDL must not leave a newly added table, or a changed column
 /// type, outside later `mysql.stats_*` reads.
-fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_exec::real_tikv_stats::StatsTarget> {
+fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
     let current = catalog.load();
     stats_targets(&current)
 }
@@ -186,7 +186,7 @@ where
     // when the boot catalog has one, and let ordinary leased passes retry the
     // lookup after bootstrap or a transient catalog failure.
     let loader = Arc::new(std::sync::RwLock::new(
-        tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog.load()).ok(),
+        tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog.load()).ok(),
     ));
     let (async_loader, async_init) = if let Some(async_interval) =
         async_stats_load_interval(stats_lease)
@@ -206,7 +206,7 @@ where
                     return;
                 };
                 let targets = current_stats_targets(&async_catalog);
-                if let Err(error) = tidb_exec::real_tikv_stats::load_needed_histograms_from_cluster(
+                if let Err(error) = tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms_from_cluster(
                     &async_opener,
                     timeout,
                     &targets,
@@ -291,7 +291,7 @@ where
                 .clone()
                 .map(Ok)
                 .unwrap_or_else(|| {
-                    tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(
+                    tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(
                         &update_catalog.load(),
                     )
                     .map_err(|error| error.to_string())

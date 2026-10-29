@@ -150,8 +150,8 @@ mod analyze {
     use std::cell::RefCell;
     use std::sync::Arc;
 
-    use tidb_exec::cluster_analyze::AnalyzeStatement;
-    use tidb_exec::real_tikv_analyze::ClusterAnalyzeReport;
+    use tidb_executor::cluster_analyze::AnalyzeStatement;
+    use tidb_executor::real_tikv_analyze::ClusterAnalyzeReport;
 
     use crate::analyze_service::AnalyzeService;
     use crate::*;
@@ -205,7 +205,7 @@ mod analyze {
     }
 
     fn statements(sql: &str) -> Vec<AnalyzeStatement> {
-        tidb_exec::real_tikv_analyze::prepare_cluster_analyze(sql, "test")
+        tidb_executor::real_tikv_analyze::prepare_cluster_analyze(sql, "test")
             .unwrap()
             .unwrap()
     }

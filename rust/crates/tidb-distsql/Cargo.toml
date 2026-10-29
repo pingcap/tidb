@@ -36,3 +36,5 @@ path = "tests/all.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]

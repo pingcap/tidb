@@ -953,7 +953,7 @@ mod schema_sync_tests {
         KvTableIndexBackfiller::new(
             &(Arc::new(tidb_ddl_build::table_from_meta::LocalTableAutoIds::default())
                 as Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>),
-            &(Arc::new(tidb_exec::ddl_session_pool::ExecutorDdlSessionPool)
+            &(Arc::new(tidb_session::ddl_session_pool::ExecutorDdlSessionPool)
                 as Arc<dyn crate::real_tikv_ddl::DdlSessionPool>),
         )
     }
@@ -1064,7 +1064,7 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_session::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         tidb_vardef::set_enable_mdl(false);
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
@@ -1308,7 +1308,7 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        let (outcome, _) = tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        let (outcome, _) = tidb_session::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
         let seed = |job: &mut Job| {
             let mut tx = opener.begin().unwrap();
@@ -2283,7 +2283,7 @@ mod schema_sync_tests {
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
-        let (outcome, _) = tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        let (outcome, _) = tidb_session::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
         let mut job = Job::default();
         job.id = 700;

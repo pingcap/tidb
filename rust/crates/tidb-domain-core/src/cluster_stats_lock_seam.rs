@@ -17,8 +17,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
-use tidb_exec::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
+use tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement;
+use tidb_stats_handle_lockstats::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use crate::errors::cluster_stats_lock_error;

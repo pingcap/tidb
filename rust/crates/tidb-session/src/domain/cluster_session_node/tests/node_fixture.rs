@@ -492,7 +492,7 @@ fn open_session_on_with_context_and_seams_and_usage(
         node.accounts.live.clone(),
         node.sysvars.live.clone(),
         Arc::new(
-            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+            SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
         Arc::clone(&node.auto_ids) as _,

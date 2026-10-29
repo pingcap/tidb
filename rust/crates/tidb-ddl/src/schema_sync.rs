@@ -983,7 +983,7 @@ mod tests {
         }
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let timeout = Duration::from_secs(5);
-        tidb_exec::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_session::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         tidb_vardef::set_enable_mdl(false);
         let mut loaded =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();

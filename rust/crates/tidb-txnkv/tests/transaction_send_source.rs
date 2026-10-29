@@ -20,7 +20,7 @@
 //! each transaction to a borrowed thread and reaches it through a channel,
 //! on the stated grounds that "the production transport is deliberately
 //! worker-local (`Rc<RefCell<..>>`)"
-//! (`tidb-exec/src/cluster_table_storage.rs`).
+//! (`tidb-store-driver/src/cluster_table_storage.rs`).
 //!
 //! That justification is worth a compile-time fact rather than a comment: a
 //! transaction reads over the node's shared client-rust store, whose handle

@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite)."
+autotests = false
 
 [dependencies]
 tidb-config = { path = "../tidb-config" }
@@ -27,8 +28,18 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+chrono-tz.workspace = true
+tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-unistore = { path = "../tidb-unistore" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

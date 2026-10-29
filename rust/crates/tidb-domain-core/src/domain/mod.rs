@@ -41,8 +41,8 @@ use tidb_domain::historical_stats::{
     HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
     StatsHandle as HistoricalStatsHandle, TableMeta,
 };
-use tidb_exec::cluster_stats_load::ClusterStatsLoader;
-use tidb_exec::stats_watch::SharedStats;
+use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
+use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::process::ProcessRegistry;
 use tidb_executor::table_size_stats::TableStorageStatsProvider;
 use tidb_kv::cluster_storage::MutationBuffer;
@@ -100,7 +100,7 @@ impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
         self.0
             .load()
             .get(&physical_id)
-            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
             .cloned()
     }
 
@@ -337,7 +337,7 @@ impl Drop for ClusterApproximateTableCountProvider {
     }
 }
 
-impl tidb_exec::real_tikv_analyze::ApproximateTableCountProvider
+impl tidb_executor::real_tikv_analyze::ApproximateTableCountProvider
     for ClusterApproximateTableCountProvider
 {
     fn approximate_table_count(
@@ -396,7 +396,7 @@ impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusP
         resource_group: &str,
     ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String> {
         let snapshot = self.transactions.open_snapshot(resource_group)?;
-        tidb_exec::cluster_stats_write::load_analyze_status_jobs(
+        tidb_stats_handle_storage::cluster_stats_write::load_analyze_status_jobs(
             &mut SnapshotMetaSnapshot::new(snapshot),
             &self.catalog.load(),
         )
@@ -411,7 +411,7 @@ impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusP
         table: &str,
         partition: &str,
     ) -> i64 {
-        tidb_exec::real_tikv_analyze::ApproximateTableCountProvider::approximate_table_count(
+        tidb_executor::real_tikv_analyze::ApproximateTableCountProvider::approximate_table_count(
             self.approximate_counts.as_ref(),
             resource_group,
             physical_id,
@@ -463,7 +463,7 @@ impl tidb_executor::show::stats::ColumnStatsUsageProvider for ClusterColumnStats
     > {
         let snapshot = self.transactions.open_snapshot(resource_group)?;
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_exec::cluster_predicate_column::load_column_stats_usage(
+        tidb_stats_handle_usage::cluster_predicate_column::load_column_stats_usage(
             &mut snapshot,
             &self.catalog.load(),
             location,
@@ -531,7 +531,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
             let current = self.stats.load();
             let Some(current) = current
                 .get(&item.table_id)
-                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
             else {
                 continue;
             };
@@ -546,7 +546,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                     continue;
                 }
                 if !analyzed {
-                    let empty = tidb_exec::cluster_stats_load::ClusterStatsItem {
+                    let empty = tidb_stats_handle_storage::cluster_stats_load::ClusterStatsItem {
                         id: item.id,
                         is_index: false,
                         stats_ver: 0,
@@ -1106,7 +1106,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_delete_analyze_jobs(
+            tidb_stats_handle_storage::cluster_stats_write::plan_delete_analyze_jobs(
                 snapshot,
                 &self.catalog.load(),
                 &cutoff,
@@ -1149,7 +1149,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
+            tidb_stats_handle_storage::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
                 snapshot,
                 &self.catalog.load(),
                 &instance,
@@ -1188,7 +1188,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
+            tidb_stats_handle_storage::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
                 snapshot,
                 &self.catalog.load(),
                 &alive_instances,
@@ -1389,11 +1389,11 @@ impl Domain {
                 .collect::<Result<Vec<_>, _>>()?;
             let plan = {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                tidb_exec::cluster_stats_write::plan_column_stats_usage_dump(
+                tidb_stats_handle_storage::cluster_stats_write::plan_column_stats_usage_dump(
                     &mut snapshot,
                     &self.catalog.load(),
                     &converted,
-                    tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                    tidb_datatype::current_time::utc_now_timestamp(),
                     Some(row_ids.as_ref()),
                 )
                 .map_err(|error| error.to_string())?
@@ -1471,7 +1471,7 @@ impl Domain {
                 };
                 let realtime_count = stats
                     .get(&table_id)
-                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                     .map(|table| table.hist_coll.realtime_count);
                 if !tidb_stats_handle_usage::need_dump_stats_delta(
                     force_dump,
@@ -1508,7 +1508,7 @@ impl Domain {
                 let locked = {
                     let snapshot = transaction.snapshot_for(false)?;
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    tidb_exec::cluster_stats_write::load_stats_locked_table_ids(
+                    tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(
                         &mut snapshot,
                         &catalog,
                     )
@@ -1519,7 +1519,7 @@ impl Domain {
                     |table_id| parents.get(&table_id).copied(),
                     &locked,
                 );
-                for statement in tidb_exec::cluster_stats_write::stats_delta_statements(&updates) {
+                for statement in tidb_stats_handle_storage::cluster_stats_write::stats_delta_statements(&updates) {
                     let ((), mutations) =
                         tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
@@ -1546,12 +1546,12 @@ impl Domain {
                             |snapshot, _start_ts| {
                                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan =
-                                    tidb_exec::cluster_stats_write::plan_stats_delta_statement(
+                                    tidb_stats_handle_storage::cluster_stats_write::plan_stats_delta_statement(
                                         &mut snapshot,
                                         &catalog,
                                         &statement,
                                         read_ts,
-                                        tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                                        tidb_datatype::current_time::utc_now_timestamp(),
                                         Some(row_ids.as_ref()),
                                     )
                                     .map_err(|error| error.to_string())?;
@@ -1585,7 +1585,7 @@ impl Domain {
                     if update.is_locked
                         || !stats
                             .get(&update.table_id)
-                            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                             .is_some_and(|table| table.is_initialized())
                     {
                         continue;
@@ -1618,7 +1618,7 @@ impl Domain {
                                 },
                                 |snapshot, _start_ts| {
                                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let (counts, plan) = tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
+                                    let (counts, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_lock(
                                         &mut snapshot,
                                         &catalog,
                                         update.table_id,
@@ -1649,7 +1649,7 @@ impl Domain {
                                 },
                                 |snapshot, _start_ts| {
                                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
+                                    let plan = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_replace(
                                 &mut snapshot,
                                 &catalog,
                                 update.table_id,
@@ -1657,7 +1657,7 @@ impl Domain {
                                 count,
                                 read_ts,
                                 "flush stats",
-                                tidb_exec::mysql_bootstrap::local_now_datetime6(),
+                                tidb_datatype::current_time::local_now_datetime6(),
                                 Some(row_ids.as_ref()),
                             )
                                     .map_err(|error| error.to_string())?;
@@ -2120,7 +2120,7 @@ pub(crate) fn timestamp_before(duration: Duration) -> Result<tidb_datatype::Time
         .map_err(|_| "analyze-job cleanup duration is too large".to_owned())?;
     let delta = tidb_datatype::MySqlDuration::from_nanoseconds(-nanoseconds, 0)
         .map_err(|error| error.to_string())?;
-    tidb_exec::mysql_bootstrap::utc_now_timestamp()
+    tidb_datatype::current_time::utc_now_timestamp()
         .add_duration(delta)
         .map_err(|error| error.to_string())
 }
@@ -2340,7 +2340,7 @@ impl ClusterHistoricalStatsHandle {
         build: impl FnOnce(
             &mut SnapshotMetaSnapshot,
             u64,
-        ) -> Result<tidb_exec::cluster_stats_write::StatsWritePlan, String>,
+        ) -> Result<tidb_stats_handle_storage::cluster_stats_write::StatsWritePlan, String>,
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let read_ts = snapshot.start_ts();
@@ -2369,7 +2369,7 @@ impl ClusterHistoricalStatsHandle {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             match table {
                 OutdatedHistoryTable::Meta => {
-                    tidb_exec::cluster_stats_write::plan_outdated_historical_meta_delete(
+                    tidb_stats_handle_storage::cluster_stats_write::plan_outdated_historical_meta_delete(
                         &mut snapshot,
                         catalog,
                         cutoff,
@@ -2377,7 +2377,7 @@ impl ClusterHistoricalStatsHandle {
                     )
                 }
                 OutdatedHistoryTable::Data => {
-                    tidb_exec::cluster_stats_write::plan_outdated_historical_data_delete(
+                    tidb_stats_handle_storage::cluster_stats_write::plan_outdated_historical_data_delete(
                         &mut snapshot,
                         catalog,
                         cutoff,
@@ -2417,14 +2417,14 @@ impl ClusterHistoricalStatsHandle {
             .map_err(|error| error.to_string())?;
         // Historical create_time is DATETIME in the internal SYSTEM session,
         // so Go's NOW() cutoff must use that same wall clock, not UTC.
-        let cutoff = tidb_exec::mysql_bootstrap::local_now_datetime()
+        let cutoff = tidb_datatype::current_time::local_now_datetime()
             .add_duration(retention)
             .map_err(|error| error.to_string())?;
         let catalog = self.catalog.load();
         let count = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::count_outdated_historical_stats(
+            tidb_stats_handle_storage::cluster_stats_write::count_outdated_historical_stats(
                 &mut snapshot,
                 &catalog,
                 cutoff,
@@ -2470,7 +2470,7 @@ impl ClusterHistoricalStatsHandle {
         let histograms = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::load_stats_gc_histograms(
+            tidb_stats_handle_storage::cluster_stats_write::load_stats_gc_histograms(
                 &mut snapshot,
                 catalog,
                 physical_id,
@@ -2480,7 +2480,7 @@ impl ClusterHistoricalStatsHandle {
         let Some(table) = Self::physical_table(catalog, physical_id) else {
             if histograms.is_empty() {
                 self.commit_stats_plan(|snapshot, _| {
-                    tidb_exec::cluster_stats_write::plan_stats_meta_delete_for_table(
+                    tidb_stats_handle_storage::cluster_stats_write::plan_stats_meta_delete_for_table(
                         snapshot,
                         catalog,
                         physical_id,
@@ -2489,7 +2489,7 @@ impl ClusterHistoricalStatsHandle {
                 })?;
             } else {
                 self.commit_stats_plan(|snapshot, version| {
-                    tidb_exec::cluster_stats_write::plan_delete_table_stats(
+                    tidb_stats_handle_storage::cluster_stats_write::plan_delete_table_stats(
                         snapshot,
                         catalog,
                         &[physical_id],
@@ -2520,7 +2520,7 @@ impl ClusterHistoricalStatsHandle {
                 continue;
             }
             self.commit_stats_plan(|snapshot, version| {
-                tidb_exec::cluster_stats_write::plan_stats_item_delete(
+                tidb_stats_handle_storage::cluster_stats_write::plan_stats_item_delete(
                     snapshot,
                     catalog,
                     physical_id,
@@ -2541,7 +2541,7 @@ impl ClusterHistoricalStatsHandle {
         physical_id: i64,
     ) -> Result<(), String> {
         self.commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_historical_stats_data_delete_for_table(
+            tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_data_delete_for_table(
                 snapshot,
                 catalog,
                 physical_id,
@@ -2549,7 +2549,7 @@ impl ClusterHistoricalStatsHandle {
             .map_err(|error| error.to_string())
         })?;
         self.commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_historical_stats_meta_delete_for_table(
+            tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_delete_for_table(
                 snapshot,
                 catalog,
                 physical_id,
@@ -2584,13 +2584,13 @@ impl ClusterHistoricalStatsHandle {
         let last_gc = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::load_stats_gc_timestamp(&mut snapshot, &catalog)
+            tidb_stats_handle_storage::cluster_stats_write::load_stats_gc_timestamp(&mut snapshot, &catalog)
                 .map_err(|error| error.to_string())?
         };
         let candidates = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::load_stats_gc_candidates(
+            tidb_stats_handle_storage::cluster_stats_write::load_stats_gc_candidates(
                 &mut snapshot,
                 &catalog,
                 last_gc,
@@ -2628,11 +2628,11 @@ impl ClusterHistoricalStatsHandle {
             );
         }
         self.commit_stats_plan(|snapshot, _| {
-            tidb_exec::cluster_stats_write::plan_stats_gc_timestamp_write(
+            tidb_stats_handle_storage::cluster_stats_write::plan_stats_gc_timestamp_write(
                 snapshot,
                 &catalog,
                 gc_version,
-                tidb_exec::mysql_bootstrap::utc_now_timestamp(),
+                tidb_datatype::current_time::utc_now_timestamp(),
                 Some(self.auto_ids.as_ref()),
             )
             .map_err(|error| error.to_string())
@@ -2647,7 +2647,7 @@ impl ClusterHistoricalStatsHandle {
     ) -> Result<Option<tidb_stats::JsonTable>, String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_exec::cluster_stats_dump::table_historical_stats_to_json(
+        tidb_stats_handle_storage::cluster_stats_dump::table_historical_stats_to_json(
             &mut snapshot,
             catalog,
             physical_id,
@@ -2666,7 +2666,7 @@ impl ClusterHistoricalStatsHandle {
         let table_stats = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_dump::load_table_stats_payload(
+            tidb_stats_handle_storage::cluster_stats_dump::load_table_stats_payload(
                 &mut snapshot,
                 catalog,
                 table,
@@ -2679,7 +2679,7 @@ impl ClusterHistoricalStatsHandle {
         };
         let snapshot = self.transactions.open_snapshot("default")?;
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_exec::cluster_stats_dump::table_stats_to_json_from_loaded(
+        tidb_stats_handle_storage::cluster_stats_dump::table_stats_to_json_from_loaded(
             &mut snapshot,
             catalog,
             database_name,
@@ -2874,9 +2874,9 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         )?;
         let staged = MutationBuffer::new();
         transaction.bind_mutation_buffer(&staged);
-        let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
+        let (version, blocks) = tidb_stats_handle_storage::cluster_stats_write::historical_stats_data_blocks(&json)
             .map_err(|error| error.to_string())?;
-        let create_time = tidb_exec::mysql_bootstrap::local_now_datetime6();
+        let create_time = tidb_datatype::current_time::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
             let ((), mutations) =
                 tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
@@ -2899,7 +2899,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     |snapshot, _start_ts| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
-                            tidb_exec::cluster_stats_write::plan_historical_stats_data_block(
+                            tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_data_block(
                                 &mut snapshot,
                                 &catalog,
                                 physical_id,
@@ -3290,7 +3290,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
         let current_ts = snapshot.start_ts();
         let locked_table_ids = {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_exec::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
+            tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
                 .map_err(|error| error.to_string())?
         };
         let ratio = factory
@@ -3312,14 +3312,14 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             for table in &database.tables {
                 let global_stats = statistics
                     .get(&table.id)
-                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                     .map(|stats| stats.as_ref().clone());
                 let mut partition_stats = std::collections::HashMap::new();
                 if let Some(partition) = table.get_partition_info() {
                     for definition in partition.read().definitions.snapshot() {
                         if let Some(stats) = statistics
                             .get(&definition.id)
-                            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                         {
                             partition_stats.insert(
                                 PartitionIdAndName::new(definition.name.original(), definition.id),

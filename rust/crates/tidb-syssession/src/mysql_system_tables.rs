@@ -686,7 +686,7 @@ impl<'view> SystemRow<'view> {
     ///
     /// The typed accessors below each know what one `mysql.*` column means.
     /// A reader of an arbitrary *user* table -- which is what `ANALYZE TABLE`
-    /// is (`tidb_exec::cluster_analyze`) -- knows the column's declared type
+    /// is (`tidb_executor::cluster_analyze`) -- knows the column's declared type
     /// instead and needs the value in the domain that type describes, so this
     /// is the one accessor that does not interpret.
     ///

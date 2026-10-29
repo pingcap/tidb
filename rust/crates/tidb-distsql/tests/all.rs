@@ -37,3 +37,5 @@ mod signed_handle_range_request_source;
 mod table_handle_ranges_source;
 mod tiflash_replica_read_source;
 mod tikv_rpc_contract_source;
+mod direct_unary_cancellation_source;
+mod distsql_query_runtime_source;

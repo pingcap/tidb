@@ -24,7 +24,7 @@ use crate::domain::cluster_session::{planner_statistics, SkippedTable};
 use crate::StmtResult;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType};
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};

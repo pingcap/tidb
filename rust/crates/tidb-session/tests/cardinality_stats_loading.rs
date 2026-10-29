@@ -164,14 +164,14 @@ impl StatsStorage {
     }
 }
 
-struct CanonicalStatistics(Arc<tidb_exec::stats_watch::SharedStats>);
+struct CanonicalStatistics(Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>);
 
 impl tidb_executor::driver::StatisticsSource for CanonicalStatistics {
     fn table(&self, id: i64) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .load()
             .get(&id)
-            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
             .cloned()
     }
 }
@@ -180,11 +180,11 @@ impl tidb_executor::driver::StatisticsSource for CanonicalStatistics {
 /// InitStatsLite / InitStats / existence-map lifecycle.
 #[test]
 fn builtin_in_estimate_survives_statistics_initialization() {
-    use tidb_exec::cluster_stats_write::{
+    use tidb_stats_handle_storage::cluster_stats_write::{
         insert_table_stats_statements, plan_insert_table_stats_statement,
         plan_stats_delta_statement, stats_delta_statements,
     };
-    use tidb_exec::real_tikv_stats::{
+    use tidb_stats_handle_syncload::real_tikv_stats::{
         load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad, StatsTarget,
     };
 
@@ -231,10 +231,10 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     )
     .unwrap();
     let mut storage = StatsStorage::default();
-    let bootstrap = tidb_exec::mysql_bootstrap::plan_mysql_bootstrap(
+    let bootstrap = tidb_session::mysql_bootstrap::plan_mysql_bootstrap(
         &mut storage,
         100,
-        &tidb_exec::mysql_bootstrap::BootstrapEnvironment {
+        &tidb_session::mysql_bootstrap::BootstrapEnvironment {
             system_tz: "UTC".to_owned(),
             new_collation_enabled: true,
             cluster_id: 1,
@@ -265,8 +265,8 @@ fn builtin_in_estimate_survives_statistics_initialization() {
             plan_stats_delta_statement(&mut storage, &catalog, &statement, 102, now, None).unwrap();
         storage.apply(&write.mutations);
     }
-    let loader = tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();
-    let cache = Arc::new(tidb_exec::stats_watch::SharedStats::new(Default::default()).unwrap());
+    let loader = tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();
+    let cache = Arc::new(tidb_stats_handle_syncload::stats_watch::SharedStats::new(Default::default()).unwrap());
     shared_catalog.stats_handle().set_statistics_view(Arc::new(
         tidb_executor::driver::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
     ));
@@ -305,7 +305,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
                     &targets[0].column_types,
                     current
                         .get(&table_id)
-                        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
                         .map(AsRef::as_ref),
                     std::time::Duration::from_secs(3),
                 )
@@ -313,7 +313,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
                 .unwrap();
             std::collections::BTreeMap::from([(
                 table_id,
-                tidb_exec::stats_watch::TableStatsState::Loaded(loaded),
+                tidb_stats_handle_syncload::stats_watch::TableStatsState::Loaded(loaded),
             )])
         };
         cache.store(snapshot);

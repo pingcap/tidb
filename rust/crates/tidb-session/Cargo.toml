@@ -10,6 +10,11 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
+tidb-table = { path = "../tidb-table" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
@@ -30,7 +35,6 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
-tidb-exec = { path = "../tidb-exec" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-hint = { path = "../tidb-hint" }
@@ -123,10 +127,10 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
+tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
 tidb-domain-core = { path = "../tidb-domain-core", features = ["test-util"] }
-tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
@@ -158,3 +162,8 @@ path = "tests/fk_global_policy.rs"
 [[test]]
 name = "serial"
 path = "tests/serial.rs"
+
+[features]
+# Test-only fault injection: the DDL worker's `fail::fail_point!`s, for
+# the crates whose tests drive it.
+failpoints = ["tidb-ddl/failpoints"]

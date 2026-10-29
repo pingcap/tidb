@@ -153,7 +153,7 @@ pub fn analyze_kv_table_columns(
     let mut statistics = TableStatistics::new(
         analyzed.scanned_rows,
         // A fresh `ANALYZE` describes exactly the rows it just read, so
-        // nothing has been modified since. `tidb_exec::cluster_analyze` stores
+        // nothing has been modified since. `crate::cluster_analyze` stores
         // the same zero, and says at length why that is a fact rather than a
         // discarded count.
         0,

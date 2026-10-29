@@ -29,7 +29,7 @@
 //!   (`LoadStatsFromJSONNoUpdate`) resolves WHICH physical tables the dump
 //!   feeds -- the table itself, or its partitions by name plus the `global`
 //!   entry. That routing needs the cluster catalog, so it lives beside the
-//!   durable statistics writer in `tidb_exec::cluster_load_stats`, exactly as
+//!   durable statistics writer in `tidb_stats_handle_storage::cluster_load_stats`, exactly as
 //!   Go keeps it outside `json.go`.
 //!
 //! # What the bytes in the dump are
