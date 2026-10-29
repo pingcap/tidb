@@ -230,7 +230,7 @@ fn route_response(
         let mut body = prometheus::TextEncoder::new()
             .encode_to_string(&prometheus::gather())
             .expect("registered metrics encode as Prometheus text");
-        body.push_str(&tidb_txnkv::client_go_metrics::gather_text());
+        body.push_str(&tidb_metrics::client_go_metrics::gather_text());
         // rust-prometheus omits registered vectors without children; Go exposes
         // their HELP/TYPE headers. Both client and server use their shared owners.
         for (name, help) in crate::server_metrics::family_catalog() {

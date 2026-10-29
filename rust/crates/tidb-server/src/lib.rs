@@ -251,7 +251,7 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_metrics::stmtsummary::init_dashboard_series();
     tidb_topsql_reporter_metrics::init_metrics_vars();
     let _statement_observation_cleanup = start_statement_observation();
-    tidb_txnkv::client_go_metrics::init_dashboard_series();
+    tidb_metrics::client_go_metrics::init_dashboard_series();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.

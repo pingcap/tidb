@@ -29,6 +29,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kv = { path = "../tidb-kv" }
+tidb-metrics = { path = "../tidb-metrics" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tikv-client.workspace = true
 tidb-proto = { path = "../tidb-proto" }

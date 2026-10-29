@@ -17,6 +17,7 @@
 //! `init*Metrics` registration of its file.
 
 pub mod bindinfo;
+pub mod client_go_metrics;
 pub mod ddl;
 pub mod distsql;
 pub mod domain;

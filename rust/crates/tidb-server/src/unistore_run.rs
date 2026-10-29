@@ -56,7 +56,7 @@ pub fn run_unistore_cluster_session(
 
     // Go's unistore client-go observes the single in-process store (id 1);
     // materialize the store-scoped dashboard series for it.
-    tidb_txnkv::client_go_metrics::init_embedded_store_series(
+    tidb_metrics::client_go_metrics::init_embedded_store_series(
         tidb_unistore_tikv::region_manager::STORE_ID,
     );
     // Go `setGlobalVars`, before the store and the domain are created.

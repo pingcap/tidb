@@ -28,7 +28,7 @@
 
 use std::sync::LazyLock;
 
-use prometheus::TextEncoder;
+use prometheus013::TextEncoder;
 
 /// `tikv-client` pins prometheus 0.13 while this workspace serves 0.14
 /// through the status server, so this module's families live on their own
@@ -50,7 +50,7 @@ pub fn init_dashboard_series() {
 
 static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-fn collector_counter_vec(source: &str) -> Option<prometheus::CounterVec> {
+fn collector_counter_vec(source: &str) -> Option<prometheus013::CounterVec> {
     tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
@@ -61,7 +61,7 @@ fn collector_counter_vec(source: &str) -> Option<prometheus::CounterVec> {
         })
 }
 
-fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
+fn collector_gauge_vec(source: &str) -> Option<prometheus013::GaugeVec> {
     tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
@@ -70,7 +70,7 @@ fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
         })
 }
 
-fn collector_counter(source: &str) -> Option<prometheus::Counter> {
+fn collector_counter(source: &str) -> Option<prometheus013::Counter> {
     tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
@@ -83,7 +83,7 @@ fn collector_counter(source: &str) -> Option<prometheus::Counter> {
 #[must_use]
 pub fn gather_text() -> String {
     TextEncoder::new()
-        .encode_to_string(&prometheus::default_registry().gather())
+        .encode_to_string(&prometheus013::default_registry().gather())
         .unwrap_or_default()
 }
 
@@ -109,16 +109,16 @@ fn materialize_dashboard_series() {
     // gc_worker.go families. Go's gc worker materializes the config gauge's
     // two children at boot (`gc_worker.go:307-308` Set(0)) and binds the
     // rest as the worker starts; the dashboard reads every family.
-    LazyLock::force(&tidb_metrics::gc_worker::GC_CONFIG);
-    LazyLock::force(&tidb_metrics::gc_worker::GC_FAILURE);
-    LazyLock::force(&tidb_metrics::gc_worker::GC_SECONDS);
-    LazyLock::force(&tidb_metrics::gc_worker::GC_ACTION_REGION_RESULT);
-    LazyLock::force(&tidb_metrics::gc_worker::GC_WORKER_ACTIONS_TOTAL);
-    LazyLock::force(&tidb_metrics::gc_worker::GC_REGION_TOO_MANY_LOCKS);
-    let _ = tidb_metrics::gc_worker::GC_CONFIG
+    LazyLock::force(&crate::gc_worker::GC_CONFIG);
+    LazyLock::force(&crate::gc_worker::GC_FAILURE);
+    LazyLock::force(&crate::gc_worker::GC_SECONDS);
+    LazyLock::force(&crate::gc_worker::GC_ACTION_REGION_RESULT);
+    LazyLock::force(&crate::gc_worker::GC_WORKER_ACTIONS_TOTAL);
+    LazyLock::force(&crate::gc_worker::GC_REGION_TOO_MANY_LOCKS);
+    let _ = crate::gc_worker::GC_CONFIG
         .with_label_values(&["tikv_gc_run_interval"])
         .set(0.0);
-    let _ = tidb_metrics::gc_worker::GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
+    let _ = crate::gc_worker::GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
     if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
         let _ = counter_vec.with_label_values(&["ok_compatible"]);
     }

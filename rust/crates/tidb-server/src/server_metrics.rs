@@ -154,7 +154,7 @@ pub(crate) fn family_catalog() -> Vec<(String, String)> {
     for (fq, help) in tidb_topsql_reporter_metrics::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_txnkv::client_go_metrics::histogram_definitions() {
+    for (fq, help) in tidb_metrics::client_go_metrics::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
     // Go `ConnIdleDurationHistogram` (server.go), childless until a

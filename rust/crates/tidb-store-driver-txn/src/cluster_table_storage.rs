@@ -1122,7 +1122,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             // `pessimistic_lock_keys_duration` histogram (`adapter.go:588`),
             // charged per lock acquisition through the client's own registry.
             accumulate_lock_observation(keys.len() as u64, lock_elapsed);
-            tidb_txnkv::client_go_metrics::observe_pessimistic_lock_keys_duration(
+            tidb_metrics::client_go_metrics::observe_pessimistic_lock_keys_duration(
                 lock_elapsed.as_secs_f64(),
             );
         }
@@ -2145,7 +2145,7 @@ impl<S: StoreClient> SessionSnapshot<S> {
         let lock_elapsed = lock_started.elapsed();
         if !matches!(outcome, LockKeysOutcome::TransactionError(_)) {
             accumulate_lock_observation(keys.len() as u64, lock_elapsed);
-            tidb_txnkv::client_go_metrics::observe_pessimistic_lock_keys_duration(
+            tidb_metrics::client_go_metrics::observe_pessimistic_lock_keys_duration(
                 lock_elapsed.as_secs_f64(),
             );
         }

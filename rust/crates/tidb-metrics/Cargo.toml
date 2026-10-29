@@ -10,6 +10,9 @@ description = "TiDB metrics: Go pkg/metrics (Rust rewrite)."
 [dependencies]
 tidb-terror = { path = "../tidb-terror" }
 prometheus = { version = "0.14", default-features = false }
+# client-go's collectors (`tikv-client` pins prometheus 0.13).
+prometheus013 = { package = "prometheus", version = "0.13", default-features = false }
+tikv-client.workspace = true
 
 [lints]
 workspace = true

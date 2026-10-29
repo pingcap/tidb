@@ -24,7 +24,6 @@ mod cache_db;
 mod checker;
 mod client;
 pub mod tikv_errors;
-pub mod client_go_metrics;
 mod counter;
 pub mod driver;
 mod driver_error;

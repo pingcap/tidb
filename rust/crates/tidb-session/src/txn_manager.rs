@@ -347,7 +347,7 @@ impl TxnManager {
     /// Observes the committed transaction's write size.
     pub fn record_write_details(session: &mut Session, (write_size, write_keys): (isize, isize)) {
         if write_size > 0 {
-            tidb_txnkv::client_go_metrics::observe_txn_write_size_bytes(write_size, false);
+            tidb_metrics::client_go_metrics::observe_txn_write_size_bytes(write_size, false);
             session
                 .txn_write_throughput_sli()
                 .add_txn_write_size(write_size, write_keys);

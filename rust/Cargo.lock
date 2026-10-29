@@ -5202,8 +5202,10 @@ dependencies = [
 name = "tidb-metrics"
 version = "0.0.0"
 dependencies = [
+ "prometheus 0.13.4",
  "prometheus 0.14.0",
  "tidb-terror",
+ "tikv-client",
 ]
 
 [[package]]
@@ -6828,6 +6830,7 @@ dependencies = [
  "tidb-hack",
  "tidb-kv",
  "tidb-meta",
+ "tidb-metrics",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-store-driver-error",
@@ -7293,7 +7296,6 @@ dependencies = [
  "futures",
  "futures-timer",
  "hyper 1.10.1",
- "prometheus 0.13.4",
  "prost 0.14.4",
  "reqwest 0.13.4",
  "serde_json",
