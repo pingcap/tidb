@@ -1188,6 +1188,16 @@ func TestDMLStmt(t *testing.T) {
 		{"select 1 as a from dual order by a", true, "SELECT 1 AS `a` ORDER BY `a`"},
 		{"select 1 as a from dual where 1 < any (select 2) order by a", true, "SELECT 1 AS `a` FROM DUAL WHERE 1<ANY (SELECT 2) ORDER BY `a`"},
 		{"select 1 order by 1", true, "SELECT 1 ORDER BY 1"},
+		// NULLS FIRST / NULLS LAST
+		{"select a from t order by a nulls last", true, "SELECT `a` FROM `t` ORDER BY `a` NULLS LAST"},
+		{"select a from t order by a nulls first", true, "SELECT `a` FROM `t` ORDER BY `a` NULLS FIRST"},
+		{"select a from t order by a desc nulls first, b nulls last", true, "SELECT `a` FROM `t` ORDER BY `a` DESC NULLS FIRST,`b` NULLS LAST"},
+		{"select a from t order by 1 desc nulls last limit 1", true, "SELECT `a` FROM `t` ORDER BY 1 DESC NULLS LAST LIMIT 1"},
+		{"select nulls from t order by nulls nulls first", true, "SELECT `nulls` FROM `t` ORDER BY `nulls` NULLS FIRST"},
+		{"select a from t order by a nulls", false, ""},
+		{"select a from t order by a nulls first last", false, ""},
+		{"select group_concat(a order by a nulls last separator ',') from t", true, "SELECT GROUP_CONCAT(`a` ORDER BY `a` NULLS LAST SEPARATOR ',') FROM `t`"},
+		{"delete from t order by a nulls last limit 1", true, "DELETE FROM `t` ORDER BY `a` NULLS LAST LIMIT 1"},
 
 		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true, "(SELECT 1)"},
@@ -7234,6 +7244,7 @@ func TestWindowFunctions(t *testing.T) {
 		// For window function descriptions.
 		// See https://dev.mysql.com/doc/refman/8.0/en/window-function-descriptions.html
 		{`SELECT CUME_DIST() OVER w FROM t;`, true, "SELECT CUME_DIST() OVER `w` FROM `t`"},
+		{"SELECT ROW_NUMBER() OVER (ORDER BY a DESC NULLS LAST) FROM t", true, "SELECT ROW_NUMBER() OVER (ORDER BY `a` DESC NULLS LAST) FROM `t`"},
 		{`SELECT DENSE_RANK() OVER (w) FROM t;`, true, "SELECT DENSE_RANK() OVER (`w`) FROM `t`"},
 		{`SELECT FIRST_VALUE(val) OVER w FROM t;`, true, "SELECT FIRST_VALUE(`val`) OVER `w` FROM `t`"},
 		{`SELECT FIRST_VALUE(val) RESPECT NULLS OVER w FROM t;`, true, "SELECT FIRST_VALUE(`val`) OVER `w` FROM `t`"},

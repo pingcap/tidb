@@ -245,7 +245,7 @@ func buildRangeForTableScan(sctx base.PlanContext, ts *physicalop.PhysicalTableS
 
 	// Rebuild GroupedRanges if GroupByColIdxs is set
 	if len(ts.GroupByColIdxs) > 0 {
-		ts.GroupedRanges, err = GroupRangesByCols(ts.Ranges, ts.GroupByColIdxs)
+		ts.GroupedRanges, err = GroupRangesByCols(ts.Ranges, ts.GroupByColIdxs, nil)
 		if err != nil {
 			return err
 		}
@@ -431,8 +431,8 @@ func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexS
 	is.Ranges = res.Ranges
 
 	// Rebuild GroupedRanges if GroupByColIdxs is set
-	if len(is.GroupByColIdxs) > 0 {
-		is.GroupedRanges, err = GroupRangesByCols(is.Ranges, is.GroupByColIdxs)
+	if len(is.GroupByColIdxs) > 0 || len(is.NullsHighColIdxs) > 0 {
+		is.GroupedRanges, err = GroupRangesByCols(is.Ranges, is.GroupByColIdxs, is.NullsHighColIdxs)
 		if err != nil {
 			return err
 		}

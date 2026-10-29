@@ -52,6 +52,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -659,10 +660,16 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	if ge != nil {
 		exhaustObj = ge
 	}
-	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
-	plansFitsProp, hintWorksWithProp, err = exhaustPhysicalPlans(exhaustObj, newProp)
-	if err != nil {
-		return nil, err
+	if newProp.HasNullsHigh() && !canPassNullsHighProp(self) {
+		// Only a DataSource can provide NULLs-high order without a Sort, through
+		// the operators that canPassNullsHighProp allows in between.
+		hintWorksWithProp = true
+	} else {
+		// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
+		plansFitsProp, hintWorksWithProp, err = exhaustPhysicalPlans(exhaustObj, newProp)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !hintWorksWithProp && !newProp.IsSortItemEmpty() && newProp.IndexJoinProp == nil {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
@@ -742,6 +749,18 @@ END:
 		p.StoreTask(prop, bestTask)
 	}
 	return bestTask, nil
+}
+
+// canPassNullsHighProp reports whether p passes a NULLs-high sort property (see
+// property.SortItem.NullsHigh) to its child unchanged. Operators that order or
+// merge rows themselves (merge join, stream agg, union scan...) only know the
+// default NULL order, so they must not receive such a property.
+func canPassNullsHighProp(p base.LogicalPlan) bool {
+	switch p.(type) {
+	case *logicalop.LogicalSelection, *logicalop.LogicalProjection:
+		return true
+	}
+	return false
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -1073,6 +1092,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// different properties.
 	path.GroupedRanges = nil
 	path.GroupByColIdxs = nil
+	path.NullsHighColIdxs = nil
 
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
@@ -1173,15 +1193,29 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// Moreover, we also need to consider the situation when some columns of `path.IdxCols` are a list of constant
 	// values. For example, for query `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c`, we can use `idx_a_b_c` to
 	// access 3 ranges and use a merge sort to satisfy `ORDER BY b, c`. This corresponds to Case 3 in the code below.
+	//
+	// A sort item with NullsHigh on a nullable column is special: the index returns NULLs first. For the first
+	// matched sort item, we split the ranges into a NULL part and a non-NULL part and merge sort them, which puts
+	// the NULLs last. See GroupRangesByCols.
 	matchResult := property.PropMatched
 	groupByColIdxs := make([]int, 0)
+	var nullsHighColIdxs []int
 	colIdx := 0
-	for _, sortItem := range prop.SortItems {
+	for i, sortItem := range prop.SortItems {
 		found := false
 		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
 			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
 				found = true
+				if sortItem.NullsHigh && !mysql.HasNotNullFlag(idxCols[colIdx].RetType.GetFlag()) {
+					// Splitting only works when the index columns before this one are constant in each range,
+					// and the merge sort only supports index scans.
+					if i > 0 || path.Index == nil || path.IsCommonHandlePath {
+						found = false
+						break
+					}
+					nullsHighColIdxs = append(nullsHighColIdxs, colIdx)
+				}
 				colIdx++
 				break
 			}
@@ -1227,8 +1261,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			break
 		}
 	}
-	if len(groupByColIdxs) > 0 && matchResult == property.PropMatched {
-		groups, err := GroupRangesByCols(path.Ranges, groupByColIdxs)
+	if (len(groupByColIdxs) > 0 || len(nullsHighColIdxs) > 0) && matchResult == property.PropMatched {
+		groups, err := GroupRangesByCols(path.Ranges, groupByColIdxs, nullsHighColIdxs)
 		if err != nil {
 			return property.PropNotMatched
 		}
@@ -1240,9 +1274,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if len(groups) > maxGroupCount {
 			return property.PropNotMatched
 		}
-		if len(groups) > 0 {
+		// With nullsHighColIdxs we always merge sort, even when the ranges contain no NULLs, because rebuilt
+		// ranges (plan cache, correlated columns) may contain them.
+		if len(groups) > 0 || len(nullsHighColIdxs) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
+			path.NullsHighColIdxs = nullsHighColIdxs
 			return property.PropMatchedNeedMergeSort
 		}
 	}
@@ -1349,8 +1386,85 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 	return emptyResult
 }
 
-// GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
-func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) ([][]*ranger.Range, error) {
+// GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs. Then, for each
+// column in nullsHighColIdxs, every group is split into the ranges where that column is NULL and the ranges where
+// it is not. A keep-order scan returns NULLs first, so a merge sort that orders NULLs high needs them in separate
+// groups. The index columns before a nullsHighColIdxs column must be constant within each range.
+func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs, nullsHighColIdxs []int) ([][]*ranger.Range, error) {
+	groups := [][]*ranger.Range{ranges}
+	if len(groupByColIdxs) > 0 {
+		var err error
+		groups, err = groupRangesByColValues(ranges, groupByColIdxs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, colIdx := range nullsHighColIdxs {
+		split := make([][]*ranger.Range, 0, 2*len(groups))
+		for _, group := range groups {
+			nonNull, null, err := splitRangesByNull(group, colIdx)
+			if err != nil {
+				return nil, err
+			}
+			if len(nonNull) > 0 {
+				split = append(split, nonNull)
+			}
+			if len(null) > 0 {
+				split = append(split, null)
+			}
+		}
+		groups = split
+	}
+	return groups, nil
+}
+
+// splitRangesByNull splits the ranges into the parts where the index column colIdx is NULL and is not NULL. The
+// columns before colIdx must be constant within each range.
+func splitRangesByNull(ranges []*ranger.Range, colIdx int) (nonNull, null []*ranger.Range, _ error) {
+	for _, ran := range ranges {
+		width := len(ran.LowVal)
+		if len(ran.HighVal) != width || width < colIdx {
+			return nil, nil, errors.Errorf("unexpected range %v when splitting NULLs of index column %d", ran, colIdx)
+		}
+		switch {
+		case width > colIdx && !ran.LowVal[colIdx].IsNull():
+			nonNull = append(nonNull, ran)
+		case width > colIdx && ran.HighVal[colIdx].IsNull():
+			null = append(null, ran)
+		default:
+			// The range spans NULL and non-NULL values of the column: either the column is not constrained
+			// (width == colIdx), or the range is [NULL, x] on the last column.
+			if width > colIdx+1 || (width == colIdx && (ran.LowExclude || ran.HighExclude)) {
+				return nil, nil, errors.Errorf("unexpected range %v when splitting NULLs of index column %d", ran, colIdx)
+			}
+			prefix := ran.LowVal[:colIdx]
+			collators := slices.Clone(ran.Collators[:colIdx])
+			collators = append(collators, collate.GetBinaryCollator())
+			if !ran.LowExclude {
+				null = append(null, &ranger.Range{
+					LowVal:    append(slices.Clone(prefix), types.Datum{}),
+					HighVal:   append(slices.Clone(prefix), types.Datum{}),
+					Collators: collators,
+				})
+			}
+			nonNullRange := &ranger.Range{
+				LowVal:    append(slices.Clone(prefix), types.MinNotNullDatum()),
+				HighVal:   append(slices.Clone(prefix), types.MaxValueDatum()),
+				Collators: slices.Clone(collators),
+			}
+			if width > colIdx {
+				nonNullRange.HighVal[colIdx] = ran.HighVal[colIdx]
+				nonNullRange.HighExclude = ran.HighExclude
+				nonNullRange.Collators[colIdx] = ran.Collators[colIdx]
+			}
+			nonNull = append(nonNull, nonNullRange)
+		}
+	}
+	return nonNull, null, nil
+}
+
+// groupRangesByColValues groups the ranges by the values of the columns specified by groupByColIdxs.
+func groupRangesByColValues(ranges []*ranger.Range, groupByColIdxs []int) ([][]*ranger.Range, error) {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
 		var datums []types.Datum
@@ -1436,7 +1550,8 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	//	3: If neither, generate a random index partial combination path from all alternatives.
 
 	// Execution part doesn't support the merge operation for intersection case yet.
-	if path.IndexMergeIsIntersection {
+	// The index merge reader's merge sort does not support NULLs-high order either.
+	if path.IndexMergeIsIntersection || prop.HasNullsHigh() {
 		return nil, nil, false, property.PropNotMatched
 	}
 
@@ -1675,7 +1790,8 @@ func expressionContainsHash(exprs []expression.Expression, hash []byte) bool {
 
 func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) ([]property.PhysicalPropMatchResult, property.PhysicalPropMatchResult) {
 	// Execution part doesn't support the merge operation for intersection case yet.
-	if path.IndexMergeIsIntersection {
+	// The index merge reader's merge sort does not support NULLs-high order either.
+	if path.IndexMergeIsIntersection || prop.HasNullsHigh() {
 		return nil, property.PropNotMatched
 	}
 	allSame, _ := prop.AllSameOrder()
@@ -2898,8 +3014,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			byItems := make([]*util.ByItems, 0, len(sortItems))
 			for _, si := range sortItems {
 				byItems = append(byItems, &util.ByItems{
-					Expr: si.Col,
-					Desc: si.Desc,
+					Expr:      si.Col,
+					Desc:      si.Desc,
+					NullsHigh: si.NullsHigh,
 				})
 			}
 			cop.IndexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
@@ -2907,6 +3024,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
 			is.GroupedRanges = candidate.path.GroupedRanges
 			is.GroupByColIdxs = candidate.path.GroupByColIdxs
+			is.NullsHighColIdxs = candidate.path.NullsHighColIdxs
 		}
 		if ds.TableInfo.GetPartitionInfo() != nil {
 			if cop.TablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
