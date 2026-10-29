@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB session context: Go pkg/sessionctx, the context a session hands every statement's planner and executor (Rust rewrite)."
 
 [dependencies]
+tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }
@@ -21,11 +22,9 @@ tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
-tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-kv = { path = "../tidb-kv" }
-tidb-table = { path = "../tidb-table" }
 chrono = { workspace = true }
 tikv-client = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
@@ -48,3 +47,6 @@ test-util = []
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-driver-error = { path = "../tidb-driver-error" }

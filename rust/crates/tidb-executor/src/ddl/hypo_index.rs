@@ -13,13 +13,13 @@
 // limitations under the License.
 
 //! The Index Advisor's `addHypoIndex`; the hypothetical-index state itself is
-//! `tidb_table::hypo_index` (Go `SessionVars.HypoIndexes`).
+//! `tidb_variable::hypo_index` (Go `SessionVars.HypoIndexes`).
 
 use tidb_hack::GoToLower;
 use tidb_model::index::{IndexColumn, IndexInfo};
 
 use crate::{Catalog, DriverError};
-use tidb_table::hypo_index::HypoIndexes;
+use tidb_variable::hypo_index::HypoIndexes;
 
 /// The Index Advisor's `addHypoIndex` (`pkg/planner/indexadvisor/optimizer.go`):
 /// a public, non-unique hypothetical index over `columns`, built straight

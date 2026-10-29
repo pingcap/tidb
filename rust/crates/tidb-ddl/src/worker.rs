@@ -3033,7 +3033,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 offset,
                 &not_null,
                 false,
-                &tidb_table::context::StaticMutateContext::new(),
+                &tidb_tblctx::StaticMutateContext::new(),
             )
             .map_err(backfill_failure)?;
         Ok(matches!(
@@ -3194,7 +3194,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                             index.id,
                             index.name.original(),
                             &condition,
-                            &tidb_table::context::MutateContext::session_zone(context),
+                            &tidb_tblctx::MutateContext::session_zone(context),
                             tidb_expr::Columns::like_default_escape(context),
                         )
                         .map_err(backfill_failure)?;
@@ -3443,15 +3443,15 @@ fn backfill_failure(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
 #[must_use]
 fn reorg_table_mutate_context(
     vars: &tidb_ddl_build::session_pool::ReorgSessionVars,
-) -> tidb_table::context::StaticMutateContext {
-    tidb_table::context::StaticMutateContext::for_reorg_meta(vars.sql_mode, vars.time_zone.clone())
+) -> tidb_tblctx::StaticMutateContext {
+    tidb_tblctx::StaticMutateContext::for_reorg_meta(vars.sql_mode, vars.time_zone.clone())
 }
 
 #[cfg(test)]
 mod reorg_context_tests {
     use super::*;
     use tidb_datatype::SessionTimeZone;
-    use tidb_table::context::MutateContext;
+    use tidb_tblctx::MutateContext;
 
     /// The statement context the worker built for a reorganization before it
     /// held Go's `reorgTableMutateContext` (Go `newReorgSessCtx`) over the

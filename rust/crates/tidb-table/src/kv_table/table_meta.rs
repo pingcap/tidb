@@ -41,7 +41,7 @@ use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, Sessi
 pub struct RowDecodeContext {
     type_flags: ConversionFlags,
     zone: SessionTimeZone,
-    expression: std::sync::Arc<dyn crate::context::MutateContext>,
+    expression: std::sync::Arc<dyn tidb_tblctx::MutateContext>,
 }
 
 /// The execute-time facts a cached prepared PointGet needs while decoding
@@ -87,7 +87,7 @@ impl RowDecodeContext {
     /// A SELECT/read-operator context. Go's SELECT arm always tolerates a
     /// zero-in-date and treats truncation as a warning.
     #[must_use]
-    pub fn for_query(ctx: &dyn crate::context::MutateContext) -> Self {
+    pub fn for_query(ctx: &dyn tidb_tblctx::MutateContext) -> Self {
         Self {
             type_flags: ctx.query_default_conversion_flags(),
             zone: ctx.session_zone(),
@@ -98,7 +98,7 @@ impl RowDecodeContext {
     /// A DML/FK context. Reading an old row is part of the write statement,
     /// so its SQL-mode-dependent write flags decide the origin-default cast.
     #[must_use]
-    pub fn for_write(ctx: &dyn crate::context::MutateContext) -> Self {
+    pub fn for_write(ctx: &dyn tidb_tblctx::MutateContext) -> Self {
         Self {
             type_flags: ctx
                 .write_conversion_flags()
@@ -115,7 +115,7 @@ impl RowDecodeContext {
 
     /// A DDL reorganization context with Go reorg flags and error levels.
     #[must_use]
-    pub fn for_ddl(ctx: &dyn crate::context::MutateContext) -> Self {
+    pub fn for_ddl(ctx: &dyn tidb_tblctx::MutateContext) -> Self {
         let ctx = ctx.for_reorg();
         Self {
             type_flags: ctx.reorg_default_conversion_flags(),
@@ -132,7 +132,7 @@ impl RowDecodeContext {
     /// `show_default_conversion_flags`; this constructor names the distinct
     /// caller class instead of making ANALYZE pretend to be SHOW.
     #[must_use]
-    pub fn for_analyze(ctx: &dyn crate::context::MutateContext) -> Self {
+    pub fn for_analyze(ctx: &dyn tidb_tblctx::MutateContext) -> Self {
         Self {
             type_flags: ctx.show_default_conversion_flags(),
             zone: ctx.session_zone(),
@@ -145,7 +145,7 @@ impl RowDecodeContext {
     pub fn new(
         type_flags: ConversionFlags,
         zone: SessionTimeZone,
-        expression: std::sync::Arc<dyn crate::context::MutateContext>,
+        expression: std::sync::Arc<dyn tidb_tblctx::MutateContext>,
     ) -> Self {
         Self {
             type_flags,
@@ -182,7 +182,7 @@ impl RowDecodeContext {
         self
     }
 
-    pub fn expression(&self) -> &dyn crate::context::MutateContext {
+    pub fn expression(&self) -> &dyn tidb_tblctx::MutateContext {
         self.expression.as_ref()
     }
 

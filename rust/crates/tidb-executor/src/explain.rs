@@ -706,7 +706,7 @@ fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAc
 
 fn index_access(
     catalog: &Catalog,
-    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
+    hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
     table_id: i64,
     alias: Option<&str>,
     index_id: i64,
@@ -726,8 +726,7 @@ fn index_access(
     // the session's hypothetical indexes rather than one the table stores.
     let hypo_index = || {
         let database = catalog.physical_kv_table_database_by_id(table_id)?;
-        hypo_indexes?
-            .table_kv_indexes(database, &table)
+        tidb_table::kv_table::hypo_kv_indexes(hypo_indexes?, database, &table)
             .into_iter()
             .find(|index| index.id == index_id)
     };
@@ -767,7 +766,7 @@ fn index_access(
 
 fn point_access(
     catalog: &Catalog,
-    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
+    hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
     table_id: i64,
     index_id: Option<i64>,
 ) -> ScanAccessObject {
@@ -1047,7 +1046,7 @@ fn physical_operator_name(
 fn physical_access(
     plan: &PhysicalPlan,
     catalog: &Catalog,
-    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
+    hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
 ) -> Option<AccessObject> {
     match plan {
         // Go reader AccessObject reports dynamic pruning; scan AccessObject

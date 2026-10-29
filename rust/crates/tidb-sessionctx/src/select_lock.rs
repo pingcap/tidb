@@ -18,7 +18,6 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use tidb_driver_error::ExecError;
 use tidb_txnkv::transaction::LockWaitTime;
 
 
@@ -43,42 +42,6 @@ impl LockStateObserver {
 impl std::fmt::Debug for LockStateObserver {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("LockStateObserver")
-    }
-}
-
-/// A locking point read's lock (Go `PointGetExecutor.lock` with its
-/// `LockWaitTime`), taken inside `Next`.
-#[derive(Clone, Debug)]
-pub struct PointLock {
-    /// How long the lock request waits on a held key.
-    pub wait: LockWaitTime,
-    /// Go `IsPessimisticReadConsistency`: lock only existing keys, after
-    /// (batch) or while (`lockKeyIfExists`) reading them; repeatable read
-    /// locks every named key before reading it.
-    pub read_committed: bool,
-    /// The transaction-state publisher, when the session has one.
-    pub lock_state: Option<LockStateObserver>,
-}
-
-impl PointLock {
-    /// Go `doLockKeys` for a point read, publishing the lock wait around it.
-    pub fn lock(
-        &self,
-        table: &mut tidb_table::kv_table::KvTable,
-        keys: &[tidb_txnkv::Key],
-        only_if_exists: bool,
-    ) -> Result<(), ExecError> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-        if let Some(state) = &self.lock_state {
-            state.set(true);
-        }
-        let locked = table.lock_keys_for_read(keys, self.wait, only_if_exists);
-        if let Some(state) = &self.lock_state {
-            state.set(false);
-        }
-        locked.map_err(ExecError::from)
     }
 }
 
@@ -170,15 +133,9 @@ impl SelectedLockKeys {
         self
     }
 
-    /// The lock a locking point read takes inside `Next` (Go
-    /// `PointGetExecutor.getAndLock`, `BatchPointGetExec.initialize`).
-    #[must_use]
-    pub fn point_lock(&self, select_wait: Option<LockWaitTime>) -> PointLock {
-        PointLock {
-            wait: select_wait.unwrap_or(self.default_wait),
-            read_committed: self.read_committed,
-            lock_state: self.lock_state.clone(),
-        }
+    /// Go `IsPessimisticReadConsistency` for this attempt's transaction.
+    pub fn read_committed(&self) -> bool {
+        self.read_committed
     }
 
     /// Whether FOR SHARE is promoted to a real lock instead of Go's no-op.

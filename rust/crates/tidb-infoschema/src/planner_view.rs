@@ -31,9 +31,9 @@ pub struct PlannerCatalog {
     view: Arc<PlannerSchemaView>,
     latest_index_schema: Option<Arc<crate::table_source::LatestIndexSchema>>,
     /// Go `SessionVars.HypoIndexes`, present only for an `EXPLAIN`.
-    hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
+    hypo_indexes: Option<Arc<tidb_variable::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
-    hypo_tiflash_replicas: Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>>,
+    hypo_tiflash_replicas: Option<Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>>,
     /// The table ids the open transaction has staged writes under, which Go
     /// reads through `Context.HasDirtyContent` (`tableHasDirtyContent`).
     dirty_tables: Vec<i64>,
@@ -116,8 +116,8 @@ impl PlannerCatalog {
     #[must_use]
     pub fn with_explain_hypo_state(
         mut self,
-        hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
-        hypo_tiflash_replicas: Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>>,
+        hypo_indexes: Option<Arc<tidb_variable::hypo_index::HypoIndexes>>,
+        hypo_tiflash_replicas: Option<Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>>,
     ) -> Self {
         self.hypo_indexes = hypo_indexes;
         self.hypo_tiflash_replicas = hypo_tiflash_replicas;

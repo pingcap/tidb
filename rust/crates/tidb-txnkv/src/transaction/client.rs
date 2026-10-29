@@ -1161,7 +1161,7 @@ fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailu
             if let Ok(proto) =
                 tidb_proto::KvrpcDeadlock::decode(deadlock.deadlock.encode_to_vec().as_slice())
             {
-                let mut detail = super::DeadlockDetail::from(&proto);
+                let mut detail = tidb_client_go_error::DeadlockDetail::from(&proto);
                 detail.is_retryable = deadlock.is_retryable;
                 return super::PessimisticLockFailure::Deadlock(detail);
             }

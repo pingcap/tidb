@@ -25,7 +25,7 @@ use tidb_planner_indexadvisor::{
     advisor_error, AdvisorSession, Column, Index, Optimizer, Result, ALL_OPTIONS,
 };
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
-use tidb_table::hypo_index::HypoIndexes;
+use tidb_variable::hypo_index::HypoIndexes;
 
 use crate::DriverError;
 use crate::StmtOutput;

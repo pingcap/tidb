@@ -212,8 +212,8 @@ use tidb_table::partition_metadata::{partition_spec_from_metadata, StoredPartiti
 
 pub use hypo_index::set_advisor_hypo_index;
 use tidb_sessionstates::HypoIndexMap;
-use tidb_table::hypo_index::HypoIndexes;
-use tidb_table::hypo_index::HypoTiFlashReplicas;
+use tidb_variable::hypo_index::HypoIndexes;
+use tidb_variable::hypo_index::HypoTiFlashReplicas;
 pub use indexes::{index_backfill_error};
 
 
@@ -248,7 +248,7 @@ pub fn create_table_in_catalog(
                 .generate_with_stack_by_args(&[(format!("{database}.{name}")).into()]),
         );
         if create.if_not_exists {
-            ctx.append_suppressed(&exists);
+            ctx.append_suppressed(&exists.clone().to_mysql_error());
             return Ok(false);
         }
         return Err(exists);

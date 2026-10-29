@@ -405,10 +405,10 @@ impl Session {
         self.vars.found_in_plan_cache = states.found_in_plan_cache;
         self.vars.found_in_binding = states.found_in_binding;
         self.hypo_indexes = std::sync::Arc::new(
-            tidb_table::hypo_index::HypoIndexes::from_session_state(states.hypo_indexes),
+            tidb_variable::hypo_index::HypoIndexes::from_session_state(states.hypo_indexes),
         );
         self.hypo_tiflash_replicas = std::sync::Arc::new(
-            tidb_table::hypo_index::HypoTiFlashReplicas::from_session_state(
+            tidb_variable::hypo_index::HypoTiFlashReplicas::from_session_state(
                 states.hypo_tiflash_replicas,
             ),
         );

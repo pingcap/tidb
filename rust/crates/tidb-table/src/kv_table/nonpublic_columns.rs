@@ -126,7 +126,7 @@ impl KvTable {
     fn cast_into_column(
         value: Datum,
         column: &KvColumn,
-        ctx: Option<&dyn crate::context::MutateContext>,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Datum, KvTableError> {
@@ -148,7 +148,7 @@ impl KvTable {
     pub(crate) fn check_data_for_modify_column(
         &self,
         row: &[Datum],
-        ctx: Option<&dyn crate::context::MutateContext>,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<(), KvTableError> {
         for (offset, changing) in &self.changing_field_types {
             let Some(data) = row.get(*offset) else {
@@ -189,7 +189,7 @@ impl KvTable {
     pub(crate) fn insert_write_row(
         &self,
         row: &[Datum],
-        ctx: Option<&dyn crate::context::MutateContext>,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
@@ -228,7 +228,7 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
         old: &[Datum],
-        ctx: Option<&dyn crate::context::MutateContext>,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Vec<Datum>, KvTableError> {
@@ -277,7 +277,7 @@ impl KvTable {
         handle: &TableHandle,
         old: &[Datum],
         new: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<(Vec<Datum>, Vec<Datum>)>, KvTableError> {
         if self.nonpublic_columns.is_empty() {
             return Ok(None);
@@ -328,7 +328,7 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
         old: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
         if self.nonpublic_columns.is_empty() {
             return Ok(None);

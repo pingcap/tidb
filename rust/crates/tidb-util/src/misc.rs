@@ -49,3 +49,73 @@ pub fn syntax_error(message: impl Into<String>) -> tidb_terror::TerrorError {
     tidb_parser::parser_errors::ERR_PARSE
         .generate_with_stack_by_args(&[SYNTAX_ERROR_PREFIX.into(), message.into().into()])
 }
+
+/// Go `util.SequenceTable`: the sequence operations a table object of a
+/// `CREATE SEQUENCE` provides, so expression evaluation can drive one without
+/// depending on the table layer.
+pub trait SequenceTable: std::fmt::Debug + Send + Sync {
+    /// Go `GetSequenceID`.
+    fn sequence_id(&self) -> i64;
+
+    /// Go `GetSequenceNextVal`.
+    fn sequence_next_val(&self) -> Result<i64, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Go `SetSequenceVal`: `None` when the counter was already at or past
+    /// `new_val` (Go's `alreadySatisfied`).
+    fn set_sequence_val(
+        &self,
+        new_val: i64,
+    ) -> Result<Option<i64>, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Go `util.GetSequenceByName` over a statement's infoschema: the
+/// sequences its `NEXTVAL` / `LASTVAL` / `SETVAL` resolve by name.
+pub trait SequenceSchema: std::fmt::Debug + Send + Sync {
+    /// The session's current database, lowercase: the schema of a bare name.
+    fn current_db(&self) -> &str;
+
+    /// The object `(database, name)` names: `Some(Some(_))` a sequence,
+    /// `Some(None)` another kind of object, `None` nothing.
+    fn object(&self, database: &str, name: &str) -> Option<Option<&dyn SequenceTable>>;
+
+    /// The `(database, name)` a one- or two-part sequence path names.
+    fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
+        match path {
+            [name] => Some((self.current_db(), name.as_str())),
+            [database, name] => Some((database.as_str(), name.as_str())),
+            _ => None,
+        }
+    }
+
+    /// The lowercase `(database, name)` an error names for `path`.
+    fn key(&self, path: &[String]) -> (String, String) {
+        use tidb_hack::GoToLower;
+        match path {
+            [name] => (self.current_db().to_string(), name.go_to_lower()),
+            [database, name] => (database.go_to_lower(), name.go_to_lower()),
+            [] => (String::new(), String::new()),
+            [leading @ .., name] => (
+                leading
+                    .iter()
+                    .map(|part| part.go_to_lower())
+                    .collect::<Vec<_>>()
+                    .join("."),
+                name.go_to_lower(),
+            ),
+        }
+    }
+}
+
+/// The sequences of a context with no infoschema: none.
+#[derive(Debug)]
+pub struct NoSequences;
+
+impl SequenceSchema for NoSequences {
+    fn current_db(&self) -> &str {
+        ""
+    }
+
+    fn object(&self, _database: &str, _name: &str) -> Option<Option<&dyn SequenceTable>> {
+        None
+    }
+}

@@ -14,3 +14,4 @@ workspace = true
 tidb-parser = { path = "../tidb-parser" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-hack = { path = "../tidb-hack" }

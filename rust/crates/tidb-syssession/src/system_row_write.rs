@@ -123,13 +123,13 @@ pub fn defaults_row(table: &TableInfo, now: Time) -> Result<RowValues, RowEncode
 struct TableWriter {
     table: KvTable,
     writes: CapturedWrites,
-    context: Arc<dyn tidb_table::context::MutateContext>,
+    context: Arc<dyn tidb_tblctx::MutateContext>,
     name: String,
 }
 
 impl TableWriter {
     fn open(info: &TableInfo, use_new_collation: bool) -> Result<Self, RowEncodeError> {
-        Self::open_with(info, use_new_collation, Arc::new(tidb_table::context::StaticMutateContext::new()))
+        Self::open_with(info, use_new_collation, Arc::new(tidb_tblctx::StaticMutateContext::new()))
     }
 
     /// [`Self::open`] under `context`, the statement context the table layer
@@ -137,7 +137,7 @@ impl TableWriter {
     fn open_with(
         info: &TableInfo,
         use_new_collation: bool,
-        context: Arc<dyn tidb_table::context::MutateContext>,
+        context: Arc<dyn tidb_tblctx::MutateContext>,
     ) -> Result<Self, RowEncodeError> {
         let writes = CapturedWrites::default();
         let table = tidb_table::table_from_meta::cluster_table(
@@ -1318,10 +1318,10 @@ mod tests {
     fn the_system_write_context_writes_as_the_default_statement_did() {
         use tidb_ast::{DdlStmt, Stmt};
         use tidb_datatype::{EvalType, TimeType};
-        type Context = Arc<dyn tidb_table::context::MutateContext>;
+        type Context = Arc<dyn tidb_tblctx::MutateContext>;
         let contexts = || -> [Context; 2] {
             [
-                Arc::new(tidb_table::context::StaticMutateContext::new()),
+                Arc::new(tidb_tblctx::StaticMutateContext::new()),
                 Arc::new(
                     tidb_sessionctx::StmtContext::for_query().with_time_zone(SessionTimeZone::utc()),
                 ),

@@ -236,6 +236,8 @@ members = [
     "crates/tidb-kv",
     "crates/tidb-autoid",
     "crates/tidb-table",
+    "crates/tidb-tblctx",
+    "crates/tidb-client-go-error",
     "crates/tidb-ddl-build",
     "crates/tidb-ddl-label",
     "crates/tidb-privilege",

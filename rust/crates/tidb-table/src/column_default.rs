@@ -918,7 +918,7 @@ pub fn check_no_default_value_for_insert(
     name: &str,
     not_null: bool,
     no_default_value: bool,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<(), crate::column::ColumnError> {
     if no_default_value && default_value.is_none() && field_type.code() != FieldTypeCode::Enum {
         if ctx.strict() {
@@ -950,7 +950,7 @@ pub fn get_col_default_value(
     name: &str,
     column_info_version: u64,
     not_null: bool,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, crate::column::ColumnError> {
     use crate::column::ColumnError;
@@ -998,7 +998,7 @@ pub fn get_col_default_value_from_nil(
     field_type: &FieldType,
     name: &str,
     not_null: bool,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<Datum, crate::column::ColumnError> {
     use crate::column::ColumnError;
 

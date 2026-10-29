@@ -432,9 +432,10 @@ mod tests {
     };
     use tidb_terror::ERR_RESULT_UNDETERMINED;
     use tidb_kv::cluster_storage::DuplicateKeyHint;
+    use tidb_client_go_error::{DeadlockDetail, DeadlockWaitChainItem};
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{
-        CommittedTransaction, DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
+        CommittedTransaction, OptimisticCommitOutcome,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
         TransactionCause, UndeterminedTransaction,
     };

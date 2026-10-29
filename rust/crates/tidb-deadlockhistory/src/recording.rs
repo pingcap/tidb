@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{err_deadlock_to_deadlock_record, GLOBAL_DEADLOCK_HISTORY};
-use tidb_txnkv::transaction::DeadlockDetail;
+use tidb_client_go_error::DeadlockDetail;
 
 static COLLECT_RETRYABLE: AtomicBool = AtomicBool::new(false);
 

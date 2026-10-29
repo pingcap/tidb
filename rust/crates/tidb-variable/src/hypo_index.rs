@@ -27,7 +27,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_hack::GoToLower;
 
 use tidb_model::index::IndexInfo;
-use crate::kv_table::{KvIndex, KvTable};
 
 /// Go `SessionVars.HypoIndexes`: `dbName -> tblName -> idxName -> idxInfo`,
 /// every key lowercase.
@@ -88,18 +87,6 @@ impl HypoIndexes {
             .unwrap_or_default();
         indexes.sort_by(|left, right| left.name.original().cmp(right.name.original()));
         indexes
-    }
-
-    /// [`Self::table_indexes`] resolved against `table`'s columns, for the
-    /// readers that work over the loaded table (EXPLAIN's access objects,
-    /// `SHOW CREATE TABLE`). An index naming a column the table no longer
-    /// has is left out.
-    #[must_use]
-    pub fn table_kv_indexes(&self, database: &str, table: &KvTable) -> Vec<KvIndex> {
-        self.table_indexes(database, &table.name())
-            .into_iter()
-            .filter_map(|index| crate::table_from_meta::kv_index(index, &table.columns).ok())
-            .collect()
     }
 
     /// Go `addHypoIndexIntoCtx`.

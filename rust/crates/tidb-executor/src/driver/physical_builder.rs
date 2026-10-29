@@ -5116,7 +5116,7 @@ fn point_lock(
     lock: bool,
     select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
     ctx: &crate::StmtContext,
-) -> Option<tidb_sessionctx::select_lock::PointLock> {
+) -> Option<crate::access_path::PointLock> {
     use tidb_planner::logical::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if !lock {
@@ -5133,7 +5133,11 @@ fn point_lock(
         // Shared locks are taken by the statement's lock step, when at all.
         Some(_) => return None,
     };
-    Some(selected.point_lock(select_wait))
+    Some(crate::access_path::PointLock {
+        wait: select_wait.unwrap_or(selected.default_wait()),
+        read_committed: selected.read_committed(),
+        lock_state: selected.lock_state(),
+    })
 }
 
 fn build_point_get(

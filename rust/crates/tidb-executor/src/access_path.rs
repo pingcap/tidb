@@ -89,6 +89,42 @@ use tidb_distsql::remote_scan::PushdownRowStream;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_distsql::remote_scan::PushdownAggregateKind;
 
+/// A locking point read's lock (Go `PointGetExecutor.lock` with its
+/// `LockWaitTime`), taken inside `Next`.
+#[derive(Clone, Debug)]
+pub(crate) struct PointLock {
+    /// How long the lock request waits on a held key.
+    pub(crate) wait: tidb_txnkv::transaction::LockWaitTime,
+    /// Go `IsPessimisticReadConsistency`: lock only existing keys, after
+    /// (batch) or while (`lockKeyIfExists`) reading them; repeatable read
+    /// locks every named key before reading it.
+    pub(crate) read_committed: bool,
+    /// The transaction-state publisher, when the session has one.
+    pub(crate) lock_state: Option<tidb_sessionctx::select_lock::LockStateObserver>,
+}
+
+impl PointLock {
+    /// Go `doLockKeys` for a point read, publishing the lock wait around it.
+    pub(crate) fn lock(
+        &self,
+        table: &mut KvTable,
+        keys: &[tidb_txnkv::Key],
+        only_if_exists: bool,
+    ) -> Result<(), ExecError> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        if let Some(state) = &self.lock_state {
+            state.set(true);
+        }
+        let locked = table.lock_keys_for_read(keys, self.wait, only_if_exists);
+        if let Some(state) = &self.lock_state {
+            state.set(false);
+        }
+        locked.map_err(ExecError::from)
+    }
+}
+
 /// Probe values shared by a composite index-join inner subtree and its
 /// target table leaf. The outer join publishes one batch at a time; the leaf
 /// refreshes its lookup source lazily when the generation changes.
@@ -577,7 +613,7 @@ pub struct HandleSourceExec {
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock` in a
     /// repeatable-read pessimistic transaction: the record keys are locked
     /// with this wait before the first read, inside `Next`.
-    lock: Option<tidb_sessionctx::select_lock::PointLock>,
+    lock: Option<PointLock>,
     /// The unique-index key each handle was found under, aligned with
     /// `handles`, which a batch read locks together with its record keys
     /// (Go `BatchPointGetExec.initialize`'s `indexKeys`).
@@ -623,7 +659,7 @@ impl HandleSourceExec {
     /// [`HandleSourceExec::lock`]).
     pub(crate) fn with_lock_before_read(
         mut self,
-        lock: Option<tidb_sessionctx::select_lock::PointLock>,
+        lock: Option<PointLock>,
     ) -> Self {
         self.lock = lock;
         self
@@ -1069,7 +1105,7 @@ pub(crate) struct UniqueIndexPointSourceExec {
     /// whose row lives elsewhere answers nothing. `None` restricts nothing.
     allowed_partitions: Option<Vec<i64>>,
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`.
-    lock: Option<tidb_sessionctx::select_lock::PointLock>,
+    lock: Option<PointLock>,
     source: Option<HandleSourceExec>,
     initialized: bool,
 }
@@ -1084,7 +1120,7 @@ impl UniqueIndexPointSourceExec {
 
     /// Locks the index and record keys this read names inside `Next`.
     #[must_use]
-    pub(crate) fn with_lock(mut self, lock: Option<tidb_sessionctx::select_lock::PointLock>) -> Self {
+    pub(crate) fn with_lock(mut self, lock: Option<PointLock>) -> Self {
         self.lock = lock;
         self
     }

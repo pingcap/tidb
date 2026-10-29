@@ -195,7 +195,7 @@ fn extract_columns_from_expression(
 /// the statement object with a value snapshot.
 #[derive(Clone, Default)]
 struct CommonMutateOptions {
-    context: Option<std::rc::Rc<dyn crate::context::MutateContext>>,
+    context: Option<std::rc::Rc<dyn tidb_tblctx::MutateContext>>,
 }
 
 /// Go `table.AddRecordOpt`, in the fields exercised by
@@ -217,7 +217,7 @@ impl AddRecordOptions {
 
     /// Go `WithCtx` for an add-record operation.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn crate::context::MutateContext>) -> Self {
+    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
@@ -240,7 +240,7 @@ impl AddRecordOptions {
 
     /// The statement context propagated by `WithCtx`.
     #[must_use]
-    pub fn context(&self) -> Option<&std::rc::Rc<dyn crate::context::MutateContext>> {
+    pub fn context(&self) -> Option<&std::rc::Rc<dyn tidb_tblctx::MutateContext>> {
         self.common.context.as_ref()
     }
 
@@ -289,14 +289,14 @@ impl UpdateRecordOptions {
 
     /// Go `WithCtx` for an update-record operation.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn crate::context::MutateContext>) -> Self {
+    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
 
     /// The statement context propagated by `WithCtx`.
     #[must_use]
-    pub fn context(&self) -> Option<&std::rc::Rc<dyn crate::context::MutateContext>> {
+    pub fn context(&self) -> Option<&std::rc::Rc<dyn tidb_tblctx::MutateContext>> {
         self.common.context.as_ref()
     }
 
@@ -355,7 +355,7 @@ impl CreateIndexOptions {
 
     /// Go `WithCtx` for an index write.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn crate::context::MutateContext>) -> Self {
+    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
@@ -376,7 +376,7 @@ impl CreateIndexOptions {
 
     /// The statement context propagated by `WithCtx`.
     #[must_use]
-    pub fn context(&self) -> Option<&std::rc::Rc<dyn crate::context::MutateContext>> {
+    pub fn context(&self) -> Option<&std::rc::Rc<dyn tidb_tblctx::MutateContext>> {
         self.common.context.as_ref()
     }
 
@@ -1945,7 +1945,7 @@ impl KvTable {
     }
 
     /// Installs point-reader options on the same backend that serves its keys.
-    pub fn configure_snapshot_read(&self, ctx: &dyn crate::context::MutateContext, avg_row_bytes: f64) {
+    pub fn configure_snapshot_read(&self, ctx: &dyn tidb_tblctx::MutateContext, avg_row_bytes: f64) {
         self.store
             .set_snapshot_read_options(ctx.snapshot_read_options(avg_row_bytes));
     }
@@ -3571,7 +3571,7 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         // Go `AddRecord(..., table.WithCtx(ctx))`'s region; its index
@@ -3597,7 +3597,7 @@ impl KvTable {
     /// (see [`tidb_kv::storage::TableStorage::attach_txn_staging`]).
     fn with_txn_staging<T>(
         &mut self,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
         write: impl FnOnce(&mut Self) -> Result<T, KvTableError>,
     ) -> Result<T, KvTableError> {
         let optimistic = ctx.optimistic_transaction();
@@ -3633,7 +3633,7 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
@@ -3665,7 +3665,7 @@ impl KvTable {
         row: &[Datum],
         record_id: Option<i64>,
         lazy_dup_check: bool,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
@@ -3706,7 +3706,7 @@ impl KvTable {
         ctx: &dyn tidb_expr::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
-        stats_ctx: Option<&dyn crate::context::MutateContext>,
+        stats_ctx: Option<&dyn tidb_tblctx::MutateContext>,
         rebase_written_id: bool,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
@@ -3943,7 +3943,7 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
         row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.update_row_with_old_context(handle, None, row, ctx)
     }
@@ -3956,7 +3956,7 @@ impl KvTable {
         handle: &TableHandle,
         old_row: Option<&[Datum]>,
         row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.with_txn_staging(ctx, |table| table.update_row_in(handle, old_row, row, ctx))
     }
@@ -3966,7 +3966,7 @@ impl KvTable {
         handle: &TableHandle,
         old_row: Option<&[Datum]>,
         row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         // The shared update owner has already completed generated values.
@@ -4276,7 +4276,7 @@ impl KvTable {
     pub fn delete_row_with_context(
         &mut self,
         handle: &TableHandle,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.with_txn_staging(ctx, |table| table.delete_row_in(handle, ctx))
     }
@@ -4284,7 +4284,7 @@ impl KvTable {
     fn delete_row_in(
         &mut self,
         handle: &TableHandle,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
@@ -4320,7 +4320,7 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
         old_row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.with_txn_staging(ctx, |table| table.delete_old_row_in(handle, old_row, ctx))
     }
@@ -4329,7 +4329,7 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
         old_row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         let physical_id = self.record_physical_id(old_row, ctx)?;
@@ -4536,7 +4536,7 @@ pub fn datum_text(value: &Datum) -> String {
 /// `GetTimeCurrentTimestamp(ctx.GetEvalCtx(), ...)` for the same reason.
 pub fn null_timestamp_substitute(
     field_type: &tidb_datatype::FieldType,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Option<Datum> {
     if field_type.code() != tidb_datatype::FieldTypeCode::Timestamp
         || field_type.flags() & NOT_NULL_FLAG == 0
@@ -4604,3 +4604,18 @@ pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_
     }))
 }
 
+/// `hypo`'s indexes for `table` (`HypoIndexes::table_indexes`) resolved
+/// against its columns, for the readers that work over the loaded table
+/// (EXPLAIN's access objects, `SHOW CREATE TABLE`). An index naming a column
+/// the table no longer has is left out.
+#[must_use]
+pub fn hypo_kv_indexes(
+    hypo: &tidb_variable::hypo_index::HypoIndexes,
+    database: &str,
+    table: &KvTable,
+) -> Vec<KvIndex> {
+    hypo.table_indexes(database, &table.name())
+        .into_iter()
+        .filter_map(|index| crate::table_from_meta::kv_index(index, &table.columns).ok())
+        .collect()
+}

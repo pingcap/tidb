@@ -976,7 +976,7 @@ impl DeferredSnapshot {
 /// Go's code and SQLSTATE (1205, 1213, 3572, ...).
 fn lock_storage_error(error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError) -> StorageError {
     StorageError::Sql(
-        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
 }

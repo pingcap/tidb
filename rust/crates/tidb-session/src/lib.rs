@@ -462,9 +462,9 @@ pub struct Session {
     /// `TableInfo` against. `None` for a session no node opened.
     info_schema: Option<Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>>,
     /// Go `SessionVars.HypoIndexes`: session state, never schema.
-    hypo_indexes: Arc<tidb_table::hypo_index::HypoIndexes>,
+    hypo_indexes: Arc<tidb_variable::hypo_index::HypoIndexes>,
     /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
-    hypo_tiflash_replicas: Arc<tidb_table::hypo_index::HypoTiFlashReplicas>,
+    hypo_tiflash_replicas: Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>,
     /// Go `SessionVars.TxnCtx.TemporaryTables`: the rows this session has
     /// written to GLOBAL temporary tables, by physical table id.
     ///

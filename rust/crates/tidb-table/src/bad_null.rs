@@ -108,7 +108,7 @@ pub fn handle_bad_null(
     field_type: &FieldType,
     column: &str,
     level: NullLevel,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<bool, ColumnError> {
     if !value.is_null() || !refuses_null(field_type) {
         return Ok(false);
@@ -134,7 +134,7 @@ pub fn handle_bad_null_in_load_data(
     column: &str,
     level: NullLevel,
     row: usize,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<bool, ColumnError> {
     if !value.is_null() || !refuses_null(field_type) {
         return Ok(false);

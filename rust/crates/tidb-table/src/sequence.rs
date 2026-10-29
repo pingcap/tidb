@@ -74,6 +74,17 @@ pub enum SequenceError {
     Store(String),
 }
 
+impl std::fmt::Display for SequenceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RunOut => formatter.write_str("sequence has run out"),
+            Self::Store(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for SequenceError {}
+
 /// Go `model.SequenceInfo`, reduced to the fields that decide values.
 ///
 /// The non-value `Comment` is retained by [`SequenceDef`],
@@ -617,78 +628,20 @@ pub struct SequenceDef {
     pub update_ts: u64,
 }
 
-/// Go `sequence.GetSequenceByName` over a statement's infoschema: the
-/// sequences its `NEXTVAL` / `LASTVAL` / `SETVAL` resolve by name.
-pub trait SequenceSchema: std::fmt::Debug + Send + Sync {
-    /// The session's current database, lowercase: the schema of a bare name.
-    fn current_db(&self) -> &str;
-
-    /// The object `(database, name)` names: `Some(Some(_))` a sequence,
-    /// `Some(None)` another kind of object, `None` nothing.
-    fn object(&self, database: &str, name: &str) -> Option<Option<&SequenceDef>>;
-
-    /// The `(database, name)` a one- or two-part sequence path names.
-    fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
-        match path {
-            [name] => Some((self.current_db(), name.as_str())),
-            [database, name] => Some((database.as_str(), name.as_str())),
-            _ => None,
-        }
+/// Go `tableCommon`'s `util.SequenceTable` half.
+impl tidb_util::misc::SequenceTable for SequenceDef {
+    fn sequence_id(&self) -> i64 {
+        self.id
     }
 
-    /// The lowercase `(database, name)` an error names for `path`.
-    fn key(&self, path: &[String]) -> (String, String) {
-        use tidb_hack::GoToLower;
-        match path {
-            [name] => (self.current_db().to_string(), name.go_to_lower()),
-            [database, name] => (database.go_to_lower(), name.go_to_lower()),
-            [] => (String::new(), String::new()),
-            [leading @ .., name] => (
-                leading
-                    .iter()
-                    .map(|part| part.go_to_lower())
-                    .collect::<Vec<_>>()
-                    .join("."),
-                name.go_to_lower(),
-            ),
-        }
+    fn sequence_next_val(&self) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
+        self.allocator.next_val().map_err(Into::into)
     }
 
-    /// The sequence `path` names, or the error Go reports for a missing
-    /// sequence or another kind of object.
-    fn resolve(&self, path: &[String]) -> Result<&SequenceDef, tidb_expr::EvalError> {
-        let object = self
-            .schema_and_name(path)
-            .and_then(|(database, name)| self.object(database, name));
-        match object {
-            Some(Some(sequence)) => Ok(sequence),
-            Some(None) => Err(tidb_expr::EvalError::Sequence({
-                let (database, name) = self.key(path);
-                tidb_expr::SequenceEvalError::WrongObject(database, name)
-            })),
-            None => Err(tidb_expr::EvalError::Sequence({
-                let (database, name) = self.key(path);
-                tidb_expr::SequenceEvalError::NotASequence(database, name)
-            })),
-        }
-    }
-
-    /// [`Self::resolve`] without the sequence.
-    fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
-        self.resolve(path).map(|_| ())
-    }
-}
-
-/// The sequences of a context with no infoschema: none.
-#[derive(Debug)]
-pub struct NoSequences;
-
-impl SequenceSchema for NoSequences {
-    fn current_db(&self) -> &str {
-        ""
-    }
-
-    fn object(&self, _database: &str, _name: &str) -> Option<Option<&SequenceDef>> {
-        None
+    fn set_sequence_val(
+        &self,
+        new_val: i64,
+    ) -> Result<Option<i64>, Box<dyn std::error::Error + Send + Sync>> {
+        self.allocator.set_val(new_val).map_err(Into::into)
     }
 }

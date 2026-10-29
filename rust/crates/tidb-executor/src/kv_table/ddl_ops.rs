@@ -27,7 +27,7 @@ pub trait KvTableDdl {
     fn create_index_with_context(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError>;
 
     fn create_index_in(
@@ -72,7 +72,7 @@ pub trait KvTableDdl {
         offset: usize,
         new_type: &tidb_datatype::FieldType,
         check_value_range: bool,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<KvTableError>, KvTableError>;
 
 }
@@ -81,7 +81,7 @@ impl KvTableDdl for KvTable {
     fn create_index_with_context(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
             .map(|_| ())
@@ -233,7 +233,7 @@ impl KvTableDdl for KvTable {
         offset: usize,
         new_type: &tidb_datatype::FieldType,
         check_value_range: bool,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<KvTableError>, KvTableError> {
         let old_type = self.columns()[offset].field_type.clone();
         let column = tidb_hack::go_to_lower(&self.columns()[offset].name);

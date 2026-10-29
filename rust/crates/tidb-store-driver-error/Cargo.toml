@@ -20,3 +20,6 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-config = { path = "../tidb-config" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+
+[dev-dependencies]
+tidb-client-go-error = { path = "../tidb-client-go-error" }

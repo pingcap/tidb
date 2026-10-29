@@ -110,7 +110,7 @@ pub trait DdlSessionPool: Send + Sync {
         offset: usize,
         new_type: &tidb_datatype::FieldType,
         check_value_range: bool,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<tidb_table::kv_table::KvTableError>, tidb_table::kv_table::KvTableError>;
 
     /// Go `checkForeignKeyConstrain`: every child row under `plan`'s new key

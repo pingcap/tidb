@@ -3611,6 +3611,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-client-go-error"
+version = "0.0.0"
+dependencies = [
+ "tidb-proto",
+]
+
+[[package]]
 name = "tidb-codec"
 version = "0.0.0"
 dependencies = [
@@ -3856,6 +3863,7 @@ dependencies = [
  "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-txnkv",
  "tidb-unistore",
@@ -3908,6 +3916,7 @@ dependencies = [
  "tidb-sqlkiller",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-timeutil",
  "tidb-ttl",
@@ -4020,6 +4029,7 @@ version = "0.0.0"
 name = "tidb-deadlockhistory"
 version = "0.0.0"
 dependencies = [
+ "tidb-client-go-error",
  "tidb-datatype",
  "tidb-resourcegrouptag",
  "tidb-txnkv",
@@ -4152,6 +4162,7 @@ dependencies = [
  "tidb-domain",
  "tidb-domain-globalconfigsync",
  "tidb-domain-serverinfo",
+ "tidb-driver-error",
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-expr",
@@ -4509,6 +4520,7 @@ dependencies = [
  "tidb-sysutil",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-tiflash",
  "tidb-tiflashcompute",
@@ -4791,6 +4803,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",
+ "tidb-util",
  "tidb-variable",
 ]
 
@@ -5985,6 +5998,7 @@ dependencies = [
  "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-test-isolation",
  "tidb-tikvutil",
@@ -6037,7 +6051,7 @@ dependencies = [
  "tidb-spill-storage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtctx",
- "tidb-table",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-tiflash",
  "tidb-topsql-stmtstats",
@@ -6589,6 +6603,7 @@ dependencies = [
 name = "tidb-store-driver-error"
 version = "0.0.0"
 dependencies = [
+ "tidb-client-go-error",
  "tidb-codec",
  "tidb-config",
  "tidb-dbterror",
@@ -6662,6 +6677,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-txnkv",
 ]
 
@@ -6714,7 +6730,6 @@ dependencies = [
  "tidb-errno",
  "tidb-error",
  "tidb-expr",
- "tidb-fastrand",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kv",
@@ -6725,13 +6740,14 @@ dependencies = [
  "tidb-parser-format",
  "tidb-plannererrors",
  "tidb-rowcodec",
- "tidb-sessionstates",
  "tidb-tablecodec",
+ "tidb-tblctx",
  "tidb-terror",
  "tidb-timeutil",
  "tidb-tracing",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-variable",
  "tikv-client",
 ]
 
@@ -6775,6 +6791,21 @@ dependencies = [
  "tidb-rowcodec",
  "tidb-terror",
  "tidb-txnkv",
+]
+
+[[package]]
+name = "tidb-tblctx"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-fastrand",
+ "tidb-kv",
+ "tidb-mysql",
+ "tidb-txnkv",
+ "tidb-util",
 ]
 
 [[package]]
@@ -7009,6 +7040,7 @@ dependencies = [
  "prost 0.14.4",
  "reqwest 0.13.4",
  "serde_json",
+ "tidb-client-go-error",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
@@ -7090,6 +7122,7 @@ name = "tidb-util"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-hack",
  "tidb-parser",
  "tidb-terror",
 ]
@@ -7113,6 +7146,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-execdetails",
  "tidb-fixcontrol",

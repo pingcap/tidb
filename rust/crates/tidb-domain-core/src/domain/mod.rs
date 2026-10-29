@@ -632,13 +632,13 @@ pub struct Domain {
     /// The route a stored-schema change this node can express takes.
     pub ddl: Arc<dyn ClusterDdl>,
     /// The route a stored-account change takes; see
-    /// [`tidb_executor::cluster_account_seam`].
+    /// the executor's `cluster_account_seam`.
     pub accounts: Arc<dyn ClusterAccountWriter>,
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     pub sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The route an `ANALYZE TABLE` takes; see
-    /// [`tidb_executor::cluster_analyze_seam`].
+    /// the executor's `cluster_analyze_seam`.
     analyze: std::sync::RwLock<Arc<dyn ClusterAnalyze>>,
     /// The route a persisted statistics-lock operation takes.
     pub stats_lock: Arc<dyn ClusterStatsLock>,
@@ -1782,7 +1782,7 @@ impl Domain {
     ///
     /// The staged-write half is untouched: a session's uncommitted rows are
     /// merged client-side and re-tested by the same predicate (see
-    /// [`tidb_executor::remote_scan`]).
+    /// the executor's `remote_scan`).
     #[must_use]
     pub fn with_kv_client(mut self, client: Arc<dyn tidb_txnkv::Client>) -> Self {
         self.kv_client = Some(client);
@@ -3189,7 +3189,7 @@ impl std::fmt::Debug for ClusterGlobalIds {
 }
 
 impl GlobalIdGenerator for ClusterGlobalIds {
-    fn gen_global_id(&self) -> Result<i64, tidb_executor::DriverError> {
+    fn gen_global_id(&self) -> Result<i64, tidb_driver_error::DriverError> {
         let allocate_once = || -> Result<i64, SqlQueryError> {
             let snapshot = self
                 .transactions
@@ -3217,8 +3217,8 @@ impl GlobalIdGenerator for ClusterGlobalIds {
                 }
                 result => {
                     return result.map_err(|error| {
-                        tidb_executor::DriverError::Mysql(
-                            tidb_executor::MysqlError::from_parts(
+                        tidb_driver_error::DriverError::Mysql(
+                            tidb_terror::MysqlError::from_parts(
                                 error.code,
                                 error.state,
                                 error.message,
@@ -3516,7 +3516,7 @@ impl std::fmt::Debug for ClusterExternalTimestamp {
 /// (the local temporary table DDL's ids, `newTemporaryTableFromTableInfo`).
 pub trait GlobalIdGenerator: Send + Sync {
     /// One id from meta's global allocator.
-    fn gen_global_id(&self) -> Result<i64, tidb_executor::DriverError>;
+    fn gen_global_id(&self) -> Result<i64, tidb_driver_error::DriverError>;
 }
 
 impl tidb_variable::vars::ExternalTimestampProvider for ClusterExternalTimestamp {

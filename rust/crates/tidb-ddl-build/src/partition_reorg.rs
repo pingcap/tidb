@@ -42,7 +42,7 @@ pub trait KvTablePartitionReorg {
         start: &[u8],
         end: &[u8],
         batch_count: usize,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError>;
 
     /// Go `checkExchangePartitionRecordValidation`'s partition condition for
@@ -68,7 +68,7 @@ impl KvTablePartitionReorg for KvTable {
         start: &[u8],
         end: &[u8],
         batch_count: usize,
-        ctx: &dyn tidb_table::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError> {
         let decode_context = RowDecodeContext::for_write(ctx);
         let decoder = crate::table_backfill::reorg_row_decoder(self, &decode_context)?;

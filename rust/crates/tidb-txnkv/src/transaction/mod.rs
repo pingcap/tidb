@@ -30,7 +30,7 @@ pub use coordinator::{
 pub use mutation::{BufferMutation, BufferMutationOp, MutationSetError};
 pub use mutation_plan::MutationPlan;
 pub use pessimistic::{
-    AcquiredLocks, DeadlockDetail, DeadlockWaitChainItem, LockWaitTime, PessimisticLockFailure,
+    AcquiredLocks, LockWaitTime, PessimisticLockFailure,
 };
 pub use schema_lease::{SchemaLease, SchemaLeaseChecker, SchemaLeaseError};
 pub use state::{

@@ -309,7 +309,7 @@ pub fn show_create_table_text(
     // hypothetical indexes after the public ones, sorted by name.
     let hypo_indexes = ctx
         .hypo_indexes()
-        .map(|hypo| hypo.table_kv_indexes(database, table))
+        .map(|hypo| tidb_table::kv_table::hypo_kv_indexes(hypo, database, table))
         .unwrap_or_default();
     let indexes = table
         .indexes()

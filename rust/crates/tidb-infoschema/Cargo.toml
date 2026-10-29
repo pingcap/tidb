@@ -25,6 +25,7 @@ tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
 serde_json = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
+tidb-util = { path = "../tidb-util" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }

@@ -41,7 +41,7 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_stats::table_statistics::TableStatistics;
 use tidb_kv::cluster_storage::ClusterTableStorage;
-use tidb_executor::driver::{Catalog, ViewDef};
+use tidb_infoschema::{Catalog, ViewDef};
 use tidb_table::kv_table::KvTable;
 use tidb_kv::storage::TableStorage;
 #[cfg(test)]

@@ -8,10 +8,13 @@ repository.workspace = true
 description = "Go pkg/util/deadlockhistory for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-client-go-error = { path = "../tidb-client-go-error" }
 tidb-resourcegrouptag = { path = "../tidb-resourcegrouptag" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-txnkv = { path = "../tidb-txnkv" }
 tracing = "0.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }

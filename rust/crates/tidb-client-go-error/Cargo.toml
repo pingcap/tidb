@@ -1,0 +1,14 @@
+[package]
+name = "tidb-client-go-error"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "client-go error (tikverr): the TiKV errors TiDB's SQL layer inspects (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-proto = { path = "../tidb-proto" }

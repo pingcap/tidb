@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use tidb_datatype::{Collation, Datum, StringDatum, Time, TimeType, MAX_FSP};
 use tidb_resourcegrouptag::decode_resource_group_tag;
-use tidb_txnkv::transaction::DeadlockDetail;
+use tidb_client_go_error::DeadlockDetail;
 
 /// `INFORMATION_SCHEMA.DEADLOCKS.DEADLOCK_ID`.
 pub const COL_DEADLOCK_ID: &str = "DEADLOCK_ID";
@@ -229,7 +229,7 @@ mod tests {
     use std::sync::Arc;
 
     use tidb_datatype::{Collation, CoreTime, Datum, StringDatum, Time, TimeType};
-    use tidb_txnkv::transaction::{DeadlockDetail, DeadlockWaitChainItem};
+    use tidb_client_go_error::{DeadlockDetail, DeadlockWaitChainItem};
     use tidb_txnkv::ResourceGroupTagBuilder;
 
     use super::{err_deadlock_to_deadlock_record, DeadlockHistory, DeadlockRecord, WaitChainItem};

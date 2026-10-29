@@ -191,7 +191,7 @@ pub struct GenerationError {
 pub fn fill_virtual_column_values<S: GeneratedColumnSlot>(
     columns: &[S],
     row: &mut [Datum],
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<(), crate::column::ColumnError> {
     let flags = tidb_expr::Columns::type_flags(ctx);
     materialize_with(columns, row, true, ctx, |column, value| {
@@ -210,7 +210,7 @@ pub(crate) fn cast_virtual_column_value(
     value: Datum,
     field_type: &FieldType,
     name: &str,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     flags: tidb_datatype::ConversionFlags,
 ) -> Result<Datum, crate::column::CastError> {
     let negative = match &value {

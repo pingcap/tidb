@@ -177,7 +177,7 @@ fn test_options() {
     assert!(!create.ignore_assertion());
     assert!(!create.from_backfill());
 
-    let context: std::rc::Rc<dyn tidb_table::context::MutateContext> =
+    let context: std::rc::Rc<dyn tidb_tblctx::MutateContext> =
         std::rc::Rc::new(crate::StmtContext::default());
     let add = AddRecordOptions::new()
         .with_context(context.clone())

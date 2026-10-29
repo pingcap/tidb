@@ -40,12 +40,12 @@ impl SequenceSnapshot {
     }
 }
 
-impl tidb_table::sequence::SequenceSchema for SequenceSnapshot {
+impl tidb_util::misc::SequenceSchema for SequenceSnapshot {
     fn current_db(&self) -> &str {
         &self.current_db
     }
 
-    fn object(&self, database: &str, name: &str) -> Option<Option<&SequenceDef>> {
+    fn object(&self, database: &str, name: &str) -> Option<Option<&dyn tidb_util::misc::SequenceTable>> {
         let key = CatalogTableKey::new(database, name);
         let entry = self
             .local_temporary
@@ -54,7 +54,7 @@ impl tidb_table::sequence::SequenceSchema for SequenceSnapshot {
             .map(|(_, entry)| entry)
             .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table))?;
         Some(match entry.as_ref() {
-            TableEntry::Sequence(sequence) => Some(sequence),
+            TableEntry::Sequence(sequence) => Some(sequence as &dyn tidb_util::misc::SequenceTable),
             _ => None,
         })
     }

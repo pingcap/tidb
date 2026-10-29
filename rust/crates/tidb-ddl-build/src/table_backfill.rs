@@ -159,7 +159,7 @@ pub trait KvTableBackfill {
         end: &[u8],
         batch_count: usize,
         decode_context: &RowDecodeContext,
-        cast_context: &dyn tidb_table::context::MutateContext,
+        cast_context: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError>;
 }
 
@@ -607,7 +607,7 @@ impl KvTableBackfill for KvTable {
         end: &[u8],
         batch_count: usize,
         decode_context: &RowDecodeContext,
-        cast_context: &dyn tidb_table::context::MutateContext,
+        cast_context: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError> {
         let target = self
             .nonpublic_columns()

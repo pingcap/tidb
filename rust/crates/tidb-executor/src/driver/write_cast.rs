@@ -245,7 +245,7 @@ pub fn cast_selected_value_for_column(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
     cast_value_shaped(
@@ -266,7 +266,7 @@ pub fn cast_load_data_value_for_column(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
     cast_value_shaped(
@@ -285,7 +285,7 @@ pub fn cast_value_for_column(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
     cast_value_shaped(
@@ -331,7 +331,7 @@ pub fn cast_value_shaped(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     shape: CastShape,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
@@ -495,7 +495,7 @@ pub fn cast_value_for_update_assignment(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<Datum, CastError> {
     cast_value_shaped(
         value,
@@ -535,7 +535,7 @@ pub fn cast_value_for_assignment(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn tidb_table::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<Datum, CastError> {
     cast_value_shaped(
         value,

@@ -38,7 +38,6 @@ const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
 use tidb_kv::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
-use tidb_driver_error::DriverError;
 use tidb_errctx::{ErrGroup, Level, LevelMap};
 use tidb_spill_storage::SpillStorage;
 
@@ -1005,9 +1004,9 @@ pub struct StmtContextData {
     latest_info_schema: Option<LatestInfoSchema>,
     /// Go `SessionVars.HypoIndexes`, which `EXPLAIN` planning and `SHOW
     /// CREATE TABLE` read.
-    hypo_indexes: Option<Arc<tidb_table::hypo_index::HypoIndexes>>,
+    hypo_indexes: Option<Arc<tidb_variable::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, which `EXPLAIN` planning reads.
-    hypo_tiflash_replicas: Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>>,
+    hypo_tiflash_replicas: Option<Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>>,
     /// The statement snapshot of every session value read by cost model v2.
     /// The planner's cost-model-v2 environment (`CostEnv`), which only the
     /// planner reads; the values this context reads itself are
@@ -1161,7 +1160,7 @@ pub struct StmtContextData {
     /// map directly): `None` until the statement touches it, then the
     /// session's map with every write applied, which the session takes back
     /// whether or not the statement then fails.
-    hypo_index_writes: Arc<std::sync::Mutex<Option<tidb_table::hypo_index::HypoIndexes>>>,
+    hypo_index_writes: Arc<std::sync::Mutex<Option<tidb_variable::hypo_index::HypoIndexes>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
@@ -1816,8 +1815,8 @@ context_configuration! {
     #[must_use]
     pub fn with_hypo_state(
         mut self,
-        indexes: Arc<tidb_table::hypo_index::HypoIndexes>,
-        tiflash_replicas: Arc<tidb_table::hypo_index::HypoTiFlashReplicas>,
+        indexes: Arc<tidb_variable::hypo_index::HypoIndexes>,
+        tiflash_replicas: Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>,
     ) -> Self {
         self.hypo_indexes = (!indexes.is_empty()).then_some(indexes);
         self.hypo_tiflash_replicas = (!tiflash_replicas.is_empty()).then_some(tiflash_replicas);
@@ -2461,7 +2460,7 @@ impl Default for ExecutorChunkSizes {
     }
 }
 
-use tidb_table::sequence::SequenceSchema;
+use tidb_util::misc::{SequenceSchema, SequenceTable};
 
 /// Go `SessionVars.SequenceState`: the value each sequence's last `NEXTVAL`
 /// returned in this session, which `LASTVAL` reads back.
@@ -3152,7 +3151,7 @@ impl StmtContext {
 
     fn with_hypo_index_writes<T>(
         &self,
-        write: impl FnOnce(&mut tidb_table::hypo_index::HypoIndexes) -> T,
+        write: impl FnOnce(&mut tidb_variable::hypo_index::HypoIndexes) -> T,
     ) -> T {
         let mut writes = self
             .hypo_index_writes
@@ -3169,7 +3168,7 @@ impl StmtContext {
 
     /// `SessionVars.HypoIndexes` as this statement's DDL left it, when the
     /// statement wrote it.
-    pub fn take_hypo_indexes(&self) -> Option<tidb_table::hypo_index::HypoIndexes> {
+    pub fn take_hypo_indexes(&self) -> Option<tidb_variable::hypo_index::HypoIndexes> {
         self.hypo_index_writes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3776,9 +3775,9 @@ impl StmtContext {
     /// Re-parses this statement's own text under its `sql_mode`. Every entry
     /// point that takes SQL text as a string goes through here, so a scanner
     /// flag cannot be honored by one tier and dropped by the next.
-    pub fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, tidb_driver_error::DriverError> {
+    pub fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, tidb_terror::TerrorError> {
         tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode(), self.parser_config)
-            .map_err(|e| tidb_driver_error::DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))
+            .map_err(|e| tidb_util::misc::syntax_error(format!("{e:?}")))
     }
 
     /// A context for a query, where Go always warns on a zero divisor and
@@ -3846,11 +3845,31 @@ impl StmtContext {
     fn sequences(&self) -> &dyn SequenceSchema {
         self.sequences
             .as_deref()
-            .unwrap_or(&tidb_table::sequence::NoSequences)
+            .unwrap_or(&tidb_util::misc::NoSequences)
     }
 
     pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
-        self.sequences().validate_path(path)
+        self.resolve_sequence(path).map(|_| ())
+    }
+
+    /// Go `infoschema.GetSequenceByName`: the sequence `path` names, or the
+    /// error Go reports for a missing sequence or another kind of object.
+    fn resolve_sequence(&self, path: &[String]) -> Result<&dyn SequenceTable, tidb_expr::EvalError> {
+        let sequences = self.sequences();
+        let object = sequences
+            .schema_and_name(path)
+            .and_then(|(database, name)| sequences.object(database, name));
+        match object {
+            Some(Some(sequence)) => Ok(sequence),
+            Some(None) => Err(tidb_expr::EvalError::Sequence({
+                let (database, name) = sequences.key(path);
+                tidb_expr::SequenceEvalError::WrongObject(database, name)
+            })),
+            None => Err(tidb_expr::EvalError::Sequence({
+                let (database, name) = sequences.key(path);
+                tidb_expr::SequenceEvalError::NotASequence(database, name)
+            })),
+        }
     }
 
     /// See [`StmtContext::with_cte_max_recursion_depth`].
@@ -3923,23 +3942,23 @@ impl StmtContext {
 
     /// Go `SessionVars.HypoIndexes`, when the session defined any.
     #[must_use]
-    pub fn hypo_indexes(&self) -> Option<&tidb_table::hypo_index::HypoIndexes> {
+    pub fn hypo_indexes(&self) -> Option<&tidb_variable::hypo_index::HypoIndexes> {
         self.hypo_indexes.as_deref()
     }
 
     /// Go `SessionVars.HypoTiFlashReplicas`, when the session defined any.
     #[must_use]
-    pub fn hypo_tiflash_replicas(&self) -> Option<&tidb_table::hypo_index::HypoTiFlashReplicas> {
+    pub fn hypo_tiflash_replicas(&self) -> Option<&tidb_variable::hypo_index::HypoTiFlashReplicas> {
         self.hypo_tiflash_replicas.as_deref()
     }
 
-    pub fn hypo_indexes_shared(&self) -> Option<Arc<tidb_table::hypo_index::HypoIndexes>> {
+    pub fn hypo_indexes_shared(&self) -> Option<Arc<tidb_variable::hypo_index::HypoIndexes>> {
         self.hypo_indexes.clone()
     }
 
     pub fn hypo_tiflash_replicas_shared(
         &self,
-    ) -> Option<Arc<tidb_table::hypo_index::HypoTiFlashReplicas>> {
+    ) -> Option<Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>> {
         self.hypo_tiflash_replicas.clone()
     }
 
@@ -4880,7 +4899,7 @@ impl StmtContext {
         self
     }
 
-    /// The SQL mode's temporal bits; see [`tidb_table::zero_date`].
+    /// The SQL mode's temporal bits; see Go `pkg/table`'s zero-date checks.
     #[must_use]
     pub fn date_modes(&self) -> tidb_datatype::DateModes {
         let mode = self.session_sql_mode();
@@ -5230,8 +5249,8 @@ impl StmtContext {
     }
 
     /// The current transaction's (or, in autocommit, current statement's)
-    /// staged-write tracker, for [`tidb_table::kv_table::KvTable::has_dirty_content`]
-    /// and [`tidb_table::kv_table::KvTable::record_key_is_staged`].
+    /// staged-write tracker, for the table layer's `KvTable::has_dirty_content`
+    /// and `KvTable::record_key_is_staged`.
     #[must_use]
     pub fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
         &self.staged_writes
@@ -5443,8 +5462,8 @@ impl StmtContext {
     /// a second string beside it, exactly as Go's `dropTableObject` hands
     /// `AppendNote` the very `ErrBadTable` it would otherwise have returned --
     /// so the two can never drift.
-    pub fn append_suppressed(&self, error: &DriverError) {
-        self.append_mysql_error(WarningLevel::Note, &error.clone().to_mysql_error());
+    pub fn append_suppressed(&self, error: &tidb_terror::MysqlError) {
+        self.append_mysql_error(WarningLevel::Note, error);
     }
 
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of the error
@@ -5546,19 +5565,19 @@ impl Drop for CopEvalGuard<'_> {
     }
 }
 
-use tidb_table::context::resolve_statement_clock;
+use tidb_tblctx::resolve_statement_clock;
 
 /// The executor's statement context behind a table-layer context the
 /// executor built (Go asserts its own context type back the same way).
 #[must_use]
-pub fn stmt_context_of(ctx: &dyn tidb_table::context::MutateContext) -> &StmtContext {
+pub fn stmt_context_of(ctx: &dyn tidb_tblctx::MutateContext) -> &StmtContext {
     ctx.as_any()
         .downcast_ref::<StmtContext>()
         .expect("the table layer's context is the executor's statement context")
 }
 
 /// Go `table.MutateContext` over this statement.
-impl tidb_table::context::MutateContext for StmtContext {
+impl tidb_tblctx::MutateContext for StmtContext {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -5575,15 +5594,15 @@ impl tidb_table::context::MutateContext for StmtContext {
         StmtContext::keys_read(self)
     }
 
-    fn for_reorg(&self) -> Arc<dyn tidb_table::context::MutateContext> {
+    fn for_reorg(&self) -> Arc<dyn tidb_tblctx::MutateContext> {
         Arc::new(StmtContext::for_reorg(self))
     }
 
-    fn with_new_collation_enabled(&self, enabled: bool) -> Arc<dyn tidb_table::context::MutateContext> {
+    fn with_new_collation_enabled(&self, enabled: bool) -> Arc<dyn tidb_tblctx::MutateContext> {
         Arc::new(self.clone().with_new_collation_enabled(enabled))
     }
 
-    fn to_shared(&self) -> Arc<dyn tidb_table::context::MutateContext> {
+    fn to_shared(&self) -> Arc<dyn tidb_tblctx::MutateContext> {
         Arc::new(self.clone())
     }
 
@@ -6173,9 +6192,9 @@ impl Columns for StmtContext {
     }
 
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences().resolve(path)?;
+        let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, true)?;
-        let value = sequence.allocator.next_val().map_err(|_| {
+        let value = sequence.sequence_next_val().map_err(|_| {
             let (database, name) = self.sequences().key(path);
             tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;
@@ -6184,28 +6203,28 @@ impl Columns for StmtContext {
         self.sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(sequence.id, value);
+            .insert(sequence.sequence_id(), value);
         Ok(Datum::Int(value))
     }
 
     fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences().resolve(path)?;
+        let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, false)?;
         Ok(self
             .sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&sequence.id)
+            .get(&sequence.sequence_id())
             .copied()
             .map_or(Datum::Null, Datum::Int))
     }
 
     fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
-        let sequence = self.sequences().resolve(path)?;
+        let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, true)?;
         // Go `SetSequenceVal`: the reported value is NULL when the stored
         // counter was already at or past `value` (`alreadySatisfied`).
-        let reported = sequence.allocator.set_val(value).map_err(|_| {
+        let reported = sequence.set_sequence_val(value).map_err(|_| {
             let (database, name) = self.sequences().key(path);
             tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;

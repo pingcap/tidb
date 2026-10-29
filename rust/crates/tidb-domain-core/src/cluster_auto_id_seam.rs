@@ -25,7 +25,7 @@
 //! outlives the table objects, and `Domain` holds exactly
 //! one.
 //!
-//! [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
+//! [`DEFAULT_AUTO_ID_STEP`]: tidb_autoid::DEFAULT_AUTO_ID_STEP
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

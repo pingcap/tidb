@@ -17,7 +17,6 @@ use super::TransactionCause;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
-use tidb_proto::KvrpcDeadlock;
 
 /// Wait budget for one locking statement, in client-go's exact encoding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,58 +37,6 @@ impl Default for LockWaitTime {
     }
 }
 
-/// One lock-wait edge in a deadlock cycle proved by TiKV's detector.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeadlockWaitChainItem {
-    /// Transaction trying to acquire the lock.
-    pub txn: u64,
-    /// Transaction currently holding the lock.
-    pub wait_for_txn: u64,
-    /// Encoded key on which `txn` is waiting.
-    pub key: Vec<u8>,
-    /// Encoded resource-group tag carrying the blocked SQL digest.
-    pub resource_group_tag: Vec<u8>,
-}
-
-/// A deadlock TiKV's detector proved, reported verbatim to the SQL layer.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeadlockDetail {
-    /// Start timestamp of the transaction holding the awaited lock.
-    pub lock_ts: u64,
-    /// Key this statement was blocked on.
-    pub lock_key: Vec<u8>,
-    /// Hash of the key that closes the cycle.
-    pub deadlock_key_hash: u64,
-    /// Key this transaction already holds that closes the cycle.
-    pub deadlock_key: Vec<u8>,
-    /// Whether the cycle contains another key from this same lock request.
-    pub is_retryable: bool,
-    /// Every lock wait on the detected cycle.
-    pub wait_chain: Vec<DeadlockWaitChainItem>,
-}
-
-impl From<&KvrpcDeadlock> for DeadlockDetail {
-    fn from(deadlock: &KvrpcDeadlock) -> Self {
-        Self {
-            lock_ts: deadlock.lock_ts,
-            lock_key: deadlock.lock_key.clone(),
-            deadlock_key_hash: deadlock.deadlock_key_hash,
-            deadlock_key: deadlock.deadlock_key.clone(),
-            is_retryable: false,
-            wait_chain: deadlock
-                .wait_chain
-                .iter()
-                .map(|entry| DeadlockWaitChainItem {
-                    txn: entry.txn,
-                    wait_for_txn: entry.wait_for_txn,
-                    key: entry.key.clone(),
-                    resource_group_tag: entry.resource_group_tag.clone(),
-                })
-                .collect(),
-        }
-    }
-}
-
 /// Why one locking statement failed.
 ///
 /// The first four variants are statement-scoped in TiDB: the transaction stays
@@ -100,7 +47,7 @@ impl From<&KvrpcDeadlock> for DeadlockDetail {
 pub enum PessimisticLockFailure {
     /// TiKV's deadlock detector proved a cycle. The statement must be aborted;
     /// retrying it would recreate the same cycle.
-    Deadlock(DeadlockDetail),
+    Deadlock(tidb_client_go_error::DeadlockDetail),
     /// A newer version of a key was committed after this statement's
     /// `for_update_ts`. Retry the statement under a fresh one.
     WriteConflict {

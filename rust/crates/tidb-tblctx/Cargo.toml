@@ -1,0 +1,22 @@
+[package]
+name = "tidb-tblctx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/table/tblctx: the context the table layer reads from the statement that drives it (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-context = { path = "../tidb-context" }
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-kv = { path = "../tidb-kv" }
+chrono = { workspace = true }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }

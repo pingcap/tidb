@@ -19,10 +19,8 @@
 //! `TableInfo` (`TableFromMeta`).
 pub mod tables_errors;
 pub mod table_write_policy;
-pub mod hypo_index;
 pub mod zero_date;
 pub mod column_default;
-pub mod context;
 pub mod bad_null;
 pub mod column;
 pub mod generated_column;

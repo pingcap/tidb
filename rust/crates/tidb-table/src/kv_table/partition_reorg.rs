@@ -248,7 +248,7 @@ impl KvTable {
         handle: &TableHandle,
         copy: &[u8],
         row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<bool, KvTableError> {
         let stored = self.decode_row_entry(handle, copy, &RowDecodeContext::for_write(ctx))?;
         Ok(stored.iter().zip(row).all(|(left, right)| left == right))
@@ -293,7 +293,7 @@ impl KvTable {
         physical_id: i64,
         row: &[Datum],
         handle: &TableHandle,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         if !self.reorganizes(physical_id) {
             return Ok(());
@@ -326,7 +326,7 @@ impl KvTable {
         new_handle: &TableHandle,
         old_row: &[Datum],
         new_row: &[Datum],
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<ReorgUpdate>, KvTableError> {
         let new_to = if self.reorganizes(new_physical_id) {
             self.locate_reorg_partition(new_row, ctx)?
@@ -410,7 +410,7 @@ impl KvTable {
         lazy_dup_check: bool,
         pessimistic: bool,
         check_in_prewrite: bool,
-        ctx: &dyn crate::context::MutateContext,
+        ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         if let Some(from) = plan.remove_from {

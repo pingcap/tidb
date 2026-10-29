@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/table/context`: what the table layer reads from the statement that
+//! Go `pkg/table/tblctx`: what the table layer reads from the statement that
 //! writes or reads through it. The executor's statement context implements
 //! it, and [`StaticMutateContext`] does where no session drives the table
 //! (Go's `exprstatic`-backed contexts); the table layer never sees the

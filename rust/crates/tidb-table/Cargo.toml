@@ -8,6 +8,8 @@ repository.workspace = true
 description = "Go pkg/table and pkg/table/tables for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-tblctx = { path = "../tidb-tblctx" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
@@ -16,7 +18,6 @@ tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-context = { path = "../tidb-context" }
 tidb-dbterror = { path = "../tidb-dbterror" }
-tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-goruntime = { path = "../tidb-goruntime" }
@@ -39,7 +40,6 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-sessionstates = { path = "../tidb-sessionstates" }
 flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -117,7 +117,7 @@ pub fn cast_table_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
     cast_table_value_with_flags(
@@ -136,7 +136,7 @@ pub fn cast_table_value_with_flags(
     value: Datum,
     field_type: &FieldType,
     column: &str,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     flags: tidb_datatype::ConversionFlags,
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
@@ -179,7 +179,7 @@ pub fn cast_table_value_with_flags(
 /// by the type context survive suppression of the remaining error.
 fn handle_raw_cast_error(
     reported: MysqlError,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     flags: tidb_datatype::ConversionFlags,
     force_ignore_truncate: bool,
 ) -> Result<(), CastError> {
@@ -283,7 +283,7 @@ pub fn cast_value_with_flags(
     field_type: &FieldType,
     column: &str,
     row_index: usize,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     completion: &dyn CastCompletion,
     force_ignore_truncate: bool,
     flags: tidb_datatype::ConversionFlags,
@@ -344,7 +344,7 @@ fn cast_contextual_value(
     field: &FieldType,
     column: &str,
     row: usize,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     completion: &dyn CastCompletion,
     force_ignore: bool,
     flags: tidb_datatype::ConversionFlags,
@@ -616,7 +616,7 @@ fn apply_zero_date(
     source: &Datum,
     column: &str,
     row_index: usize,
-    ctx: &dyn crate::context::MutateContext,
+    ctx: &dyn tidb_tblctx::MutateContext,
     completion: &dyn CastCompletion,
 ) -> Result<Datum, CastError> {
     use crate::zero_date::ZeroDateAction;
