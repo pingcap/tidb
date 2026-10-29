@@ -114,7 +114,7 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
     context: &DdlStatementContext,
     job_context: &dyn DdlSessionContext,
     store_count: usize,
-) -> Result<Vec<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
+) -> Result<Vec<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
     let (schema_id, stored) = locate_table(catalog, schema, table)?;
     let created = create_foreign_key(catalog, schema, stored, name, definition, context)?;
     let mut specs = Vec::new();
@@ -189,7 +189,7 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
         fk_info: Some(GoShared::new(fk)),
         fk_check: context.0.foreign_key_checks(),
     };
-    specs.push(crate::ddl_job_submit::JobSpec {
+    specs.push(tidb_ddl_jobsubmit::JobSpec {
         job,
         args: JobArgsValue::AddForeignKey(Some(GoShared::new(args))),
         id_allocated: true,
@@ -248,7 +248,7 @@ fn check_add_foreign_key_valid_in_owner(
 
 /// The outcome of this job's existing-row check, if the owner ran one.
 fn checked_outcome(
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     outcome: Option<&ReorgOutcome>,
 ) -> Option<Option<(u16, String)>> {
     match outcome {
@@ -264,7 +264,7 @@ fn checked_outcome(
 /// Go `onCreateForeignKey`.
 pub(super) fn plan_persisted_add_foreign_key_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -359,7 +359,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
 /// the table now holds it) against the parent.
 fn foreign_key_check(
     catalog: &ClusterCatalog,
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     schema: &str,
     info: &TableInfo,
     fk: &GoShared<tidb_model::table::FKInfo>,
@@ -401,7 +401,7 @@ fn foreign_key_check(
 }
 
 fn check_request(
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     check: ForeignKeyCheck,
 ) -> PersistedDdlActionStep {
@@ -431,7 +431,7 @@ fn check_request(
 /// Go `dropForeignKey` for an ADD FOREIGN KEY rolling back.
 fn drop_foreign_key_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     name: &str,
     start_ts: u64,
@@ -458,7 +458,7 @@ fn drop_foreign_key_step(
 
 /// Go `rollingbackAddForeignKey`: `cancelOnlyNotHandledJob` at `StateNone`.
 pub(super) fn plan_cancel_add_foreign_key(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.schema_state == SchemaState::NONE {
         return Err(cancelled_ddl_job(active));

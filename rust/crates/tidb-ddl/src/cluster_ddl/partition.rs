@@ -174,7 +174,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ..tidb_model::TablePartitionArgs::default()
             };
             AddIndexSubmission::Job(
-                Box::new(crate::ddl_job_submit::JobSpec {
+                Box::new(tidb_ddl_jobsubmit::JobSpec {
                     job,
                     args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
                     // `assignGIDsForJobs` draws the new partitions' ids.
@@ -239,7 +239,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ..tidb_model::TablePartitionArgs::default()
             };
             AddIndexSubmission::Job(
-                Box::new(crate::ddl_job_submit::JobSpec {
+                Box::new(tidb_ddl_jobsubmit::JobSpec {
                     job,
                     args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
                     id_allocated: true,
@@ -310,7 +310,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ..tidb_model::TruncateTableArgs::default()
             };
             AddIndexSubmission::Job(
-                Box::new(crate::ddl_job_submit::JobSpec {
+                Box::new(tidb_ddl_jobsubmit::JobSpec {
                     job,
                     args: JobArgsValue::TruncateTable(Some(GoShared::new(args))),
                     // `assignGIDsForJobs` draws the new partition ids.
@@ -332,7 +332,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
 }
 
 fn table_partition_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<GoShared<tidb_model::TablePartitionArgs>, DdlPlanError> {
     tidb_model::get_table_partition_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -346,7 +346,7 @@ fn table_partition_args(
 
 /// The table's partitioning, which a partition job's table must have.
 fn job_partition(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
 ) -> Result<GoShared<tidb_model::partition::PartitionInfo>, DdlPlanError> {
     info.partition.clone().ok_or_else(|| {
@@ -495,7 +495,7 @@ fn table_info_with_dropping_partitions(info: &TableInfo) -> TableInfo {
 fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     old_info: &TableInfo,
     old_ids: &[i64],
     outcome: Option<&ReorgOutcome>,
@@ -513,7 +513,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
     }
     let outcome = outcome.filter(|outcome| outcome.job_id == active.job.id);
     let request =
-        |active: &crate::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
+        |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
             stage,
             table: Box::new(old_info.clone_like_go()),
@@ -676,7 +676,7 @@ fn check_add_partition_name_unique(
 pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -834,7 +834,7 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
 pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
@@ -1004,7 +1004,7 @@ fn update_dropping_partition_info(
 pub(super) fn plan_persisted_drop_table_partition_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1152,14 +1152,14 @@ pub(super) fn plan_persisted_drop_table_partition_job_step<S: MetaSnapshot>(
 pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Only the first step may still cancel the job on a fault.
     let can_cancel = active.job.schema_state == SchemaState::PUBLIC;
-    let fault = |active: &mut crate::ddl_job_table::ActiveDdlJob, error: DdlPlanError| {
+    let fault = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob, error: DdlPlanError| {
         if can_cancel {
             cancel_ddl_job(active, error)
         } else {
@@ -1372,7 +1372,7 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
 /// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
 pub(super) fn plan_cancel_partition(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let info = checked_job_table(catalog, active, true)?.clone_like_go();

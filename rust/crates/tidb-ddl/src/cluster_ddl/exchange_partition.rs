@@ -95,7 +95,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
         with_validation: GoField::new(*with_validation),
     };
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ExchangeTablePartition(Some(GoShared::new(args))),
             id_allocated: true,
@@ -127,7 +127,7 @@ struct ExchangeArgs {
 }
 
 fn exchange_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<
     (
         GoShared<tidb_model::ExchangeTablePartitionArgs>,
@@ -196,7 +196,7 @@ fn check_exchange_partition_placement_policy<S: MetaSnapshot>(
 /// The schema diff of an exchange step (Go
 /// `SetSchemaDiffForExchangeTablePartition`).
 fn exchange_diff(
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     partitioned_written: bool,
     diff: &mut SchemaDiff,
@@ -227,7 +227,7 @@ fn exchange_diff(
 /// given, the partitioned one (`multiInfos`).
 fn exchange_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     standalone: &TableInfo,
     partitioned: Option<&TableInfo>,
@@ -277,7 +277,7 @@ fn exchange_step(
 pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -608,7 +608,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
 /// partitioned one, if it was marked) loses its `ExchangePartitionInfo`.
 fn rollback_exchange_table_partition(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     mut standalone: TableInfo,
     start_ts: u64,
@@ -648,7 +648,7 @@ fn rollback_exchange_table_partition(
 /// Go `rollingbackExchangeTablePartition`.
 pub(super) fn plan_cancel_exchange_partition(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.schema_state == SchemaState::NONE {

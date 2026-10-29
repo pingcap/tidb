@@ -802,7 +802,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             job.schema_name = database.info.name.lowercase().to_owned().into();
             job.table_name = stored.name.lowercase().to_owned().into();
             return Ok(Some(AddIndexSubmission::Job(
-                Box::new(crate::ddl_job_submit::JobSpec {
+                Box::new(tidb_ddl_jobsubmit::JobSpec {
                     job,
                     args: JobArgsValue::UpdateTiFlashReplicaStatus(Some(GoShared::new(
                         tidb_model::UpdateTiFlashReplicaStatusArgs {
@@ -887,7 +887,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         ]);
     }
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args,
             id_allocated: true,
@@ -1146,7 +1146,7 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
 /// Go: a multi-schema sub-job stops at its revertible point first,
 /// publishing nothing.
 fn revertible_point(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Option<PersistedDdlActionStep> {
     if !is_revertible_sub_job(&active.job) {
         return None;
@@ -1159,7 +1159,7 @@ fn revertible_point(
 /// the table as it stands without a new version.
 fn revertible_point_with_table(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     with_check: bool,
     start_ts: u64,
@@ -1188,13 +1188,13 @@ fn check_rename_index_cache(info: &TableInfo) -> Result<(), DdlPlanError> {
 }
 
 fn args_error(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     error: serde_json::Error,
 ) -> DdlPlanError {
     cancel_ddl_job(active, DdlPlanError::Encode(error.to_string()))
 }
 
-fn nil_args(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
+fn nil_args(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
     cancel_ddl_job(
         active,
         DdlPlanError::Encode(format!("{} job has nil args", active.job.type_)),
@@ -1205,7 +1205,7 @@ fn nil_args(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
 pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
@@ -1853,7 +1853,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
 /// Go `convertJob2RollbackJob` for these actions.
 pub(super) fn plan_cancel_alter_table(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let cancel = match active.job.type_ {
         // `cancelOnlyNotHandledJob(job, model.StateNone)`.

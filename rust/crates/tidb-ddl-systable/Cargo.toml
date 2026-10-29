@@ -1,0 +1,23 @@
+[package]
+name = "tidb-ddl-systable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/ddl/systable (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-syssession = { path = "../tidb-syssession" }
+serde_json.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-table = { path = "../tidb-table" }
+tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
+tidb-txnkv = { path = "../tidb-txnkv" }

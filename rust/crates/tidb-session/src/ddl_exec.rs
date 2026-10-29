@@ -274,7 +274,7 @@ impl Session {
 }
 
 /// A DDL package error as the statement's error.
-pub(crate) fn ddl_error(error: &tidb_ddl::cluster_ddl::DdlPlanError) -> DriverError {
+pub(crate) fn ddl_error(error: &tidb_ddl_build::plan_error::DdlPlanError) -> DriverError {
     DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(
         error.to_sql_error(),
     ))

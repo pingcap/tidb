@@ -319,7 +319,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         })
         .unwrap_or_default();
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
             id_allocated: false,
@@ -473,7 +473,7 @@ fn changed_indexes(partition: &tidb_model::partition::PartitionInfo) -> BTreeMap
 /// target scheme recorded on its partitioning.
 fn reorg_partition_info(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     part_info: &tidb_model::partition::PartitionInfo,
 ) -> Result<TableInfo, DdlPlanError> {
     let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
@@ -503,7 +503,7 @@ fn reorg_partition_info(
 /// for PARTITION BY and REMOVE PARTITIONING.
 fn reorg_table_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
     start_ts: u64,
@@ -521,7 +521,7 @@ fn reorg_table_step(
 pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1023,7 +1023,7 @@ fn phase_scope(info: &TableInfo, phase: PartitionReorgPhase) -> (Vec<i64>, Vec<i
 fn do_partition_reorg_work<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     outcome: Option<&ReorgOutcome>,
 ) -> Result<PartitionReorgWork, DdlPlanError> {
@@ -1031,7 +1031,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
     if let Some(meta) = &active.job.reorg_meta {
         meta.write().reorg_type = tidb_model::ReorgType::TXN;
     }
-    let request = |active: &crate::ddl_job_table::ActiveDdlJob,
+    let request = |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
                    phase: PartitionReorgPhase,
                    stage: ReorgStageRequest| {
         let (physical_ids, index_ids) = phase_scope(info, phase);
@@ -1063,7 +1063,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
         PartitionReorgPhase::AddingIndexes => Some(PartitionReorgPhase::UntouchedGlobalIndexes),
         PartitionReorgPhase::UntouchedGlobalIndexes => None,
     };
-    let start_from = |active: &mut crate::ddl_job_table::ActiveDdlJob,
+    let start_from = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
                       mut phase: Option<PartitionReorgPhase>| {
         while let Some(current) = phase {
             if has_work(current) {
@@ -1154,7 +1154,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
 /// `rollbackLikeDropPartition`.
 fn rollback_reorganize_partition_with_err(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &GoShared<tidb_model::TablePartitionArgs>,
     start_ts: u64,
     error: DdlPlanError,
@@ -1260,7 +1260,7 @@ fn rollback_reorganize_partition_with_err(
 /// destroyed, so the job rolls on.
 pub(super) fn plan_cancel_reorganize_partition(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_table_partition_args(&mut active.job)

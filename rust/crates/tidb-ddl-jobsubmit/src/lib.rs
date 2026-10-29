@@ -40,9 +40,9 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::cluster_ddl::DdlPlanError;
+use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_ddl_build::table_info_build::DdlAdmissionError;
-use crate::ddl_job_table::DdlJobTable;
+use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 
 /// Go `JobSpec`: the durable envelope plus its source-typed private arguments.
 #[derive(Clone, Debug)]
@@ -58,13 +58,13 @@ pub struct JobSpec {
 /// Go `GenGlobalIDs`: transaction-local allocation over the locked global-ID
 /// key. The caller commits [`Self::mutation`] together with every inserted job
 /// row, preserving Go's allocation/insertion atomicity.
-pub(crate) struct GlobalIdAllocator {
+pub struct GlobalIdAllocator {
     original: i64,
     current: i64,
 }
 
 impl GlobalIdAllocator {
-    pub(crate) fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, DdlPlanError> {
+    pub fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, DdlPlanError> {
         let current = match snapshot.get(&key::next_global_id_kv_key())? {
             Some(stored) => value::parse_int_value(&stored)
                 .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
@@ -76,7 +76,7 @@ impl GlobalIdAllocator {
         })
     }
 
-    pub(crate) fn allocate(&mut self, count: i64) -> Result<Vec<i64>, DdlPlanError> {
+    pub fn allocate(&mut self, count: i64) -> Result<Vec<i64>, DdlPlanError> {
         let first = self
             .current
             .checked_add(1)
@@ -92,7 +92,7 @@ impl GlobalIdAllocator {
         Ok((first..=new_max).collect())
     }
 
-    pub(crate) fn mutation(&self) -> Result<Option<BufferMutation>, DdlPlanError> {
+    pub fn mutation(&self) -> Result<Option<BufferMutation>, DdlPlanError> {
         (self.current != self.original)
             .then(|| {
                 BufferMutation::set(
@@ -570,7 +570,7 @@ pub fn prepare_spec_for_submit(
     Ok(())
 }
 
-pub(crate) fn submit_error(error: JobSubmitError) -> DdlPlanError {
+pub fn submit_error(error: JobSubmitError) -> DdlPlanError {
     match error.to_terror() {
         Some(go) => DdlPlanError::Admission(DdlAdmissionError::from_terror(&go)),
         None => DdlPlanError::plain_refusal(error.to_string()),
@@ -653,7 +653,7 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
     if specs.is_empty() {
         return Ok(());
     }
-    let system_tables = crate::ddl_systable::SystemTableManager::new(catalog);
+    let system_tables = tidb_ddl_systable::SystemTableManager::new(catalog);
     if system_tables
         .has_flashback_cluster_job(snapshot, min_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?

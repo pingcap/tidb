@@ -39,7 +39,7 @@ use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, PersistedDdlJobPlan,
 };
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
-use tidb_ddl::ddl_job_submit::{plan_insert_attempt, JobSpec};
+use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
 use tidb_session::mysql_bootstrap::{
     plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapLayout, BootstrapWrite,
 };
@@ -396,7 +396,7 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
             panic!("a bootstrap seeds exactly one account");
         };
         assert_eq!((root.user.as_str(), root.host.as_str()), ("root", "%"));
-        tidb_ddl::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
+        tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
         DdlHistoryTable::locate(&catalog).expect("mysql.tidb_ddl_history");
 
         let advisory = tidb_syssession::advisory_locks::AdvisoryLockTable::locate(&mut store)

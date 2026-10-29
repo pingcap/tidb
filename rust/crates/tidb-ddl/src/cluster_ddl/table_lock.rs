@@ -113,7 +113,7 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
         _ => return Ok(None),
     };
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::LockTables(Some(GoShared::new(args))),
             id_allocated: true,
@@ -131,7 +131,7 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
 }
 
 fn lock_tables_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<tidb_model::LockTablesArgs, DdlPlanError> {
     let args = tidb_model::get_lock_tables_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -146,7 +146,7 @@ fn lock_tables_args(
 }
 
 /// A step that changes no table.
-fn no_table_write(active: &crate::ddl_job_table::ActiveDdlJob) -> DdlWrite {
+fn no_table_write(active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> DdlWrite {
     job_only_write(active.job.id, Vec::new())
 }
 
@@ -155,7 +155,7 @@ fn no_table_write(active: &crate::ddl_job_table::ActiveDdlJob) -> DdlWrite {
 /// lock changed; a table dropped since it was locked is skipped.
 fn unlock_tables(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::LockTablesArgs,
     start_ts: u64,
 ) -> Result<DdlWrite, DdlPlanError> {
@@ -195,7 +195,7 @@ fn unlock_tables(
 /// step points the job at it).
 fn job_table<'a>(
     catalog: &'a ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &tidb_model::TableLockTpInfo,
 ) -> Result<&'a TableInfo, DdlPlanError> {
     active.job.schema_id = target.schema_id;
@@ -206,7 +206,7 @@ fn job_table<'a>(
 /// Go `onLockTables`.
 pub(super) fn plan_persisted_lock_tables_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut args = lock_tables_args(active)?;
@@ -293,7 +293,7 @@ pub(super) fn plan_persisted_lock_tables_job_step(
 /// Go `onUnlockTables`.
 pub(super) fn plan_persisted_unlock_tables_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut args = lock_tables_args(active)?;

@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use tidb_infoschema_issyncer::catalog_watch::{
     CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
 };
-use crate::ddl_systable::MinJobIdRefresher;
+use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::mdl_info_load::{load_mdl_jobs, MdlJob};
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};

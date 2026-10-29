@@ -138,7 +138,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         ..tidb_model::ModifyIndexArgs::default()
     });
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ModifyIndex(Some(args)),
             id_allocated: true,
@@ -151,7 +151,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
 /// needed by a foreign key. `Ok(Err(if_exists))` when one is missing.
 fn check_drop_index(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<
     (
         TableInfo,
@@ -212,7 +212,7 @@ fn check_drop_index(
 /// Go `onDropIndex` for a DROP INDEX / DROP PRIMARY KEY job.
 pub(super) fn plan_persisted_drop_index_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (stored, checked) = check_drop_index(catalog, active)?;
@@ -316,7 +316,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
 /// cancelled; past that the drop runs on.
 pub(super) fn plan_cancel_drop_index(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (_, checked) = check_drop_index(catalog, active)?;
     let indexes = checked.map_err(|(_, error)| error)?;

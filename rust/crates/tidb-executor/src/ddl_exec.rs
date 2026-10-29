@@ -134,7 +134,7 @@ pub fn map_error(error: DriverError) -> SqlQueryError {
 }
 
 /// A DDL planning refusal as Go's executor raises it.
-fn ddl_error(error: &tidb_ddl::cluster_ddl::DdlPlanError) -> DriverError {
+fn ddl_error(error: &tidb_ddl_build::plan_error::DdlPlanError) -> DriverError {
     DriverError::Mysql(crate::MysqlError::from_sql_error(error.to_sql_error()))
 }
 

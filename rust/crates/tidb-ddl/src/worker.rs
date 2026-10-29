@@ -31,12 +31,11 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_ddl_serverstate::{EtcdSyncer, MemSyncer, Syncer};
 use tidb_timeutil::SleepContext;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
-use crate::cluster_ddl::{
-    CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
-};
+use crate::cluster_ddl::{CheckConstraintValidation, DdlStatement, ExchangePartitionValidation};
+use tidb_ddl_build::plan_error::DdlPlanError;
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
-use crate::ddl_job_table::DdlJobTable;
-use crate::ddl_systable::MinJobIdRefresher;
+use tidb_ddl_systable::ddl_job_table::DdlJobTable;
+use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use crate::real_tikv_ddl::{
@@ -930,7 +929,7 @@ where
 }
 
 fn persisted_job_error(error: &tidb_terror::TerrorError) -> SqlQueryError {
-    let error = crate::cluster_ddl::ddl_job_error_to_sql_error(error);
+    let error = tidb_ddl_build::plan_error::ddl_job_error_to_sql_error(error);
     SqlQueryError::from(error)
 }
 
@@ -1183,9 +1182,9 @@ mod schema_sync_tests {
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
             assert!(
                 matches!(
-                    crate::ddl_systable::SystemTableManager::new(&catalog)
+                    tidb_ddl_systable::SystemTableManager::new(&catalog)
                         .get_mdl_version(&mut snapshot, job.id),
-                    Err(crate::ddl_systable::SystemTableManagerError::NotFound)
+                    Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
                 ),
                 "disabled mode must never register an MDL row"
             );

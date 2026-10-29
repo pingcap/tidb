@@ -15,6 +15,8 @@
 //! Pinned Go `pkg/ddl/systable`: reads of the active DDL and MDL system
 //! tables plus the monotonic minimum-job-ID refresher.
 
+pub mod ddl_job_table;
+
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};

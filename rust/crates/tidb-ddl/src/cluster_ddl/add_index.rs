@@ -213,7 +213,7 @@ pub enum AddIndexSubmission {
     /// The job to queue, and the warnings Go's executor appended to the
     /// statement before submitting it.
     Job(
-        Box<crate::ddl_job_submit::JobSpec>,
+        Box<tidb_ddl_jobsubmit::JobSpec>,
         Vec<tidb_context::SqlWarn>,
     ),
     /// `IF NOT EXISTS` over an existing index: a Note, no job.
@@ -504,7 +504,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     job.reorg_meta = Some(GoShared::new(reorg_meta));
 
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ModifyIndex(Some(args)),
             id_allocated: true,
@@ -640,7 +640,7 @@ pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
 /// the version bump with its diff.
 pub(super) fn table_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
     should_update_version: bool,
@@ -661,7 +661,7 @@ pub(super) fn table_step(
 /// does per action (the affected physical tables of a partition job).
 pub(super) fn table_step_with_diff(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
     should_update_version: bool,
@@ -903,7 +903,7 @@ fn move_and_update_hidden_columns_to_public(info: &mut TableInfo, index: &GoShar
 pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1020,7 +1020,7 @@ fn check_primary_key_not_null(info: &mut TableInfo, index: &IndexInfo) {
 fn plan_write_reorganization<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     indexes: Vec<GoShared<IndexInfo>>,
     outcome: Option<&ReorgOutcome>,
@@ -1157,7 +1157,7 @@ pub(super) enum CreateIndexReorg {
 pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     indexes: &[GoShared<IndexInfo>],
     outcome: Option<&ReorgOutcome>,
@@ -1185,7 +1185,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
         return Ok(CreateIndexReorg::Step(action_step(write)));
     }
     let request =
-        |active: &crate::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
+        |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
             stage,
             table: Box::new(info.clone_like_go()),
@@ -1265,7 +1265,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
 /// Go `convertAddIdxJob2RollbackJob`: the indexes back to delete-only, the
 /// job rolling back with `error`.
 fn convert_add_index_to_rollback(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &mut TableInfo,
     indexes: &[GoShared<IndexInfo>],
     error: DdlPlanError,
@@ -1318,7 +1318,7 @@ fn convert_add_index_to_rollback(
 /// delete-reorganization -> gone, then ROLLBACK DONE.
 fn plan_rollback_add_index(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let stored = checked_job_table(catalog, active, true)?;
@@ -1504,7 +1504,7 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
 /// its rollback, from wherever it stood.
 pub(super) fn plan_cancel_add_index(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let _ = start_ts;
@@ -1546,7 +1546,7 @@ pub(super) fn plan_cancel_add_index(
 pub(super) fn load_reorg_handle<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<ReorgHandle, DdlPlanError> {
     let table =
         crate::ddl_reorg_table::DdlReorgTable::locate(catalog).map_err(DdlPlanError::Encode)?;

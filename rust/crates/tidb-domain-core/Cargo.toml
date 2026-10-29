@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }

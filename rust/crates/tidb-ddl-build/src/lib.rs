@@ -19,6 +19,7 @@
 
 use tidb_terror::MysqlError;
 
+pub mod plan_error;
 pub mod column_defaults;
 pub mod column_field_type;
 pub mod foreign_key;

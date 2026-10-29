@@ -28,17 +28,14 @@ use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
-use tidb_ddl::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
-    prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
-    DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep,
-};
+use tidb_ddl::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
+use tidb_ddl_build::plan_error::DdlPlanError;
 
 use tidb_ddl::cluster_ddl::DdlJobSchemaState;
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
-use tidb_ddl::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
-use tidb_ddl::ddl_job_table::DdlJobTable;
-use tidb_ddl::ddl_systable::{SystemTableManager, SystemTableManagerError};
+use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
+use tidb_ddl_systable::ddl_job_table::DdlJobTable;
+use tidb_ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::store_clustered_row;
 use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_with_context};
@@ -259,7 +256,7 @@ fn plan_check_constraint_job_submission(
     };
     let catalog = load_cluster_catalog(store)?;
     let mut before_insert_with_assigned_ids =
-        |_: &[tidb_ddl::ddl_job_submit::JobSpec]| Option::<fn()>::None;
+        |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
         store,
         &catalog,
@@ -1303,7 +1300,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             assert_eq!(saved.class(), tidb_terror::TerrorClass::Ddl);
         }
         assert_eq!(
-            tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&saved),
+            tidb_ddl_build::plan_error::ddl_job_error_to_sql_error(&saved),
             direct
         );
         drop(saved);
@@ -1329,7 +1326,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         assert_eq!(restored.rfc_code(), expected_rfc);
         assert_eq!(restored.message(), message);
         assert_eq!(
-            tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&restored),
+            tidb_ddl_build::plan_error::ddl_job_error_to_sql_error(&restored),
             direct
         );
     }
@@ -1916,7 +1913,7 @@ fn persisted_check_source_missing_constraint_keeps_original_name() {
         let error = history.error.as_ref().unwrap().read();
         assert_eq!(error.rfc_code(), "ddl:3940");
         assert_eq!(error.message(), "Constraint 'MissingCheck' does not exist.");
-        let sql = tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&error);
+        let sql = tidb_ddl_build::plan_error::ddl_job_error_to_sql_error(&error);
         assert_eq!(sql.message, error.message());
     }
 }
@@ -2342,7 +2339,7 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
         assert_eq!(error.rfc_code(), "ddl:-1");
         assert_eq!(
-            tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&error).code,
+            tidb_ddl_build::plan_error::ddl_job_error_to_sql_error(&error).code,
             1105
         );
         assert_eq!(finished.raw_args, raw_args);
@@ -2660,7 +2657,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let mut before_insert_with_assigned_ids = {
         let assigned_ids = Rc::clone(&assigned_ids);
         let cleanup_ids = Rc::clone(&cleanup_ids);
-        move |specs: &[tidb_ddl::ddl_job_submit::JobSpec]| {
+        move |specs: &[tidb_ddl_jobsubmit::JobSpec]| {
             assert_eq!(specs.len(), 1);
             let id = specs[0].job.id;
             assert_ne!(id, 0);
@@ -3189,7 +3186,7 @@ fn plan_ddl_with_tiflash_stores(
     };
     let catalog = load_cluster_catalog(store)?;
     let mut before_insert_with_assigned_ids =
-        |_: &[tidb_ddl::ddl_job_submit::JobSpec]| Option::<fn()>::None;
+        |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
         store,
         &catalog,

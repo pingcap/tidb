@@ -103,7 +103,7 @@ pub(super) fn build_add_column_job<S: MetaSnapshot>(
         ..tidb_model::TableColumnArgs::default()
     });
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::TableColumn(Some(args)),
             id_allocated: true,
@@ -135,7 +135,7 @@ fn column_exists(name: &str) -> DdlPlanError {
 /// column of that name already exists (the job is cancelled).
 fn check_add_column(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<AddColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
     let info = checked_job_table(catalog, active, true)?.clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
@@ -206,7 +206,7 @@ fn check_unsupported_charset_for_tiflash(
 /// Go `onAddColumn`.
 pub(super) fn plan_persisted_add_column_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -326,7 +326,7 @@ pub(super) fn plan_persisted_add_column_job_step(
 /// cancelled; afterwards it turns delete-only and rolls back as a drop.
 pub(super) fn plan_cancel_add_column(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let AddColumnTarget { info, column, .. } =

@@ -227,7 +227,7 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
 #[test]
 fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     let invalid = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_ddl::cluster_ddl::DdlPlanError::from(
+        tidb_ddl_build::plan_error::DdlPlanError::from(
             tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                 ("alter auto_random_base of a non auto_random table".to_owned()).into(),
             ]),
@@ -240,7 +240,7 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     );
 
     let zero = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
-        tidb_ddl::cluster_ddl::DdlPlanError::from(
+        tidb_ddl_build::plan_error::DdlPlanError::from(
             tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
         ),
     ));
@@ -734,7 +734,7 @@ fn a_transaction_keeps_the_schema_its_begin_saw() {
 /// switches on. `pkg/errno` names each; these pin the pairing.
 #[test]
 fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
-    use tidb_ddl::cluster_ddl::DdlPlanError;
+    use tidb_ddl_build::plan_error::DdlPlanError;
 
     let coded = |error: DdlPlanError| {
         let query_error = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(error));

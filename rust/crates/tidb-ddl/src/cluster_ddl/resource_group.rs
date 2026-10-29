@@ -68,7 +68,7 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
         resource_group_info: GoField::new(Some(GoShared::new(group))),
     };
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ResourceGroup(Some(GoShared::new(args))),
             id_allocated,
@@ -86,7 +86,7 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
 }
 
 fn group_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<tidb_model::ResourceGroupInfo, DdlPlanError> {
     let args = tidb_model::get_resource_group_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -108,7 +108,7 @@ fn group_args(
 /// Go `checkResourceGroupExist`.
 fn stored_group<'a>(
     catalog: &'a ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     group_id: i64,
 ) -> Result<&'a tidb_model::ResourceGroupInfo, DdlPlanError> {
     stored_resource_group(catalog, group_id).map_err(|error| cancel_ddl_job(active, error))
@@ -117,7 +117,7 @@ fn stored_group<'a>(
 /// One step publishing a group change under a new version.
 fn group_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mutation: BufferMutation,
     update: ResourceGroupUpdate,
     finished_state: SchemaState,
@@ -155,7 +155,7 @@ fn group_step(
 /// Go `onCreateResourceGroup`.
 pub(super) fn plan_persisted_create_resource_group_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut group = group_args(active)?;
     let proto = resource_group_proto(&group).map_err(|error| cancel_ddl_job(active, error))?;
@@ -177,7 +177,7 @@ pub(super) fn plan_persisted_create_resource_group_job_step(
 /// Go `onAlterResourceGroup`.
 pub(super) fn plan_persisted_alter_resource_group_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let altered = group_args(active)?;
     let proto = resource_group_proto(&altered).map_err(|error| cancel_ddl_job(active, error))?;
@@ -199,7 +199,7 @@ pub(super) fn plan_persisted_alter_resource_group_job_step(
 /// Go `onDropResourceGroup`: public -> none in one step.
 pub(super) fn plan_persisted_drop_resource_group_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let group_id = active.job.schema_id;
     let group = stored_group(catalog, active, group_id)?.clone();

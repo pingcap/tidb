@@ -10,6 +10,8 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
+tidb-ddl-systable = { path = "../tidb-ddl-systable" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }

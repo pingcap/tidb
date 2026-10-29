@@ -104,13 +104,13 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         fk_check: GoField::new(build.context.foreign_key_checks()),
         ..tidb_model::CreateTableArgs::default()
     });
-    let mut specs = [crate::ddl_job_submit::JobSpec {
+    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
         args: JobArgsValue::CreateTable(Some(args)),
         // `assignGIDsForJobs` draws the table's and its partitions' ids.
         id_allocated: false,
     }];
-    crate::ddl_job_submit::prepare_submit_batch(
+    tidb_ddl_jobsubmit::prepare_submit_batch(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
@@ -148,7 +148,7 @@ pub(super) fn shared_involving_schema_info(
 pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

@@ -1,0 +1,28 @@
+[package]
+name = "tidb-ddl-jobsubmit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/ddl/jobsubmit (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ddl-systable = { path = "../tidb-ddl-systable" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-ddl-bdr = { path = "../tidb-ddl-bdr" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-filter = { path = "../tidb-filter" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-metadef = { path = "../tidb-metadef" }

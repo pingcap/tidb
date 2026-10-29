@@ -8,7 +8,8 @@
 #![allow(missing_docs)]
 
 use crate::cluster_ddl_source::{lower_ddl, plan_ddl};
-use tidb_ddl::cluster_ddl::{DdlPlan, DdlPlanError};
+use tidb_ddl::cluster_ddl::DdlPlan;
+use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_context::WarningLevel;
 use tidb_meta::key;
 

@@ -91,13 +91,13 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
     let args = GoShared::new(tidb_model::CreateSchemaArgs {
         db_info: GoField::new(Some(GoShared::new(info))),
     });
-    let mut specs = [crate::ddl_job_submit::JobSpec {
+    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
         args: JobArgsValue::CreateSchema(Some(args)),
         // `assignGIDsForJobs` draws the schema id.
         id_allocated: false,
     }];
-    crate::ddl_job_submit::prepare_submit_batch(
+    tidb_ddl_jobsubmit::prepare_submit_batch(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;

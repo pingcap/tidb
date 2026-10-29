@@ -37,10 +37,10 @@
 //! Only shapes this node can also serve are admitted, and every refusal
 //! happens in [`lower_ddl_with_context`], before a timestamp is spent or a byte is written.
 
+use tidb_ddl_build::plan_error::{unknown_ddl_job_error, DdlPlanError};
 use tidb_ddl_build::session_context::DdlSessionContext;
 use tidb_ddl_build::index::set_global_index_version;
 use std::collections::BTreeMap;
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tidb_ast::CiString;
@@ -55,7 +55,6 @@ use tidb_terror::TerrorError;
 use tidb_hack::GoCaseCompare;
 use tidb_meta::{key, value};
 use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
-use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
@@ -65,7 +64,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_model::{get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared, GoSharedPointerSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo};
 use tidb_goruntime::go_runtime::GoSharedSlice;
-use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
+use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
@@ -4722,190 +4721,6 @@ fn lower_drop_index(
     })
 }
 
-/// Why a planned catalog change cannot be built from the observed snapshot.
-#[derive(Clone, Debug)]
-pub enum DdlPlanError {
-    /// A source-defined error whose class, code and message must survive the
-    /// worker checkpoint. SQL projection belongs at the submitting connection.
-    Source(TerrorError),
-    /// The catalog could not be read or decoded.
-    Catalog(ClusterCatalogError),
-    /// A source-defined DDL refusal reported as TiDB's generic 1105.
-    Unsupported(String),
-    /// A refusal raised by the shared admission code while the change was
-    /// being planned, carrying the MySQL error number Go reports for it.
-    ///
-    /// `ALTER COLUMN ... SET DEFAULT` is the first change whose validation
-    /// runs against the STORED column type and therefore cannot happen at
-    /// lowering time; without this the exact refusals -- 1067 for a bad
-    /// default, 1171 for a NULL default on a primary key -- would all
-    /// flatten to the generic 1105.
-    Admission(tidb_ddl_build::table_info_build::DdlAdmissionError),
-    /// Go `GenGlobalIDs`' own limit: the user ID space is exhausted.
-    GlobalIdExhausted {
-        /// The ID the allocation would have reached.
-        wanted: i64,
-    },
-    /// A catalog object could not be encoded.
-    Encode(String),
-    /// The mutation set was rejected before it could be published.
-    Mutations(MutationSetError),
-}
-
-impl fmt::Display for DdlPlanError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Source(error) => fmt::Display::fmt(error, formatter),
-            Self::Catalog(error) => write!(formatter, "{error}"),
-            Self::Unsupported(reason) => formatter.write_str(reason),
-            Self::Admission(error) => formatter.write_str(&error.reason),
-            Self::GlobalIdExhausted { wanted } => write!(
-                formatter,
-                "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
-            ),
-            Self::Encode(detail) => write!(formatter, "{detail}"),
-            Self::Mutations(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl DdlPlanError {
-    /// A refusal carrying an already classified driver-tier failure.
-    pub fn from_mysql_error(error: tidb_terror::MysqlError) -> Self {
-        Self::Admission(DdlAdmissionError::from_mysql_error(error))
-    }
-
-    /// A refusal Go raises as a plain `errors.Errorf` (1105, no class).
-    pub(crate) fn plain_refusal(message: impl Into<String>) -> Self {
-        Self::Admission(DdlAdmissionError::plain(message))
-    }
-
-    /// The existing SQL contract is owned with the error, so direct execution
-    /// and persisted action checkpoints cannot select different error numbers.
-    pub(crate) fn mysql_error_code(&self) -> Option<u16> {
-        use tidb_errno::errcode;
-        Some(match self {
-            Self::Source(error) => error.to_sql_error().code,
-            Self::Admission(error) => error.code,
-            Self::Unsupported(_) => errcode::ErrUnknown,
-            Self::Catalog(_)
-            | Self::Encode(_)
-            | Self::Mutations(_)
-            | Self::GlobalIdExhausted { .. } => return None,
-        })
-    }
-
-    /// The Go `*terror.Error` identity this refusal is raised as, `None` for
-    /// the plain errors and the failures that are not Go errors at all.
-    #[must_use]
-    pub fn identity(&self) -> Option<tidb_terror::TerrorIdentity> {
-        match self {
-            Self::Source(error) => Some(error.identity()),
-            Self::Admission(error) => error.identity,
-            _ => None,
-        }
-    }
-
-    /// Durable job error. Coded legacy errors retain their numeric envelope;
-    /// uncoded errors follow Go `toTError`'s DDL/CodeUnknown fallback.
-    /// Source RFC identities must be carried from their producers, not guessed
-    /// from a MySQL number shared by several Go error classes.
-    pub fn to_job_error(&self) -> tidb_terror::TerrorError {
-        if let Self::Source(error) = self {
-            return error.clone();
-        }
-        // The Go definition the refusal was raised as: the job's `err` JSON
-        // carries its class, code and RFC identity (`{"class":8,"code":1062,
-        // "rfccode":"kv:1062"}`), exactly as Go persists a `*terror.Error`.
-        if let Some(identity) = self.identity() {
-            return tidb_terror::TerrorError::synthesize(
-                identity.class(),
-                identity.code(),
-                self.to_string(),
-            );
-        }
-        match self.mysql_error_code() {
-            Some(code) => tidb_terror::TerrorError::compatible(
-                tidb_terror::TerrorCode::new(
-                    isize::try_from(code).expect("u16 error code fits isize"),
-                ),
-                self.to_string(),
-            ),
-            None => unknown_ddl_job_error(self.to_string()),
-        }
-    }
-
-    /// Converts a direct refusal through the same contract as durable history.
-    pub fn to_sql_error(&self) -> tidb_mysql::errors::SqlError {
-        ddl_job_error_to_sql_error(&self.to_job_error())
-    }
-
-    /// Go `proto.Equal(err)`: whether this is the Go error `proto` raises.
-    #[must_use]
-    pub fn equal(&self, proto: &TerrorError) -> bool {
-        self.identity() == Some(proto.identity())
-    }
-}
-
-fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_terror::TerrorError {
-    tidb_terror::TerrorError::synthesize(
-        tidb_terror::TerrorClass::Ddl,
-        tidb_terror::CODE_UNKNOWN,
-        message,
-    )
-}
-
-/// Projects the durable DDL error envelope onto SQL. Legacy Rust job rows have
-/// numeric codes without RFC identities; they must remain readable after restart.
-/// SQLSTATE comes from the shared Go MySQL catalog, never a transport-local map.
-pub fn ddl_job_error_to_sql_error(
-    error: &tidb_terror::TerrorError,
-) -> tidb_mysql::errors::SqlError {
-    let code = u16::try_from(error.code().value()).unwrap_or(tidb_errno::errcode::ErrUnknown);
-    tidb_mysql::errors::SqlError {
-        code,
-        state: tidb_mysql::errors::mysql_state(code),
-        message: error.message().to_owned(),
-        identity: Some(error.identity()),
-    }
-}
-
-impl std::error::Error for DdlPlanError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Source(error) => Some(error),
-            Self::Admission(error) => Some(error),
-            Self::Catalog(error) => Some(error),
-            Self::Mutations(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<TerrorError> for DdlPlanError {
-    fn from(error: TerrorError) -> Self {
-        Self::Source(error)
-    }
-}
-
-impl From<DdlAdmissionError> for DdlPlanError {
-    fn from(error: DdlAdmissionError) -> Self {
-        Self::Admission(error)
-    }
-}
-
-impl From<ClusterCatalogError> for DdlPlanError {
-    fn from(error: ClusterCatalogError) -> Self {
-        Self::Catalog(error)
-    }
-}
-
-impl From<MutationSetError> for DdlPlanError {
-    fn from(error: MutationSetError) -> Self {
-        Self::Mutations(error)
-    }
-}
-
 /// What one planned catalog change will publish.
 #[derive(Clone, Debug)]
 pub enum DdlPlan {
@@ -4962,7 +4777,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
     min_job_id: i64,
-) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
+) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let (job, args) = match statement {
         DdlStatement::AddCheckConstraint {
@@ -5088,12 +4903,12 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
         _ => return Ok(None),
     };
 
-    let mut specs = [crate::ddl_job_submit::JobSpec {
+    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
         args,
         id_allocated: true,
     }];
-    crate::ddl_job_submit::prepare_submit_batch(
+    tidb_ddl_jobsubmit::prepare_submit_batch(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
@@ -5299,7 +5114,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
 fn plan_persisted_action<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -5487,12 +5302,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     plan_action: impl FnOnce(
         &mut S,
         &ClusterCatalog,
-        &mut crate::ddl_job_table::ActiveDdlJob,
+        &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+    let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
         .load_by_id(snapshot, ddl_job_id)
@@ -5509,7 +5324,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         info.table_ids = active.table_ids.clone();
         info.omit_owner_id =
             tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
-        match crate::ddl_systable::SystemTableManager::new(&catalog)
+        match tidb_ddl_systable::SystemTableManager::new(&catalog)
             .get_mdl_version(snapshot, ddl_job_id)
         {
             Ok(version) if Some(version) != schema_state.synced_version => {
@@ -5520,7 +5335,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                 });
             }
             Ok(_) => {}
-            Err(crate::ddl_systable::SystemTableManagerError::NotFound) => {}
+            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => {}
             Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
         }
         Some(info)
@@ -5694,8 +5509,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 fn finish_persisted_ddl_job<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    job_table: &crate::ddl_job_table::DdlJobTable,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    job_table: &tidb_ddl_systable::ddl_job_table::DdlJobTable,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
@@ -5742,7 +5557,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
 /// and a later owner can call this function with the same job ID.
 fn plan_persisted_check_constraint_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
@@ -6171,7 +5986,7 @@ fn plan_persisted_check_constraint_job_step(
 /// CREATE DATABASE has no reorg states or backfill.
 fn plan_persisted_create_schema_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -6277,7 +6092,7 @@ fn plan_persisted_create_schema_job_step(
 /// the shared synchronization and history lifecycle.
 fn plan_persisted_create_tables_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
@@ -6462,7 +6277,7 @@ fn plan_persisted_create_tables_job_step(
 fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
@@ -6644,7 +6459,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
 fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
@@ -6911,7 +6726,7 @@ fn submit_built_job<S: MetaSnapshot>(
     match built {
         Some(add_index::AddIndexSubmission::Job(spec, warnings)) => {
             let mut specs = [*spec];
-            crate::ddl_job_submit::prepare_submit_batch(
+            tidb_ddl_jobsubmit::prepare_submit_batch(
                 snapshot, catalog, &mut specs, start_ts, upgrading, min_job_id,
             )?;
             let [spec] = specs;
@@ -6956,7 +6771,7 @@ fn notifier_sub_job_id(job: &Job) -> i64 {
 }
 
 fn cancel_ddl_job(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     error: impl Into<DdlPlanError>,
 ) -> DdlPlanError {
     active.job.state = JobState::CANCELLED;
@@ -6992,7 +6807,7 @@ fn job_control_step(job: &Job) -> PersistedDdlActionStep {
     }
 }
 
-fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
+fn cancelled_ddl_job(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
     cancel_ddl_job(
         active,
         DdlPlanError::from(
@@ -7006,7 +6821,7 @@ fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlan
 // worker. Conversion is its own step; an irreversible DROP resumes next time.
 fn plan_cancel_persisted_ddl_job(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let cancel = match active.job.type_ {
@@ -7123,7 +6938,7 @@ fn plan_cancel_persisted_ddl_job(
 // the same object checks on forward CHECK and cancellation paths.
 fn checked_job_table<'a>(
     catalog: &'a ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     require_public: bool,
 ) -> Result<&'a TableInfo, DdlPlanError> {
     let database = catalog
@@ -7306,7 +7121,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+    let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
         .load_by_id(snapshot, ddl_job_id)

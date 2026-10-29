@@ -25,7 +25,7 @@ use tidb_session::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_ddl::ddl_systable::MinJobIdRefresher;
+use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 

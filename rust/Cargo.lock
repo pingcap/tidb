@@ -3852,11 +3852,13 @@ dependencies = [
  "tidb-dbterror",
  "tidb-ddl-bdr",
  "tidb-ddl-build",
+ "tidb-ddl-jobsubmit",
  "tidb-ddl-label",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
  "tidb-ddl-serverstate",
+ "tidb-ddl-systable",
  "tidb-domain-affinity",
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
@@ -3953,6 +3955,7 @@ dependencies = [
  "tidb-sessionctx",
  "tidb-sqlkiller",
  "tidb-store-driver-txn",
+ "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
@@ -3975,6 +3978,27 @@ dependencies = [
  "tidb-exprctx",
  "tidb-model",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-ddl-jobsubmit"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-dbterror",
+ "tidb-ddl-bdr",
+ "tidb-ddl-build",
+ "tidb-ddl-systable",
+ "tidb-filter",
+ "tidb-goruntime",
+ "tidb-infoschema",
+ "tidb-meta",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-sessionctx",
+ "tidb-terror",
+ "tidb-txnkv",
 ]
 
 [[package]]
@@ -4006,6 +4030,7 @@ name = "tidb-ddl-mock"
 version = "0.0.0"
 dependencies = [
  "tidb-ddl",
+ "tidb-ddl-systable",
  "tidb-infoschema",
  "tidb-model",
 ]
@@ -4060,6 +4085,22 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tracing",
+]
+
+[[package]]
+name = "tidb-ddl-systable"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tidb-datatype",
+ "tidb-ddl-logutil",
+ "tidb-goruntime",
+ "tidb-infoschema",
+ "tidb-log",
+ "tidb-model",
+ "tidb-syssession",
+ "tidb-table",
+ "tidb-txnkv",
 ]
 
 [[package]]
@@ -4201,6 +4242,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
+ "tidb-ddl-jobsubmit",
  "tidb-ddl-notifier",
  "tidb-domain",
  "tidb-domain-globalconfigsync",
@@ -6272,6 +6314,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-serverstate",
+ "tidb-ddl-systable",
  "tidb-deadlockhistory",
  "tidb-disk",
  "tidb-domain",
@@ -6438,8 +6481,10 @@ dependencies = [
  "tidb-dbterror",
  "tidb-ddl",
  "tidb-ddl-build",
+ "tidb-ddl-jobsubmit",
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
+ "tidb-ddl-systable",
  "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-domain",

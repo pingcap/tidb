@@ -244,7 +244,7 @@ pub(super) fn build_create_table_with_info_job(
         fk_check: GoField::new(job_context.foreign_key_checks()),
     });
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::CreateTable(Some(args)),
             // `assignGIDsForJobs` draws the object's (and partitions') ids.
@@ -394,7 +394,7 @@ pub fn build_session_temporary_table_info(
 
 /// The arguments of a CREATE VIEW / SEQUENCE job.
 fn create_table_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<(GoShared<TableInfo>, bool, i64), DdlPlanError> {
     let args = tidb_model::get_create_table_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -420,7 +420,7 @@ fn create_table_args(
 /// `checkSchemaExistAndCancelNotExistJob` cancels it.
 fn job_database<'a>(
     catalog: &'a ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<&'a tidb_infoschema::cluster_catalog::LoadedDatabase, DdlPlanError> {
     catalog
         .databases
@@ -452,7 +452,7 @@ fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
 /// One step publishing a new object under a new version.
 fn object_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut mutations: Vec<BufferMutation>,
     diff: SchemaDiff,
     info: &TableInfo,
@@ -489,7 +489,7 @@ fn object_step(
 pub(super) fn plan_persisted_create_view_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, or_replace, old_view_id) = create_table_args(active)?;
@@ -551,7 +551,7 @@ pub(super) fn plan_persisted_create_view_job_step<S: MetaSnapshot>(
 /// Go `onCreateSequence`.
 pub(super) fn plan_persisted_create_sequence_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, _, _) = create_table_args(active)?;
@@ -668,7 +668,7 @@ fn build_alter_sequence_job(
             .collect(),
     };
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::AlterSequence(Some(GoShared::new(args))),
             id_allocated: true,
@@ -680,7 +680,7 @@ fn build_alter_sequence_job(
 /// Go `onAlterSequence`.
 pub(super) fn plan_persisted_alter_sequence_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_alter_sequence_args(&mut active.job)

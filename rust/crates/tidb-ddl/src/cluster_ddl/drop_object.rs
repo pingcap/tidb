@@ -41,12 +41,12 @@ fn submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let mut specs = [crate::ddl_job_submit::JobSpec {
+    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
         args,
         id_allocated: true,
     }];
-    crate::ddl_job_submit::prepare_submit_batch(
+    tidb_ddl_jobsubmit::prepare_submit_batch(
         snapshot, catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;

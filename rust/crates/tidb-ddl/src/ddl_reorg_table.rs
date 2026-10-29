@@ -22,7 +22,7 @@ use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_ddl::add_index::ReorgHandle;
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
 
 /// The located table.
@@ -204,8 +204,3 @@ impl DdlReorgTable {
     }
 }
 
-impl From<SystemTableError> for crate::cluster_ddl::DdlPlanError {
-    fn from(error: SystemTableError) -> Self {
-        Self::Encode(error.to_string())
-    }
-}

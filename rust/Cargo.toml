@@ -270,6 +270,8 @@ members = [
     "crates/tidb-keydecoder",
     "crates/tidb-keyspace",
     "crates/tidb-ddl",
+    "crates/tidb-ddl-jobsubmit",
+    "crates/tidb-ddl-systable",
     "crates/tidb-stmtsummary",
     "crates/tidb-server",
     "crates/tidb-domain-core",

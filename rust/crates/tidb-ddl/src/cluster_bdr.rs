@@ -15,7 +15,7 @@
 //! Go's BDR admission for the DDL this node plans and publishes directly.
 //!
 //! A persisted job meets Go's `SubmitBatch` admission in
-//! [`crate::ddl_job_submit::prepare_spec_for_submit`]. The changes
+//! [`tidb_ddl_jobsubmit::prepare_spec_for_submit`]. The changes
 //! [`crate::cluster_ddl::plan_ddl`] publishes in one transaction have no
 //! submitted job, so the planner asks the same questions: the ADD COLUMN /
 //! MODIFY COLUMN builders' `IsAddColumnDenied` / `IsModifyColumnDenied`
@@ -25,8 +25,8 @@
 
 use tidb_ast::BdrRole;
 
-use crate::cluster_ddl::DdlPlanError;
-use crate::ddl_job_submit::{submit_error, JobSubmitError};
+use tidb_ddl_build::plan_error::DdlPlanError;
+use tidb_ddl_jobsubmit::{submit_error, JobSubmitError};
 use tidb_hack::GoToLower;
 
 fn role_of(stored: &[u8]) -> Option<BdrRole> {

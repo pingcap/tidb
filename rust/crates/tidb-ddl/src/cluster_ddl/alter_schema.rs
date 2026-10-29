@@ -107,7 +107,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
     }
     job.involving_schema_info = GoSharedSlice::from_vec(involving);
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ModifySchema(Some(GoShared::new(args))),
             id_allocated: true,
@@ -128,7 +128,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
 pub(super) fn plan_persisted_alter_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_schema_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?

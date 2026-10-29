@@ -41,12 +41,13 @@ use tidb_txnkv::transaction::OptimisticCoordinatorError;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
-use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
+use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
+use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_ddl_build::table_info_build::DdlAdmissionError;
 
 use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
-use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
-use crate::ddl_job_table::DdlJobTable;
+use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
+use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
@@ -610,7 +611,7 @@ impl DdlJobDoneChMap {
     /// cleanup that drops them when the insert fails.
     pub fn register_job_done_channels(
         &self,
-        specs: &[crate::ddl_job_submit::JobSpec],
+        specs: &[tidb_ddl_jobsubmit::JobSpec],
     ) -> impl FnOnce() + '_ {
         let job_ids = specs.iter().map(|spec| spec.job.id).collect::<Vec<_>>();
         {
@@ -1028,13 +1029,13 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
 /// rows, and commit the allocation and inserts atomically.
 pub fn gen_global_ids_and_insert_jobs_with_retry<S, F, Cleanup>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    specs: &mut [crate::ddl_job_submit::JobSpec],
+    specs: &mut [tidb_ddl_jobsubmit::JobSpec],
     timeout: Duration,
     mut before_insert_with_assigned_ids: F,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
-    F: FnMut(&[crate::ddl_job_submit::JobSpec]) -> Option<Cleanup>,
+    F: FnMut(&[tidb_ddl_jobsubmit::JobSpec]) -> Option<Cleanup>,
     Cleanup: FnOnce(),
 {
     let mut attempt = 0_u32;
@@ -1575,7 +1576,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     // policies' own sequence, in a transaction of its own, before the job.
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {
         let policy_id = add_index_reorg::reorg_transaction(&opener, timeout, |meta, _, _, _| {
-            let (id, mutation) = crate::ddl_job_submit::reserve_placement_policy_id(meta)?;
+            let (id, mutation) = tidb_ddl_jobsubmit::reserve_placement_policy_id(meta)?;
             Ok((id, vec![mutation]))
         })?;
         crate::cluster_ddl::placement_policy::set_placement_policy_id(&spec, policy_id);

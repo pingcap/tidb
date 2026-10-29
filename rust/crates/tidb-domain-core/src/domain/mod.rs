@@ -3145,7 +3145,7 @@ impl GlobalIdGenerator for ClusterGlobalIds {
                 .open_snapshot("default")
                 .map_err(SqlQueryError::unknown)?;
             let read_ts = snapshot.start_ts();
-            let (id, mutation) = tidb_ddl::ddl_job_submit::reserve_global_id(
+            let (id, mutation) = tidb_ddl_jobsubmit::reserve_global_id(
                 &mut SnapshotMetaSnapshot::new(snapshot),
             )
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;

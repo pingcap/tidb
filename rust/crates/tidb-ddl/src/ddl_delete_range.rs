@@ -25,7 +25,7 @@ use tidb_model::{ActionType, Job, JobState, TableInfo};
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::cluster_ddl::DdlPlanError;
+use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
 

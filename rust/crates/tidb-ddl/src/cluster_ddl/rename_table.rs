@@ -230,12 +230,12 @@ pub fn prepare_rename_table_job_submission<S: MetaSnapshot>(
         })));
         (job, args)
     };
-    let mut specs = [crate::ddl_job_submit::JobSpec {
+    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
         args,
         id_allocated: true,
     }];
-    crate::ddl_job_submit::prepare_submit_batch(
+    tidb_ddl_jobsubmit::prepare_submit_batch(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
@@ -357,7 +357,7 @@ fn rename_one(
     tables: &mut EvolvingTables<'_>,
     helper: &mut ForeignKeyHelper,
     label_rules: &mut LabelRuleSteps,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &tidb_model::RenameTableArgs,
     new_schema_id: i64,
 ) -> Result<(), DdlPlanError> {
@@ -500,7 +500,7 @@ fn rename_one(
 /// Go `onRenameTable` / `onRenameTables` and their finishing steps.
 pub(super) fn plan_persisted_rename_table_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     _start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let single = active.job.type_ == ActionType::ACTION_RENAME_TABLE;
@@ -692,7 +692,7 @@ fn set_rename_diff(
     single: bool,
     infos: &[tidb_model::RenameTableArgs],
     old_schema: impl Fn(&tidb_model::RenameTableArgs) -> i64,
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) {
     if single {
         diff.old_schema_id = old_schema(&infos[0]);

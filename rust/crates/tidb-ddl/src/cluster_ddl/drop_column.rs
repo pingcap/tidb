@@ -88,7 +88,7 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
         ..tidb_model::TableColumnArgs::default()
     });
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::TableColumn(Some(args)),
             id_allocated: true,
@@ -109,7 +109,7 @@ struct DropColumnTarget {
 /// not there (the job is cancelled).
 fn check_drop_column_in_owner(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<DropColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
     let stored = checked_job_table(catalog, active, true)?.clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
@@ -177,7 +177,7 @@ fn check_drop_column_in_owner(
 /// rolling back.
 pub(super) fn plan_persisted_drop_column_job_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let DropColumnTarget {
@@ -306,7 +306,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
 /// that the drop runs on.
 pub(super) fn plan_cancel_drop_column(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let target = check_drop_column_in_owner(catalog, active)?.map_err(|(_, error)| error)?;
     for index in &target.indexes {

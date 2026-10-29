@@ -208,7 +208,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
         store_count,
     )));
     Ok(Some(AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::ModifyColumn(Some(GoShared::new(args))),
             id_allocated: true,
@@ -1163,7 +1163,7 @@ struct ModifyTarget {
 /// changed, found by the id persisted after the first visit.
 fn get_modify_column_info(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::ModifyColumnArgs,
 ) -> Result<ModifyTarget, DdlPlanError> {
     let Some(database) = catalog
@@ -1290,7 +1290,7 @@ fn check_column_already_exists(
 /// The step that records `args` as the job's (Go mutates the arguments the
 /// job re-encodes).
 fn with_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &tidb_model::ModifyColumnArgs,
     step: PersistedDdlActionStep,
 ) -> PersistedDdlActionStep {
@@ -1309,7 +1309,7 @@ fn reorg_request(job: &Job, reorg: AddIndexReorg) -> PersistedDdlActionStep {
 
 /// A check request (Go `checkModifyColumnData`), run outside the job.
 fn check_request(
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     new: &tidb_model::ColumnInfo,
     check_value_range: bool,
@@ -1343,7 +1343,7 @@ fn check_request(
 
 /// The outcome of this job's column check, if the owner ran one.
 fn checked_outcome(
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     outcome: Option<&ReorgOutcome>,
 ) -> Option<Option<(u16, String)>> {
     match outcome {
@@ -1360,7 +1360,7 @@ fn checked_outcome(
 pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1383,7 +1383,7 @@ pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
 fn plan_modify_column_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
     counter_writes: &mut Vec<BufferMutation>,
@@ -1610,7 +1610,7 @@ fn clear_modify_flag(column: &GoShared<tidb_model::ColumnInfo>) {
 /// Go `rollbackModifyColumnJob`: a change that rewrote nothing.
 fn rollback_modify_column_job(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     new: &tidb_model::ColumnInfo,
     start_ts: u64,
@@ -1639,7 +1639,7 @@ fn rollback_modify_column_job(
 /// Go `rollbackModifyColumnJobWithReorg`.
 fn rollback_modify_column_job_with_reorg(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     start_ts: u64,
@@ -1683,7 +1683,7 @@ fn rollback_modify_column_job_with_reorg(
 /// Go `rollbackModifyColumnJobWithIndexReorg`.
 fn rollback_modify_column_job_with_index_reorg(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     start_ts: u64,
@@ -1882,7 +1882,7 @@ fn update_index_col(part: &mut tidb_model::index::IndexColumn, column: &tidb_mod
 /// writes.
 fn adjust_foreign_key_children(
     catalog: &ClusterCatalog,
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &mut TableInfo,
     new: &tidb_model::ColumnInfo,
     old: &tidb_model::ColumnInfo,
@@ -1946,7 +1946,7 @@ fn adjust_foreign_key_children(
 /// Go `finishModifyColumnWithoutReorg`.
 fn finish_modify_column_without_reorg(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
     new: &tidb_model::ColumnInfo,
@@ -2031,7 +2031,7 @@ fn column_in_change(old: &tidb_model::ColumnInfo, new_id: i64) -> DdlPlanError {
 fn do_modify_column_no_check<S: MetaSnapshot>(
     _snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
     new: &tidb_model::ColumnInfo,
@@ -2053,7 +2053,7 @@ fn do_modify_column_no_check<S: MetaSnapshot>(
 /// stands, and finishes in the step that publishes every sub-job.
 fn revertible_point(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
     start_ts: u64,
@@ -2073,7 +2073,7 @@ fn revertible_point(
 /// are checked.
 fn mark_modifying(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
     new: &tidb_model::ColumnInfo,
@@ -2100,7 +2100,7 @@ fn mark_modifying(
 fn do_modify_column_with_check<S: MetaSnapshot>(
     _snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
     new: &tidb_model::ColumnInfo,
@@ -2143,7 +2143,7 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
 #[allow(clippy::too_many_arguments)]
 fn precheck_for_varchar_to_char(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     new: &tidb_model::ColumnInfo,
@@ -2633,7 +2633,7 @@ fn remove_old_objects(
 fn do_modify_column_index_reorg<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     outcome: Option<&ReorgOutcome>,
@@ -2661,7 +2661,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             let half = all.len() / 2;
             (all[..half].to_vec(), all[half..].to_vec())
         };
-    let finish = |active: &mut crate::ddl_job_table::ActiveDdlJob,
+    let finish = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
                   target: &mut ModifyTarget,
                   args: &mut tidb_model::ModifyColumnArgs,
                   changing_indexes: &[GoShared<IndexInfo>]|
@@ -2893,7 +2893,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
 fn do_modify_column_type_with_data<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     changing: GoShared<tidb_model::ColumnInfo>,
@@ -3187,7 +3187,7 @@ enum ColumnReorgVisit {
 fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     changing: &GoShared<tidb_model::ColumnInfo>,
     outcome: Option<&ReorgOutcome>,
@@ -3203,7 +3203,7 @@ fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
         merge_reorg_warnings(&active.job, &outcome.warnings);
     }
     let request =
-        |active: &crate::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
+        |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
             stage,
             table: Box::new(target.info.clone_like_go()),
@@ -3295,7 +3295,7 @@ fn merge_reorg_warnings(job: &Job, warnings: &[(u16, String, i64)]) {
 /// Go `rollingbackModifyColumn`.
 pub(super) fn plan_cancel_modify_column(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Go `IsRollbackable`: a modify-column job is not once it is public.
     if active.job.schema_state == SchemaState::PUBLIC {

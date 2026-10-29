@@ -54,7 +54,7 @@ use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, DdlStatement,
     PersistedDdlJobPlan, ResourceGroupUpdate,
 };
-use tidb_ddl::ddl_job_submit::{plan_insert_attempt, JobSpec};
+use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
 use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};

@@ -186,7 +186,7 @@ where
             if enable != tidb_vardef::is_mdl_enabled(false) {
                 let running = {
                     let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-                    tidb_ddl::ddl_job_table::DdlJobTable::locate(&self.catalog)
+                    tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&self.catalog)
                         .and_then(|table| table.has_jobs(&mut snapshot))
                         .map_err(|error| SqlQueryError::unknown(error.to_string()))?
                 };

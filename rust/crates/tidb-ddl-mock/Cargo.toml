@@ -11,6 +11,7 @@ description = "Generated-test-double parity for Go pkg/ddl/mock."
 workspace = true
 
 [dependencies]
+tidb-ddl-systable = { path = "../tidb-ddl-systable" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-model = { path = "../tidb-model" }

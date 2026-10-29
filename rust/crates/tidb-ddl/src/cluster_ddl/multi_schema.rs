@@ -512,10 +512,10 @@ pub(super) fn build_multi_schema_job(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &str,
-    specs: Vec<crate::ddl_job_submit::JobSpec>,
+    specs: Vec<tidb_ddl_jobsubmit::JobSpec>,
     job_context: &dyn DdlSessionContext,
     store_count: usize,
-) -> Result<crate::ddl_job_submit::JobSpec, DdlPlanError> {
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     let (schema_id, stored) = locate_table(catalog, schema, table)?;
     let mut info = MultiSchemaInfo::default();
     let mut names = MultiSchemaNames::default();
@@ -606,7 +606,7 @@ pub(super) fn build_multi_schema_job(
             vars.analyze_version.clone().into(),
         ),
     ])));
-    Ok(crate::ddl_job_submit::JobSpec {
+    Ok(tidb_ddl_jobsubmit::JobSpec {
         job,
         args: tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
             tidb_model::EmptyArgs::default(),
@@ -631,7 +631,7 @@ struct MultiSchemaNames {
 
 impl MultiSchemaNames {
     /// Go `fillMultiSchemaInfo`.
-    fn fill(&mut self, spec: &crate::ddl_job_submit::JobSpec) -> Result<(), DdlPlanError> {
+    fn fill(&mut self, spec: &tidb_ddl_jobsubmit::JobSpec) -> Result<(), DdlPlanError> {
         let after = |position: &Option<GoShared<tidb_ast::JobColumnPosition>>| {
             position.as_ref().and_then(|position| {
                 let position = position.read();
@@ -824,7 +824,7 @@ fn merge_add_index(sub_jobs: &mut Vec<SubJob>) {
 
 /// What one sub-job's step came to (Go `runOneJobStep` on its proxy job).
 struct SubJobStep {
-    proxy: crate::ddl_job_table::ActiveDdlJob,
+    proxy: tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     step: PersistedDdlActionStep,
     /// `runOneJobStep`'s returned error.
     run_error: Option<DdlPlanError>,
@@ -834,7 +834,7 @@ struct SubJobStep {
 fn run_sub_job_step(
     overlay: &mut MetaOverlay<'_>,
     catalog: &ClusterCatalog,
-    active: &crate::ddl_job_table::ActiveDdlJob,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub: &GoShared<SubJob>,
     seq: usize,
     skip_version: bool,
@@ -961,7 +961,7 @@ fn flush_cancelling(sub_jobs: &[GoShared<SubJob>]) {
 pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1214,7 +1214,7 @@ fn merge_write(merged: &mut DdlWrite, write: DdlWrite) {
 /// publishing nothing new.
 fn finish_multi_schema_job(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub_jobs: &[GoShared<SubJob>],
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let version = sub_jobs
@@ -1235,7 +1235,7 @@ fn finish_multi_schema_job(
 /// Go `rollingBackMultiSchemaChange`: past the revertible point the job runs
 /// on; before it, every sub-job turns cancelling.
 pub(super) fn plan_cancel_multi_schema(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {
         return Err(cancelled_ddl_job(active));

@@ -181,7 +181,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
         ..tidb_model::InvolvingSchemaInfo::default()
     }]);
     let built = AddIndexSubmission::Job(
-        Box::new(crate::ddl_job_submit::JobSpec {
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::PlacementPolicy(Some(GoShared::new(args))),
             id_allocated: true,
@@ -200,7 +200,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
 
 /// Go `genPlacementPolicyID`, set on a CREATE PLACEMENT POLICY job before
 /// it is queued.
-pub fn set_placement_policy_id(spec: &crate::ddl_job_submit::JobSpec, id: i64) {
+pub fn set_placement_policy_id(spec: &tidb_ddl_jobsubmit::JobSpec, id: i64) {
     if let JobArgsValue::PlacementPolicy(Some(args)) = &spec.args {
         if let Some(policy) = &args.read().policy {
             policy.write().id = id;
@@ -209,7 +209,7 @@ pub fn set_placement_policy_id(spec: &crate::ddl_job_submit::JobSpec, id: i64) {
 }
 
 fn policy_args(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<GoShared<tidb_model::PlacementPolicyArgs>, DdlPlanError> {
     tidb_model::get_placement_policy_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -224,7 +224,7 @@ fn policy_args(
 /// Go `checkPlacementPolicyExistAndCancelNonExistJob`.
 fn stored_policy<S: MetaSnapshot>(
     snapshot: &mut S,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     policy_id: i64,
 ) -> Result<tidb_model::PolicyInfo, DdlPlanError> {
     let stored = snapshot
@@ -247,7 +247,7 @@ fn stored_policy<S: MetaSnapshot>(
 /// `updateSchemaVersion` with the job's `SchemaID`).
 fn policy_step(
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut mutations: Vec<BufferMutation>,
     bundles: Vec<tidb_placement::Bundle>,
 ) -> Result<DdlWrite, DdlPlanError> {
@@ -299,7 +299,7 @@ fn update_exist_placement_policy(
 pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = policy_args(active)?;
     let (policy, or_replace) = {
@@ -368,7 +368,7 @@ pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
 pub(super) fn plan_persisted_alter_placement_policy_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = policy_args(active)?;
     let (policy_id, settings) = {
@@ -401,7 +401,7 @@ pub(super) fn plan_persisted_alter_placement_policy_job_step<S: MetaSnapshot>(
 pub(super) fn plan_persisted_drop_placement_policy_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let policy_id = policy_args(active)?.read().policy_id;
     let mut policy = stored_policy(snapshot, active, policy_id)?;

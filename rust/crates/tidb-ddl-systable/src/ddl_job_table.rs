@@ -63,7 +63,7 @@ pub struct ActiveDdlJob {
 impl ActiveDdlJob {
     /// The same row carrying `job` instead: Go's proxy job, which runs a
     /// multi-schema change's sub-job as if it were the job itself.
-    pub(crate) fn with_job(&self, job: Job) -> Self {
+    pub fn with_job(&self, job: Job) -> Self {
         Self {
             job,
             reorg: self.reorg,
