@@ -35,7 +35,7 @@ use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
-use tidb_table::kv_table::IndexRange;
+use tidb_ranger::types::Range;
 use tidb_table::kv_table::KvColumn;
 use tidb_table::kv_table::KvIndex;
 use tidb_table::kv_table::KvTable;
@@ -202,7 +202,7 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<Recorded>>>) {
     let opened = table.pushdown_partial_aggregate_cursor(
         &[0],
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
-        Option::<&[IndexRange]>::None,
+        Option::<&[Range]>::None,
         &count_over_primary(),
         &tidb_sessionctx::StmtContext::default(),
         &SessionTimeZone::default(),

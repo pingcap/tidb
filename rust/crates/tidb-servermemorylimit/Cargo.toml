@@ -11,16 +11,16 @@ description = "TiDB util/servermemorylimit: Go pkg/util/servermemorylimit (Rust 
 workspace = true
 
 [features]
-enableassert = ["tidb-logutil/enableassert", "tidb-memory/enableassert", "tidb-memoryusagealarm/enableassert", "tidb-sqlkiller/enableassert"]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-memory/failpoints", "tidb-memoryusagealarm/failpoints", "tidb-sqlkiller/failpoints"]
-intest = ["tidb-logutil/intest", "tidb-memory/intest", "tidb-memoryusagealarm/intest", "tidb-sqlkiller/intest"]
-jemalloc = ["tidb-memory/jemalloc", "tidb-memoryusagealarm/jemalloc"]
-testexport = ["tidb-memoryusagealarm/testexport"]
+enableassert = ["tidb-logutil/enableassert", "tidb-memory/enableassert", "tidb-sqlkiller/enableassert"]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-memory/failpoints", "tidb-sqlkiller/failpoints"]
+intest = ["tidb-logutil/intest", "tidb-memory/intest", "tidb-sqlkiller/intest"]
+jemalloc = ["tidb-memory/jemalloc"]
+testexport = []
 
 [dependencies]
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-log = { path = "../tidb-log" }
 chrono.workspace = true

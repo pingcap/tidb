@@ -27,8 +27,9 @@
 //! the parent module, and this file is only the read direction.
 
 use super::row_decoder::{PreparedPointGetRowDecoder, RowDecoder};
+use tidb_ranger::types::Range;
 use super::{
-    index_entry_handle, IndexRange, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
+    index_entry_handle, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
     RowDecodeContext, TableHandle,
 };
 use crate::executor::{Executor, ExecutorMeta};
@@ -122,7 +123,7 @@ pub trait KvTableReader {
     fn row_cursor_projected_with_context(
         &mut self,
         keep: Option<&[usize]>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError>;
 
@@ -132,7 +133,7 @@ pub trait KvTableReader {
     fn row_cursor_projected_directed_with_context(
         &mut self,
         keep: Option<&[usize]>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         descending: bool,
         ordered: bool,
         context: &RowDecodeContext,
@@ -173,7 +174,7 @@ pub trait KvTableReader {
     fn row_cursor_with_decoder(
         &mut self,
         decoder: RowDecoder,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         descending: bool,
         ordered: bool,
         zone: &SessionTimeZone,
@@ -190,7 +191,7 @@ pub trait KvTableReader {
     /// order, exactly as [`crate::handle_range::record_key_ranges`] documents.
     fn record_key_ranges(
         &self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         zone: &SessionTimeZone,
         keep_order: bool,
     ) -> Result<Vec<(Key, Key)>, KvTableError>;
@@ -205,7 +206,7 @@ pub trait KvTableReader {
     /// record range as one group, reading a correct superset.
     fn record_key_range_groups(
         &self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         zone: &SessionTimeZone,
         descending: bool,
     ) -> Result<Vec<Vec<(Key, Key)>>, KvTableError>;
@@ -248,7 +249,7 @@ pub trait KvTableReader {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -271,7 +272,7 @@ pub trait KvTableReader {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -290,7 +291,7 @@ pub trait KvTableReader {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -330,7 +331,7 @@ pub trait KvTableReader {
     ) -> Result<Option<StagedPhysicalLookup>, KvTableError>;
 
     /// Converts sorted handles using the direct KV range builder shared with
-    /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
+    /// Go's RequestBuilder.SetTableHandles, avoiding an Range round trip.
     fn table_reader_handle_key_ranges(
         table_id: i64,
         handles: &[TableHandle],
@@ -378,7 +379,7 @@ pub trait KvTableReader {
         &mut self,
         keep: &[usize],
         predicates: &[Expression],
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         aggregate: &PushdownPartialAggregate,
         context: &crate::StmtContext,
         zone: &SessionTimeZone,
@@ -393,7 +394,7 @@ pub trait KvTableReader {
     fn pushdown_index_partial_aggregate_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         scan_keep: &[usize],
         predicates: &[Expression],
         aggregate: &PushdownPartialAggregate,
@@ -425,7 +426,7 @@ pub trait KvTableReader {
     fn pushdown_index_handle_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         scan_keep: &[usize],
         scan_extra_handle_slot: Option<usize>,
         predicates: &[Expression],
@@ -494,7 +495,7 @@ pub trait KvTableReader {
     /// produced.
     fn scan_rows_with_handles_in_with_context(
         &mut self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
@@ -524,7 +525,7 @@ pub trait KvTableReader {
     fn scan_index_range(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<Vec<TableHandle>, KvTableError>;
 
@@ -533,7 +534,7 @@ pub trait KvTableReader {
     fn index_range_cursor(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError>;
 
@@ -542,7 +543,7 @@ pub trait KvTableReader {
     fn index_range_cursor_with_direction(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
         descending: bool,
         ordered: bool,
@@ -554,7 +555,7 @@ pub trait KvTableReader {
     fn index_ranges_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError>;
 
@@ -563,7 +564,7 @@ pub trait KvTableReader {
     fn index_ranges_cursor_with_direction(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
         descending: bool,
         ordered: bool,
@@ -591,14 +592,14 @@ pub trait KvTableReader {
     fn index_lookup_ranges_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError>;
 
     fn index_ranges_cursor_for_physical_ids(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
         physical_ids: &[i64],
         descending: bool,
@@ -677,11 +678,12 @@ impl KvTableReader for KvTable {
                 .into_iter()
                 .collect());
         }
-        let range = IndexRange {
-            low: values.to_vec(),
-            high: values.to_vec(),
-            low_exclusive: false,
-            high_exclusive: false,
+        let range = Range {
+            low_val: values.to_vec(),
+            high_val: values.to_vec(),
+            collators: crate::access_path::key_collators(values, values),
+            low_exclude: false,
+            high_exclude: false,
         };
         let mut cursor = self.index_range_cursor(index_id, &range, zone)?;
         let mut handles = Vec::new();
@@ -744,7 +746,7 @@ impl KvTableReader for KvTable {
     fn row_cursor_projected_with_context(
         &mut self,
         keep: Option<&[usize]>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
         self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, false, context)
@@ -753,7 +755,7 @@ impl KvTableReader for KvTable {
     fn row_cursor_projected_directed_with_context(
         &mut self,
         keep: Option<&[usize]>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         descending: bool,
         ordered: bool,
         context: &RowDecodeContext,
@@ -892,7 +894,7 @@ impl KvTableReader for KvTable {
     fn row_cursor_with_decoder(
         &mut self,
         decoder: RowDecoder,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         descending: bool,
         ordered: bool,
         zone: &SessionTimeZone,
@@ -958,16 +960,11 @@ impl KvTableReader for KvTable {
 
     fn record_key_ranges(
         &self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         zone: &SessionTimeZone,
         keep_order: bool,
     ) -> Result<Vec<(Key, Key)>, KvTableError> {
-        let full_common_handle = [IndexRange {
-            low: vec![Datum::MinNotNull],
-            high: vec![Datum::MaxValue],
-            low_exclusive: false,
-            high_exclusive: false,
-        }];
+        let full_common_handle = tidb_ranger::points::full_not_null_range();
         // Go `ranger.FullIntRange(isUnsigned)`: a scan with no `WHERE` still
         // carries the handle domain as ONE range, and the table reader splits
         // it like any other (`table_reader.go:295`). For an UNSIGNED handle
@@ -979,12 +976,7 @@ impl KvTableReader for KvTable {
         // A SIGNED handle needs none of this: its whole domain is one key
         // interval already, and building it here instead of through the range
         // encoder would only re-derive the same bytes.
-        let full_unsigned_handle = [IndexRange {
-            low: vec![Datum::UInt(0)],
-            high: vec![Datum::UInt(u64::MAX)],
-            low_exclusive: false,
-            high_exclusive: false,
-        }];
+        let full_unsigned_handle = tidb_ranger::points::full_int_range(true);
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
         } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
@@ -1006,24 +998,14 @@ impl KvTableReader for KvTable {
 
     fn record_key_range_groups(
         &self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         zone: &SessionTimeZone,
         descending: bool,
     ) -> Result<Vec<Vec<(Key, Key)>>, KvTableError> {
-        let full_common_handle = [IndexRange {
-            low: vec![Datum::MinNotNull],
-            high: vec![Datum::MaxValue],
-            low_exclusive: false,
-            high_exclusive: false,
-        }];
+        let full_common_handle = tidb_ranger::points::full_not_null_range();
         // See [`Self::record_key_ranges]: the full-domain defaults exist so
         // the boundary split can see the handle's own width.
-        let full_unsigned_handle = [IndexRange {
-            low: vec![Datum::UInt(0)],
-            high: vec![Datum::UInt(u64::MAX)],
-            low_exclusive: false,
-            high_exclusive: false,
-        }];
+        let full_unsigned_handle = tidb_ranger::points::full_int_range(true);
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
         } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
@@ -1072,7 +1054,7 @@ impl KvTableReader for KvTable {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -1109,7 +1091,7 @@ impl KvTableReader for KvTable {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -1147,7 +1129,7 @@ impl KvTableReader for KvTable {
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
@@ -2004,7 +1986,7 @@ impl KvTableReader for KvTable {
         &mut self,
         keep: &[usize],
         predicates: &[Expression],
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         aggregate: &PushdownPartialAggregate,
         context: &crate::StmtContext,
         zone: &SessionTimeZone,
@@ -2155,7 +2137,7 @@ impl KvTableReader for KvTable {
     fn pushdown_index_partial_aggregate_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         scan_keep: &[usize],
         predicates: &[Expression],
         aggregate: &PushdownPartialAggregate,
@@ -2237,9 +2219,9 @@ impl KvTableReader for KvTable {
         // asks TiKV for a unique get the range does not name.
         let declared_unique = index.unique
             && ranges.iter().all(|range| {
-                range.low.len() == index.column_offsets.len()
-                    && !range.low.iter().any(|datum| matches!(datum, Datum::Null))
-                    && !range.high.iter().any(|datum| matches!(datum, Datum::Null))
+                range.low_val.len() == index.column_offsets.len()
+                    && !range.low_val.iter().any(|datum| matches!(datum, Datum::Null))
+                    && !range.high_val.iter().any(|datum| matches!(datum, Datum::Null))
             });
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             tidb_codec::encode_key_in_timezone(zone, values)
@@ -2251,17 +2233,17 @@ impl KvTableReader for KvTable {
                 let mut low = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
-                    &encode(&range.low)?,
+                    &encode(&range.low_val)?,
                 ));
-                if range.low_exclusive {
+                if range.low_exclude {
                     low = low.prefix_next();
                 }
                 let mut high = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
-                    &encode(&range.high)?,
+                    &encode(&range.high_val)?,
                 ));
-                if !range.high_exclusive {
+                if !range.high_exclude {
                     high = high.prefix_next();
                 }
                 key_ranges.push((low, high));
@@ -2508,7 +2490,7 @@ impl KvTableReader for KvTable {
     fn pushdown_index_handle_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         scan_keep: &[usize],
         scan_extra_handle_slot: Option<usize>,
         predicates: &[Expression],
@@ -2762,17 +2744,17 @@ impl KvTableReader for KvTable {
             let mut low = Key::from_bytes(encode_index_seek_key(
                 self.table_id(),
                 index_id,
-                &encode(&range.low)?,
+                &encode(&range.low_val)?,
             ));
-            if range.low_exclusive {
+            if range.low_exclude {
                 low = low.prefix_next();
             }
             let mut high = Key::from_bytes(encode_index_seek_key(
                 self.table_id(),
                 index_id,
-                &encode(&range.high)?,
+                &encode(&range.high_val)?,
             ));
-            if !range.high_exclusive {
+            if !range.high_exclude {
                 high = high.prefix_next();
             }
             key_ranges.push((low, high));
@@ -2787,9 +2769,9 @@ impl KvTableReader for KvTable {
         // a unique lookup that binds no handle and answer nothing.
         let declared_unique = index.unique
             && ranges.iter().all(|range| {
-                range.low.len() == index.column_offsets.len()
-                    && !range.low.iter().any(|datum| matches!(datum, Datum::Null))
-                    && !range.high.iter().any(|datum| matches!(datum, Datum::Null))
+                range.low_val.len() == index.column_offsets.len()
+                    && !range.low_val.iter().any(|datum| matches!(datum, Datum::Null))
+                    && !range.high_val.iter().any(|datum| matches!(datum, Datum::Null))
             });
         // `output_offsets` addresses the full executor schema, while the
         // cursor consumes the projected response schema. Keep both mappings
@@ -2977,7 +2959,7 @@ impl KvTableReader for KvTable {
 
     fn scan_rows_with_handles_in_with_context(
         &mut self,
-        handle_ranges: Option<&[IndexRange]>,
+        handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         // UPDATE/DELETE use the same table reader as SELECT in Go. Keep the
@@ -3066,7 +3048,7 @@ impl KvTableReader for KvTable {
     fn scan_index_range(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<Vec<TableHandle>, KvTableError> {
         let mut cursor = self.index_range_cursor(index_id, range, zone)?;
@@ -3080,7 +3062,7 @@ impl KvTableReader for KvTable {
     fn index_range_cursor(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         // `ordered`: this entry point serves reads whose answer is the index
@@ -3091,7 +3073,7 @@ impl KvTableReader for KvTable {
     fn index_range_cursor_with_direction(
         &mut self,
         index_id: i64,
-        range: &IndexRange,
+        range: &Range,
         zone: &SessionTimeZone,
         descending: bool,
         ordered: bool,
@@ -3109,7 +3091,7 @@ impl KvTableReader for KvTable {
     fn index_ranges_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
@@ -3126,7 +3108,7 @@ impl KvTableReader for KvTable {
     fn index_ranges_cursor_with_direction(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
         descending: bool,
         ordered: bool,
@@ -3145,7 +3127,7 @@ impl KvTableReader for KvTable {
     fn index_lookup_ranges_cursor(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
@@ -3162,7 +3144,7 @@ impl KvTableReader for KvTable {
     fn index_ranges_cursor_for_physical_ids(
         &mut self,
         index_id: i64,
-        ranges: &[IndexRange],
+        ranges: &[Range],
         zone: &SessionTimeZone,
         physical_ids: &[i64],
         descending: bool,
@@ -3203,17 +3185,17 @@ impl KvTableReader for KvTable {
                 let mut low = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
-                    &encode(&range.low)?,
+                    &encode(&range.low_val)?,
                 ));
-                if range.low_exclusive {
+                if range.low_exclude {
                     low = low.prefix_next();
                 }
                 let mut high = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
-                    &encode(&range.high)?,
+                    &encode(&range.high_val)?,
                 ));
-                if !range.high_exclusive {
+                if !range.high_exclude {
                     high = high.prefix_next();
                 }
                 key_ranges.push((low, high));
@@ -4790,7 +4772,7 @@ pub struct TableScanExec {
     /// The clustered-handle ranges this scan reads, when the driver offered
     /// them and this scan took them ([`Executor::accept_handle_ranges`]).
     /// `None` reads the whole table, which is every scan until the offer.
-    handle_ranges: Option<Vec<IndexRange>>,
+    handle_ranges: Option<Vec<Range>>,
     /// Rebuilds `handle_ranges` on every open when the scan's access
     /// conditions read correlated columns (Go `ResolveCorrelatedColumns`).
     handle_range_rebuilder: Option<crate::access_path::RangeRebuilder>,
@@ -5991,11 +5973,11 @@ impl crate::table_access::TableAccess for TableScanExec {
                     return false;
                 };
                 let range = &ranges[0];
-                let fixed = range.low.len() >= rank
-                    && range.high.len() >= rank
-                    && !range.low_exclusive
-                    && !range.high_exclusive
-                    && (0..rank).all(|i| range.low[i] == range.high[i]);
+                let fixed = range.low_val.len() >= rank
+                    && range.high_val.len() >= rank
+                    && !range.low_exclude
+                    && !range.high_exclude
+                    && (0..rank).all(|i| range.low_val[i] == range.high_val[i]);
                 if !fixed {
                     return false;
                 }
@@ -6209,7 +6191,7 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// therefore still every row the statement admits -- the weaker half of
     /// the promise in [`crate::table_access`], and the only one that matters
     /// for correctness.
-    fn accept_handle_ranges(&mut self, ranges: &[IndexRange]) -> bool {
+    fn accept_handle_ranges(&mut self, ranges: &[Range]) -> bool {
         self.handle_ranges = Some(ranges.to_vec());
         true
     }
@@ -6616,7 +6598,7 @@ mod remote_cursor_tests {
         assert!(table
             .pushdown_index_handle_cursor(
                 7,
-                &[IndexRange::full()],
+                &tidb_ranger::points::full_range(),
                 &[2, 1, 0],
                 None,
                 &[predicate],
@@ -6729,7 +6711,7 @@ mod remote_cursor_tests {
             let cursor = table
                 .pushdown_index_handle_cursor(
                     7,
-                    &[IndexRange::full()],
+                    &tidb_ranger::points::full_range(),
                     &[2, 1, 0],
                     None,
                     &[predicate],
@@ -6818,7 +6800,7 @@ mod remote_cursor_tests {
                 let cursor = table
                     .pushdown_index_handle_cursor(
                         7,
-                        &[IndexRange::full()],
+                        &tidb_ranger::points::full_range(),
                         &[1, 2],
                         Some(extra_slot),
                         &predicates,
@@ -6876,7 +6858,7 @@ mod remote_cursor_tests {
             let cursor = table
                 .pushdown_index_handle_cursor(
                     7,
-                    &[IndexRange::full()],
+                    &tidb_ranger::points::full_range(),
                     &[0, 1, 2],
                     None,
                     &[],
@@ -6933,7 +6915,7 @@ mod remote_cursor_tests {
                 let cursor = table
                     .pushdown_index_handle_cursor(
                         7,
-                        &[IndexRange::full()],
+                        &tidb_ranger::points::full_range(),
                         &[0, 1, 2],
                         None,
                         &predicates,
@@ -7020,7 +7002,7 @@ mod remote_cursor_tests {
         let mut cursor = table
             .pushdown_index_handle_cursor(
                 7,
-                &[IndexRange::full()],
+                &tidb_ranger::points::full_range(),
                 &[0, 1],
                 None,
                 &predicates,
@@ -7074,7 +7056,7 @@ mod remote_cursor_tests {
         assert!(table
             .pushdown_index_handle_cursor(
                 7,
-                &[IndexRange::full()],
+                &tidb_ranger::points::full_range(),
                 &[0, 1],
                 None,
                 &predicates,
@@ -7465,11 +7447,12 @@ mod remote_cursor_tests {
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],
         };
-        let ranges = [IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Int(9)],
-            low_exclusive: false,
-            high_exclusive: false,
+        let ranges = [Range {
+            low_val: vec![Datum::Int(1)],
+            high_val: vec![Datum::Int(9)],
+            collators: vec![tidb_datatype::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
         }];
         let statement = PushdownStatementContext::default();
         let stream = table.pushdown_index_partial_aggregate_cursor(
@@ -7591,11 +7574,12 @@ mod remote_cursor_tests {
             }],
             streamed: true,
         };
-        let ranges = [IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Int(9)],
-            low_exclusive: false,
-            high_exclusive: false,
+        let ranges = [Range {
+            low_val: vec![Datum::Int(1)],
+            high_val: vec![Datum::Int(9)],
+            collators: vec![tidb_datatype::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
         }];
         let statement = PushdownStatementContext::default();
         let stream = table

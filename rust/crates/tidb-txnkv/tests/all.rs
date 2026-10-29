@@ -20,7 +20,6 @@ mod driver_error_source;
 mod gc_safe_point_realtikv_source;
 mod gc_safe_point_source;
 mod interface_source;
-mod key_ranges_source;
 mod kv_package_source;
 mod mutable_transaction_runtime_source;
 mod prefix_filter_source;

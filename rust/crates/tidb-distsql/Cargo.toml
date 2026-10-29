@@ -14,6 +14,7 @@ autotests = false
 [dependencies]
 tidb-copr = { path = "../tidb-copr" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-ranger = { path = "../tidb-ranger" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-trxevents = { path = "../tidb-trxevents" }

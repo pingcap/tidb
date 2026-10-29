@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
-use tidb_table::kv_table::IndexRange;
+use tidb_ranger::types::Range;
 use tidb_table::kv_table::KvColumn;
 use tidb_table::kv_table::KvIndex;
 use tidb_table::kv_table::KvTable;
@@ -250,11 +250,15 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
     );
     assert_entry("unique_general_ci_A", &modern_written);
 
-    let point = IndexRange {
-        low: row.to_vec(),
-        high: row.to_vec(),
-        low_exclusive: false,
-        high_exclusive: false,
+    let point = Range {
+        low_val: row.to_vec(),
+        high_val: row.to_vec(),
+        collators: row
+            .iter()
+            .map(|value| value.collation().unwrap_or(tidb_datatype::Collation::Binary))
+            .collect(),
+        low_exclude: false,
+        high_exclude: false,
     };
     assert_eq!(legacy_handle, modern_handle);
     let zone = tidb_datatype::SessionTimeZone::utc();

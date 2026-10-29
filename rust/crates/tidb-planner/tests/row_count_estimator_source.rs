@@ -45,7 +45,8 @@
 
 use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
-use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions, IndexRangeDatums, IndexRowCounts};
+use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions, IndexRowCounts};
+use tidb_ranger::Range;
 use tidb_stats::table_statistics::ColumnStats;
 use tidb_stats::table_statistics::IndexStats;
 use tidb_planner::selectivity_greedy::{
@@ -586,8 +587,8 @@ fn index_range(
     high: &[i64],
     low_exclude: bool,
     high_exclude: bool,
-) -> IndexRangeDatums {
-    IndexRangeDatums {
+) -> Range {
+    Range {
         collators: vec![tidb_datatype::Collation::Binary; low.len()],
         low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
         high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
@@ -605,7 +606,7 @@ fn source_index_range_estimates() {
     // the index histogram. `source_index_exp_backoff_estimates` covers the
     // populated-map case.
     let columns = vec![None, None];
-    let cases: &[(&str, Vec<IndexRangeDatums>, (f64, f64, f64))] = &[
+    let cases: &[(&str, Vec<Range>, (f64, f64, f64))] = &[
         (
             "idx_point_1_2",
             vec![index_range(&[1, 2], &[1, 2], false, false)],
@@ -684,7 +685,7 @@ fn source_index_exp_backoff_estimates() {
     let a = column_a();
     let b = column_b();
     let columns = vec![Some(&a), Some(&b)];
-    let cases: &[(&str, Vec<IndexRangeDatums>, (f64, f64, f64))] = &[
+    let cases: &[(&str, Vec<Range>, (f64, f64, f64))] = &[
         (
             "bo_point_1_2",
             vec![index_range(&[1, 2], &[1, 2], false, false)],

@@ -214,7 +214,7 @@ fn print_info() {
 
 fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     initialize_compute_topology(&config.global_config)?;
-    tidb_txnkv::global_mpp_failed_store_prober().run();
+    tidb_copr::mpp_probe::global_mpp_failed_store_prober().run();
     let _mpp_prober_cleanup = MppProberCleanup;
     tidb_cgmon::start_cgroup_monitor();
     let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
@@ -267,7 +267,7 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
 struct MppProberCleanup;
 impl Drop for MppProberCleanup {
     fn drop(&mut self) {
-        tidb_txnkv::global_mpp_failed_store_prober().stop();
+        tidb_copr::mpp_probe::global_mpp_failed_store_prober().stop();
     }
 }
 

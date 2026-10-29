@@ -183,7 +183,7 @@ fn the_second_execute_of_a_cacheable_statement_reports_a_hit() {
     for _ in 0..2 {
         session.run("EXECUTE range_cost USING @w,@d,@last").unwrap();
         let info =
-            tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 41).unwrap();
+            tidb_sessmgr::processinfo::SessionManager::get_process_info(&registry, 41).unwrap();
         let plan = tidb_plancodec::decode_binary_plan_for_connection(
             info.brief_binary_plan.clone(),
             "row",
@@ -1478,7 +1478,7 @@ fn held_prepared_execution_reuses_published_digest() {
     // Statement summary now legitimately materializes normalized SQL too.
     // Assert the published PREPARE identity, not a zero-normalizer-call count.
     assert_eq!(
-        tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 91)
+        tidb_sessmgr::processinfo::SessionManager::get_process_info(&registry, 91)
             .unwrap()
             .digest,
         digest

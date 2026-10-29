@@ -47,7 +47,7 @@ use tidb_txnkv::{
 /// Go `mpp_probe.go`'s `detectMPPStore`: `IsAlive` through the store's
 /// TiKV client.
 struct MppHealthClient<S: tikv_client::PdClient>(TikvStore<S>);
-impl<S: tikv_client::PdClient> tidb_txnkv::MppAliveClient for MppHealthClient<S> {
+impl<S: tikv_client::PdClient> crate::mpp_probe::MppAliveClient for MppHealthClient<S> {
     fn is_alive(&self, address: &str, timeout: std::time::Duration) -> Result<bool, String> {
         // Go's background ctx: no statement can stop a health probe.
         let ctx = tidb_kv::mem_quota::StatementMemory::default();
@@ -242,7 +242,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
                     let store = self.store.clone();
                     let memory = memory.clone();
                     probes.spawn(async move {
-                        let prober = tidb_txnkv::global_mpp_failed_store_prober();
+                        let prober = crate::mpp_probe::global_mpp_failed_store_prober();
                         // Go deprecated tidb_mpp_store_fail_ttl is always zero.
                         if !prober.is_recovery(&address, std::time::Duration::ZERO) {
                             return None;
@@ -251,7 +251,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
                             &address,
                             memory.as_ref(),
                             &store,
-                            tidb_txnkv::DETECT_TIMEOUT_LIMIT,
+                            crate::mpp_probe::DETECT_TIMEOUT_LIMIT,
                         )
                         .await
                         {
@@ -584,12 +584,12 @@ pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
         let store = store.clone();
         let memory = memory.clone();
         probes.spawn(async move {
-            let prober = tidb_txnkv::global_mpp_failed_store_prober();
+            let prober = crate::mpp_probe::global_mpp_failed_store_prober();
             // Go deprecated tidb_mpp_store_fail_ttl is always zero.
             if !prober.is_recovery(&address, std::time::Duration::ZERO) {
                 return None;
             }
-            match probe_mpp_store(&address, memory.as_ref(), &store, tidb_txnkv::DETECT_TIMEOUT_LIMIT).await
+            match probe_mpp_store(&address, memory.as_ref(), &store, crate::mpp_probe::DETECT_TIMEOUT_LIMIT).await
             {
                 Ok(true) => Some(index),
                 _ => {
@@ -1738,7 +1738,7 @@ mod mpp_read_batch_tests {
         let mut response = fixture.open().unwrap();
         let connections = fixture.connections.load(Ordering::SeqCst);
         let client = MppHealthClient(fixture.store.clone());
-        assert!(tidb_txnkv::MppAliveClient::is_alive(
+        assert!(crate::mpp_probe::MppAliveClient::is_alive(
             &client,
             &fixture.address,
             Duration::from_secs(2)
@@ -1785,7 +1785,7 @@ mod mpp_read_batch_tests {
         );
         let connections = fixture.connections.load(Ordering::SeqCst);
         let client = MppHealthClient(fixture.store.clone());
-        assert!(tidb_txnkv::MppAliveClient::is_alive(
+        assert!(crate::mpp_probe::MppAliveClient::is_alive(
             &client,
             &fixture.address,
             Duration::from_secs(2)

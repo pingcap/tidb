@@ -124,7 +124,7 @@ fn same_key(left: &[Datum], right: &[Datum], ctx: &crate::StmtContext) -> bool {
     let context = tidb_datatype::ConversionContext::new(
         tidb_expr::Columns::type_flags(ctx),
         tidb_datatype::ConversionLocation::from_time_zone(&zone),
-        &tidb_datatype::IGNORE_CONVERSION_WARNINGS,
+        &tidb_context::IGNORE_CONVERSION_WARNINGS,
     );
     left.len() == right.len()
         && left.iter().zip(right).all(|(left, right)| {

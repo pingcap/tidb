@@ -242,6 +242,28 @@ pub trait WarnAppender {
     fn append_note(&self, err: WarnErr);
 }
 
+/// Go `WarnAppender.AppendWarning`, the half of it `types.Context` (Rust
+/// `tidb_datatype::ConversionContext`) publishes conversion warnings through.
+///
+/// This is an input port, not warning storage. Executor/session warning
+/// handlers implement it and remain the sole owners of warning ordering,
+/// caps, levels, snapshots, and publication.
+pub trait ConversionWarningAppender {
+    /// Appends one original generated conversion error as a warning.
+    fn append_conversion_warning(&self, warning: TerrorError);
+}
+
+/// Source `contextutil.IgnoreWarn` for dependency-leaf contexts.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IgnoreConversionWarnings;
+
+impl ConversionWarningAppender for IgnoreConversionWarnings {
+    fn append_conversion_warning(&self, _warning: TerrorError) {}
+}
+
+/// Shared no-op warning sink used by strict/default dependency-leaf contexts.
+pub static IGNORE_CONVERSION_WARNINGS: IgnoreConversionWarnings = IgnoreConversionWarnings;
+
 /// Appends and reads warnings (Go `WarnHandler`).
 pub trait WarnHandler: WarnAppender {
     /// Gets the warning count.

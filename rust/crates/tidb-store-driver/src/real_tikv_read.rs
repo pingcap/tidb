@@ -218,7 +218,7 @@ impl ProductionReadProcessAuthority {
         drop(self.factory.take());
         drop(self.transaction_opener.take());
         // Go `mppStoreProber.Stop`: its probes send through the store.
-        tidb_txnkv::global_mpp_failed_store_prober().stop();
+        tidb_copr::mpp_probe::global_mpp_failed_store_prober().stop();
         let store = self.tikv_store.store().clone();
         self.tikv_store
             .block_on(store.close())

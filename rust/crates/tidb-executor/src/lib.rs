@@ -141,7 +141,7 @@ use tidb_distsql::select_response::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;
-use crate::handle_range::split_ranges_across_int64_boundary;
+use tidb_distsql::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
@@ -277,7 +277,7 @@ pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashA
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
 use tidb_ddl_build::table_backfill::KvTableBackfill;
-use tidb_table::kv_table::{FkAction, IndexRange, KvColumn, KvTable, RowDecodeContext, TableCharset};
+use tidb_table::kv_table::{FkAction, KvColumn, KvTable, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;
 pub use mem_quota::{SessionMemory, StatementCancellation, StatementMemory};
 use tidb_vardef::OomAction;

@@ -24,7 +24,7 @@
 //!
 //! # Pruning consumes the ranger's intervals over Go's pruning columns
 //!
-//! The caller hands over [`IndexRange`] intervals built for the columns read
+//! The caller hands over [`Range`] intervals built for the columns read
 //! by the partition expression. As pinned Go does, scalar RANGE pruning
 //! evaluates the full expression for points and for the supported monotone
 //! functions, HASH and scalar LIST evaluate points, RANGE COLUMNS compares
@@ -40,7 +40,7 @@
 //! that could be in the lowest partition, a bound this tier cannot compare.
 //! Reading a superset costs time; reading a subset costs correctness.
 //!
-use tidb_table::kv_table::IndexRange;
+use tidb_ranger::types::Range;
 use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
@@ -107,26 +107,12 @@ pub fn pruned_ids_from_ranger(
     ranger_ranges: &[tidb_ranger::types::Range],
     ctx: &impl tidb_expr::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
-    let ranges = ranger_ranges
-        .iter()
-        .map(|range| IndexRange {
-            low: range.low_val.clone(),
-            high: range.high_val.clone(),
-            low_exclusive: range.low_exclude,
-            high_exclusive: range.high_exclude,
-        })
-        .collect::<Vec<_>>();
-    let collations = ranger_ranges
-        .iter()
-        .map(|range| range.collators.clone())
-        .collect::<Vec<_>>();
-    pruned_ids_impl(spec, &ranges, &collations, ctx)
+    pruned_ids_impl(spec, ranger_ranges, ctx)
 }
 
 fn pruned_ids_impl(
     spec: &PartitionSpec,
-    ranges: &[IndexRange],
-    range_collations: &[Vec<tidb_datatype::Collation>],
+    ranges: &[Range],
     ctx: &impl tidb_expr::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
     Ok(match &spec.kind {
@@ -145,7 +131,6 @@ fn pruned_ids_impl(
             ranges,
             less_than,
             field_types,
-            range_collations,
         )),
         PartitionKind::List {
             values,
@@ -174,12 +159,12 @@ fn pruned_ids_impl(
 /// interval over one KEY column is enumerated while its width is smaller than
 /// the partition count. A partial multi-column key may hash anywhere and
 /// remains a full scan.
-fn prune_key_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Vec<i64> {
+fn prune_key_ids(spec: &PartitionSpec, ranges: &[Range]) -> Vec<i64> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
-        if range.is_point(true) && range.low.len() == spec.dependencies.len() {
+        if range.is_point(true) && range.low_val.len() == spec.dependencies.len() {
             let Ok(ordinal) =
-                tidb_table::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
+                tidb_table::partition_routing::key_partition_index_for_tuple(&range.low_val, spec.num())
             else {
                 return spec
                     .definitions
@@ -206,18 +191,18 @@ fn prune_key_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Vec<i64> {
         .collect()
 }
 
-fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) -> bool {
-    let (Some(low), Some(high)) = (range.low.first(), range.high.first()) else {
+fn mark_short_key_range(range: &Range, partitions: u64, used: &mut [bool]) -> bool {
+    let (Some(low), Some(high)) = (range.low_val.first(), range.high_val.first()) else {
         return false;
     };
     let (low, high, unsigned) = match (low, high) {
         (Datum::Int(low), Datum::Int(high)) => {
-            let low = if range.low_exclusive {
+            let low = if range.low_exclude {
                 low.wrapping_add(1)
             } else {
                 *low
             };
-            let high = if range.high_exclusive {
+            let high = if range.high_exclude {
                 high.wrapping_sub(1)
             } else {
                 *high
@@ -225,12 +210,12 @@ fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) 
             (low as u64, high as u64, false)
         }
         (Datum::UInt(low), Datum::UInt(high)) => {
-            let low = if range.low_exclusive {
+            let low = if range.low_exclude {
                 low.wrapping_add(1)
             } else {
                 *low
             };
-            let high = if range.high_exclusive {
+            let high = if range.high_exclude {
                 high.wrapping_sub(1)
             } else {
                 *high
@@ -275,10 +260,9 @@ fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) 
 /// the two source `sort.Search` operations over the partition bounds.
 fn prune_range_columns_ids(
     spec: &PartitionSpec,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     less_than: &[Vec<tidb_table::partition_routing::RangeColumnBound>],
     field_types: &[tidb_datatype::FieldType],
-    range_collations: &[Vec<tidb_datatype::Collation>],
 ) -> Vec<i64> {
     if less_than.len() != spec.definitions.len()
         || less_than
@@ -293,32 +277,30 @@ fn prune_range_columns_ids(
     }
 
     let mut used = vec![false; spec.definitions.len()];
-    for (range_index, range) in ranges.iter().enumerate() {
-        if range.low.len() > field_types.len() || range.high.len() > field_types.len() {
+    for range in ranges {
+        if range.low_val.len() > field_types.len() || range.high_val.len() > field_types.len() {
             return spec
                 .definitions
                 .iter()
                 .map(|definition| definition.id)
                 .collect();
         }
-        let Some(collations) = range_collations
-            .get(range_index)
-            .filter(|collations| collations.len() >= range.low.len().max(range.high.len()))
-        else {
+        let collations = &range.collators;
+        if collations.len() < range.low_val.len().max(range.high_val.len()) {
             return spec
                 .definitions
                 .iter()
                 .map(|definition| definition.id)
                 .collect();
-        };
+        }
 
         let Ok(start) = first_range_columns_bound(less_than, |bound| {
             range_columns_min_cmp(
                 bound,
-                &range.low,
+                &range.low_val,
                 field_types,
                 collations.as_slice(),
-                range.low_exclusive,
+                range.low_exclude,
             )
         }) else {
             return spec
@@ -330,9 +312,9 @@ fn prune_range_columns_ids(
         let Ok(mut end) = first_range_columns_bound(less_than, |bound| {
             range_columns_max_cmp(
                 bound,
-                &range.high,
+                &range.high_val,
                 collations.as_slice(),
-                range.high_exclusive,
+                range.high_exclude,
             )
         }) else {
             return spec
@@ -498,7 +480,7 @@ pub type ListPartitionLocation = BTreeMap<usize, BTreeSet<isize>>;
 /// `None` means the comparison cannot safely prune and must become a full
 /// scan. An empty map is a proven contradiction for this predicate.
 pub fn list_column_location_for_ranges(
-    ranges: &[IndexRange],
+    ranges: &[Range],
     values: &[(Vec<Datum>, usize)],
     default_partition: Option<usize>,
     field_types: &[tidb_datatype::FieldType],
@@ -523,7 +505,7 @@ pub fn list_column_location_for_ranges(
 
     let mut location = ListPartitionLocation::new();
     for range in ranges {
-        if range.low.len() != 1 || range.high.len() != 1 {
+        if range.low_val.len() != 1 || range.high_val.len() != 1 {
             return Ok(None);
         }
         let point = range.is_point(true);
@@ -535,7 +517,7 @@ pub fn list_column_location_for_ranges(
             let matches = if point {
                 tidb_expr::compare_datums_with_collation(
                     value,
-                    &range.high[0],
+                    &range.high_val[0],
                     field_type.collation(),
                 )? == Ordering::Equal
             } else {
@@ -586,10 +568,10 @@ pub fn intersect_list_partition_location(
 
 fn tuple_in_range(
     tuple: &[Datum],
-    range: &IndexRange,
+    range: &Range,
     field_types: &[tidb_datatype::FieldType],
 ) -> Result<bool, tidb_expr::EvalError> {
-    let width = range.low.len().min(range.high.len()).min(tuple.len());
+    let width = range.low_val.len().min(range.high_val.len()).min(tuple.len());
     if width == 0 {
         return Ok(true);
     }
@@ -598,14 +580,14 @@ fn tuple_in_range(
             "LIST COLUMNS range wider than its field types",
         ));
     }
-    let low = tuple_endpoint_order(&tuple[..width], &range.low[..width], &field_types[..width])?;
-    let high = tuple_endpoint_order(&tuple[..width], &range.high[..width], &field_types[..width])?;
-    let lower_ok = if range.low_exclusive {
+    let low = tuple_endpoint_order(&tuple[..width], &range.low_val[..width], &field_types[..width])?;
+    let high = tuple_endpoint_order(&tuple[..width], &range.high_val[..width], &field_types[..width])?;
+    let lower_ok = if range.low_exclude {
         low == Ordering::Greater
     } else {
         low != Ordering::Less
     };
-    let upper_ok = if range.high_exclusive {
+    let upper_ok = if range.high_exclude {
         high == Ordering::Less
     } else {
         high != Ordering::Greater
@@ -642,7 +624,7 @@ fn tuple_endpoint_order(
 /// because an interval can include values that have no explicit owner.
 fn prune_list_ids(
     spec: &PartitionSpec,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     values: &[(i64, usize)],
     null_partition: Option<usize>,
     default_partition: Option<usize>,
@@ -657,11 +639,16 @@ fn prune_list_ids(
     };
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
-        if range.high.len() != spec.dependencies.len() || range.is_full() {
+        // `[NULL, +inf]`, the full scan's interval.
+        let full_scan = matches!(range.low_val.as_slice(), [Datum::Null])
+            && matches!(range.high_val.as_slice(), [Datum::MaxValue])
+            && !range.low_exclude
+            && !range.high_exclude;
+        if range.high_val.len() != spec.dependencies.len() || full_scan {
             return Ok(full());
         }
         if range.is_point(true) {
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high_val);
             let value = spec.expr.eval(ctx, row.to_row())?;
             let (value, is_null) = list_pruning_integer(&value)?;
             let ordinal = if is_null {
@@ -736,7 +723,7 @@ type ScalarInterval = (ScalarRangeEndpoint, ScalarRangeEndpoint);
 /// One scalar ranger interval. `None` means an endpoint has a type that the
 /// partition expression cannot compare, so its safe pruning answer is every
 /// partition.
-fn scalar_interval(range: &IndexRange) -> Option<ScalarInterval> {
+fn scalar_interval(range: &Range) -> Option<ScalarInterval> {
     fn endpoint(value: Option<&Datum>) -> Option<(Option<i64>, bool)> {
         match value? {
             Datum::Int(value) => Some((Some(*value), false)),
@@ -747,11 +734,11 @@ fn scalar_interval(range: &IndexRange) -> Option<ScalarInterval> {
             _ => None,
         }
     }
-    let (low, low_unsigned) = endpoint(range.low.first())?;
-    let (high, high_unsigned) = endpoint(range.high.first())?;
+    let (low, low_unsigned) = endpoint(range.low_val.first())?;
+    let (high, high_unsigned) = endpoint(range.high_val.first())?;
     Some((
-        (low, range.low_exclusive, low_unsigned),
-        (high, range.high_exclusive, high_unsigned),
+        (low, range.low_exclude, low_unsigned),
+        (high, range.high_exclude, high_unsigned),
     ))
 }
 
@@ -814,10 +801,10 @@ fn scalar_in_interval(
 }
 
 /// `NULL` is selected when the range starts at inclusive `NULL`: this covers
-/// both the `IS NULL` point and `IndexRange::full()`. Ordinary comparisons
+/// both the `IS NULL` point and `Range::full()`. Ordinary comparisons
 /// start at `MinNotNull` and therefore cannot select it.
-fn interval_includes_null(range: &IndexRange) -> bool {
-    matches!(range.low.first(), Some(Datum::Null)) && !range.low_exclusive
+fn interval_includes_null(range: &Range) -> bool {
+    matches!(range.low_val.first(), Some(Datum::Null)) && !range.low_exclude
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -833,16 +820,16 @@ enum RangeMonotoneMode {
 /// proves that only the first `2^flen` hash values can occur.
 fn prune_hash_ids(
     spec: &PartitionSpec,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     ctx: &impl tidb_expr::Columns,
 ) -> Option<Vec<i64>> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
         if range.is_point(true) {
-            if range.high.len() != spec.dependencies.len() {
+            if range.high_val.len() != spec.dependencies.len() {
                 return None;
             }
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high_val);
             let Ok(value) = spec.expr.eval(ctx, row.to_row()) else {
                 // Pinned Go skips a point whose partition expression cannot
                 // be evaluated; another ranger point may still be usable.
@@ -888,12 +875,12 @@ fn prune_hash_ids(
 }
 
 fn mark_short_hash_range(
-    range: &IndexRange,
+    range: &Range,
     partitions: u64,
     field_type: &tidb_datatype::FieldType,
     used: &mut [bool],
 ) -> bool {
-    let (Some(low), Some(high)) = (range.low.first(), range.high.first()) else {
+    let (Some(low), Some(high)) = (range.low_val.first(), range.high_val.first()) else {
         return false;
     };
     let (Some(mut low), Some(mut high)) = (
@@ -902,10 +889,10 @@ fn mark_short_hash_range(
     ) else {
         return false;
     };
-    if range.low_exclusive {
+    if range.low_exclude {
         low = low.wrapping_add(1);
     }
-    if range.high_exclusive {
+    if range.high_exclude {
         high = high.wrapping_sub(1);
     }
     let width = if field_type.is_unsigned() {
@@ -949,7 +936,7 @@ mod tests {
     use super::*;
     use tidb_table::partition_routing::PartitionDef;
 
-    fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
+    fn pruned_ids(spec: &PartitionSpec, ranges: &[Range]) -> Option<Vec<i64>> {
         let field_types = match &spec.kind {
             PartitionKind::RangeColumns { field_types, .. } => Some(field_types.as_slice()),
             _ => None,
@@ -957,10 +944,8 @@ mod tests {
         let ranger_ranges = ranges
             .iter()
             .map(|range| {
-                let width = range.low.len().max(range.high.len());
-                tidb_ranger::types::Range {
-                    low_val: range.low.clone(),
-                    high_val: range.high.clone(),
+                let width = range.low_val.len().max(range.high_val.len());
+                Range {
                     collators: field_types.map_or_else(
                         || vec![tidb_datatype::Collation::Binary; width],
                         |field_types| {
@@ -971,8 +956,7 @@ mod tests {
                                 .collect()
                         },
                     ),
-                    low_exclude: range.low_exclusive,
-                    high_exclude: range.high_exclusive,
+                    ..range.clone()
                 }
             })
             .collect::<Vec<_>>();
@@ -1159,12 +1143,16 @@ mod tests {
             (vec![Datum::new_string("b")], 1),
         ];
         let explicit = list_column_location_for_ranges(
-            &[interval(
-                Datum::new_string("A"),
-                false,
-                Datum::new_string("A"),
-                false,
-            )],
+            // The detacher gives a range its column's collator.
+            &[Range {
+                collators: vec![field_type.collation()],
+                ..interval(
+                    Datum::new_string("A"),
+                    false,
+                    Datum::new_string("A"),
+                    false,
+                )
+            }],
             &values,
             Some(2),
             std::slice::from_ref(&field_type),
@@ -1175,12 +1163,16 @@ mod tests {
         assert_eq!(explicit.keys().copied().collect::<Vec<_>>(), vec![0]);
 
         let gap = list_column_location_for_ranges(
-            &[interval(
-                Datum::new_string("z"),
-                false,
-                Datum::new_string("z"),
-                false,
-            )],
+            // The detacher gives a range its column's collator.
+            &[Range {
+                collators: vec![field_type.collation()],
+                ..interval(
+                    Datum::new_string("z"),
+                    false,
+                    Datum::new_string("z"),
+                    false,
+                )
+            }],
             &values,
             Some(2),
             std::slice::from_ref(&field_type),
@@ -1191,12 +1183,14 @@ mod tests {
         assert_eq!(gap.keys().copied().collect::<Vec<_>>(), vec![2]);
     }
 
-    fn interval(low: Datum, low_exclusive: bool, high: Datum, high_exclusive: bool) -> IndexRange {
-        IndexRange {
-            low: vec![low],
-            high: vec![high],
-            low_exclusive,
-            high_exclusive,
+    fn interval(low: Datum, low_exclusive: bool, high: Datum, high_exclusive: bool) -> Range {
+        Range {
+            low_val: vec![low],
+            high_val: vec![high],
+            // `pruned_ids` gives each test interval its columns' collators.
+            collators: Vec::new(),
+            low_exclude: low_exclusive,
+            high_exclude: high_exclusive,
         }
     }
 
@@ -1205,12 +1199,13 @@ mod tests {
         low_exclusive: bool,
         high: Vec<Datum>,
         high_exclusive: bool,
-    ) -> IndexRange {
-        IndexRange {
-            low,
-            high,
-            low_exclusive,
-            high_exclusive,
+    ) -> Range {
+        Range {
+            low_val: low,
+            high_val: high,
+            collators: Vec::new(),
+            low_exclude: low_exclusive,
+            high_exclude: high_exclusive,
         }
     }
 
@@ -1720,7 +1715,7 @@ mod tests {
             *default_partition = None;
         }
         assert_eq!(
-            pruned_ids(&without_default, &[IndexRange::full()]),
+            pruned_ids(&without_default, &tidb_ranger::points::full_range()),
             Some(vec![201, 202, 203]),
             "a full ranger interval must retain every definition"
         );

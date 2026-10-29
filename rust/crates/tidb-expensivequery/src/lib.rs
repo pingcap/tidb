@@ -31,7 +31,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_log::{Field, Value};
-use tidb_memoryusagealarm::{gen_log_fields, ProcessInfo, SessionManager};
+use tidb_memoryusagealarm::gen_log_fields;
+use tidb_sessmgr::processinfo::{ProcessInfo, SessionManager};
 
 /// Go `Handle`: the handler for expensive queries.
 pub struct Handle {

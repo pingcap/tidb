@@ -20,6 +20,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 use tidb_terror::TerrorError;
+use tidb_context::{ConversionWarningAppender, IGNORE_CONVERSION_WARNINGS};
 
 pub use flags::{ConversionFlags, DateModes, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS};
 
@@ -62,27 +63,6 @@ impl ConversionLocation {
         &self.0
     }
 }
-
-/// Capability required by [`ConversionContext`] to publish a typed warning.
-///
-/// This is an input port, not warning storage. Executor/session warning
-/// handlers implement it and remain the sole owners of warning ordering,
-/// caps, levels, snapshots, and publication.
-pub trait ConversionWarningAppender {
-    /// Appends one original generated conversion error as a warning.
-    fn append_conversion_warning(&self, warning: TerrorError);
-}
-
-/// Source `contextutil.IgnoreWarn` for dependency-leaf contexts.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct IgnoreConversionWarnings;
-
-impl ConversionWarningAppender for IgnoreConversionWarnings {
-    fn append_conversion_warning(&self, _warning: TerrorError) {}
-}
-
-/// Shared no-op warning sink used by strict/default dependency-leaf contexts.
-pub static IGNORE_CONVERSION_WARNINGS: IgnoreConversionWarnings = IgnoreConversionWarnings;
 
 /// Information carried while converting between datatype representations.
 #[derive(Clone)]

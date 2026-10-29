@@ -20,10 +20,8 @@
 
 use std::sync::Mutex;
 
-use tidb_datatype::{
-    output_format, parse_hex_str, ConversionContext, ConversionLocation, ConversionWarningAppender,
-    Datum, DatumKind, FieldType, FieldTypeCode, STRICT_FLAGS,
-};
+use tidb_datatype::{output_format, parse_hex_str, ConversionContext, ConversionLocation, Datum, DatumKind, FieldType, FieldTypeCode, STRICT_FLAGS};
+use tidb_context::ConversionWarningAppender;
 use tidb_terror::TerrorError;
 
 #[derive(Default)]

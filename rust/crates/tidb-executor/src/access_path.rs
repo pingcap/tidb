@@ -83,7 +83,7 @@ const INDEX_LOOKUP_INLINE_HANDLES: usize = 16;
 use crate::kv_table::{IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor};
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::IndexRange;
+use tidb_ranger::types::Range;
 use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownRowStream;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
@@ -1557,7 +1557,7 @@ const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 5;
 /// recomputes a scan's ranges from access conditions over correlated columns
 /// each time an Apply reopens it for a new outer row.
 pub(crate) type RangeRebuilder =
-    std::sync::Arc<dyn Fn() -> Result<Vec<IndexRange>, ExecError> + Send + Sync>;
+    std::sync::Arc<dyn Fn() -> Result<Vec<Range>, ExecError> + Send + Sync>;
 
 /// Adds the rows a table-side handle lookup found to the statement's
 /// processed keys: Go's table-side coprocessor scan processes one key per
@@ -1578,7 +1578,7 @@ pub struct IndexRangeSourceExec {
     /// composed when logical column pruning reaches a join leaf.
     keep: Vec<usize>,
     index_id: i64,
-    ranges: Vec<IndexRange>,
+    ranges: Vec<Range>,
     /// Rebuilds `ranges` on every open when the scan's access conditions read
     /// correlated columns (Go `rebuildIndexRanges`).
     range_rebuilder: Option<RangeRebuilder>,
@@ -1891,7 +1891,7 @@ impl IndexRangeSourceExec {
         meta: ExecutorMeta,
         table: KvTable,
         index_id: i64,
-        ranges: Vec<IndexRange>,
+        ranges: Vec<Range>,
         decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         Self::new_with_statement(
@@ -1982,7 +1982,7 @@ impl IndexRangeSourceExec {
         meta: ExecutorMeta,
         mut table: KvTable,
         index_id: i64,
-        ranges: Vec<IndexRange>,
+        ranges: Vec<Range>,
         decode_context: tidb_table::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
@@ -4499,11 +4499,11 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         };
         if rank > 0 {
             let range = &self.ranges[0];
-            let fixed = range.low.len() >= rank
-                && range.high.len() >= rank
-                && !range.low_exclusive
-                && !range.high_exclusive
-                && (0..rank).all(|i| range.low[i] == range.high[i]);
+            let fixed = range.low_val.len() >= rank
+                && range.high_val.len() >= rank
+                && !range.low_exclude
+                && !range.high_exclude
+                && (0..rank).all(|i| range.low_val[i] == range.high_val[i]);
             if !fixed {
                 return false;
             }
@@ -4904,6 +4904,21 @@ pub(crate) enum LookupProbePart {
     // Values at this column in each ranger template. Alternative columns
     // share the same ordinal, preserving correlated static range tuples.
     Alternatives(Vec<Datum>),
+}
+
+/// Go `Range.Collators` for an index-join range built from key datums: Go
+/// fills the keys into the planner's template, whose collators are the index
+/// columns'; a key datum converted into its column's domain carries that
+/// column's collation (a string does, any other kind compares binary).
+pub(crate) fn key_collators(low: &[Datum], high: &[Datum]) -> Vec<tidb_datatype::Collation> {
+    (0..low.len().max(high.len()))
+        .map(|position| {
+            low.get(position)
+                .and_then(Datum::collation)
+                .or_else(|| high.get(position).and_then(Datum::collation))
+                .unwrap_or(tidb_datatype::Collation::Binary)
+        })
+        .collect()
 }
 
 /// Go's static next-column range (`nextColRange`) in one index-join
@@ -5613,27 +5628,29 @@ impl IndexJoinLookupExec {
         key: &[Datum],
         bounds: &[Datum],
         tail: Option<&LookupProbeTail>,
-    ) -> Result<Vec<IndexRange>, ExecError> {
+    ) -> Result<Vec<Range>, ExecError> {
         if bounds.is_empty() {
             // Go `buildRangesForIndexJoin` fills the join keys into a template
             // whose last slot may hold the static next-column range.
             let Some(tail) = tail else {
-                return Ok(vec![IndexRange {
-                    low: key.to_vec(),
-                    high: key.to_vec(),
-                    low_exclusive: false,
-                    high_exclusive: false,
+                return Ok(vec![Range {
+                    low_val: key.to_vec(),
+                    high_val: key.to_vec(),
+                    collators: key_collators(key, key),
+                    low_exclude: false,
+                    high_exclude: false,
                 }]);
             };
             let mut low = key.to_vec();
             low.push(tail.low.clone());
             let mut high = key.to_vec();
             high.push(tail.high.clone());
-            return Ok(vec![IndexRange {
-                low,
-                high,
-                low_exclusive: tail.low_exclusive,
-                high_exclusive: tail.high_exclusive,
+            return Ok(vec![Range {
+                collators: key_collators(&low, &high),
+                low_val: low,
+                high_val: high,
+                low_exclude: tail.low_exclusive,
+                high_exclude: tail.high_exclusive,
             }]);
         }
         if bounds.len() != self.probe_bound_ops.len() {
@@ -5686,11 +5703,16 @@ impl IndexJoinLookupExec {
                 low.extend(range.low_val);
                 let mut high = key.to_vec();
                 high.extend(range.high_val);
-                IndexRange {
-                    low,
-                    high,
-                    low_exclusive: range.low_exclude,
-                    high_exclusive: range.high_exclude,
+                // Go sets the template's last slot from the rebuilt range:
+                // `ran.Collators[lastPos] = nextColRan.Collators[0]`.
+                let mut collators = key_collators(key, key);
+                collators.extend(range.collators);
+                Range {
+                    low_val: low,
+                    high_val: high,
+                    collators,
+                    low_exclude: range.low_exclude,
+                    high_exclude: range.high_exclude,
                 }
             })
             .collect())
@@ -5705,7 +5727,7 @@ impl IndexJoinLookupExec {
     /// `[7, >= 'epic']` -- so the task's ranges go through
     /// `ranger.UnionRanges(.., true)` and each inner row is read once. That
     /// union spans the whole task, so the limit does not apply to it.
-    fn take_probe_ranges(&mut self, limit: Option<usize>) -> Result<Vec<IndexRange>, ExecError> {
+    fn take_probe_ranges(&mut self, limit: Option<usize>) -> Result<Vec<Range>, ExecError> {
         let compare = !self.probe_bound_ops.is_empty();
         let mut ranges = Vec::new();
         while compare || limit.is_none_or(|limit| ranges.len() < limit) {
@@ -5718,27 +5740,8 @@ impl IndexJoinLookupExec {
         if !compare || ranges.len() < 2 {
             return Ok(ranges);
         }
-        let ranges = ranges
-            .into_iter()
-            .map(|range| tidb_ranger::types::Range {
-                low_val: range.low,
-                high_val: range.high,
-                collators: Vec::new(),
-                low_exclude: range.low_exclusive,
-                high_exclude: range.high_exclusive,
-            })
-            .collect();
-        let ranges = tidb_ranger::ranger::union_ranges(ranges, true)
-            .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))?;
-        Ok(ranges
-            .into_iter()
-            .map(|range| IndexRange {
-                low: range.low_val,
-                high: range.high_val,
-                low_exclusive: range.low_exclude,
-                high_exclusive: range.high_exclude,
-            })
-            .collect())
+        tidb_ranger::ranger::union_ranges(ranges, true)
+            .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))
     }
 
     /// The next probe's converted key tuple, bounds dropped. Callers that do
@@ -6998,7 +7001,7 @@ use std::collections::HashMap;
                 ExecutorMeta::new(schema, 0, 2, 32),
                 table.clone(),
                 1,
-                vec![IndexRange::full()],
+                tidb_ranger::points::full_range(),
                 crate::RowDecodeContext::for_test_query_utc(),
             );
             assert!(source.accept_keep_order(false));
@@ -7039,7 +7042,7 @@ use std::collections::HashMap;
                         ExecutorMeta::new(Schema::new(columns), 0, 2, 2),
                         table.clone(),
                         1,
-                        vec![IndexRange::full()],
+                        tidb_ranger::points::full_range(),
                         crate::RowDecodeContext::for_test_query_utc(),
                     );
                     source.read_extra_handle(handle_slot);
@@ -7267,7 +7270,7 @@ use std::collections::HashMap;
             ExecutorMeta::new(schema, 0, 1, 3),
             (**table).clone(),
             index_id,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
         );
         assert!(source.accept_keep_order(false));
@@ -7848,7 +7851,7 @@ use std::collections::HashMap;
             ),
             table,
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
         );
         check_close.store(true, Ordering::SeqCst);
@@ -7972,10 +7975,10 @@ use std::collections::HashMap;
             .probe_index_ranges(&[Datum::Int(7)], &[Datum::Int(10), Datum::Int(12)], None)
             .unwrap();
         let range = &ranges[0];
-        assert_eq!(range.low, [Datum::Int(7), Datum::Int(12)]);
-        assert_eq!(range.high, [Datum::Int(7), Datum::MaxValue]);
-        assert!(!range.low_exclusive);
-        assert!(!range.high_exclusive);
+        assert_eq!(range.low_val, [Datum::Int(7), Datum::Int(12)]);
+        assert_eq!(range.high_val, [Datum::Int(7), Datum::MaxValue]);
+        assert!(!range.low_exclude);
+        assert!(!range.high_exclude);
     }
 
     #[test]
@@ -8011,7 +8014,7 @@ use std::collections::HashMap;
             ExecutorMeta::new(Schema::new(vec![]), 0, 1, 32),
             table,
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
         );
         source.set_lookup_concurrency(13);
@@ -8040,7 +8043,7 @@ use std::collections::HashMap;
             ExecutorMeta::new(Schema::new(vec![]), 0, 32, 32),
             table,
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
         );
         source.open().unwrap();
@@ -8523,7 +8526,7 @@ use std::collections::HashMap;
             },
             table.clone(),
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
@@ -8552,7 +8555,7 @@ use std::collections::HashMap;
             },
             table,
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
@@ -8734,7 +8737,7 @@ use std::collections::HashMap;
             ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
             table,
             1,
-            vec![IndexRange::full()],
+            tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
         );
         if covering {

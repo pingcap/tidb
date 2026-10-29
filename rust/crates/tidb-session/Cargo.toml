@@ -47,7 +47,6 @@ tidb-globalconn = { path = "../tidb-globalconn" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-mathutil = { path = "../tidb-mathutil" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
 tidb-redact = { path = "../tidb-redact" }

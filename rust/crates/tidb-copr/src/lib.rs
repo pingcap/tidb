@@ -15,6 +15,9 @@
 //! Go `pkg/store/copr`: the store's coprocessor client (`CopClient`), the
 //! batch-cop task building for TiFlash, and the MPP client (`MPPClient`).
 
+pub mod key_ranges;
+pub mod range_diagnostics;
+pub mod mpp_probe;
 pub mod region_location;
 pub mod copr_cache;
 pub mod copr_cache_metrics;

@@ -27,7 +27,7 @@
 use tidb_datatype::{Collation, Datum};
 
 /// Go `Range`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Range {
     /// Go `LowVal`.
     pub low_val: Vec<Datum>,
@@ -39,6 +39,13 @@ pub struct Range {
     pub low_exclude: bool,
     /// Go `HighExclude`.
     pub high_exclude: bool,
+}
+
+/// Go `Range` is a `fmt.Stringer`.
+impl std::fmt::Display for Range {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.to_display_string())
+    }
 }
 
 /// Go `Ranges` (`[]*Range`).

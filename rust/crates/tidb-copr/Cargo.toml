@@ -34,6 +34,7 @@ tidb-log = { path = "../tidb-log" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-placement = { path = "../tidb-placement" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-hack = { path = "../tidb-hack" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-murmur3 = { path = "../tidb-murmur3" }

@@ -352,7 +352,7 @@ fn cast_contextual_value(
     use tidb_terror::TerrorError;
     #[derive(Default)]
     struct Warnings(std::cell::RefCell<Vec<TerrorError>>);
-    impl tidb_datatype::ConversionWarningAppender for Warnings {
+    impl tidb_context::ConversionWarningAppender for Warnings {
         fn append_conversion_warning(&self, warning: TerrorError) {
             self.0.borrow_mut().push(warning);
         }

@@ -264,7 +264,7 @@ impl ColumnRange {
 
 /// The ranger's range, including per-column collators. Cardinality must not
 /// project this into a second representation that loses range metadata.
-pub use tidb_ranger::Range as IndexRangeDatums;
+use tidb_ranger::Range;
 
 fn topn_num(topn: Option<&TopN>) -> usize {
     topn.map_or(0, TopN::num)
@@ -695,7 +695,7 @@ pub fn get_column_row_count(
 /// index alternatives; ranges belong to the candidate being estimated.
 pub fn get_index_row_count_with_partial_stats(
     columns: &[(Option<&ColumnStats>, Collation)],
-    ranges: &[IndexRangeDatums],
+    ranges: &[Range],
     realtime: i64,
     modify_count: i64,
     options: &EstimatorOptions,
@@ -1128,7 +1128,7 @@ fn out_of_range_on_index(index: &IndexStats, value: &Datum) -> bool {
 /// Go `getOrdinalOfRangeCond`: the first index column whose bounds differ.
 /// Unlike the point predicate, Go compares every position using Collators[0].
 #[must_use]
-pub fn ordinal_of_range_cond(range: &IndexRangeDatums) -> usize {
+pub fn ordinal_of_range_cond(range: &Range) -> usize {
     for (index, low) in range.low_val.iter().enumerate() {
         let Some(high) = range.high_val.get(index) else {
             return index;
@@ -1241,7 +1241,7 @@ pub fn get_index_row_count(
     stats: &IndexEstimationStats<'_>,
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
-    ranges: &[IndexRangeDatums],
+    ranges: &[Range],
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     if stats.index.is_some()
@@ -1413,7 +1413,7 @@ pub fn get_index_row_count(
             equal_selectivity(&tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val[..position])?)?
         };
         if position < range.low_val.len() {
-            let suffix = IndexRangeDatums {
+            let suffix = Range {
                 low_val: vec![range.low_val[position].clone()],
                 high_val: vec![range.high_val[position].clone()],
                 collators: vec![range.collators[position]],
@@ -1469,7 +1469,7 @@ pub fn exp_backoff_estimation(
     columns: &[Option<&ColumnStats>],
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
-    range: &IndexRangeDatums,
+    range: &Range,
     realtime_row_count: i64,
     modify_count: i64,
     options: &EstimatorOptions,
@@ -1500,7 +1500,7 @@ pub fn exp_backoff_estimation(
             // again and remains finite.
             if range.low_val.len() > 1 {
                 if let Some(candidates) = recursive_indexes.get(position) {
-                    let one_column_range = IndexRangeDatums {
+                    let one_column_range = Range {
                         collators: vec![range.collators[0]],
                         low_val: vec![range.low_val[position].clone()],
                         high_val: vec![range.high_val[position].clone()],
@@ -1601,7 +1601,7 @@ pub fn get_index_row_count_for_stats_v2(
     columns: &[Option<&ColumnStats>],
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
-    ranges: &[IndexRangeDatums],
+    ranges: &[Range],
     row_counts: IndexRowCounts,
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
@@ -1993,7 +1993,7 @@ mod equal_cond_selectivity_tests {
 mod recursive_index_estimation_tests {
     use super::{
         encode_datums, exp_backoff_estimation, EstimatorOptions, Histogram, IndexColumnStats,
-        IndexRangeDatums, IndexRowCounts, IndexStats, RecursiveIndexStats,
+        Range, IndexRowCounts, IndexStats, RecursiveIndexStats,
     };
     use tidb_datatype::Datum;
 
@@ -2037,7 +2037,7 @@ mod recursive_index_estimation_tests {
             ],
             Vec::new(),
         ];
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
@@ -2083,7 +2083,7 @@ mod recursive_index_estimation_tests {
             unsigned: false,
         };
         let columns = vec![Some(&column), None];
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
@@ -2154,7 +2154,7 @@ mod recursive_index_estimation_tests {
             Vec::new(),
             vec![RecursiveIndexStats::new(Some(&candidate), vec![None], IndexRowCounts::unscaled(100, 0))],
         ];
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
             high_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
@@ -2219,7 +2219,7 @@ mod recursive_index_estimation_tests {
                 })],
             Vec::new(),
         ];
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 2],
             low_val: vec![Datum::Int(1), Datum::Int(5)],
             high_val: vec![Datum::Int(1), Datum::Int(9)],
@@ -2251,7 +2251,7 @@ mod recursive_index_estimation_tests {
             (Datum::Int(1), Datum::Raw(vec![1])),
             (Datum::Raw(vec![1]), Datum::Raw(vec![1])),
         ] {
-            let range = IndexRangeDatums {
+            let range = Range {
                 collators: vec![tidb_datatype::Collation::Binary; 1],
                 low_val: vec![low],
                 high_val: vec![high],
@@ -2289,7 +2289,7 @@ mod recursive_index_estimation_tests {
             stats_ver: 2,
             unsigned: false,
         };
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 1],
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::VectorFloat32(
@@ -2324,7 +2324,7 @@ mod recursive_index_estimation_tests {
                 vec![RecursiveIndexStats::new(Some(&candidate), vec![None], IndexRowCounts::unscaled(100, 0))]
             })
             .collect::<Vec<_>>();
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![tidb_datatype::Collation::Binary; 2],
             low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
             high_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
@@ -2478,7 +2478,7 @@ mod version_one_value_tests {
                         );
                     }
                     for (low, high, expected) in [(2, 2, 7.0), (1, 3, 22.0)] {
-                        let range = IndexRangeDatums {
+                        let range = Range {
                             low_val: vec![values[low].clone()],
                             high_val: vec![values[high].clone()],
                             collators: vec![Collation::Binary],
@@ -2704,7 +2704,7 @@ mod index_range_collation_tests {
     #[test]
     fn index_range_prefix_comparison_retains_ranger_collation() {
         let collation = Collation::Utf8Mb4GeneralCi;
-        let range = IndexRangeDatums {
+        let range = Range {
             collators: vec![collation],
             low_val: vec![Datum::new_collation_string("A", collation)],
             high_val: vec![Datum::new_collation_string("a", collation)],
@@ -2727,7 +2727,7 @@ mod index_range_collation_tests {
 
     #[test]
     fn range_prefix_and_point_checks_use_their_source_collator_positions() {
-        let range = IndexRangeDatums {
+        let range = Range {
             low_val: vec![Datum::Int(1), Datum::new_string("A")],
             high_val: vec![Datum::Int(1), Datum::new_string("a")],
             collators: vec![Collation::Binary, Collation::Utf8Mb4GeneralCi],
@@ -2775,7 +2775,7 @@ mod version_one_index_dispatch_tests {
     #[test]
     fn version_one_index_enumeration_uses_cms_without_v2_growth_scaling() {
         let index = index();
-        let range = IndexRangeDatums {
+        let range = Range {
             low_val: vec![Datum::Int(1)],
             high_val: vec![Datum::Int(3)],
             collators: vec![Collation::Binary],
@@ -2789,8 +2789,8 @@ mod version_one_index_dispatch_tests {
         assert!((estimate.est - 22.0).abs() < 1e-10, "{estimate:?}");
     }
 
-    fn range(low: Vec<Datum>, high: Vec<Datum>) -> IndexRangeDatums {
-        IndexRangeDatums {
+    fn range(low: Vec<Datum>, high: Vec<Datum>) -> Range {
+        Range {
             collators: vec![Collation::Binary; low.len()],
             low_val: low,
             high_val: high,

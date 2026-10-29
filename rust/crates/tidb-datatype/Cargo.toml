@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
+tidb-context = { path = "../tidb-context" }
 tidb-mysql = { path = "../tidb-mysql" }
 chrono.workspace = true
 chrono-tz.workspace = true

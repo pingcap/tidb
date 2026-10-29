@@ -33,7 +33,9 @@ use tidb_proto::{
 
 use tidb_txnkv::KvRequestMetadata;
 use crate::read_bytes_ema::ReadBytesEma;
-use tidb_txnkv::{Key, KeyRange, KeyRanges};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
+use crate::key_ranges::KeyRanges;
 
 /// Region epoch metadata copied from `metapb.RegionEpoch`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -293,7 +295,7 @@ pub fn build_region_tasks(
     }
 
     let mut ranges = KeyRanges::new(original_ranges);
-    let reordered = tidb_txnkv::ensure_monotonic_key_ranges(&mut ranges);
+    let reordered = crate::range_diagnostics::ensure_monotonic_key_ranges(&mut ranges);
     let hints = (!reordered && hints_shape_valid).then_some(original_hints.as_slice());
     if ranges.is_empty() {
         return Some(Vec::new());

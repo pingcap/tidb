@@ -55,7 +55,7 @@ impl QuerySessionFactory for Domain {
         Some(self.connection_id_allocator())
     }
 
-    fn session_manager(&self) -> Option<Arc<dyn tidb_memoryusagealarm::SessionManager>> {
+    fn session_manager(&self) -> Option<Arc<dyn tidb_sessmgr::processinfo::SessionManager>> {
         Some(Domain::session_manager(self))
     }
 

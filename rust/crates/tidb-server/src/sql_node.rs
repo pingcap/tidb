@@ -535,7 +535,7 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
 /// handle runs until its domain closes the exit it was built over.
 pub(crate) fn run_expensive_query_handle(
     handle: Arc<tidb_expensivequery::Handle>,
-    manager: Arc<dyn tidb_memoryusagealarm::SessionManager>,
+    manager: Arc<dyn tidb_sessmgr::processinfo::SessionManager>,
 ) {
     handle.set_session_manager(manager);
     std::thread::spawn(move || handle.run());
@@ -547,7 +547,7 @@ struct ServerMemoryLimitRunner {
 }
 
 impl ServerMemoryLimitRunner {
-    fn start(manager: Arc<dyn tidb_memoryusagealarm::SessionManager>) -> Self {
+    fn start(manager: Arc<dyn tidb_sessmgr::processinfo::SessionManager>) -> Self {
         let (exit, receiver) = mpsc::channel();
         let mut handle = tidb_servermemorylimit::new_server_memory_limit_handle(receiver);
         handle.set_session_manager(manager);
@@ -574,7 +574,7 @@ struct MemoryUsageAlarmRunner {
 }
 
 impl MemoryUsageAlarmRunner {
-    fn start(manager: Arc<dyn tidb_memoryusagealarm::SessionManager>) -> Self {
+    fn start(manager: Arc<dyn tidb_sessmgr::processinfo::SessionManager>) -> Self {
         let (exit, receiver) = crossbeam_channel::unbounded();
         let handle = tidb_memoryusagealarm::Handle::new(
             receiver,

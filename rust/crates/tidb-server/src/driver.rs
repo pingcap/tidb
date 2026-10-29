@@ -366,7 +366,7 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     }
 
     /// Returns the server's session manager for process memory control.
-    fn session_manager(&self) -> Option<Arc<dyn tidb_memoryusagealarm::SessionManager>> {
+    fn session_manager(&self) -> Option<Arc<dyn tidb_sessmgr::processinfo::SessionManager>> {
         None
     }
 

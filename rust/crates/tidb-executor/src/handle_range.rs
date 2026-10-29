@@ -65,9 +65,12 @@
 //! The shared planner owns that estimate and lower bound; this module now
 //! performs range algebra only.
 
-use tidb_table::kv_table::{IndexRange, KvTable};
+use tidb_table::kv_table::KvTable;
+use tidb_ranger::types::Range;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
+use tidb_distsql::{
+    signed_handle_ranges_to_kv_ranges, split_ranges_across_int64_boundary, SignedHandleRange,
+};
 use tidb_txnkv::Key;
 
 /// The primary-key column that IS the row handle, when the table has one and
@@ -127,7 +130,7 @@ struct HandleColumn {
 /// `convertPointsInPlace`, and it decides two things: which extremes an open
 /// endpoint becomes ([`to_table_range_in_domain`]), and whether the ranges
 /// have to be cut at the point the key encoding flips sign
-/// ([`split_ranges_across_int64_boundary`]).
+/// ([`tidb_distsql::split_ranges_across_int64_boundary`]).
 fn handle_is_unsigned(table: &KvTable) -> bool {
     handle_column(table).is_some_and(|column| column.field_type.is_unsigned())
 }
@@ -147,9 +150,9 @@ fn handle_is_unsigned(table: &KvTable) -> bool {
 /// optimization: `u64::MAX` encodes as -1, so mapping an unsigned open high to
 /// `i64::MAX` turns `id >= 2^63` into the key interval `[negative, i64::MAX]`,
 /// which spans the whole table -- and hides the boundary from
-/// [`split_ranges_across_int64_boundary`], because a sentinel is not an
+/// [`tidb_distsql::split_ranges_across_int64_boundary`], because a sentinel is not an
 /// integer it can compare.
-fn to_table_range_in_domain(range: &IndexRange, unsigned: bool) -> (i64, i64, bool, bool) {
+fn to_table_range_in_domain(range: &Range, unsigned: bool) -> (i64, i64, bool, bool) {
     // The domain's extremes, as the handle codec spells them. For an unsigned
     // handle the maximum is `u64::MAX`, whose signed reading is -1.
     let (domain_low, domain_high) = if unsigned {
@@ -157,27 +160,27 @@ fn to_table_range_in_domain(range: &IndexRange, unsigned: bool) -> (i64, i64, bo
     } else {
         (i64::MIN, i64::MAX)
     };
-    let low = range.low.first();
-    let high = range.high.first();
+    let low = range.low_val.first();
+    let high = range.high_val.first();
     let (low_value, low_exclusive) = match low {
         Some(Datum::Null) => (domain_low, false),
-        Some(Datum::MinNotNull) | None => (domain_low, range.low_exclusive),
-        Some(Datum::Int(value)) => (*value, range.low_exclusive),
-        Some(Datum::UInt(value)) => (*value as i64, range.low_exclusive),
-        _ => (domain_low, range.low_exclusive),
+        Some(Datum::MinNotNull) | None => (domain_low, range.low_exclude),
+        Some(Datum::Int(value)) => (*value, range.low_exclude),
+        Some(Datum::UInt(value)) => (*value as i64, range.low_exclude),
+        _ => (domain_low, range.low_exclude),
     };
     let (high_value, high_exclusive) = match high {
-        Some(Datum::MaxValue) | None => (domain_high, range.high_exclusive),
-        Some(Datum::Int(value)) => (*value, range.high_exclusive),
-        Some(Datum::UInt(value)) => (*value as i64, range.high_exclusive),
-        _ => (domain_high, range.high_exclusive),
+        Some(Datum::MaxValue) | None => (domain_high, range.high_exclude),
+        Some(Datum::Int(value)) => (*value, range.high_exclude),
+        Some(Datum::UInt(value)) => (*value as i64, range.high_exclude),
+        _ => (domain_high, range.high_exclude),
     };
     (low_value, high_value, low_exclusive, high_exclusive)
 }
 
 /// A range whose open ends have been replaced by the handle domain's own
 /// extremes, so every bound is a concrete integer the boundary split can read.
-fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
+fn materialize_open_bounds(range: &Range, unsigned: bool) -> Range {
     let (low, high, low_exclusive, high_exclusive) = to_table_range_in_domain(range, unsigned);
     let datum = |value: i64| {
         if unsigned {
@@ -186,11 +189,12 @@ fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
             Datum::Int(value)
         }
     };
-    IndexRange {
-        low: vec![datum(low)],
-        high: vec![datum(high)],
-        low_exclusive,
-        high_exclusive,
+    Range {
+        low_val: vec![datum(low)],
+        high_val: vec![datum(high)],
+        collators: range.collators.clone(),
+        low_exclude: low_exclusive,
+        high_exclude: high_exclusive,
     }
 }
 
@@ -212,7 +216,7 @@ fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
 /// the `WHERE` above the source filters every row it returns.
 pub fn record_key_ranges(
     table: &KvTable,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
 ) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError>
@@ -251,7 +255,7 @@ pub fn record_key_ranges(
 /// prefixed by each physical table's record namespace.
 fn common_handle_record_key_ranges(
     table: &KvTable,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(Key, Key)>, tidb_codec::CodecError> {
     let ids = table.record_physical_ids();
@@ -259,15 +263,15 @@ fn common_handle_record_key_ranges(
     for id in ids {
         for range in ranges {
             let low = tidb_codec::Encoder::new(table.use_new_collation())
-                .encode_key_in_timezone(zone, &range.low)?;
-            let low = if range.low_exclusive {
+                .encode_key_in_timezone(zone, &range.low_val)?;
+            let low = if range.low_exclude {
                 Key::from_bytes(low).prefix_next().into_bytes()
             } else {
                 low
             };
             let high = tidb_codec::Encoder::new(table.use_new_collation())
-                .encode_key_in_timezone(zone, &range.high)?;
-            let high = if range.high_exclusive {
+                .encode_key_in_timezone(zone, &range.high_val)?;
+            let high = if range.high_exclude {
                 high
             } else {
                 Key::from_bytes(high).prefix_next().into_bytes()
@@ -283,7 +287,7 @@ fn common_handle_record_key_ranges(
 
 pub fn record_key_range_value_halves(
     table: &KvTable,
-    ranges: &[IndexRange],
+    ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<
     Option<[Vec<(Key, Key)>; 2]>,
@@ -301,16 +305,16 @@ pub fn record_key_range_value_halves(
     // Go `points2TableRanges`: replace the open endpoints with the handle
     // domain's own extremes, so every bound below is a real integer -- and,
     // for an unsigned handle, one the boundary split can recognise.
-    let materialized: Vec<IndexRange> = ranges
+    let materialized: Vec<Range> = ranges
         .iter()
         .map(|range| materialize_open_bounds(range, unsigned))
         .collect();
     let (signed_side, unsigned_side) = if unsigned {
-        split_ranges_across_int64_boundary(materialized, true, false)
+        split_ranges_across_int64_boundary(materialized, true, false, false)
     } else {
         (materialized, Vec::new())
     };
-    fn encode(half: &[IndexRange], ids: &[i64], unsigned: bool) -> Vec<(Key, Key)> {
+    fn encode(half: &[Range], ids: &[i64], unsigned: bool) -> Vec<(Key, Key)> {
         let mut handle_ranges = Vec::with_capacity(half.len());
         for range in half {
             let (low, high, low_exclusive, high_exclusive) =
@@ -336,220 +340,4 @@ pub fn record_key_range_value_halves(
         encode(&signed_side, &ids, unsigned),
         encode(&unsigned_side, &ids, unsigned),
     ]))
-}
-
-/// Go `SplitRangesAcrossInt64Boundary`
-/// (`pkg/distsql/request_builder.go:575`): divides an UNSIGNED handle's
-/// ranges at the point where the key encoding flips sign.
-///
-/// A row handle is encoded as a signed 64-bit integer, so an unsigned value
-/// above `i64::MAX` encodes NEGATIVE and sorts, in key order, before every
-/// ordinary handle. A single range spanning that point would be read as one
-/// contiguous key interval and would miss everything on the far side.
-///
-/// The result is two range lists in the order they must be READ. When order
-/// does not matter Go concatenates them into the first list and leaves the
-/// second empty, which is why the signature returns a pair rather than two
-/// separate calls: the caller must not reorder them itself.
-///
-/// Returns `(signed, unsigned)` for an ascending ordered read and
-/// `(unsigned, signed)` for a descending one, because the unsigned half
-/// occupies the LOWER key range.
-#[must_use]
-pub fn split_ranges_across_int64_boundary(
-    ranges: Vec<IndexRange>,
-    keep_order: bool,
-    desc: bool,
-) -> (Vec<IndexRange>, Vec<IndexRange>) {
-    /// The unsigned reading of a bound, or `None` when it is not an integer
-    /// this split understands.
-    fn unsigned(datum: Option<&Datum>) -> Option<u64> {
-        match datum? {
-            Datum::UInt(value) => Some(*value),
-            Datum::Int(value) => Some(*value as u64),
-            _ => None,
-        }
-    }
-    // Go returns the ranges untouched for a common handle, an empty set, or a
-    // SIGNED leading bound -- the last being how it detects that the handle is
-    // not unsigned at all.
-    if ranges.is_empty() || matches!(ranges[0].low.first(), Some(Datum::Int(_))) {
-        return (ranges, Vec::new());
-    }
-    let boundary = i64::MAX as u64;
-    let Some(index) = ranges
-        .iter()
-        .position(|range| unsigned(range.high.first()).is_some_and(|high| high > boundary))
-    else {
-        // Nothing reaches past the boundary.
-        return (ranges, Vec::new());
-    };
-    let order = |signed: Vec<IndexRange>, mut unsigned_half: Vec<IndexRange>| {
-        if !keep_order {
-            // Go appends the SIGNED half onto the unsigned one and returns a
-            // single list: with no order to keep, one scan covers both.
-            unsigned_half.extend(signed);
-            return (unsigned_half, Vec::new());
-        }
-        if desc {
-            (unsigned_half, signed)
-        } else {
-            (signed, unsigned_half)
-        }
-    };
-    let straddles = unsigned(ranges[index].low.first()).is_some_and(|low| low <= boundary);
-    if !straddles {
-        // A clean cut: every range from `index` on is wholly above the
-        // boundary.
-        let mut ranges = ranges;
-        let unsigned_half = ranges.split_off(index);
-        return order(ranges, unsigned_half);
-    }
-    // The range at `index` spans the boundary and has to be cut in two.
-    let mut ranges = ranges;
-    let tail = ranges.split_off(index);
-    let mut signed = ranges;
-    let (crossing, rest) = tail.split_first().expect("the straddling range");
-    // Go skips the signed piece when the cut point is EXCLUDED at exactly
-    // `MaxInt64`, because that piece would then be empty.
-    if !(unsigned(crossing.low.first()) == Some(boundary) && crossing.low_exclusive) {
-        signed.push(IndexRange {
-            low: crossing.low.clone(),
-            high: vec![Datum::UInt(boundary)],
-            low_exclusive: crossing.low_exclusive,
-            high_exclusive: false,
-        });
-    }
-    let mut unsigned_half = Vec::with_capacity(rest.len() + 1);
-    // ... and the unsigned piece when it is excluded at exactly
-    // `MaxInt64 + 1`, for the same reason.
-    if !(unsigned(crossing.high.first()) == Some(boundary + 1) && crossing.high_exclusive) {
-        unsigned_half.push(IndexRange {
-            low: vec![Datum::UInt(boundary + 1)],
-            high: crossing.high.clone(),
-            low_exclusive: false,
-            high_exclusive: crossing.high_exclusive,
-        });
-    }
-    unsigned_half.extend(rest.iter().cloned());
-    order(signed, unsigned_half)
-}
-
-#[cfg(test)]
-mod int64_boundary_split_tests {
-    use super::*;
-
-    const MAX: u64 = i64::MAX as u64;
-
-    fn range(low: u64, high: u64) -> IndexRange {
-        IndexRange {
-            low: vec![Datum::UInt(low)],
-            high: vec![Datum::UInt(high)],
-            low_exclusive: false,
-            high_exclusive: false,
-        }
-    }
-
-    fn bounds(ranges: &[IndexRange]) -> Vec<(u64, u64)> {
-        ranges
-            .iter()
-            .map(|range| match (range.low.first(), range.high.first()) {
-                (Some(Datum::UInt(low)), Some(Datum::UInt(high))) => (*low, *high),
-                other => panic!("unsigned bounds, got {other:?}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn a_signed_leading_bound_is_left_alone() {
-        // Go detects a non-unsigned handle by the leading bound's KIND and
-        // returns the ranges untouched.
-        let input = vec![IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Int(9)],
-            low_exclusive: false,
-            high_exclusive: false,
-        }];
-        let (first, second) = split_ranges_across_int64_boundary(input, true, false);
-        assert_eq!(first.len(), 1);
-        assert!(second.is_empty());
-    }
-
-    #[test]
-    fn ranges_below_the_boundary_are_left_alone() {
-        let (first, second) =
-            split_ranges_across_int64_boundary(vec![range(1, 9), range(20, MAX)], true, false);
-        assert_eq!(bounds(&first), vec![(1, 9), (20, MAX)]);
-        assert!(second.is_empty(), "nothing reaches past the boundary");
-    }
-
-    #[test]
-    fn a_clean_cut_splits_between_ranges() {
-        // No range straddles: the split falls between them.
-        let (signed, unsigned) = split_ranges_across_int64_boundary(
-            vec![range(1, 9), range(MAX + 1, MAX + 5)],
-            true,
-            false,
-        );
-        assert_eq!(bounds(&signed), vec![(1, 9)]);
-        assert_eq!(bounds(&unsigned), vec![(MAX + 1, MAX + 5)]);
-    }
-
-    #[test]
-    fn a_straddling_range_is_cut_at_the_boundary() {
-        let (signed, unsigned) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], true, false);
-        assert_eq!(
-            bounds(&signed),
-            vec![(1, MAX)],
-            "the signed piece ends AT i64::MAX, inclusive"
-        );
-        assert_eq!(
-            bounds(&unsigned),
-            vec![(MAX + 1, MAX + 5)],
-            "and the unsigned piece starts one past it"
-        );
-    }
-
-    #[test]
-    fn an_empty_signed_piece_is_not_emitted() {
-        // Go skips the signed half when the low bound is EXCLUSIVE at exactly
-        // i64::MAX, because `(MAX, MAX]` selects nothing.
-        let mut input = range(MAX, MAX + 5);
-        input.low_exclusive = true;
-        let (signed, unsigned) = split_ranges_across_int64_boundary(vec![input], true, false);
-        assert!(signed.is_empty(), "an empty signed piece is omitted");
-        assert_eq!(bounds(&unsigned), vec![(MAX + 1, MAX + 5)]);
-    }
-
-    #[test]
-    fn an_empty_unsigned_piece_is_not_emitted() {
-        // The mirror image: exclusive at exactly i64::MAX + 1.
-        let mut input = range(1, MAX + 1);
-        input.high_exclusive = true;
-        let (signed, unsigned) = split_ranges_across_int64_boundary(vec![input], true, false);
-        assert_eq!(bounds(&signed), vec![(1, MAX)]);
-        assert!(unsigned.is_empty(), "an empty unsigned piece is omitted");
-    }
-
-    #[test]
-    fn descending_order_reads_the_unsigned_half_first() {
-        // The unsigned half occupies the LOWER key range, so a descending
-        // ordered read takes it first.
-        let (first, second) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], true, true);
-        assert_eq!(bounds(&first), vec![(MAX + 1, MAX + 5)]);
-        assert_eq!(bounds(&second), vec![(1, MAX)]);
-    }
-
-    #[test]
-    fn an_unordered_read_gets_one_list_with_the_unsigned_half_first() {
-        // Go concatenates rather than returning a pair when order is free, so
-        // ONE scan covers both halves -- and it puts the unsigned half first
-        // because that is where the keys start.
-        let (all, second) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], false, false);
-        assert_eq!(bounds(&all), vec![(MAX + 1, MAX + 5), (1, MAX)]);
-        assert!(second.is_empty(), "an unordered read gets a single list");
-    }
 }

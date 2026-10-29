@@ -2579,7 +2579,7 @@ impl Session {
                 self.active_resource_group.clone(),
                 snapshot.ddl_session_alias.clone(),
                 snapshot.redact_sql,
-                tidb_memoryusagealarm::OOMAlarmVariablesInfo {
+                tidb_sessmgr::processinfo::OOMAlarmVariablesInfo {
                     session_analyze_version: snapshot.analyze_version,
                     session_enabled_rate_limit_action: snapshot.rate_limit_action,
                     session_mem_quota_query: snapshot.mem_quota,

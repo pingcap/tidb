@@ -139,7 +139,7 @@ impl ScalarRange {
 /// A composite-index pseudo range after the source has computed its equal
 /// prefix length.
 #[derive(Clone, Debug, PartialEq)]
-pub struct IndexRange {
+pub struct Range {
     /// Per-column normalized bounds, in index order.
     pub columns: Vec<ScalarRange>,
     /// Number of leading columns equal to a concrete value.
@@ -150,7 +150,7 @@ pub struct IndexRange {
     pub high_exclude: bool,
 }
 
-impl IndexRange {
+impl Range {
     /// Creates a source-shaped composite index range.
     #[must_use]
     pub fn new(
@@ -313,7 +313,7 @@ pub fn pseudo_row_count_by_scalar_ranges(ranges: &[ScalarRange], table_row_count
 /// index is not known to be unique.
 #[must_use]
 pub fn pseudo_row_count_by_index_ranges(
-    ranges: &[IndexRange],
+    ranges: &[Range],
     table_row_count: f64,
     unique_columns: Option<usize>,
 ) -> f64 {

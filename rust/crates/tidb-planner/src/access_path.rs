@@ -19,10 +19,10 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+use tidb_ranger::Range;
 use crate::{
     cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
-        row_count_estimator::IndexRangeDatums,
     },
     tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
@@ -519,7 +519,7 @@ pub enum PointRangePath {
 /// `Range.IsPointNonNullable` and additionally require every range to cover
 /// all index columns.
 #[must_use]
-pub fn only_point_ranges(path: PointRangePath, ranges: &[IndexRangeDatums]) -> bool {
+pub fn only_point_ranges(path: PointRangePath, ranges: &[Range]) -> bool {
     ranges.iter().all(|range| match path {
         PointRangePath::IntHandle => range.is_point(true),
         PointRangePath::Index { column_count } => {
@@ -1062,10 +1062,11 @@ pub enum DataSourceAccessPath {
 mod tests {
     use tidb_datatype::Datum;
 
-    use super::{only_point_ranges, IndexRangeDatums, PointRangePath};
+    use super::{only_point_ranges, PointRangePath};
+    use tidb_ranger::Range;
 
-    fn range(low: Datum, high: Datum) -> IndexRangeDatums {
-        IndexRangeDatums {
+    fn range(low: Datum, high: Datum) -> Range {
+        Range {
             collators: vec![tidb_datatype::Collation::Binary; 1],
             low_val: vec![low],
             high_val: vec![high],

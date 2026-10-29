@@ -21,6 +21,7 @@ testexport = []
 tidb-disk = { path = "../tidb-disk" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 crossbeam-channel = "0.5"

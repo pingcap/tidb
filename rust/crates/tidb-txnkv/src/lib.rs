@@ -38,7 +38,6 @@ mod iteration;
 mod key;
 pub mod key_flags;
 pub mod kv_storage;
-mod key_ranges;
 mod keyspace;
 mod kv_api;
 mod kv_contract;
@@ -47,12 +46,10 @@ mod kv_response;
 pub mod lock;
 mod mem_storage;
 mod mpp;
-mod mpp_probe;
 mod mvcc_metadata;
 pub mod new_txn;
 mod option;
 mod prefix_ops;
-mod range_diagnostics;
 mod resource_group;
 pub mod retry;
 pub mod rpc;
@@ -117,7 +114,6 @@ pub use inner_txn::{
 pub use iteration::{next_until, row_key_prefix_filter, walk_mem_buffer, KvIterator, KvRetriever};
 pub use key::{key_range_slice_mem_usage, Entry, Key, KeyRange};
 pub use key_flags::{AssertionState, FlagsOp, KeyFlags};
-pub use key_ranges::KeyRanges;
 pub use keyspace::{is_system_keyspace, is_user_keyspace, KernelType, SYSTEM_KEYSPACE};
 pub use kv_api::{
     batch_get_value, get_value, Client, ClientSendOption, Driver, EmptyIterator, EmptyRetriever,
@@ -142,11 +138,6 @@ pub use kv_response::{
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator, MppDispatchRequest, MppError, MppQueryId, MppStoreTask, MppStreamResponse, MppTask, MppTaskLocation, MppTaskState, MppVersion};
-pub use mpp_probe::{
-    global_mpp_failed_store_prober, global_mpp_server_info_manager, MppAliveClient,
-    MppFailedStoreProber, MppServerInfo, MppServerInfoManager, DETECT_PERIOD, DETECT_TIMEOUT_LIMIT,
-    MAX_OBSOLETE_TIME_LIMIT, MAX_RECOVERY_TIME_LIMIT, MPP_SERVER_INFO_CACHE_SIZE,
-};
 pub use mvcc_metadata::{
     decode_extra_txn_status_key, decode_key_ts, encode_extra_txn_status_key, encode_write_cf_value,
     parse_write_cf_value, DbUserMeta, LockType, MvccLockMetadata, MvccMetadataError, WriteCfValue,
@@ -172,10 +163,6 @@ pub use option::{
 };
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
-pub use range_diagnostics::{
-    ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,
-    range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
-};
 pub use resource_group::{
     set_decode_table_id_func, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };

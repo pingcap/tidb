@@ -110,10 +110,8 @@ use std::any::Any;
 use std::sync::{Arc, Weak};
 
 use chrono::{DateTime, Utc};
-use tidb_datatype::{
-    str_to_float, ConversionContext, ConversionFlags, ConversionLocation,
-    ConversionWarningAppender, Datum,
-};
+use tidb_datatype::{str_to_float, ConversionContext, ConversionFlags, ConversionLocation, Datum};
+use tidb_context::ConversionWarningAppender;
 use tidb_errctx::{
     new_context_with_levels, Context as ErrCtxContext, LevelMap, SharedError,
     WarnAppender as ErrCtxWarnAppender,
@@ -944,7 +942,7 @@ pub fn get_stmt_timestamp(sctx: &Arc<dyn SessionContext>) -> Result<DateTime<Utc
         let type_ctx = ConversionContext::new(
             vars.type_flags(),
             ConversionLocation::named(zone_name(&vars.location())),
-            &tidb_datatype::IGNORE_CONVERSION_WARNINGS,
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
         );
         let truncated = tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE.generate_with_stack(format!(
             "Truncated incorrect DOUBLE value: '{}'",

@@ -27,7 +27,7 @@ use tidb_executor::{
 use tidb_sessionctx::StmtContext;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::{
-    GeneratedColumnSelection, IndexRange, KvColumn, KvIndex, KvTable, RowDecodeContext, RowDecoder,
+    GeneratedColumnSelection, KvColumn, KvIndex, KvTable, RowDecodeContext, RowDecoder,
 };
 
 fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
@@ -766,11 +766,12 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     let handles = table
         .scan_index_range(
             7,
-            &IndexRange {
-                low: vec![Datum::Int(4)],
-                high: vec![Datum::Int(4)],
-                low_exclusive: false,
-                high_exclusive: false,
+            &tidb_ranger::types::Range {
+                low_val: vec![Datum::Int(4)],
+                high_val: vec![Datum::Int(4)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: false,
             },
             &zone,
         )

@@ -301,7 +301,7 @@ pub fn column_default_storage_value(
             // statement's warning and the default is kept.
             #[derive(Default)]
             struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
-            impl tidb_datatype::ConversionWarningAppender for Warnings {
+            impl tidb_context::ConversionWarningAppender for Warnings {
                 fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
                     self.0.borrow_mut().push(warning);
                 }

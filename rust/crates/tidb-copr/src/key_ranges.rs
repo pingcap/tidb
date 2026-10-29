@@ -28,7 +28,8 @@ use std::sync::Arc;
 
 use tidb_proto::CoprocessorKeyRange;
 
-use crate::{Key, KeyRange};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
 
 /// A key-range sequence with optional split ranges before and after a shared
 /// middle span.

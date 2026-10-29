@@ -27,7 +27,6 @@ tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-globalconn = { path = "../tidb-globalconn" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-test-isolation = { path = "../tidb-test-isolation" }
@@ -47,7 +46,6 @@ tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
-tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl = { path = "../tidb-ddl" }

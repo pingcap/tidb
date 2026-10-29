@@ -8,14 +8,14 @@
 
 use super::*;
 use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::IndexRange;
+use tidb_ranger::types::Range;
 
 fn planner_index_path(
     sql: &str,
     catalog: &Catalog,
     table: &KvTable,
     visible: &str,
-) -> Option<(i64, Vec<IndexRange>)> {
+) -> Option<(i64, Vec<Range>)> {
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
         panic!("not a query")
@@ -83,15 +83,7 @@ fn planner_index_path(
     let scan = find_index_scan(&physical, table.table_id(), visible)?;
     Some((
         scan.index_id,
-        scan.ranges
-            .iter()
-            .map(|range| IndexRange {
-                low: range.low_val.clone(),
-                high: range.high_val.clone(),
-                low_exclusive: range.low_exclude,
-                high_exclusive: range.high_exclude,
-            })
-            .collect(),
+        scan.ranges.clone(),
     ))
 }
 
@@ -544,11 +536,12 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         ranges("SELECT id FROM q WHERE score > 5"),
         Some((
             1,
-            vec![IndexRange {
-                low: vec![Datum::Int(5)],
-                high: vec![Datum::MaxValue],
-                low_exclusive: true,
-                high_exclusive: false,
+            vec![Range {
+                low_val: vec![Datum::Int(5)],
+                high_val: vec![Datum::MaxValue],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: true,
+                high_exclude: false,
             }]
         ))
     );
@@ -556,11 +549,12 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         ranges("SELECT id FROM q WHERE score < 5"),
         Some((
             1,
-            vec![IndexRange {
-                low: vec![Datum::MinNotNull],
-                high: vec![Datum::Int(5)],
-                low_exclusive: false,
-                high_exclusive: true,
+            vec![Range {
+                low_val: vec![Datum::MinNotNull],
+                high_val: vec![Datum::Int(5)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: true,
             }]
         ))
     );
@@ -569,11 +563,12 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         ranges("SELECT id FROM q WHERE score > 5 AND score <= 9"),
         Some((
             1,
-            vec![IndexRange {
-                low: vec![Datum::Int(5)],
-                high: vec![Datum::Int(9)],
-                low_exclusive: true,
-                high_exclusive: false,
+            vec![Range {
+                low_val: vec![Datum::Int(5)],
+                high_val: vec![Datum::Int(9)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: true,
+                high_exclude: false,
             }]
         ))
     );
@@ -589,17 +584,19 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         Some((
             1,
             vec![
-                IndexRange {
-                    low: vec![Datum::MinNotNull],
-                    high: vec![Datum::Int(0)],
-                    low_exclusive: false,
-                    high_exclusive: true,
+                Range {
+                    low_val: vec![Datum::MinNotNull],
+                    high_val: vec![Datum::Int(0)],
+                    collators: vec![tidb_datatype::Collation::Binary],
+                    low_exclude: false,
+                    high_exclude: true,
                 },
-                IndexRange {
-                    low: vec![Datum::Int(1)],
-                    high: vec![Datum::MaxValue],
-                    low_exclusive: true,
-                    high_exclusive: false,
+                Range {
+                    low_val: vec![Datum::Int(1)],
+                    high_val: vec![Datum::MaxValue],
+                    collators: vec![tidb_datatype::Collation::Binary],
+                    low_exclude: true,
+                    high_exclude: false,
                 }
             ]
         ))
@@ -624,7 +621,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
     // ```
     assert_eq!(
         ranges("SELECT id FROM q"),
-        Some((1, vec![IndexRange::full()]))
+        Some((1, tidb_ranger::points::full_range()))
     );
 }
 
@@ -750,22 +747,24 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
     // appended behind it.
     assert_eq!(
         ranges("SELECT * FROM t1 WHERE c1 > 1 AND c2 = 1 AND c3 < 1"),
-        Some(vec![IndexRange {
-            low: vec![Datum::Int(1), Datum::Int(1)],
-            high: vec![Datum::Int(1), Datum::MaxValue],
-            low_exclusive: true,
-            high_exclusive: false,
+        Some(vec![Range {
+            low_val: vec![Datum::Int(1), Datum::Int(1)],
+            high_val: vec![Datum::Int(1), Datum::MaxValue],
+            collators: vec![tidb_datatype::Collation::Binary; 2],
+            low_exclude: true,
+            high_exclude: false,
         }])
     );
     // With nothing said about the handle the range stops at the declared key
     // part, exactly as it did before the handle was a key part at all.
     assert_eq!(
         ranges("SELECT * FROM t1 WHERE c2 = 1"),
-        Some(vec![IndexRange {
-            low: vec![Datum::Int(1)],
-            high: vec![Datum::Int(1)],
-            low_exclusive: false,
-            high_exclusive: false,
+        Some(vec![Range {
+            low_val: vec![Datum::Int(1)],
+            high_val: vec![Datum::Int(1)],
+            collators: vec![tidb_datatype::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
         }])
     );
 }
@@ -883,7 +882,7 @@ fn a_unique_index_gets_no_handle_dimension() {
         "u",
     ) {
         assert!(
-            ranges.iter().all(|range| range.low.len() == 1),
+            ranges.iter().all(|range| range.low_val.len() == 1),
             "a unique index must not range on the handle: {ranges:?}"
         );
     }
@@ -981,11 +980,12 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
     };
     assert_eq!(
         ranges,
-        vec![IndexRange {
-            low: vec![Datum::Int(1), Datum::Int(1)],
-            high: vec![Datum::Int(1), Datum::MaxValue],
-            low_exclusive: true,
-            high_exclusive: false,
+        vec![Range {
+            low_val: vec![Datum::Int(1), Datum::Int(1)],
+            high_val: vec![Datum::Int(1), Datum::MaxValue],
+            collators: vec![tidb_datatype::Collation::Binary; 2],
+            low_exclude: true,
+            high_exclude: false,
         }],
         "the handle was appended behind the key part that already holds it"
     );

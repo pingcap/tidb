@@ -34,7 +34,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use tidb_memory::Tracker;
-use tidb_memoryusagealarm::{OOMAlarmVariablesInfo, ProcessInfo, SessionManager};
+pub mod processinfo;
+
+use processinfo::{OOMAlarmVariablesInfo, ProcessInfo, SessionManager};
 
 const MAX_TRANSACTION_STMT_HISTORY: usize = 50;
 

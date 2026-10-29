@@ -32,8 +32,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use prost::Message;
-use tidb_datatype::Datum;
-use tidb_distsql::{DatumRange, RequestBuilder};
+use tidb_distsql::RequestBuilder;
 use tidb_txnkv::TransportRequest;
 use tidb_proto::tipb;
 
@@ -163,16 +162,12 @@ impl ChecksumContext {
             ..tipb::ChecksumRequest::default()
         };
         let ranges = if self.is_common_handle {
-            DatumRange::inclusive(vec![Datum::MinNotNull], vec![Datum::MaxValue])
+            tidb_ranger::points::full_not_null_range()
         } else {
-            DatumRange::inclusive(vec![Datum::Int(i64::MIN)], vec![Datum::Int(i64::MAX)])
+            tidb_ranger::points::full_int_range(false)
         };
         let mut builder = RequestBuilder::new();
-        builder.set_handle_ranges(
-            physical_table_id,
-            self.is_common_handle,
-            std::slice::from_ref(&ranges),
-        );
+        builder.set_handle_ranges(physical_table_id, self.is_common_handle, &ranges);
         finish_request(builder, &checksum, settings)
     }
 
@@ -194,9 +189,12 @@ fn build_index_request(
         algorithm: Some(tipb::ChecksumAlgorithm::Crc64Xor as i32),
         ..tipb::ChecksumRequest::default()
     };
-    let range = DatumRange::inclusive(vec![Datum::Null], vec![Datum::MaxValue]);
     let mut builder = RequestBuilder::new();
-    builder.set_index_ranges(physical_table_id, index_id, std::slice::from_ref(&range));
+    builder.set_index_ranges(
+        physical_table_id,
+        index_id,
+        &tidb_ranger::points::full_range(),
+    );
     finish_request(builder, &checksum, settings)
 }
 
@@ -397,6 +395,7 @@ impl ChecksumTableExec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_datatype::Datum;
 
     fn settings() -> RequestSettings {
         RequestSettings {
@@ -505,10 +504,7 @@ mod tests {
             key_ranges(&record.request),
             tidb_distsql::table_ranges_to_kv_ranges(
                 100,
-                &[DatumRange::inclusive(
-                    vec![Datum::Int(i64::MIN)],
-                    vec![Datum::Int(i64::MAX)]
-                )],
+                &tidb_ranger::points::full_int_range(false),
             )
             .unwrap()
             .into_iter()

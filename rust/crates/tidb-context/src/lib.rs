@@ -30,9 +30,9 @@ pub use collector::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub use plancache::{PlanCacheTracker, PlanCacheType, RangeFallbackHandler};
 pub use warn::{
-    new_func_warn_appender_for_test, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr,
+    new_func_warn_appender_for_test, ConversionWarningAppender, IgnoreConversionWarnings, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr,
     WarnHandler, WarnHandlerExt, IGNORE_WARN, WARN_LEVEL_ERROR, WARN_LEVEL_NOTE,
-    WARN_LEVEL_WARNING,
+    WARN_LEVEL_WARNING, IGNORE_CONVERSION_WARNINGS,
 };
 
 use std::any::Any;

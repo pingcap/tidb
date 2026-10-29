@@ -58,7 +58,7 @@ pub use query_runtime::{checksum, select_with_runtime_stats_over_client, Injecte
 pub use request::{ReadRequestBuilder, ReadRequestMetadata};
 pub use request_builder::{
     build_table_ranges, common_handle_ranges_to_kv_ranges, index_ranges_to_kv_ranges,
-    table_ranges_to_kv_ranges, DatumRange,
+    split_ranges_across_int64_boundary, table_ranges_to_kv_ranges,
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
 pub use select_iter::SelectResultRow;

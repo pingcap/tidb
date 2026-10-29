@@ -3121,7 +3121,7 @@ impl Domain {
         Arc::clone(&self.expensive_query_handle)
     }
 
-    pub fn session_manager(&self) -> Arc<dyn tidb_memoryusagealarm::SessionManager> {
+    pub fn session_manager(&self) -> Arc<dyn tidb_sessmgr::processinfo::SessionManager> {
         Arc::new(self.processes.clone())
     }
 }

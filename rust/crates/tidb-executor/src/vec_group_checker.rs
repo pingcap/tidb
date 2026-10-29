@@ -488,7 +488,7 @@ fn eval_group_item(
 
 struct GroupWarnings<'a, C>(&'a C);
 
-impl<C: Columns> tidb_datatype::ConversionWarningAppender for GroupWarnings<'_, C> {
+impl<C: Columns> tidb_context::ConversionWarningAppender for GroupWarnings<'_, C> {
     fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
         let warning = warning.to_sql_error();
         self.0.append_sql_warn(tidb_context::SqlWarn::from_error(

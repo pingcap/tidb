@@ -24,7 +24,8 @@
 //! `TestIndexRangesToKVRanges`), plus the numeric `kv.Request` field values
 //! those tests pin through their struct literals.
 
-use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, KvPriority, RequestBuilder, RequestEnvelope};
+use tidb_ranger::types::Range;
+use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, KvPriority, RequestBuilder, RequestEnvelope};
 use tidb_txnkv::RequestType;
 use tidb_txnkv::ReplicaReadType;
 use tidb_paging::MIN_PAGING_SIZE;
@@ -35,33 +36,30 @@ fn datum(value: i64) -> tidb_datatype::Datum {
     tidb_datatype::Datum::Int(value)
 }
 
-fn source_ranges() -> Vec<DatumRange> {
+/// Go's test ranges: `&ranger.Range{LowVal: ..., HighVal: ...,
+/// Collators: collate.GetBinaryCollatorSlice(1)}`.
+fn range(
+    low: Vec<tidb_datatype::Datum>,
+    high: Vec<tidb_datatype::Datum>,
+    low_exclude: bool,
+    high_exclude: bool,
+) -> Range {
+    Range {
+        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        low_val: low,
+        high_val: high,
+        low_exclude,
+        high_exclude,
+    }
+}
+
+fn source_ranges() -> Vec<Range> {
     vec![
-        DatumRange::inclusive(vec![datum(1)], vec![datum(2)]),
-        DatumRange {
-            low: vec![datum(2)],
-            high: vec![datum(4)],
-            low_exclude: true,
-            high_exclude: true,
-        },
-        DatumRange {
-            low: vec![datum(4)],
-            high: vec![datum(19)],
-            low_exclude: false,
-            high_exclude: true,
-        },
-        DatumRange {
-            low: vec![datum(19)],
-            high: vec![datum(32)],
-            low_exclude: true,
-            high_exclude: false,
-        },
-        DatumRange {
-            low: vec![datum(34)],
-            high: vec![datum(34)],
-            low_exclude: true,
-            high_exclude: false,
-        },
+        range(vec![datum(1)], vec![datum(2)], false, false),
+        range(vec![datum(2)], vec![datum(4)], true, true),
+        range(vec![datum(4)], vec![datum(19)], false, true),
+        range(vec![datum(19)], vec![datum(32)], true, false),
+        range(vec![datum(34)], vec![datum(34)], true, false),
     ]
 }
 

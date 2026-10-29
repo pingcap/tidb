@@ -707,7 +707,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 /// The statement's warning buffer as the conversion's warning sink.
 struct StatementWarnings<'a>(&'a StmtContext);
 
-impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
+impl tidb_context::ConversionWarningAppender for StatementWarnings<'_> {
     fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
         let reported = warning.to_sql_error();
         self.0

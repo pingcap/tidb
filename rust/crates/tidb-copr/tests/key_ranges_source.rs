@@ -13,7 +13,9 @@
 
 //! Direct source tests for `pkg/store/copr/key_ranges_test.go`.
 
-use tidb_txnkv::{Key, KeyRange, KeyRanges};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
+use tidb_copr::key_ranges::KeyRanges;
 
 fn key(value: &str) -> Key {
     Key::from_bytes(value.as_bytes())

@@ -23,10 +23,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use tidb_datatype::{
-    str_to_float, ConversionContext, ConversionFlags, ConversionLocation,
-    ConversionWarningAppender, Datum, STRICT_FLAGS,
-};
+use tidb_datatype::{str_to_float, ConversionContext, ConversionFlags, ConversionLocation, Datum, STRICT_FLAGS};
+use tidb_context::ConversionWarningAppender;
 use tidb_errctx::{
     new_context_with_levels, Context as ErrCtxContext, LevelMap, SharedError,
     WarnAppender as ErrCtxWarnAppender,

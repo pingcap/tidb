@@ -35,7 +35,9 @@ use tidb_proto::{
     CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
     CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2, KvrpcLockInfo,
 };
-use tidb_txnkv::{Key, KeyRange, KeyRanges};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
+use tidb_copr::key_ranges::KeyRanges;
 
 fn ranges(keys: &[&str]) -> KeyRanges {
     KeyRanges::new(

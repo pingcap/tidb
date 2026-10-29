@@ -557,7 +557,8 @@ mod tests {
     use tidb_stats::{Bucket, Histogram, StatsLoadedStatus};
 
     use super::TableStatsSnapshot;
-    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRangeDatums};
+    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use tidb_ranger::Range;
     use tidb_stats::table_statistics::ColumnStats;
     use tidb_stats::table_statistics::IndexStats;
     use crate::cardinality::selectivity::get_row_count_by_index_ranges;
@@ -728,7 +729,7 @@ mod tests {
                 .as_ref()
                 .and_then(|stats| stats.hist_coll())
                 .expect("initStats attaches the collection");
-            let range = IndexRangeDatums {
+            let range = Range {
                 collators: vec![Collation::Binary],
                 low_val: vec![low],
                 high_val: vec![high],

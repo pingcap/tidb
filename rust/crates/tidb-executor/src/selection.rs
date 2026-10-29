@@ -393,7 +393,7 @@ impl<C: Columns> crate::table_access::TableAccess for SelectionExec<C> {
             .is_some_and(|access| access.accept_scan_filter(filter, ctx))
     }
 
-    fn accept_handle_ranges(&mut self, ranges: &[tidb_table::kv_table::IndexRange]) -> bool {
+    fn accept_handle_ranges(&mut self, ranges: &[tidb_ranger::types::Range]) -> bool {
         self.child
             .table_access()
             .is_some_and(|access| access.accept_handle_ranges(ranges))

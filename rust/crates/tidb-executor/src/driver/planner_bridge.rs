@@ -368,18 +368,8 @@ fn locate_list_columns_condition(
                             "LIST COLUMNS range detachment failed: {error:?}"
                         ))
                     })?;
-                let ranges = detached
-                    .ranges
-                    .iter()
-                    .map(|range| crate::IndexRange {
-                        low: range.low_val.clone(),
-                        high: range.high_val.clone(),
-                        low_exclusive: range.low_exclude,
-                        high_exclusive: range.high_exclude,
-                    })
-                    .collect::<Vec<_>>();
                 let location = tidb_planner_rule::list_column_location_for_ranges(
-                    &ranges,
+                    &detached.ranges,
                     values,
                     *default_partition,
                     field_types,

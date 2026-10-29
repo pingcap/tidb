@@ -20,7 +20,7 @@ use tidb_planner::cardinality::{
     pseudo::{
         pseudo_avg_count_per_value, pseudo_between_count, pseudo_equal_count, pseudo_less_count,
         pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges,
-        pseudo_row_count_by_signed_int_ranges, pseudo_row_count_by_unsigned_int_ranges, IndexRange,
+        pseudo_row_count_by_signed_int_ranges, pseudo_row_count_by_unsigned_int_ranges, Range,
         PseudoBoundKind, ScalarRange, SignedIntRange, UnsignedIntRange, PSEUDO_BETWEEN_RATE,
         PSEUDO_EQUAL_RATE, PSEUDO_LESS_RATE,
     },
@@ -376,13 +376,13 @@ fn test_pseudo_scalar_and_index_ranges() {
         10.0
     );
 
-    let unique_equal = IndexRange::new(vec![scalar[3], scalar[3]], 2, false, false);
+    let unique_equal = Range::new(vec![scalar[3], scalar[3]], 2, false, false);
     assert_eq!(
         pseudo_row_count_by_index_ranges(&[unique_equal], table_rows, Some(2)),
         1.0
     );
 
-    let prefix_range = IndexRange::new(vec![scalar[3], scalar[2]], 1, false, false);
+    let prefix_range = Range::new(vec![scalar[3], scalar[2]], 1, false, false);
     assert_eq!(
         pseudo_row_count_by_index_ranges(&[prefix_range], table_rows, None),
         2.5

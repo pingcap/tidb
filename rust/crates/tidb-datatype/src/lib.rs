@@ -131,8 +131,8 @@ pub use collation::{
 };
 pub use compare::{compare_int, vec_compare_ii, vec_compare_iu, vec_compare_ui, vec_compare_uu};
 pub use conversion_context::{
-    ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender, DateModes,
-    IgnoreConversionWarnings, DEFAULT_STATEMENT_FLAGS, IGNORE_CONVERSION_WARNINGS, STRICT_FLAGS,
+    ConversionContext, ConversionFlags, ConversionLocation, DateModes, DEFAULT_STATEMENT_FLAGS,
+    STRICT_FLAGS,
 };
 pub use convert::{
     convert_decimal_str_to_uint, convert_decimal_to_uint, convert_float_to_int,

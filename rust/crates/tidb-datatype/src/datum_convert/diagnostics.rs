@@ -30,9 +30,10 @@ pub struct DatumConversion {
 mod tests {
     use super::*;
     use crate::{
-        ConversionLocation, ConversionWarningAppender, DatumKind, FieldType, FieldTypeCode,
-        FieldTypeFlags, SessionTimeZone, DEFAULT_STATEMENT_FLAGS,
+        ConversionLocation, DatumKind, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone,
+        DEFAULT_STATEMENT_FLAGS,
     };
+    use tidb_context::ConversionWarningAppender;
     use std::cell::RefCell;
 
     #[derive(Default)]

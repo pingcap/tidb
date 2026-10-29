@@ -3692,7 +3692,6 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
- "tidb-datatype",
  "tidb-mysql",
  "tidb-terror",
 ]
@@ -3714,6 +3713,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-fastrand",
+ "tidb-hack",
  "tidb-infoschema-perfschema",
  "tidb-kv",
  "tidb-log",
@@ -3786,6 +3786,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "tidb-charset",
+ "tidb-context",
  "tidb-errno",
  "tidb-goruntime",
  "tidb-hack",
@@ -4082,6 +4083,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-paging",
  "tidb-proto",
+ "tidb-ranger",
  "tidb-tablecodec",
  "tidb-tiflash",
  "tidb-topsql-stmtstats",
@@ -4159,7 +4161,6 @@ dependencies = [
  "tidb-ast",
  "tidb-autoid",
  "tidb-bindinfo",
- "tidb-codec",
  "tidb-config",
  "tidb-config-configtypes",
  "tidb-datatype",
@@ -4183,7 +4184,6 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
- "tidb-memoryusagealarm",
  "tidb-meta",
  "tidb-model",
  "tidb-mysql",
@@ -5057,6 +5057,7 @@ dependencies = [
  "tidb-memory",
  "tidb-parser",
  "tidb-plancodec",
+ "tidb-sessmgr",
  "tidb-vardef",
 ]
 
@@ -5890,7 +5891,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
- "tidb-memoryusagealarm",
+ "tidb-sessmgr",
  "tidb-sqlkiller",
 ]
 
@@ -5972,7 +5973,6 @@ dependencies = [
  "tidb-logutil",
  "tidb-mathutil",
  "tidb-memory",
- "tidb-memoryusagealarm",
  "tidb-meta",
  "tidb-metabuild",
  "tidb-metadef",
@@ -6132,7 +6132,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-kv",
  "tidb-memory",
- "tidb-memoryusagealarm",
  "tidb-parser",
  "tidb-sqlkiller",
  "tidb-stmtctx",

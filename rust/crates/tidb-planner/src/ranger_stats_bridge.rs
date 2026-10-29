@@ -22,7 +22,7 @@ use tidb_datatype::Datum;
 use crate::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges as estimate_pseudo_index_ranges,
     pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
-    pseudo_row_count_by_unsigned_int_ranges, IndexRange, PseudoBoundKind, ScalarRange,
+    pseudo_row_count_by_unsigned_int_ranges, Range, PseudoBoundKind, ScalarRange,
     SignedIntRange, UnsignedIntRange,
 };
 
@@ -90,7 +90,7 @@ pub fn pseudo_count_by_index_ranges(
                 high_kind,
             });
         }
-        index_ranges.push(IndexRange {
+        index_ranges.push(Range {
             columns,
             equal_prefix_len,
             low_exclude: ran.low_exclude,

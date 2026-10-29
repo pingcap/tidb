@@ -266,7 +266,7 @@ pub trait TableAccess {
     /// when a non-unique index names the same handle more than once. An EMPTY
     /// slice is the contradictory `WHERE` no handle satisfies, and reads
     /// nothing.
-    fn accept_handle_ranges(&mut self, ranges: &[tidb_table::kv_table::IndexRange]) -> bool {
+    fn accept_handle_ranges(&mut self, ranges: &[tidb_ranger::types::Range]) -> bool {
         let _ = ranges;
         false
     }

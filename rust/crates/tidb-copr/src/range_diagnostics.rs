@@ -18,7 +18,9 @@
 
 use std::cmp::Ordering;
 
-use crate::{Key, KeyRange, KeyRanges};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
+use crate::key_ranges::KeyRanges;
 
 /// Counts every source diagnostic category for one key-range sequence.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

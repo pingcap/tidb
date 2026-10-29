@@ -17,10 +17,8 @@
 
 use std::sync::Mutex;
 
-use tidb_datatype::{
-    parse_hex_str, ConversionContext, ConversionFlags, ConversionLocation,
-    ConversionWarningAppender, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS,
-};
+use tidb_datatype::{parse_hex_str, ConversionContext, ConversionFlags, ConversionLocation, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS};
+use tidb_context::ConversionWarningAppender;
 use tidb_terror::{TerrorClass, TerrorError};
 
 #[derive(Default)]
@@ -162,4 +160,27 @@ fn binary_literal_uses_context_warning_and_shared_terror_identity() {
     let (_, error) = literal.to_int_with_context(&ignore_context);
     assert!(error.is_none());
     assert_eq!(warnings.0.lock().unwrap().len(), 1, "ignore wins");
+}
+
+/// tidb-context's executor warning handler is a conversion-context sink.
+#[test]
+fn executor_warning_handler_is_the_conversion_context_sink() {
+    use tidb_context::warning_publication::{StaticWarningHandler, WarningHandler};
+    use tidb_terror::{TerrorClass, TerrorCode};
+    let warnings = StaticWarningHandler::new(0);
+    let context = ConversionContext::new(
+        STRICT_FLAGS.with_truncate_as_warning(true),
+        ConversionLocation::UTC,
+        &warnings,
+    );
+    context.append_warning(TerrorError::registered(
+        TerrorClass::Types,
+        TerrorCode::new(1292),
+        "truncated",
+    ));
+    assert_eq!(warnings.warning_count(), 1);
+    assert_eq!(
+        warnings.warnings_snapshot()[0].message,
+        "[types:1292]truncated"
+    );
 }

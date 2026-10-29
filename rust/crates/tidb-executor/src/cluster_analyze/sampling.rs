@@ -25,7 +25,7 @@ pub(super) struct SamplingSchema {
     pub common_handle: bool,
     /// The handle ranges the sampling request reads; see
     /// [`analyze_handle_ranges`].
-    pub ranges: Vec<tidb_distsql::DatumRange>,
+    pub ranges: tidb_ranger::types::Ranges,
     primary_ids: Vec<i64>,
     primary_prefix_ids: Vec<i64>,
     primary_lengths: Vec<i64>,
@@ -304,7 +304,7 @@ impl SamplingSchema {
 /// These are not the record prefix and its successor: TiKV's table scan reads
 /// a range whose end is its start's `PrefixNext` as a point get of the start,
 /// and no row key is the bare `t{id}_r`, so that range samples no rows.
-fn analyze_handle_ranges(table: &TableInfo) -> Vec<tidb_distsql::DatumRange> {
+fn analyze_handle_ranges(table: &TableInfo) -> tidb_ranger::types::Ranges {
     use tidb_ranger::points::{full_int_range, full_not_null_range};
     let unsigned_pk = table
         .pk_is_handle
@@ -315,29 +315,12 @@ fn analyze_handle_ranges(table: &TableInfo) -> Vec<tidb_distsql::DatumRange> {
         Some(unsigned) => full_int_range(unsigned),
         None if table.is_common_handle => full_not_null_range(),
         None => full_int_range(false),
-    }
-    .into_iter()
-    .map(|range| crate::IndexRange {
-        low: range.low_val,
-        high: range.high_val,
-        low_exclusive: range.low_exclude,
-        high_exclusive: range.high_exclude,
-    })
-    .collect::<Vec<_>>();
-    let ranges = if unsigned_pk.is_some() {
-        crate::split_ranges_across_int64_boundary(ranges, false, false).0
+    };
+    if unsigned_pk.is_some() {
+        crate::split_ranges_across_int64_boundary(ranges, false, false, false).0
     } else {
         ranges
-    };
-    ranges
-        .into_iter()
-        .map(|range| tidb_distsql::DatumRange {
-            low: range.low,
-            high: range.high,
-            low_exclude: range.low_exclusive,
-            high_exclude: range.high_exclusive,
-        })
-        .collect()
+    }
 }
 
 fn concurrency_for_stores(stores: u64) -> u64 {

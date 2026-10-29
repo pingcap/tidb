@@ -45,7 +45,6 @@ use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::TableScanExec;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::IndexRange;
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::physical_cte::{
@@ -1092,7 +1091,7 @@ fn correlated_index_range_rebuilder(
                 ctx.ranger_options(),
             )
             .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?;
-        Ok(executor_ranges(&ranges))
+        Ok(ranges)
     }))
 }
 
@@ -1130,20 +1129,8 @@ fn correlated_table_range_rebuilder(
                 .ranges
             }
         };
-        Ok(executor_ranges(&ranges))
+        Ok(ranges)
     }))
-}
-
-fn executor_ranges(ranges: &tidb_ranger::types::Ranges) -> Vec<IndexRange> {
-    ranges
-        .iter()
-        .map(|range| IndexRange {
-            low: range.low_val.clone(),
-            high: range.high_val.clone(),
-            low_exclusive: range.low_exclude,
-            high_exclusive: range.high_exclude,
-        })
-        .collect()
 }
 
 fn table_scan_schema(
@@ -1341,7 +1328,7 @@ fn build_table_scan(
         .filter(|_| !scan.group_by_col_idxs.is_empty())
         .unwrap_or(&scan.ranges);
     if !scan_ranges.is_empty() || scan.range_rebuild.is_some() {
-        let ranges = executor_ranges(scan_ranges);
+        let ranges = scan_ranges.clone();
         if !source.accept_handle_ranges(&ranges) {
             return Err(DriverError::unsupported(
                 "the physical table scan cannot apply its ranges",
@@ -2649,9 +2636,9 @@ fn build_index_reader(
         .filter(|_| !scan.group_by_col_idxs.is_empty())
         .unwrap_or(&scan.ranges);
     let ranges = if scan_ranges.is_empty() {
-        vec![IndexRange::full()]
+        tidb_ranger::points::full_range()
     } else {
-        executor_ranges(scan_ranges)
+        scan_ranges.clone()
     };
     let prefix_limit = embedded_index_prefix_limit(index_plan);
     let prefix_index_offset = prefix_limit
@@ -5623,7 +5610,7 @@ fn build_index_merge_reader(
                 // Go builds the worker's key ranges from the scan's Ranges:
                 // a partial whose ranges came out empty (`c1 >= 3 and
                 // c1 <= 1`) reads no keys.
-                let ranges = executor_ranges(&scan.ranges);
+                let ranges = scan.ranges.clone();
                 let mut source = IndexRangeSourceExec::new_with_statement(
                     meta(ctx, partial, partial_schema),
                     partial_table.clone(),
@@ -9204,7 +9191,7 @@ use super::*;
                     ExecutorMeta::new(two_long_schema(), 10, 2, 2),
                     table.clone(),
                     7,
-                    vec![IndexRange::full()],
+                    tidb_ranger::points::full_range(),
                     RowDecodeContext::for_query(&ctx),
                     crate::remote_scan::pushdown_statement_context(&ctx),
                 ),

@@ -18,7 +18,6 @@ tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-txninfo = { path = "../tidb-txninfo" }
 tidb-memory = { path = "../tidb-memory" }
-tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 chrono = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }

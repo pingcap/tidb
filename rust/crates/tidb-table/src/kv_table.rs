@@ -62,9 +62,9 @@ pub use row_decoder::{
     DecodedRow, GeneratedColumnSelection, PreparedPointGetRowDecoder, RowDecoder,
 };
 pub use table_meta::{
-    index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
+    FkAction, KvColumn,
     KvForeignKey, KvIndex, NonPublicColumn, PreparedPointGetDecodeContext,
-    range_text, RowDecodeContext, TableCharset, TableHandle,
+    RowDecodeContext, TableCharset, TableHandle,
 };
 pub use index_entries::index_key_bounds;
 use table_meta::NonPublicIndex;

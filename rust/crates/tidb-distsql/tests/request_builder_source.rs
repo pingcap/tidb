@@ -15,11 +15,12 @@
 //! Request-builder behavior selected from `pkg/distsql/request_builder_test.go`.
 //! A passing subset does not accept the complete upstream package.
 
+use tidb_ranger::types::Range;
 use prost::Message;
 use tidb_codec::{encode_int, encode_key};
 use tidb_tablecodec::table_key::encode_row_key;
 use tidb_datatype::Datum;
-use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::StoreLabel;
@@ -32,33 +33,25 @@ use tidb_txnkv::{Handle, IntHandle, Key, ResourceGroupTagBuilder};
 
 const DAG_BYTES: &[u8] = &[0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0];
 
-fn source_ranges() -> Vec<DatumRange> {
+/// Go's test ranges: `&ranger.Range{LowVal: ..., HighVal: ...,
+/// Collators: collate.GetBinaryCollatorSlice(1)}`.
+fn range(low: Vec<Datum>, high: Vec<Datum>, low_exclude: bool, high_exclude: bool) -> Range {
+    Range {
+        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        low_val: low,
+        high_val: high,
+        low_exclude,
+        high_exclude,
+    }
+}
+
+fn source_ranges() -> Vec<Range> {
     vec![
-        DatumRange::inclusive(vec![Datum::Int(1)], vec![Datum::Int(2)]),
-        DatumRange {
-            low: vec![Datum::Int(2)],
-            high: vec![Datum::Int(4)],
-            low_exclude: true,
-            high_exclude: true,
-        },
-        DatumRange {
-            low: vec![Datum::Int(4)],
-            high: vec![Datum::Int(19)],
-            low_exclude: false,
-            high_exclude: true,
-        },
-        DatumRange {
-            low: vec![Datum::Int(19)],
-            high: vec![Datum::Int(32)],
-            low_exclude: true,
-            high_exclude: false,
-        },
-        DatumRange {
-            low: vec![Datum::Int(34)],
-            high: vec![Datum::Int(34)],
-            low_exclude: true,
-            high_exclude: false,
-        },
+        range(vec![Datum::Int(1)], vec![Datum::Int(2)], false, false),
+        range(vec![Datum::Int(2)], vec![Datum::Int(4)], true, true),
+        range(vec![Datum::Int(4)], vec![Datum::Int(19)], false, true),
+        range(vec![Datum::Int(19)], vec![Datum::Int(32)], true, false),
+        range(vec![Datum::Int(34)], vec![Datum::Int(34)], true, false),
     ]
 }
 
@@ -93,7 +86,7 @@ fn table_and_index_ranges_match_source_exclusion_vectors() {
 // Go pkg/distsql/request_builder_test.go::TestTableRangesToKVRangesWithFbs.
 #[test]
 fn test_table_ranges_to_kv_ranges_with_fbs() {
-    let fbs = DatumRange::inclusive(vec![Datum::Int(1)], vec![Datum::Int(4)]);
+    let fbs = range(vec![Datum::Int(1)], vec![Datum::Int(4)], false, false);
     let table = table_ranges_to_kv_ranges(0, std::slice::from_ref(&fbs)).expect("table FBS");
     assert_eq!(
         table,
@@ -107,7 +100,7 @@ fn test_table_ranges_to_kv_ranges_with_fbs() {
 // Go pkg/distsql/request_builder_test.go::TestIndexRangesToKVRangesWithFbs.
 #[test]
 fn test_index_ranges_to_kv_ranges_with_fbs() {
-    let fbs = DatumRange::inclusive(vec![Datum::Int(1)], vec![Datum::Int(4)]);
+    let fbs = range(vec![Datum::Int(1)], vec![Datum::Int(4)], false, false);
     let index = index_ranges_to_kv_ranges(&[0], 0, &[fbs]).expect("index FBS");
     let low = encode_key(&[Datum::Int(1)]).expect("low");
     let high = encode_key(&[Datum::Int(5)]).expect("high");

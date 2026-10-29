@@ -30,9 +30,10 @@ use tidb_expr::expression::{Expression, ScalarFunction};
 
 use super::pseudo::{PSEUDO_EQUAL_RATE, hist_coll_pseudo_selectivity};
 use super::row_count_estimator::{
-    ColumnRange, EstimationError, EstimatorOptions, IndexRangeDatums, get_index_row_count,
+    ColumnRange, EstimationError, EstimatorOptions, get_index_row_count,
     get_row_count_by_column_ranges,
 };
+use tidb_ranger::Range;
 use tidb_ranger::points::{ExpressionEvaluator, PointBuilderError};
 use crate::selectivity_greedy::{StatsNode, StatsNodeType, get_usable_sets_by_greedy};
 use crate::stats_info::HistColl;
@@ -602,7 +603,7 @@ fn find_prefix_of_index(columns: &[Column], index_column_ids: &[i64]) -> Vec<Col
 pub fn get_row_count_by_index_ranges(
     coll: &HistColl,
     index_id: i64,
-    ranges: &[IndexRangeDatums],
+    ranges: &[Range],
     index_columns: &[Column],
     options: &EstimatorOptions,
 ) -> Result<super::row_count_column::RowEstimate, EstimationError> {
@@ -808,7 +809,8 @@ mod index_range_estimate_tests {
     use tidb_stats::{Bucket, Histogram, TopN};
 
     use super::get_row_count_by_index_ranges;
-    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRangeDatums, IndexRowCounts};
+    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRowCounts};
+    use tidb_ranger::Range;
     use tidb_stats::table_statistics::IndexStats;
     use crate::stats_info::HistColl;
 
@@ -816,8 +818,8 @@ mod index_range_estimate_tests {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))
     }
 
-    fn range(low: Vec<Datum>, high: Vec<Datum>) -> IndexRangeDatums {
-        IndexRangeDatums {
+    fn range(low: Vec<Datum>, high: Vec<Datum>) -> Range {
+        Range {
             collators: vec![Collation::Binary; low.len()],
             low_val: low,
             high_val: high,

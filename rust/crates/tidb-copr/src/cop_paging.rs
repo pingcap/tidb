@@ -36,7 +36,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
-use tidb_txnkv::{Key, KeyRange, KeyRanges};
+use tidb_txnkv::Key;
+use tidb_txnkv::KeyRange;
+use crate::key_ranges::KeyRanges;
 
 use tidb_paging::grow_paging_size;
 use crate::copr_cache::CoprCache;

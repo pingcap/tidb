@@ -24,7 +24,7 @@ use tidb_log::{Field, Value};
 
 use tidb_logutil::bg_logger;
 use tidb_memory::Tracker;
-use tidb_memoryusagealarm::{ProcessInfo, SessionManager};
+use tidb_sessmgr::processinfo::{ProcessInfo, SessionManager};
 use tidb_sqlkiller::KillSignal;
 
 // Process global Observation indicators for memory limit (Go package vars).
@@ -130,11 +130,11 @@ fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManag
                 if same_statement {
                     let last_log = s
                         .last_log_time
-                        .unwrap_or_else(tidb_memoryusagealarm::zero_time);
+                        .unwrap_or_else(tidb_sessmgr::processinfo::zero_time);
                     if now - last_log > chrono::Duration::seconds(5) {
                         let kill_start = s
                             .kill_start_time
-                            .unwrap_or_else(tidb_memoryusagealarm::zero_time);
+                            .unwrap_or_else(tidb_sessmgr::processinfo::zero_time);
                         let seconds = (now - kill_start).num_seconds();
                         bg_logger().warn(
                             &format!(

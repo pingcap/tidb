@@ -32,7 +32,6 @@ mod partial_aggregate_primary_ids_source;
 mod partition_exchange_global_index_source;
 mod physical_expand_source;
 mod physical_union_scan_execution_source;
-mod ranger_types_source;
 mod reorg_partition_ddl_failures_source;
 mod row_decoder_source;
 mod shard_row_id_bits_source;

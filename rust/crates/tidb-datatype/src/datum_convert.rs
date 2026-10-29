@@ -93,7 +93,7 @@ impl Datum {
             crate::ConversionContext::new(
                 flags,
                 crate::ConversionLocation::from_time_zone(zone),
-                &crate::IGNORE_CONVERSION_WARNINGS,
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
             )
         });
         self.convert_to_reported(target, flags, zone, &mut Diagnostics::new(context.as_ref()))
@@ -1928,7 +1928,7 @@ mod tests {
     #[test]
     fn calendar_batch_context_retains_parser_warning_and_unsigned_error() {
         struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
-        impl crate::ConversionWarningAppender for Warnings {
+        impl tidb_context::ConversionWarningAppender for Warnings {
             fn append_conversion_warning(&self, e: tidb_terror::TerrorError) {
                 self.0.borrow_mut().push(e);
             }
@@ -1966,7 +1966,7 @@ mod tests {
     #[test]
     fn calendar_batch_context_distinguishes_typed_and_string_dst() {
         struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
-        impl crate::ConversionWarningAppender for Warnings {
+        impl tidb_context::ConversionWarningAppender for Warnings {
             fn append_conversion_warning(&self, e: tidb_terror::TerrorError) {
                 self.0.borrow_mut().push(e);
             }
@@ -2043,7 +2043,7 @@ mod tests {
         let context = crate::ConversionContext::new(
             crate::DEFAULT_STATEMENT_FLAGS,
             crate::ConversionLocation::UTC,
-            &crate::IGNORE_CONVERSION_WARNINGS,
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
         );
         for (input, expected) in [(8_390_000, "838:59:59"), (-8_390_000, "")] {
             let result = crate::Datum::Int(input)
