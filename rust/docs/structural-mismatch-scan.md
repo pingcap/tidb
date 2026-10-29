@@ -7,7 +7,7 @@ Done (each is its Go package's crate now): every `tidb-util` entry (one crate pe
 Blocked on a behavior-level change, not a move:
 - `planner/property` (`physical_property`, `stats_info`, `task_type`) and `planner/cardinality`: the planner's `stats_info::HistColl` reimplements Go `statistics.HistColl`, and cardinality reads planner core (`access_path`, logical plans).
 - `planner/util/path.go` (`access_path`) and `domainmisc`: read planner core, which Go's `planner/util` reaches only through `core/base`, still inside the planner crate.
-- tidb-txnkv still holds Go `store/driver`'s `tikvStore` (`TikvStore`, which copr, kv's `tikv_region_store` and unistore build on); the transaction driver half moved to tidb-store-driver-txn, `table_key` to tidb-tablecodec, and autoid, infoschema(-issyncer) and bindinfo read through `kv_storage::{Storage, Transaction}`. The crates still naming the concrete opener (domain-core, ddl, session, executor, gcworker, the statistics-handle crates) all reach Go `store/driver/txn` transitively: seam work, not inversions (ExecPlan).
+- tidb-txnkv's `TikvStore` is client-go's `KVStore` surface (Go's copr and gcworker use `*tikv.KVStore` directly), correctly below copr; the transaction driver half moved to tidb-store-driver-txn, `table_key` to tidb-tablecodec, and autoid, infoschema(-issyncer) and bindinfo read through `kv_storage::{Storage, Transaction}`. The crates still naming the concrete opener (domain-core, ddl, session, executor, gcworker, the statistics-handle crates) all reach Go `store/driver/txn` transitively: seam work, not inversions (ExecPlan).
 
 ## Disposition of every remaining entry (2026-10-29)
 

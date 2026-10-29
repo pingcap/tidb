@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/store/driver`'s `tikvStore`, the half that holds client-go's
-//! `*tikv.KVStore`: the node's one client-rust store, with the runtime its
+//! client-go's `*tikv.KVStore` as TiDB holds it (Go `pkg/store/driver`'s
+//! `tikvStore` embeds it; Go's `store/copr` and `store/gcworker` use it
+//! directly): the node's one client-rust store, with the runtime its
 //! background work -- the txn safe point updater -- runs on. The GC worker,
 //! region splitting and the read path's safe-point check share it, as Go's
 //! share the one `KVStore`. It also holds the node's one PD HTTP client (Go
