@@ -800,3 +800,33 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk.MustExec("commit")
 	}
 }
+
+func TestPessimisticRetryRestartsSeededRand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, u int unique)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustQuery("select if(rand(12345) < 0.8, 1, 2)").Check(testkit.Rows("1"))
+
+	// tk2 holds the lock of u = 1 until the first attempt of the update waits for it, then its commit makes the
+	// update retry.
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (2, 1)")
+	tk.MustExec("begin pessimistic")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tk.ExecToErr("update t set u = if(rand(12345) < 0.8, 1, 2) where id = 1")
+	}()
+	tk3 := testkit.NewTestKit(t, store)
+	require.Eventually(t, func() bool {
+		return tk3.MustQuery("select count(*) from information_schema.tidb_trx where state = 'LockWaiting'").Rows()[0][0] == "1"
+	}, 5*time.Second, 10*time.Millisecond)
+	tk2.MustExec("commit")
+	require.ErrorContains(t, <-errCh, "Duplicate entry '1' for key 't.u'")
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 10", "2 1"))
+}
