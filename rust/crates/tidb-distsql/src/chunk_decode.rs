@@ -23,10 +23,8 @@
 use std::fmt;
 
 use prost::Message;
-use tidb_codec::{
-    decode_column_datums, decode_columns, decode_default_rows, decode_one_typed_in_timezone,
-    CodecError, ColumnCodecError, ColumnLayout, RawColumn, RawValue, TypedColumnError,
-};
+use tidb_codec::{decode_default_rows, decode_one_typed_in_timezone, CodecError, RawValue};
+use tidb_chunk::raw_column::{decode_column_datums, decode_columns, ColumnCodecError, ColumnLayout, RawColumn, TypedColumnError};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk, EncodeType, RowMeta, SelectResponse};
 

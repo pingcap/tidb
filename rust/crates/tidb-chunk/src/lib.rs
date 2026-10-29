@@ -49,6 +49,7 @@ pub mod iterator;
 pub mod list;
 pub mod mutrow;
 pub mod pool;
+pub mod raw_column;
 pub mod row;
 pub mod row_container;
 pub mod row_container_reader;

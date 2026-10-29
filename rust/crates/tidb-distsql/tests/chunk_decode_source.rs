@@ -16,10 +16,8 @@
 //! chunk boundary. These tests intentionally stop before typed Datum decode.
 
 use prost::Message;
-use tidb_codec::{
-    encode_value, ColumnLayout, VALUE_COMPACT_BYTES_FLAG, VALUE_NIL_FLAG, VALUE_VARINT_FLAG,
-    VALUE_VECTOR_FLOAT32_FLAG,
-};
+use tidb_codec::{encode_value, VALUE_COMPACT_BYTES_FLAG, VALUE_NIL_FLAG, VALUE_VARINT_FLAG, VALUE_VECTOR_FLOAT32_FLAG};
+use tidb_chunk::raw_column::ColumnLayout;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_distsql::{
     decode_chunk, decode_response_chunks, decode_select_response, ChunkDecodeError,
@@ -269,7 +267,7 @@ fn type_chunk_typed_scalar_leaf_rejects_opaque_field_type_without_consuming_more
     assert_eq!(
         decoded.decode_datums(&[FieldType::new(FieldTypeCode::Geometry)]),
         Err(ChunkDecodeError::TypedColumnCodec(
-            tidb_codec::TypedColumnError::UnsupportedFieldType(FieldTypeCode::Geometry)
+            tidb_chunk::raw_column::TypedColumnError::UnsupportedFieldType(FieldTypeCode::Geometry)
         ))
     );
     assert_eq!(decoded.remainder, b"suffix");

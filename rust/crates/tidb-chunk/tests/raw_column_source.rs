@@ -14,7 +14,7 @@
 
 //! Source-shaped coverage for `pkg/util/chunk/codec.go`.
 
-use tidb_codec::{decode_columns, ColumnCodecError, ColumnLayout};
+use tidb_chunk::raw_column::{decode_columns, ColumnCodecError, ColumnLayout};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 #[test]

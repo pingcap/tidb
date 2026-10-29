@@ -3592,6 +3592,7 @@ dependencies = [
  "bytes",
  "tidb-build-tags",
  "tidb-checksum",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-disjointset",
  "tidb-disk",

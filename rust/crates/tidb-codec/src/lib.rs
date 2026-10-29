@@ -18,7 +18,6 @@
 //! intentionally contains no opaque fixture-only handle representation.
 
 mod bytes;
-mod column;
 mod datum;
 mod decimal;
 mod duration;
@@ -36,10 +35,6 @@ mod value;
 pub use bytes::{
     decode_bytes, decode_bytes_desc, decode_compact_bytes, encode_bytes, encode_bytes_desc,
     encode_bytes_ext, encode_compact_bytes, encoded_bytes_len,
-};
-pub use column::{
-    decode_column_datums, decode_columns, ColumnCodecError, ColumnLayout, RawColumn,
-    TypedColumnError,
 };
 pub use datum::{
     cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
