@@ -1003,7 +1003,7 @@ pub trait Columns {
     }
 
     /// Shared session owner used by the plan-aware user-variable rewriter.
-    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         None
     }
 

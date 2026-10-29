@@ -52,7 +52,7 @@ pub trait SessionContext {
     /// Whether a privilege registry backs [`Self::privilege_manager`].
     fn has_privilege_registry(&self) -> bool;
     /// Go `SessionVars.UserVars`.
-    fn user_vars(&self) -> &tidb_expr::user_vars::UserVars;
+    fn user_vars(&self) -> &tidb_variable::user_vars::UserVars;
     /// Go `SessionVars.StmtCtx.AppendWarning` / `AppendNote`.
     fn append_sql_warning(&mut self, warning: tidb_context::SqlWarn);
     /// Go `SessionVars.InTxn`.

@@ -236,6 +236,7 @@ members = [
     "crates/tidb-server",
     "crates/tidb-domain-core",
     "crates/tidb-session",
+    "crates/tidb-util-config",
     "crates/tidb-variable",
     "crates/tidb-kv",
     "crates/tidb-autoid",

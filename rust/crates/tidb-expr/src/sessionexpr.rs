@@ -81,7 +81,7 @@
 //! [`crate::expropt`]'s ten providers and its `KvStorage` / `SqlExecutor` /
 //! `SessionVars` / `AdvisoryLockContext` / `PrivilegeChecker` boundary traits,
 //! [`crate::exprctx`]'s optional-property keys,
-//! [`tidb_infoschema_context::MetaOnlyInfoSchema`], [`crate::user_vars::UserVarsReader`],
+//! [`tidb_infoschema_context::MetaOnlyInfoSchema`], [`tidb_variable::user_vars::UserVarsReader`],
 //! and [`crate::exprstatic`]'s `EvalCtxError` as this file's error type —
 //! `IntoStatic` requires the two to agree anyway.
 //!
@@ -145,7 +145,7 @@ use crate::exprstatic::evalctx::{
 use crate::exprstatic::exprctx::{make_expr_context_static, StaticConvertibleExprContext};
 use crate::exprstatic::{EvalCtxError, SessionVarsSnapshot};
 use tidb_infoschema_context::MetaOnlyInfoSchema;
-use crate::user_vars::UserVarsReader;
+use tidb_variable::user_vars::UserVarsReader;
 
 /// boundary: Go `sessionctx/variable.SessionVars` together with the
 /// `stmtctx.StatementContext` this package reaches through it
@@ -1079,7 +1079,7 @@ mod tests {
         SessionContextPropReader, SessionVarsPropReader, SqlExecutorPropReader,
     };
     use crate::exprstatic::StaticSessionVars;
-    use crate::user_vars::UserVars;
+    use tidb_variable::user_vars::UserVars;
 
     /// Go `require.Same` on two interface values: the same allocation, even
     /// when the two handles have different trait-object types.

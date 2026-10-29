@@ -342,7 +342,7 @@ impl<'a> SchemaNameResolver<'a> {
 }
 
 impl ColumnResolver for SchemaNameResolver<'_> {
-    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.base.user_vars()
     }
 

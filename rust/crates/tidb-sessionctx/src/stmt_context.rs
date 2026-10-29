@@ -782,7 +782,7 @@ pub struct StmtContextData {
     /// cannot be a value copied in and out at the statement boundary. `None`
     /// is a context with no session behind it, where a user variable reads as
     /// NULL (Go's own answer for an unset one) and an assignment is dropped.
-    user_vars: Option<tidb_expr::user_vars::UserVars>,
+    user_vars: Option<tidb_variable::user_vars::UserVars>,
     /// Typed execute-time values. Clones within one execution share this
     /// immutable snapshot; later executions install a different snapshot.
     prepared_params: Option<Arc<[Datum]>>,
@@ -2295,7 +2295,7 @@ context_configuration! {
     /// expr` writes THROUGH -- see the field's own doc for why this is a
     /// shared handle rather than a copy.
     #[must_use]
-    pub fn with_user_vars(mut self, user_vars: tidb_expr::user_vars::UserVars) -> Self {
+    pub fn with_user_vars(mut self, user_vars: tidb_variable::user_vars::UserVars) -> Self {
         self.user_vars = Some(user_vars);
         self
     }
@@ -2470,7 +2470,7 @@ pub type SequenceState = Arc<Mutex<HashMap<i64, i64>>>;
 
 impl StmtContext {
     /// The same owner supplies declared types to planning and values to execution.
-    pub fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+    pub fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.user_vars.as_ref()
     }
 
@@ -5968,7 +5968,7 @@ impl Columns for StmtContext {
         self.block_encryption_mode
     }
 
-    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.user_vars.as_ref()
     }
 
@@ -5976,7 +5976,7 @@ impl Columns for StmtContext {
     /// unset one is NULL rather than an error.
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         let vars = self.user_vars.as_ref()?;
-        tidb_expr::user_vars::UserVarsReader::get_user_var_val(vars, &tidb_hack::go_to_lower(name))
+        tidb_variable::user_vars::UserVarsReader::get_user_var_val(vars, &tidb_hack::go_to_lower(name))
     }
 
     /// Go `SessionVars.SetUserVarVal`. A NULL value never reaches here -- the

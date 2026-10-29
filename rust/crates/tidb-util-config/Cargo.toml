@@ -1,0 +1,17 @@
+[package]
+name = "tidb-util-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/config: loading a plan replayer's session variables (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-log = { path = "../tidb-log" }
+toml.workspace = true

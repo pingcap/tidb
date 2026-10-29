@@ -45,7 +45,7 @@ impl<'a> FoldModeResolver<'a> {
 }
 
 impl ColumnResolver for FoldModeResolver<'_> {
-    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.base.user_vars()
     }
 

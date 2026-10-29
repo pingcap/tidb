@@ -48,7 +48,7 @@ use crate::exprctx::{
     OptionalEvalPropKey, OptionalEvalPropKeySet, ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS,
 };
 use crate::expropt::{DynOptionalEvalPropProvider, EvalPropContext, OptionalEvalPropProviders};
-use crate::user_vars::{UserVars, UserVarsReader};
+use tidb_variable::user_vars::{UserVars, UserVarsReader};
 use tidb_hack::go_to_lower;
 
 /// boundary: Go `vardef.DefMaxAllowedPacket`, which is

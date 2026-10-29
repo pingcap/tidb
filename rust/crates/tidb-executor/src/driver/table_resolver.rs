@@ -44,7 +44,7 @@ pub(crate) struct TableResolver<'a> {
 }
 
 impl ColumnResolver for TableResolver<'_> {
-    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.constant_context.user_vars()
     }
 

@@ -65,7 +65,7 @@ pub trait ColumnResolver {
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
 
     /// Go's session user-variable owner: declared types are resolved at build time.
-    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         None
     }
 
@@ -280,7 +280,7 @@ pub trait ColumnResolver {
 // Keep a borrowed resolver's complete context, including trait objects, when
 // passing it through the rewriter's statically dispatched recursive helpers.
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
-    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         (**self).user_vars()
     }
     fn allow_build_cast_array(&self) -> bool {
@@ -2169,7 +2169,7 @@ fn rewrite_leaf_literal(
             Ok(rewritten)
         }
         Expr::UserVar(name) => {
-            use crate::user_vars::UserVarsReader;
+            use tidb_variable::user_vars::UserVarsReader;
             let name = tidb_hack::go_to_lower(name);
             let declared = resolver
                 .user_vars()

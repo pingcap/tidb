@@ -646,7 +646,7 @@ fn multi_update_defaults_resolve_across_sources() {
 /// rejected statement cannot consume the source expression's side effect.
 #[test]
 fn insert_select_generated_target_is_rejected_before_source_effects() {
-    use tidb_expr::user_vars::{UserVars, UserVarsReader};
+    use tidb_variable::user_vars::{UserVars, UserVarsReader};
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(

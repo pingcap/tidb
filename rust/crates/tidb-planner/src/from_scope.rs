@@ -196,7 +196,7 @@ impl ScopeResolver<'_> {
 }
 
 impl ColumnResolver for ScopeResolver<'_> {
-    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.scope.constant_context.as_ref()?.user_vars()
     }
 

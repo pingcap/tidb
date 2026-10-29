@@ -7230,6 +7230,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-util-config"
+version = "0.0.0"
+dependencies = [
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-variable",
+ "toml",
+]
+
+[[package]]
 name = "tidb-vardef"
 version = "0.0.0"
 dependencies = [

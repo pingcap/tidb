@@ -719,7 +719,7 @@ pub struct Session {
     /// The session owns the store and lends the handle to every statement
     /// context, because `@x := expr` writes it from INSIDE expression
     /// evaluation -- once per row, visible to the next select-list item.
-    user_vars: tidb_expr::user_vars::UserVars,
+    user_vars: tidb_variable::user_vars::UserVars,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
     /// each sequence, keyed by lowercase `db.name`, which is what `LASTVAL`
     /// reports. It is SESSION state, not the sequence's stored counter -- a
@@ -951,7 +951,7 @@ impl Session {
             parse_warnings: None,
             last_result_output_names: Vec::new(),
             last_result_current_db: String::new(),
-            user_vars: tidb_expr::user_vars::UserVars::new(),
+            user_vars: tidb_variable::user_vars::UserVars::new(),
             sequence_last_values: Arc::default(),
             statement_boundary_open: false,
             process: None,
@@ -1154,7 +1154,6 @@ pub use txn::{
     TxnManagerOps,
 };
 mod user_table;
-pub mod util_config;
 mod variables;
 mod warnings;
 pub(crate) use classify::{
@@ -3261,7 +3260,7 @@ impl tidb_executor::sessionctx::SessionContext for Session {
         self.privileges.is_some()
     }
 
-    fn user_vars(&self) -> &tidb_expr::user_vars::UserVars {
+    fn user_vars(&self) -> &tidb_variable::user_vars::UserVars {
         &self.user_vars
     }
 

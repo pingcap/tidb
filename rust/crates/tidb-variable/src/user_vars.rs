@@ -12,15 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/sessionctx/variable`, covering `session.go`'s
-//! `UserVarsReader` interface and its `UserVars` implementation — the slice
-//! `pkg/expression/exprctx`'s `EvalContext` reads user-defined variables
-//! through.
-//!
-//! It lives in this crate because the expression context is its Go consumer
-//! and sits below the session tier here; the session's own user-variable
-//! storage adopts this type as the single authority rather than keeping a
-//! parallel map.
+//! Go `pkg/sessionctx/variable/session.go`'s `UserVarsReader` interface and
+//! its `UserVars` implementation: what `exprctx`'s `EvalContext` reads
+//! user-defined variables through, and the session's own user-variable
+//! storage.
 //!
 //! Names are stored as given: Go's `SetUserVarVal`/getters do not fold case —
 //! callers pass lowercased names — while `UnsetUserVar` lowercases its

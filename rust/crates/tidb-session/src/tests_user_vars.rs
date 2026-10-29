@@ -305,7 +305,7 @@ fn user_variable_batch_uses_migrated_types_and_source_string_assignments() {
     session
         .run("SELECT @json := CAST('[1,2]' AS JSON), @duration := CAST('12:34:56' AS TIME)")
         .unwrap();
-    use tidb_expr::user_vars::UserVarsReader;
+    use tidb_variable::user_vars::UserVarsReader;
     for name in ["json", "duration"] {
         assert!(matches!(
             session.user_vars.get_user_var_val(name),
@@ -322,7 +322,7 @@ fn user_variable_batch_uses_migrated_types_and_source_string_assignments() {
 fn user_variable_batch_set_plans_all_assignments_before_execution() {
     let mut session = Session::new();
     session.run("SET @first = 5, @second = @first * 2").unwrap();
-    use tidb_expr::user_vars::UserVarsReader;
+    use tidb_variable::user_vars::UserVarsReader;
     assert!(
         matches!(session.user_vars.get_user_var_val("second"), Some(Datum::Real(value)) if value == 10.0)
     );

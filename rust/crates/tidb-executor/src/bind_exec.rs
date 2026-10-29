@@ -22,7 +22,7 @@ use tidb_ast::{
 };
 use tidb_bindinfo::binding::{self, Binding, BIND_INFO_COLUMNS, SOURCE_MANUAL, STATUS_ENABLED};
 use tidb_datatype::Datum;
-use tidb_expr::user_vars::UserVarsReader;
+use tidb_variable::user_vars::UserVarsReader;
 use tidb_hack::go_to_lower;
 
 use crate::{DriverError, StmtOutput};

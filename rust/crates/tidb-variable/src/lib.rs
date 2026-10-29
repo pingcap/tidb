@@ -18,6 +18,7 @@
 //! package does.
 
 mod error;
+pub mod user_vars;
 pub mod hypo_index;
 pub mod variable_errors;
 pub mod hint_updatable_vars;

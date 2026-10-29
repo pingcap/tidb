@@ -58,7 +58,7 @@
 use super::*;
 use crate::compiler::PlanCacheableChecker;
 use std::collections::HashMap;
-use tidb_expr::user_vars::UserVarsReader;
+use tidb_variable::user_vars::UserVarsReader;
 
 use tidb_ast::{Expr, PrepareSource, QueryStmt, SelectField, Stmt};
 use tidb_datatype::Datum;
