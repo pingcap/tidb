@@ -401,48 +401,17 @@ func TestAutoIDRPCRetryPolicy(t *testing.T) {
 }
 
 func TestSinglePointAllocTransfer(t *testing.T) {
-	t.Run("uses authoritative source base", func(t *testing.T) {
-		mockCli := &mockAutoIDClient{
-			allocResp:  &autoid.AutoIDResponse{Min: 2, Max: 2},
-			rebaseResp: &autoid.RebaseResponse{},
-		}
+	t.Run("updates local owner without RPC", func(t *testing.T) {
+		mockCli := &mockAutoIDClient{}
 		allocator := newTestSinglePointAlloc(mockCli)
+		allocator.lastAllocated.Store(4)
 
-		require.NoError(t, allocator.Transfer(2, 1))
+		require.NoError(t, allocator.Transfer(2, 3))
 		require.Equal(t, int64(2), allocator.dbID)
-		require.Equal(t, int64(1), mockCli.allocCallCount.Load())
-		require.NotNil(t, mockCli.allocReq)
-		require.Equal(t, int64(1), mockCli.allocReq.DbID)
-		require.Equal(t, uint64(0), mockCli.allocReq.N)
-		require.NotNil(t, mockCli.rebaseReq)
-		require.Equal(t, int64(2), mockCli.rebaseReq.Base)
-	})
-
-	t.Run("uses one deadline for transfer RPCs", func(t *testing.T) {
-		missingDeadlineErr := errors.New("missing transfer deadline")
-		var sourceDeadline, destinationDeadline time.Time
-		mockCli := &mockAutoIDClient{
-			alloc: func(ctx context.Context, _ int64, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
-				var ok bool
-				sourceDeadline, ok = ctx.Deadline()
-				if !ok {
-					return nil, missingDeadlineErr
-				}
-				return &autoid.AutoIDResponse{Min: 2, Max: 2}, nil
-			},
-			rebase: func(ctx context.Context, _ int64, _ *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
-				var ok bool
-				destinationDeadline, ok = ctx.Deadline()
-				if !ok {
-					return nil, missingDeadlineErr
-				}
-				return &autoid.RebaseResponse{}, nil
-			},
-		}
-		allocator := newTestSinglePointAlloc(mockCli)
-
-		require.NoError(t, allocator.Transfer(2, 1))
-		require.Equal(t, sourceDeadline, destinationDeadline)
+		require.Equal(t, int64(3), allocator.tblID)
+		require.Equal(t, int64(4), allocator.Base())
+		require.Equal(t, int64(0), mockCli.allocCallCount.Load())
+		require.Equal(t, int64(0), mockCli.rebaseCallCount.Load())
 	})
 
 	t.Run("uses a deadline for force rebase", func(t *testing.T) {
@@ -458,32 +427,6 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		allocator := newTestSinglePointAlloc(mockCli)
 
 		require.NoError(t, allocator.ForceRebase(2))
-	})
-
-	t.Run("keeps source owner when destination rebase fails", func(t *testing.T) {
-		rebaseErr := errors.New("rebase failed")
-		mockCli := &mockAutoIDClient{
-			allocResp: &autoid.AutoIDResponse{Min: 2, Max: 2},
-			rebaseErr: rebaseErr,
-		}
-		allocator := newTestSinglePointAlloc(mockCli)
-
-		require.ErrorIs(t, allocator.Transfer(2, 1), rebaseErr)
-		require.Equal(t, int64(1), allocator.dbID)
-		require.Equal(t, int64(1), allocator.tblID)
-	})
-
-	t.Run("uses local bound when the source base is stale", func(t *testing.T) {
-		mockCli := &mockAutoIDClient{
-			allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 0},
-			rebaseResp: &autoid.RebaseResponse{},
-		}
-		allocator := newTestSinglePointAlloc(mockCli)
-		allocator.lastAllocated.Store(4)
-
-		require.NoError(t, allocator.Transfer(2, 1))
-		require.NotNil(t, mockCli.rebaseReq)
-		require.Equal(t, int64(4), mockCli.rebaseReq.Base)
 	})
 
 	t.Run("does not regress after a lower rebase", func(t *testing.T) {
@@ -570,6 +513,7 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.NoError(t, <-transferDone)
 		require.Equal(t, int64(0), allocatedMin)
 		require.Equal(t, int64(2), allocatedMax)
+		state.destinationBase.Store(2)
 		minBase, maxBase, err := allocator.Alloc(context.Background(), 1, 1, 1)
 		require.NoError(t, err)
 		require.Equal(t, int64(2), minBase)
@@ -577,9 +521,8 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.Equal(t, int64(3), allocator.Base())
 
 		requireAllocRequest(t, <-state.allocRequests, 1, 2)
-		requireAllocRequest(t, <-state.allocRequests, 1, 0)
-		requireRebaseRequest(t, <-state.rebaseRequests, 2, 2)
 		requireAllocRequest(t, <-state.allocRequests, 2, 1)
+		require.Equal(t, 0, len(state.rebaseRequests))
 	})
 
 	t.Run("transfers after an in-flight rebase", func(t *testing.T) {
@@ -604,6 +547,7 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 
 		require.NoError(t, <-rebaseErr)
 		require.NoError(t, <-transferDone)
+		state.destinationBase.Store(4)
 		minBase, maxBase, err := allocator.Alloc(context.Background(), 1, 1, 1)
 		require.NoError(t, err)
 		require.Equal(t, int64(4), minBase)
@@ -611,9 +555,8 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.Equal(t, int64(5), allocator.Base())
 
 		requireRebaseRequest(t, <-state.rebaseRequests, 1, 4)
-		requireAllocRequest(t, <-state.allocRequests, 1, 0)
-		requireRebaseRequest(t, <-state.rebaseRequests, 2, 4)
 		requireAllocRequest(t, <-state.allocRequests, 2, 1)
+		require.Equal(t, 0, len(state.rebaseRequests))
 	})
 }
 
@@ -789,12 +732,6 @@ func TestAutoIDRPCRetry(t *testing.T) {
 			name string
 			run  func(context.Context, *singlePointAlloc) error
 		}{
-			{
-				name: "transfer",
-				run: func(ctx context.Context, allocator *singlePointAlloc) error {
-					return allocator.transfer(ctx, 33, 44)
-				},
-			},
 			{
 				name: "force rebase",
 				run: func(ctx context.Context, allocator *singlePointAlloc) error {
