@@ -35,6 +35,9 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 
+[dev-dependencies]
+tidb-util = { path = "../tidb-util" }
+
 [features]
 test-util = []
 

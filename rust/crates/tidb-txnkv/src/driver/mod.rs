@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transaction-driver leaves. The shared router is steward-owned so read and
-//! error campaigns can evolve in parallel without editing the crate root.
+//! Go `pkg/store/driver`'s store (`tikv_store`) and the write-conflict
+//! arguments its errors carry (`transaction_error`).
 
-pub mod mem_buffer;
-pub mod read;
-pub mod tikv_mem_buffer;
 pub mod tikv_store;
 pub mod transaction_error;

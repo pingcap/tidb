@@ -17,7 +17,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use tidb_txnkv::{Key, KvIterator, UnionIter};
+use tidb_txnkv::{Key, KvIterator};
+use tidb_store_driver_txn::union_iter::UnionIter;
 
 #[derive(Clone, Debug)]
 struct ErrorToken(Rc<()>);

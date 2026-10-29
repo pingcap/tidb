@@ -16,10 +16,9 @@
 
 use std::collections::HashMap;
 
-use tidb_txnkv::{
-    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, BufferBatchGetter, GetOptions,
-    Getter, Key, ValueEntry,
-};
+use tidb_txnkv::{BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, ValueEntry};
+use tidb_store_driver_txn::batch_getter::BufferBatchGetter;
+use tidb_store_driver_txn::batch_getter::BatchBufferGetter;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestError {

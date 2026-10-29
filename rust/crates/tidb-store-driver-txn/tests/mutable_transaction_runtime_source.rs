@@ -17,12 +17,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use tidb_txnkv::driver::read::{TransactionReadDriver, TransactionReadError, TransactionSnapshot};
-use tidb_txnkv::{
-    del_key_with_prefix, AssertionOp, BatchGetError, BatchGetOptions, BatchGetter, FlagsOp, Getter,
-    GetOptions, Key, KeyFlags, KvIterator, MemBufferBackend, MemBufferDriver, StagingHandle,
-    ValueEntry,
-};
+use tidb_store_driver_txn::driver::read::{TransactionReadDriver, TransactionReadError, TransactionSnapshot};
+use tidb_txnkv::{AssertionOp, BatchGetError, BatchGetOptions, BatchGetter, FlagsOp, Getter, GetOptions, Key, KeyFlags, KvIterator, StagingHandle, ValueEntry};
+use tidb_store_driver_txn::driver::mem_buffer::MemBufferDriver;
+use tidb_store_driver_txn::driver::mem_buffer::MemBufferBackend;
+use tidb_util::prefix_helper::del_key_with_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestError {

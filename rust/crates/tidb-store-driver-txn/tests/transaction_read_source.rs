@@ -19,14 +19,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tidb_txnkv::driver::read::{
+use tidb_store_driver_txn::driver::read::{
     SnapshotInterceptor, TransactionBuffer, TransactionReadDriver, TransactionReadError,
     TransactionSnapshot,
 };
-use tidb_txnkv::{
-    BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key,
-    KvIterator, ValueEntry,
-};
+use tidb_txnkv::{BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, KvIterator, ValueEntry};
+use tidb_store_driver_txn::batch_getter::BatchBufferGetter;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReadError {

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a session statement locks, stages and commits through.
+pub mod batch_getter;
 pub mod cluster_http;
 pub mod cluster_storage;
 #[cfg(any(test, feature = "test-util"))]
@@ -21,6 +22,7 @@ pub mod cluster_table_storage;
 pub mod driver;
 pub mod transaction;
 pub mod txn_error;
+pub mod union_iter;
 pub mod session_commit_protocol;
 pub mod meta_txn;
 

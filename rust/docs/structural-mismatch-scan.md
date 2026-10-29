@@ -26,7 +26,7 @@ Checked, and they stay where they are (the citation is to a Go file the module p
 - tidb-expr: `binary_literal`, `time_fn/duration_parse` (expression evaluation over `types` rules), `aggregation/names`.
 - tidb-datatype: `session_time_zone` (the `*time.Location` shape the temporal code converts with).
 - tidb-domain-core: `domain/schema_lease`, `session_transaction`, `domain/stat`.
-- tidb-txnkv: `mvcc_metadata`, `mem_storage`, `prefix_ops`, `client_go_metrics`, `driver/cop_store` (client-go surfaces; see the txnkv entry below).
+- tidb-txnkv: `mvcc_metadata`, `mem_storage`, `client_go_metrics` (client-go surfaces; see the txnkv entry below). Done 2026-10-30: `prefix_ops` is `tidb_util::prefix_helper` (Go `util/prefix_helper.go`, over `kv.Retriever`/`kv.RetrieverMutator`); `union_iter`, `batch_getter`'s buffer half and `driver/{read,mem_buffer,tikv_mem_buffer}` are tidb-store-driver-txn's (Go `store/driver/txn`), with `kv.StagingHandle` back in txnkv's `kv_api`; `cluster_storage`'s union store (`MutationBuffer`, `ClusterTableStorage`, the snapshot wrappers) moved from tidb-kv to tidb-store-driver-txn, tidb-kv keeping the `kv.Snapshot` seam (`ClusterSnapshot`).
 - tidb-metadef: `bootstrap_tables` (the bootstrap table list metadef owns for the session).
 
 Not mismatches, checked: tidb-table `column_default` builds a computed default from the AST at DDL time and from the stored text when a table loads, the same computation Go's `ddl/add_column.go` and `table/column.go` (`getColDefaultExprValue` re-parses the stored text) share; there is no DDL-only half to move.

@@ -24,39 +24,11 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use crate::batch_getter::{BatchBufferGetter, BatchGetOptions, GetOptions, Getter, ValueEntry};
+use crate::batch_getter::BatchBufferGetter;
+use tidb_txnkv::{BatchGetOptions, GetOptions, Getter, ValueEntry};
 use crate::driver::read::{TransactionBuffer, TransactionReadError};
-use crate::iteration::KvIterator;
-use crate::{AssertionOp, FlagsOp, Key, KeyFlags};
-
-/// Opaque handle returned by one backend staging scope.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct StagingHandle(isize);
-
-impl StagingHandle {
-    /// Invalid staging handle, matching the Go zero value.
-    pub const INVALID: Self = Self(0);
-    /// Sentinel that always names the last active stage.
-    pub const LAST_ACTIVE: Self = Self(-1);
-
-    /// Wraps one backend-native staging index.
-    #[must_use]
-    pub const fn new(index: usize) -> Self {
-        Self(index as isize)
-    }
-
-    /// Returns a positive backend-native staging index.
-    #[must_use]
-    pub fn index(self) -> Option<usize> {
-        (self.0 > 0).then_some(self.0 as usize)
-    }
-
-    /// Returns the source signed representation.
-    #[must_use]
-    pub const fn raw(self) -> isize {
-        self.0
-    }
-}
+use tidb_txnkv::KvIterator;
+use tidb_txnkv::{AssertionOp, FlagsOp, Key, KeyFlags, StagingHandle};
 
 /// Concrete mutable storage operations required by [`MemBufferDriver`].
 ///

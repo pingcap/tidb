@@ -23,14 +23,12 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use crate::batch_getter::{
-    batch_get_from_layers, BatchBufferGetter, BatchGetError, BatchGetOptions, BatchGetter,
-    GetOptions, Getter, ValueEntry,
-};
-use crate::error::{KvError, ERR_NOT_EXIST};
-use crate::iteration::KvIterator;
-use crate::key::Key;
+use crate::batch_getter::{batch_get_from_layers, BatchBufferGetter};
 use crate::union_iter::UnionIter;
+use tidb_txnkv::{
+    BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, KvError, KvIterator,
+    Mutator, Retriever, ValueEntry, ERR_NOT_EXIST,
+};
 
 /// Error behavior required by the transaction read path.
 pub trait TransactionReadError: BatchGetError {
@@ -466,6 +464,69 @@ where
                 Err(source)
             }
         }
+    }
+}
+
+/// Go `tikvTxn` is a `kv.Retriever`: buffer-first point reads and the
+/// connected union iterators above.
+impl<B, S, I> Getter for TransactionReadDriver<B, S, I>
+where
+    B: TransactionBuffer,
+    <B as Getter>::Error: TransactionReadError,
+    S: TransactionSnapshot + Getter<Error = <B as Getter>::Error>,
+    I: SnapshotInterceptor<S>,
+{
+    type Error = <B as Getter>::Error;
+
+    fn get(&mut self, key: &Key, options: GetOptions) -> Result<ValueEntry, Self::Error> {
+        TransactionReadDriver::get(self, key, options)
+    }
+}
+
+impl<B, S, I> Retriever for TransactionReadDriver<B, S, I>
+where
+    B: TransactionBuffer,
+    <B as Getter>::Error: TransactionReadError,
+    S: TransactionSnapshot + Getter<Error = <B as Getter>::Error>,
+    I: SnapshotInterceptor<S>,
+{
+    type Iterator = TransactionIterator<B::Iter, S::Iter, I::Iter>;
+
+    /// Go `Iter(k, upperBound)`: a nil `k` is the empty key, the start of
+    /// the keyspace.
+    fn iter(
+        &mut self,
+        key: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Self::Iterator, Self::Error> {
+        TransactionReadDriver::iter(self, key.unwrap_or(&Key::default()), upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        key: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Self::Iterator, Self::Error> {
+        TransactionReadDriver::iter_reverse(self, key, lower_bound)
+    }
+}
+
+/// Go `tikvTxn` is a `kv.Mutator`: writes land in the transaction buffer.
+impl<B, S, I> Mutator for TransactionReadDriver<B, S, I>
+where
+    B: TransactionBuffer,
+    <B as Getter>::Error: TransactionReadError,
+    S: TransactionSnapshot + Getter<Error = <B as Getter>::Error>,
+    I: SnapshotInterceptor<S>,
+{
+    type Error = <B as Getter>::Error;
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), Self::Error> {
+        TransactionReadDriver::set(self, key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), Self::Error> {
+        TransactionReadDriver::delete(self, key)
     }
 }
 

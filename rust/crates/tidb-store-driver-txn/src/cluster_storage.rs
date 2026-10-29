@@ -111,8 +111,8 @@ impl Default for NativeMemBuffer {
 }
 
 fn buffer_error(error: Box<dyn std::error::Error + Send + Sync>) -> StorageError {
-    match tidb_txnkv::TikvMemBufferError::from_native_write(error) {
-        tidb_txnkv::TikvMemBufferError::Kv(error) => StorageError::Sql(
+    match crate::driver::tikv_mem_buffer::TikvMemBufferError::from_native_write(error) {
+        crate::driver::tikv_mem_buffer::TikvMemBufferError::Kv(error) => StorageError::Sql(
             tidb_terror::MysqlError::sql_error(error.mysql_code().as_u16(), error.to_string())
                 .with_identity(tidb_terror::TerrorIdentity::new(
                     tidb_terror::TerrorClass::from_value(error.class().as_u8() as isize),

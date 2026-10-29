@@ -22,10 +22,11 @@
 //! vendored `tikv-client` crate — the composition Go ships in production.
 
 use tikv_client::transaction::unionstore::MemDb;
-use tidb_txnkv::{
-    AssertionOp, BatchGetOptions, FlagsOp, Getter, GetOptions, Key, KvIterator, MemBufferBackend,
-    MemBufferDriver, TikvMemBufferBackend, TikvMemBufferError,
-};
+use tidb_txnkv::{AssertionOp, BatchGetOptions, FlagsOp, Getter, GetOptions, Key, KvIterator};
+use tidb_store_driver_txn::driver::tikv_mem_buffer::TikvMemBufferError;
+use tidb_store_driver_txn::driver::tikv_mem_buffer::TikvMemBufferBackend;
+use tidb_store_driver_txn::driver::mem_buffer::MemBufferDriver;
+use tidb_store_driver_txn::driver::mem_buffer::MemBufferBackend;
 
 fn k(value: &str) -> Key {
     Key::from(value.as_bytes().to_vec())

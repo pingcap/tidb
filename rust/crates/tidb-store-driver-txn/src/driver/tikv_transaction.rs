@@ -39,10 +39,12 @@ use tikv_client::PdClient;
 use tikv_client::TimestampExt;
 
 use tidb_txnkv::batch_getter::GetOptions;
-use tidb_txnkv::driver::mem_buffer::{MemBufferDriver, StagingHandle};
-use tidb_txnkv::driver::tikv_mem_buffer::{TikvMemBufferBackend, TikvMemBufferError};
+use crate::driver::mem_buffer::MemBufferDriver;
+use tidb_txnkv::StagingHandle;
+use crate::driver::tikv_mem_buffer::{TikvMemBufferBackend, TikvMemBufferError};
 use tidb_txnkv::key_flags::AssertionState;
-use tidb_txnkv::{AssertionOp, FlagsOp, Key, KeyFlags, MemBufferBackend};
+use tidb_txnkv::{AssertionOp, FlagsOp, Key, KeyFlags};
+use crate::driver::mem_buffer::MemBufferBackend;
 
 /// Error surface of the transaction driver: a buffer-level failure or a
 /// client-engine failure, kept distinct so callers can classify retries the

@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `store/driver/txn`'s transaction driver (`tikv_transaction`) and the
-//! client-go store surface the coprocessor sends through (`cop_store`).
+//! Go `store/driver/txn`'s transaction driver (`tikv_transaction`), its
+//! union store (`mem_buffer`, `tikv_mem_buffer`, `read`) and the client-go
+//! store surface the coprocessor sends through (`cop_store`).
 
 pub mod cop_store;
+pub mod mem_buffer;
+pub mod read;
+pub mod tikv_mem_buffer;
 pub mod tikv_transaction;

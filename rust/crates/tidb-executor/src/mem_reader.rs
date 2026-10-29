@@ -46,11 +46,11 @@
 //!   table, or `cacheTable` for a cached table. When present it is unioned
 //!   with the buffer through `transaction.NewUnionIter(dirty, snapshot,
 //!   reverse)`, dirty winning on equal keys. That union is reused here from
-//!   [`tidb_txnkv::union_iter::UnionIter`] rather than restated.
+//!   [`tidb_store_driver_txn::union_iter::UnionIter`] rather than restated.
 //!
 //! # Reused rather than restated
 //!
-//! * [`tidb_txnkv::union_iter::UnionIter`] IS Go
+//! * [`tidb_store_driver_txn::union_iter::UnionIter`] IS Go
 //!   `pkg/store/driver/txn.NewUnionIter`, including its own tombstone
 //!   skipping and its dirty-wins-on-equal-key rule.
 //! * [`tidb_txnkv::iteration::KvIterator`] is Go `kv.Iterator`; [`ScanIter`]
@@ -127,7 +127,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tidb_txnkv::{Handle as KvHandle, Key, KvIterator, UnionIter};
+use tidb_store_driver_txn::union_iter::UnionIter;
+use tidb_txnkv::{Handle as KvHandle, Key, KvIterator};
 
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;

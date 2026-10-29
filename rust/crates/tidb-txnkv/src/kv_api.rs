@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use crate::{
     AssertionOp, BatchGetOptions, BatchGetter, CacheDb, FlagsOp, GetOptions, Getter, Key, KeyFlags,
-    KvIterator, MppClient, OptionKey, QueryResponseError, QueryResultSubset, StagingHandle,
+    KvIterator, MppClient, OptionKey, QueryResponseError, QueryResultSubset,
     TransportRequest, ValueEntry, Version,
 };
 use tidb_tiflash::ReplicaRead;
@@ -184,6 +184,35 @@ pub trait Client: fmt::Debug + Send + Sync {
 
     /// Go `Client.IsRequestTypeSupported`.
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool;
+}
+
+/// Go `kv.StagingHandle`: the reference of one staging buffer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StagingHandle(isize);
+
+impl StagingHandle {
+    /// Invalid staging handle, matching the Go zero value.
+    pub const INVALID: Self = Self(0);
+    /// Sentinel that always names the last active stage.
+    pub const LAST_ACTIVE: Self = Self(-1);
+
+    /// Wraps one backend-native staging index.
+    #[must_use]
+    pub const fn new(index: usize) -> Self {
+        Self(index as isize)
+    }
+
+    /// Returns a positive backend-native staging index.
+    #[must_use]
+    pub fn index(self) -> Option<usize> {
+        (self.0 > 0).then_some(self.0 as usize)
+    }
+
+    /// Returns the source signed representation.
+    #[must_use]
+    pub const fn raw(self) -> isize {
+        self.0
+    }
 }
 
 /// Basic key mutation operations.

@@ -19,6 +19,5 @@ mod handle;
 mod iteration;
 mod key_helpers;
 mod key_version;
-mod mvcc_metadata;
 mod retry;
 mod txn_scope;

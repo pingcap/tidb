@@ -42,12 +42,13 @@ use tikv_client::transaction::unionstore::{
     KvIterator as TikvKvIterator, MemDb, MemDbSnapshot, SnapshotError,
 };
 
-use crate::batch_getter::{BatchGetError, BatchGetOptions, GetOptions, Getter, ValueEntry};
-use crate::driver::mem_buffer::{MemBufferBackend, StagingHandle};
+use tidb_txnkv::{BatchGetError, BatchGetOptions, GetOptions, Getter, ValueEntry};
+use crate::driver::mem_buffer::MemBufferBackend;
+use tidb_txnkv::StagingHandle;
 use crate::driver::read::TransactionReadError;
-use crate::iteration::KvIterator;
-use crate::key_flags::AssertionState;
-use crate::{AssertionOp, FlagsOp, Key, KeyFlags};
+use tidb_txnkv::KvIterator;
+use tidb_txnkv::key_flags::AssertionState;
+use tidb_txnkv::{AssertionOp, FlagsOp, Key, KeyFlags};
 
 /// Error surface of the TiKV-client memory-buffer backend.
 ///
@@ -59,7 +60,7 @@ use crate::{AssertionOp, FlagsOp, Key, KeyFlags};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TikvMemBufferError {
     /// A native buffer failure with its TiDB SQL identity.
-    Kv(crate::KvError),
+    Kv(tidb_txnkv::KvError),
     /// The canonical TiDB not-found identity.
     NotFound,
     /// Client-go rejects storing an empty value through `Set`.
@@ -104,13 +105,13 @@ impl TikvMemBufferError {
     /// Converts native MemDB failures without discarding their SQL identity.
     pub fn from_native_write(error: Box<dyn std::error::Error + Send + Sync>) -> Self {
         if let Some(error) = error.downcast_ref::<tikv_client::error::EntryTooLargeError>() {
-            return Self::Kv(crate::gen_entry_too_large_err(error.limit, error.size));
+            return Self::Kv(tidb_txnkv::gen_entry_too_large_err(error.limit, error.size));
         }
         if let Some(error) = error.downcast_ref::<tikv_client::error::TransactionTooLargeError>() {
-            return Self::Kv(crate::gen_txn_too_large_err(error.size as i64));
+            return Self::Kv(tidb_txnkv::gen_txn_too_large_err(error.size as i64));
         }
         if let Some(error) = error.downcast_ref::<tikv_client::error::KeyTooLargeError>() {
-            return Self::Kv(crate::gen_key_too_large_err(error.key_size as i64));
+            return Self::Kv(tidb_txnkv::gen_key_too_large_err(error.key_size as i64));
         }
         match error.downcast_ref::<TikvStaticError>() {
             Some(TikvStaticError::CannotSetNilValue) => Self::CannotSetNilValue,

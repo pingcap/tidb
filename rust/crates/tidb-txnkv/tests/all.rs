@@ -15,21 +15,14 @@
 //! All topology-independent `tidb-txnkv` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod batch_getter_source;
 mod driver_error_source;
 mod gc_safe_point_realtikv_source;
 mod gc_safe_point_source;
 mod interface_source;
 mod kv_package_source;
-mod mutable_transaction_runtime_source;
-mod prefix_filter_source;
-mod prefix_ops_source;
 mod primitives;
 mod resource_group_tag_source;
 mod tikv_client_coprocessor_transport_source;
 mod tikv_client_transaction_stack_source;
-mod tikv_mem_buffer_backend_source;
 mod tikv_unary_command_source;
-mod transaction_read_source;
 mod trxevents_source_test_contract;
-mod union_iter_source;

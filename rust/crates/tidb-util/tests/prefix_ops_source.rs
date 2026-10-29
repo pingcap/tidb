@@ -19,13 +19,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use tidb_txnkv::driver::read::{
+use tidb_store_driver_txn::driver::read::{
     TransactionBuffer, TransactionReadDriver, TransactionReadError, TransactionSnapshot,
 };
-use tidb_txnkv::{
-    del_key_with_prefix, row_key_prefix_filter, scan_meta_with_prefix, BatchBufferGetter,
-    BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, KvIterator, ValueEntry,
-};
+use tidb_txnkv::{BatchGetError, BatchGetOptions, BatchGetter, GetOptions, Getter, Key, KvIterator, ValueEntry};
+use tidb_store_driver_txn::batch_getter::BatchBufferGetter;
+use tidb_util::prefix_helper::scan_meta_with_prefix;
+use tidb_util::prefix_helper::row_key_prefix_filter;
+use tidb_util::prefix_helper::del_key_with_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestError {

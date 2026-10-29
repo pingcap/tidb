@@ -137,7 +137,10 @@ impl KeyFlags {
         self
     }
 
-    pub(crate) const fn with_assertion_state(mut self, assertion: AssertionState) -> Self {
+    /// The flags with `assertion` as their assertion state, as a
+    /// transaction buffer reports the state client-go keeps beside them.
+    #[must_use]
+    pub const fn with_assertion_state(mut self, assertion: AssertionState) -> Self {
         self.assertion = assertion;
         self
     }

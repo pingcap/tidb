@@ -81,15 +81,6 @@ where
     Ok(())
 }
 
-/// Returns the source key comparator that stops after a row-key prefix.
-///
-/// This directly translates `pkg/util/prefix_helper.go::RowKeyPrefixFilter`:
-/// keys inside the captured prefix return `false`, while the first key outside
-/// it returns `true`. The result composes directly with [`next_until`].
-pub fn row_key_prefix_filter(row_key_prefix: Key) -> impl Fn(&Key) -> bool {
-    move |current_key| !current_key.has_prefix(&row_key_prefix)
-}
-
 /// Walks every buffered key/value pair in a retriever.
 ///
 /// This is a direct translation of `pkg/kv/utils.go:70 WalkMemBuffer` using a

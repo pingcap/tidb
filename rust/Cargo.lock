@@ -6835,6 +6835,7 @@ dependencies = [
  "tidb-terror",
  "tidb-tracing",
  "tidb-txnkv",
+ "tidb-util",
  "tidb-vardef",
  "tikv-client",
  "tokio",
@@ -7427,7 +7428,9 @@ dependencies = [
  "tidb-errno",
  "tidb-hack",
  "tidb-parser",
+ "tidb-store-driver-txn",
  "tidb-terror",
+ "tidb-txnkv",
 ]
 
 [[package]]

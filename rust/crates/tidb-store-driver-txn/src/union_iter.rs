@@ -19,7 +19,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::{Key, KvIterator};
+use tidb_txnkv::{Key, KvIterator};
 
 /// Merges a transaction's dirty iterator with its snapshot iterator.
 ///

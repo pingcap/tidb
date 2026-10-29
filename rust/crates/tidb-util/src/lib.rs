@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util`'s root package (`misc`).
+//! Go `pkg/util`'s root package (`misc`, `prefix_helper`).
 //! Every `pkg/util/*` subpackage is its own crate (`tidb-memory`,
 //! `tidb-logutil`, ...); Go's build tags are `tidb-build-tags`' features.
 
 pub mod misc;
+pub mod prefix_helper;

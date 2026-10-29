@@ -14,7 +14,8 @@
 
 //! Direct source tests for `pkg/util/prefix_helper.go::RowKeyPrefixFilter`.
 
-use tidb_txnkv::{next_until, row_key_prefix_filter, Key, KvIterator};
+use tidb_txnkv::{next_until, Key, KvIterator};
+use tidb_util::prefix_helper::row_key_prefix_filter;
 
 #[test]
 fn test_prefix_filter() {

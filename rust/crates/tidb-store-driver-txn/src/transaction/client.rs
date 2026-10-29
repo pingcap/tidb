@@ -20,7 +20,7 @@ use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::gc_state::VisibilityError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use crate::TikvTransactionDriver;
-use tidb_txnkv::MemBufferBackend;
+use crate::driver::mem_buffer::MemBufferBackend;
 use std::sync::Arc;
 use std::time::Duration;
 use tikv_client::{PdClient, Timestamp, TimestampExt, TransactionOptions};
@@ -362,7 +362,7 @@ impl<S: PdClient> RealTransaction<S> {
     }
     fn transaction_error(error: crate::TikvTransactionError) -> OptimisticCoordinatorError {
         match error {
-            crate::TikvTransactionError::Buffer(tidb_txnkv::TikvMemBufferError::Kv(error)) => {
+            crate::TikvTransactionError::Buffer(crate::driver::tikv_mem_buffer::TikvMemBufferError::Kv(error)) => {
                 OptimisticCoordinatorError::Storage(error)
             }
             crate::TikvTransactionError::Client(

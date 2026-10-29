@@ -46,26 +46,22 @@ mod kv_response;
 pub mod lock;
 mod mem_storage;
 mod mpp;
-mod mvcc_metadata;
 pub mod new_txn;
 mod option;
-mod prefix_ops;
 mod resource_group;
 pub mod retry;
 pub mod rpc;
 pub mod transaction;
 mod txn_scope;
 mod txn_source;
-mod union_iter;
 mod unistore;
 mod variables;
 mod version;
 
 pub use assertion::AssertionOp;
 pub use batch_getter::{
-    batch_get_to_get_options, with_return_commit_ts, BatchBufferGetter, BatchGetError,
-    BatchGetOption, BatchGetOptions, BatchGetter, BufferBatchGetter, GetOption, GetOptions,
-    GetOrBatchGetOption, Getter, ValueEntry,
+    batch_get_to_get_options, with_return_commit_ts, BatchGetError, BatchGetOption,
+    BatchGetOptions, BatchGetter, GetOption, GetOptions, GetOrBatchGetOption, Getter, ValueEntry,
 };
 pub use cache_db::{new_cache_db, CacheDb, CacheDbError, MemManager, TABLE_CACHE_CAPACITY_BYTES};
 pub use checker::{
@@ -79,13 +75,6 @@ pub use client::{
     ClientReplicaReadType, EndpointType, TraceInfo,
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
-pub use driver::mem_buffer::{
-    EmptyIterator as DriverEmptyIterator, MemBufferBackend, MemBufferDriver,
-    MemBufferSnapshotGetter, MemBufferSnapshotIterator, StagingHandle,
-};
-pub use driver::tikv_mem_buffer::{
-    TikvMemBufferBackend, TikvMemBufferError, TikvMemBufferIterator, TikvMemBufferSnapshotGetter,
-};
 pub use error::{
     gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_shared_lock_lost_err,
     gen_txn_too_large_err, gen_write_conflict_in_tidb_err, is_err_not_found,
@@ -111,7 +100,7 @@ pub use inner_txn::{
     LongRunningInnerTxn, StartTsGuard, ACTIVE_START_TS, GLOBAL_INNER_TXN_START_TS,
     TIME_TO_PRINT_LONG_INTERNAL_TXN,
 };
-pub use iteration::{next_until, row_key_prefix_filter, walk_mem_buffer, KvIterator, KvRetriever};
+pub use iteration::{next_until, walk_mem_buffer, KvIterator, KvRetriever};
 pub use key::{key_range_slice_mem_usage, Entry, Key, KeyRange};
 pub use key_flags::{AssertionState, FlagsOp, KeyFlags};
 pub use keyspace::{is_system_keyspace, is_user_keyspace, KernelType, SYSTEM_KEYSPACE};
@@ -119,7 +108,7 @@ pub use kv_api::{
     batch_get_value, get_value, Client, ClientSendOption, Driver, EmptyIterator, EmptyRetriever,
     EmptyRetrieverError, EtcdBackend, FairLockingController, MemBuffer, Mutator, Response,
     ResultSubset, Retriever, RetrieverMutator, Snapshot, SnapshotInterceptor, SplittableStore,
-    Storage, StorageWithPd, Transaction,
+    StagingHandle, Storage, StorageWithPd, Transaction,
 };
 pub use kv_contract::{
     find_keys_in_stage, new_copr_request_limiter, new_query_cop_store_limiter,
@@ -138,12 +127,6 @@ pub use kv_response::{
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator, MppDispatchRequest, MppError, MppQueryId, MppStoreTask, MppStreamResponse, MppTask, MppTaskLocation, MppTaskState, MppVersion};
-pub use mvcc_metadata::{
-    decode_extra_txn_status_key, decode_key_ts, encode_extra_txn_status_key, encode_write_cf_value,
-    parse_write_cf_value, DbUserMeta, LockType, MvccLockMetadata, MvccMetadataError, WriteCfValue,
-    WriteType, FOR_UPDATE_PREFIX, LOCK_USER_META_DELETE, LOCK_USER_META_NONE, MIN_COMMIT_TS_PREFIX,
-    SHORT_VALUE_MAX_LEN, SHORT_VALUE_PREFIX,
-};
 pub use new_txn::{
     retry_backoff_delay, run_in_new_txn, run_in_new_txn_with, set_txn_resource_group, NewTxnError,
     NewTxnStorage, NewTxnTransaction, RunInNewTxnContext, TxnOptionValue, TxnResourceGroup,
@@ -162,7 +145,6 @@ pub use option::{
     INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
 };
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
-pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use resource_group::{
     set_decode_table_id_func, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };
@@ -177,7 +159,6 @@ pub use txn_source::{
     is_lossy_ddl_reorg_source_set, set_cdc_write_source, set_lossy_ddl_reorg_source,
     TxnSourceError, LIGHTNING_PHYSICAL_IMPORT_TXN_SOURCE, LOSSY_DDL_COLUMN_REORG_SOURCE,
 };
-pub use union_iter::{UnionIter, UnionIterInitError};
 pub use unistore::{set_standalone_tidb, standalone_tidb, STANDALONE_TIDB};
 pub use variables::{KvVariables, DEFAULT_BACKOFF_LOCK_FAST, DEFAULT_BACKOFF_WEIGHT};
 pub use version::{Version, VersionProvider, MAX_VERSION, MIN_VERSION};
