@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 type mockServerHelper struct {
@@ -315,7 +316,6 @@ func TestServerConsistentHashInit(t *testing.T) {
 }
 
 func TestServerConsistentHashInitCanceled(t *testing.T) {
-	installMockTimeForTest(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -325,12 +325,12 @@ func TestServerConsistentHashInitCanceled(t *testing.T) {
 	}
 	sch := NewServerConsistentHash(ctx, 1, helper)
 
-	start := mvsNow()
+	start := time.Now()
 	ok := sch.init()
 	if ok {
 		t.Fatalf("expected init failed when context canceled")
 	}
-	if mvsSince(start) > 0 {
+	if time.Since(start) >= time.Second {
 		t.Fatalf("init should return quickly when context is canceled")
 	}
 	if got := helper.getServerInfoCalls; got > 1 {

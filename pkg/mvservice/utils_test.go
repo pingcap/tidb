@@ -23,14 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func installMockTimeForTest(t *testing.T) *MockTimeModule {
-	t.Helper()
-	module := NewMockTimeModule(mvsUnix(1700000000, 0))
-	restore := InstallMockTimeModuleForTest(module)
-	t.Cleanup(restore)
-	return module
-}
-
 func mustHash(mapping map[string]uint32) func([]byte) uint32 {
 	return func(data []byte) uint32 {
 		if v, ok := mapping[string(data)]; ok {

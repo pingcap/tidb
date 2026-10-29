@@ -76,7 +76,7 @@ func (c *ConsistentHash) doInsert(node string) bool {
 		return false
 	}
 	nodes := make([]virtualNode, 0, c.replicas)
-	for i := 0; i < c.replicas; i++ {
+	for i := range c.replicas {
 		// Create a virtual node identifier, e.g. "node1#0", "node1#1".
 		virtualKey := node + "#" + strconv.Itoa(i)
 		hash := c.hashFunc([]byte(virtualKey))

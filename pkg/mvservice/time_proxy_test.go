@@ -24,6 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func installMockTimeForTest(t *testing.T) *MockTimeModule {
+	t.Helper()
+	module := NewMockTimeModule(mvsUnix(1700000000, 0))
+	restore := InstallMockTimeModuleForTest(module)
+	t.Cleanup(restore)
+	return module
+}
+
 func waitValueNoTime(t *testing.T, ch <-chan time.Time, spins int) time.Time {
 	t.Helper()
 	for range spins {
