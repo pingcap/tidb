@@ -35,11 +35,11 @@ pub(super) struct ExtremumWindowState {
 }
 
 impl ExtremumWindowState {
-    pub(super) fn update_frame<C: Columns>(
+    pub fn update_frame<C: Columns>(
         &mut self,
         func: &AggFunc,
         ctx: &C,
-        chunk: &impl crate::window::FrameRows,
+        chunk: &impl crate::frame_rows::FrameRows,
         start: usize,
         end: usize,
         output_type: &FieldType,
@@ -119,7 +119,7 @@ impl ExtremumWindowState {
         Ok(())
     }
 
-    pub(super) fn finish(&self, output_type: &FieldType) -> Result<Datum, ExecError> {
+    pub fn finish(&self, output_type: &FieldType) -> Result<Datum, ExecError> {
         let value = self
             .items
             .front()

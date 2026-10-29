@@ -33,7 +33,11 @@ use crate::access_path::{
 use crate::apply::NestedLoopApplyExec;
 use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
-use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
+use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+use tidb_executor_aggfuncs::aggfuncs::AggKind;
+use tidb_executor_aggregate::GroupedStreamAggExec;
+use tidb_executor_aggregate::HashAggExec;
+use tidb_executor_aggregate::StreamAggExec;
 use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
     ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExec, MergeByItem, PartialHandleBatch,
@@ -1708,7 +1712,7 @@ fn aggregate_function(
     if let AggKind::ApproxCountDistinct(sig) = &mut kind {
         let string_result =
             descriptor.ret_type().eval_type() == tidb_datatype::EvalType::String;
-        *sig = crate::hash_agg::ApproxCountDistinctSig::of(descriptor.mode, string_result)
+        *sig = tidb_executor_aggfuncs::aggfuncs::ApproxCountDistinctSig::of(descriptor.mode, string_result)
             .ok_or_else(|| {
                 DriverError::unsupported(format!(
                     "APPROX_COUNT_DISTINCT in {} mode",
@@ -1880,9 +1884,9 @@ fn build_window(
         }
         // No explicit frame: Go's default covers the whole partition for the
         // ORDER-BY-less case these tests exercise.
-        None => crate::window::WindowFrameSpec {
-            start: crate::window::WindowBound::Unbounded,
-            end: crate::window::WindowBound::Unbounded,
+        None => tidb_executor_windows::WindowFrameSpec {
+            start: tidb_executor_windows::WindowBound::Unbounded,
+            end: tidb_executor_windows::WindowBound::Unbounded,
             range: None,
             range_desc: false,
         },
@@ -1901,7 +1905,7 @@ fn build_window(
     }
     let mut funcs = Vec::with_capacity(window.window_func_descs.len());
     for (index, descriptor) in window.window_func_descs.iter().enumerate() {
-        use crate::window::WindowFunction;
+        use tidb_executor_windows::WindowFunction;
         let output_type = output_schema
             .columns
             .get(child_width + index)
@@ -2002,9 +2006,9 @@ fn build_window(
                 WindowFunction::Aggregate(aggregate_function(&descriptor, &child_schema, ctx)?)
             }
         };
-        funcs.push(crate::window::WindowFuncSpec { func, output_type });
+        funcs.push(tidb_executor_windows::WindowFuncSpec { func, output_type });
     }
-    let base = crate::window::WindowExec::new(
+    let base = tidb_executor_windows::WindowExec::new(
         meta(ctx, plan, output_schema),
         funcs,
         partition_by,
@@ -2019,7 +2023,7 @@ fn build_window(
         child_width,
     );
     if ctx.enable_pipelined_window_exec() {
-        Ok(Box::new(crate::window::PipelinedWindowExec::new(base)))
+        Ok(Box::new(tidb_executor_windows::PipelinedWindowExec::new(base)))
     } else {
         Ok(Box::new(base))
     }
@@ -2029,7 +2033,7 @@ fn build_window(
 fn window_frame_spec(
     frame: &tidb_planner::logical::window::WindowFrame,
     range_desc: bool,
-) -> Result<crate::window::WindowFrameSpec, DriverError> {
+) -> Result<tidb_executor_windows::WindowFrameSpec, DriverError> {
     use tidb_planner::logical::window::{BoundType, FrameType};
     if frame.frame_type == FrameType::Groups {
         return Err(DriverError::unsupported(
@@ -2038,20 +2042,20 @@ fn window_frame_spec(
     }
     let bound = |bound: Option<&tidb_planner::logical::window::FrameBound>| {
         let Some(bound) = bound else {
-            return crate::window::WindowBound::Unbounded;
+            return tidb_executor_windows::WindowBound::Unbounded;
         };
         if bound.bound_type == BoundType::CurrentRow {
-            return crate::window::WindowBound::CurrentRow;
+            return tidb_executor_windows::WindowBound::CurrentRow;
         }
         if bound.unbounded {
-            return crate::window::WindowBound::Unbounded;
+            return tidb_executor_windows::WindowBound::Unbounded;
         }
-        crate::window::WindowBound::Offset {
+        tidb_executor_windows::WindowBound::Offset {
             num: bound.num,
             preceding: bound.bound_type == BoundType::Preceding,
         }
     };
-    Ok(crate::window::WindowFrameSpec {
+    Ok(tidb_executor_windows::WindowFrameSpec {
         start: bound(frame.start.as_ref()),
         end: bound(frame.end.as_ref()),
         range: (frame.frame_type == FrameType::Ranges).then(|| frame.clone()),

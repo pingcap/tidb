@@ -1656,7 +1656,7 @@ fn go_topn_heap_finish(
     // Go's unstable pdqsort: insertion sort up to 12 rows, and beyond that its
     // pivot and pattern schedule, which decides where equal keys end up.
     let mut sorted = heap;
-    tidb_stats::go_sort_func_by(&mut sorted, |a, b| ordering(&a.1, &b.1));
+    tidb_goruntime::go_pdqsort::go_sort_func_by(&mut sorted, |a, b| ordering(&a.1, &b.1));
     sorted
 }
 

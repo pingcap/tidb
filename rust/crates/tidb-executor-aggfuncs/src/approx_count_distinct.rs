@@ -297,7 +297,7 @@ impl ApproxCountDistinctSketch {
 
     /// The state Go's aggregate serializer must retain across a spill: the
     /// thinning degree, zero membership, and every surviving non-zero hash.
-    pub(crate) fn spill_state(&self) -> (u8, bool, Vec<u32>) {
+    pub fn spill_state(&self) -> (u8, bool, Vec<u32>) {
         let hashes = self.buf.iter().copied().filter(|hash| *hash != 0).collect();
         (self.skip_degree, self.has_zero, hashes)
     }
@@ -305,7 +305,7 @@ impl ApproxCountDistinctSketch {
     /// Rebuilds a sketch from [`Self::spill_state`]. Re-inserting survivors
     /// gives the same set and thinning degree without persisting hash-table
     /// bucket placement, which is an internal allocation detail in Go too.
-    pub(crate) fn from_spill_state(
+    pub fn from_spill_state(
         skip_degree: u8,
         has_zero: bool,
         hashes: &[u32],

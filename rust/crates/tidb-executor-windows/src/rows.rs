@@ -16,63 +16,11 @@
 
 use tidb_driver_error::ExecError;
 use std::collections::VecDeque;
+use tidb_executor_aggfuncs::frame_rows::FrameRows;
 use std::ops::Range;
 use std::sync::Arc;
 use tidb_chunk::{chunk::Chunk, row::Row};
 
-/// Frame access independent of whether rows span one or several child chunks.
-/// Aggregate evaluators can bind typed column readers once per contiguous range.
-pub(crate) trait FrameRows {
-    fn num_rows(&self) -> usize;
-
-    /// Go subtracts frame offsets as uint64. A backward offset visits the
-    /// remaining rows before its wrapped shift reaches the first invalid row.
-    fn sliding_end(&self, start: usize, end: usize) -> usize {
-        if end < start {
-            self.num_rows()
-        } else {
-            end
-        }
-    }
-
-    fn check_sliding_end(&self, start: usize, end: usize) -> Result<(), ExecError> {
-        if end < start {
-            let len = self.num_rows();
-            Err(ExecError::internal(format!(
-                "runtime error: index out of range [{len}] with length {len}"
-            )))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn get_row(&self, index: usize) -> Row<'_>;
-    fn visit_chunks(
-        &self,
-        range: Range<usize>,
-        visit: impl FnMut(&Chunk, Range<usize>) -> Result<(), ExecError>,
-    ) -> Result<(), ExecError>;
-}
-
-impl FrameRows for Chunk {
-    fn num_rows(&self) -> usize {
-        self.num_rows()
-    }
-    fn get_row(&self, index: usize) -> Row<'_> {
-        self.get_row(index)
-    }
-    fn visit_chunks(
-        &self,
-        range: Range<usize>,
-        mut visit: impl FnMut(&Chunk, Range<usize>) -> Result<(), ExecError>,
-    ) -> Result<(), ExecError> {
-        if range.is_empty() {
-            Ok(())
-        } else {
-            visit(self, range)
-        }
-    }
-}
 
 struct Batch {
     chunk: Arc<Chunk>,
@@ -90,25 +38,25 @@ impl Batch {
 /// A child chunk is released once its last live range has expired. Output
 /// aliases must not be returned to a caller before their input ranges expire.
 #[derive(Default)]
-pub(crate) struct WindowRows {
+pub struct WindowRows {
     batches: VecDeque<Batch>,
     end: usize,
 }
 
 impl WindowRows {
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.batches.clear();
         self.end = 0;
     }
     /// Exclusive logical end, including any prefix already discarded.
-    pub(crate) fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         self.end
     }
-    pub(crate) fn start(&self) -> usize {
+    pub fn start(&self) -> usize {
         self.batches.front().map_or(self.end, |batch| batch.start)
     }
 
-    pub(crate) fn push_range(&mut self, chunk: &Arc<Chunk>, source: Range<usize>) {
+    pub fn push_range(&mut self, chunk: &Arc<Chunk>, source: Range<usize>) {
         assert!(source.start <= source.end && source.end <= chunk.num_rows());
         if source.is_empty() {
             return;
@@ -131,7 +79,7 @@ impl WindowRows {
     }
 
     /// Returns the number of rows dropped, for Go's output-readiness counter.
-    pub(crate) fn discard_before(&mut self, index: usize) -> usize {
+    pub fn discard_before(&mut self, index: usize) -> usize {
         let start = self.start();
         assert!(index >= start && index <= self.end);
         while self
@@ -266,7 +214,9 @@ mod tests {
 
     #[test]
     fn sliding_states_keep_absolute_indexes_after_input_expiry() {
-        use crate::hash_agg::{AggFunc, AggKind, WindowAggState};
+        use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+        use tidb_executor_aggfuncs::aggfuncs::AggKind;
+        use tidb_executor_aggfuncs::aggfuncs::WindowAggState;
         use tidb_expr::{column::Column, expression::Expression};
 use tidb_exprctx::NoColumns;
         let ty = FieldType::new(FieldTypeCode::LongLong);

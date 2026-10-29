@@ -31,7 +31,7 @@ use std::sync::Arc;
 mod pipelined;
 mod rows;
 pub use pipelined::{OrderedWindowExec, PipelinedWindowExec};
-pub(crate) use rows::FrameRows;
+pub use tidb_executor_aggfuncs::frame_rows::FrameRows;
 use rows::WindowRows;
 
 use tidb_chunk::chunk::Chunk;
@@ -42,7 +42,8 @@ use tidb_exprctx::Columns;
 
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use crate::hash_agg::{AggFunc, WindowAggState};
+use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+use tidb_executor_aggfuncs::aggfuncs::WindowAggState;
 use tidb_executor_internal_vecgroupchecker::VecGroupChecker;
 
 /// One window function's runtime form.

@@ -12,9 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The MIN/MAX ordering of Go `pkg/executor/aggfuncs` (`func_max_min.go`),
-//! shared by the root aggregation and the partial stage a scan computes over
-//! its staged rows.
+//! Go `pkg/executor/aggfuncs`: the aggregate and window function states
+//! ([`aggfuncs`]), `APPROX_COUNT_DISTINCT`'s sketch, and at this root the
+//! MIN/MAX ordering (`func_max_min.go`) shared by the root aggregation and
+//! the partial stage a scan computes over its staged rows.
+
+pub mod aggfuncs;
+pub mod approx_count_distinct;
+pub mod farmhash;
+pub mod frame_rows;
 
 use tidb_datatype::CollationCollator;
 use tidb_datatype::Datum;

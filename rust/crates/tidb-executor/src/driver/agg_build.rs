@@ -20,7 +20,8 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 
-use crate::hash_agg::{AggKind, BitOp};
+use tidb_executor_aggfuncs::aggfuncs::AggKind;
+use tidb_executor_aggfuncs::aggfuncs::BitOp;
 
 use super::DriverError;
 

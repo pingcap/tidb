@@ -14,6 +14,8 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-executor-windows = { path = "../tidb-executor-windows" }
+tidb-executor-aggregate = { path = "../tidb-executor-aggregate" }
 tidb-executor-sortexec = { path = "../tidb-executor-sortexec" }
 tidb-executor-join = { path = "../tidb-executor-join" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }

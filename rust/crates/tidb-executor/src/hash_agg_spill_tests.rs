@@ -22,7 +22,9 @@
 
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
+use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+use tidb_executor_aggfuncs::aggfuncs::AggKind;
+use tidb_executor_aggregate::HashAggExec;
 use tidb_kv::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};

@@ -22,22 +22,22 @@ use std::sync::Arc;
 use tidb_chunk::ColumnRead;
 use tidb_datatype::MYDECIMAL_STRUCT_SIZE;
 
-type DecimalBatch = Arc<[Option<(i128, u32)>]>;
-type DecimalCache = smallvec::SmallVec<[Option<DecimalBatch>; 4]>;
-type IntegerBatch = Arc<[Option<i64>]>;
-type IntegerCache = smallvec::SmallVec<[Option<IntegerBatch>; 4]>;
-type RealBatch = Arc<[Option<f64>]>;
-type RealCache = smallvec::SmallVec<[Option<RealBatch>; 4]>;
+pub type DecimalBatch = Arc<[Option<(i128, u32)>]>;
+pub type DecimalCache = smallvec::SmallVec<[Option<DecimalBatch>; 4]>;
+pub type IntegerBatch = Arc<[Option<i64>]>;
+pub type IntegerCache = smallvec::SmallVec<[Option<IntegerBatch>; 4]>;
+pub type RealBatch = Arc<[Option<f64>]>;
+pub type RealCache = smallvec::SmallVec<[Option<RealBatch>; 4]>;
 
 #[derive(Clone, Copy)]
-pub(super) enum IntegerAggOp {
+pub enum IntegerAggOp {
     Sum,
     MinMax { is_max: bool },
     Avg,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum AggInputMode<T = usize> {
+pub enum AggInputMode<T = usize> {
     Expression,
     FirstRow,
     CountAll,
@@ -92,7 +92,7 @@ pub(super) enum AggInputMode<T = usize> {
 }
 
 impl AggInputMode {
-    pub(super) fn new(func: &AggFunc) -> Self {
+    pub fn new(func: &AggFunc) -> Self {
         Self::typed(func).unwrap_or(Self::Expression)
     }
 
@@ -270,7 +270,7 @@ impl AggInputMode {
         }
     }
 
-    pub(super) fn bind<'a>(&self, chunk: &'a Chunk) -> AggInputMode<ColumnRead<'a>> {
+    pub fn bind<'a>(&self, chunk: &'a Chunk) -> AggInputMode<ColumnRead<'a>> {
         // Type/offset checks belong to the plan, and both slot indexing and
         // the immutable column read view belong to this chunk boundary.
         // Holding the view matches Go's direct column pointer and avoids
@@ -554,7 +554,7 @@ impl AggInputMode<ColumnRead<'_>> {
         }
     }
 
-    pub(super) fn update<C: Columns>(
+    pub fn update<C: Columns>(
         &self,
         func: &AggFunc,
         ctx: &C,
@@ -582,7 +582,7 @@ impl AggInputMode<ColumnRead<'_>> {
             return Ok(delta);
         }
         extra_values.clear();
-        let input = eval_agg_input(func, ctx, row, &mut *extra_values)?;
+        let input = super::eval_agg_input(func, ctx, row, &mut *extra_values)?;
         let mut sort_key = Vec::with_capacity(func.order_by.len());
         for (expr, _) in &func.order_by {
             sort_key.push(expr.eval(ctx, row)?);
@@ -591,14 +591,14 @@ impl AggInputMode<ColumnRead<'_>> {
     }
 }
 
-fn read_count(column: &ColumnRead<'_>, row: usize, unsigned: bool) -> Option<Option<i64>> {
+pub fn read_count(column: &ColumnRead<'_>, row: usize, unsigned: bool) -> Option<Option<i64>> {
     if column.is_null(row) {
         return Some(None);
     }
     read_count_value(Some(column.get_int64(row)), unsigned)
 }
 
-fn read_count_value(value: Option<i64>, unsigned: bool) -> Option<Option<i64>> {
+pub fn read_count_value(value: Option<i64>, unsigned: bool) -> Option<Option<i64>> {
     let value = value?;
     if unsigned {
         i64::try_from(value as u64).ok().map(Some)
@@ -607,7 +607,7 @@ fn read_count_value(value: Option<i64>, unsigned: bool) -> Option<Option<i64>> {
     }
 }
 
-pub(super) fn bind_inputs<'a>(
+pub fn bind_inputs<'a>(
     modes: &[AggInputMode],
     chunk: &'a Chunk,
 ) -> smallvec::SmallVec<[AggInputMode<ColumnRead<'a>>; 4]> {
@@ -619,7 +619,7 @@ pub(super) fn bind_inputs<'a>(
 /// old Rust row accessor reacquired the backing byte view for every row. The
 /// cache is aligned with `modes`, and repeated DECIMAL columns share one
 /// allocation so `SUM(x), MIN(x), MAX(x)` does not decode `x` three times.
-pub(super) fn prepare_decimal_cache(modes: &[AggInputMode], chunk: &Chunk) -> DecimalCache {
+pub fn prepare_decimal_cache(modes: &[AggInputMode], chunk: &Chunk) -> DecimalCache {
     let mut batches: smallvec::SmallVec<[(usize, DecimalBatch); 4]> = smallvec::SmallVec::new();
     modes
         .iter()
@@ -660,7 +660,7 @@ pub(super) fn prepare_decimal_cache(modes: &[AggInputMode], chunk: &Chunk) -> De
 /// the whole column; retaining the values here avoids reopening the Rust
 /// backing lock for every row while preserving the same signed storage bits
 /// for unsigned SQL columns.
-pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> IntegerCache {
+pub fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> IntegerCache {
     let mut batches: smallvec::SmallVec<[(usize, IntegerBatch); 4]> = smallvec::SmallVec::new();
     modes
         .iter()
@@ -709,7 +709,7 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
 /// `Float64s` accessors expose the typed column to `sum4Float64`,
 /// `avgOriginal4Float64`, and `maxMin4Float*`; keeping the values here avoids
 /// reopening the Rust backing byte view for every row and aggregate.
-pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealCache {
+pub fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealCache {
     let mut batches: smallvec::SmallVec<[(usize, RealBatch); 4]> = smallvec::SmallVec::new();
     modes
         .iter()
@@ -752,7 +752,7 @@ pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealC
         .collect()
 }
 
-fn integer_coefficient(value: i64, unsigned: bool) -> i128 {
+pub fn integer_coefficient(value: i64, unsigned: bool) -> i128 {
     if unsigned {
         i128::from(value as u64)
     } else {
@@ -760,7 +760,7 @@ fn integer_coefficient(value: i64, unsigned: bool) -> i128 {
     }
 }
 
-pub(super) fn update_row<C: Columns>(
+pub fn update_row<C: Columns>(
     modes: &[AggInputMode<ColumnRead<'_>>],
     funcs: &[AggFunc],
     ctx: &C,
@@ -788,7 +788,7 @@ pub(super) fn update_row<C: Columns>(
     Ok(delta)
 }
 
-pub(super) fn update_row_with_decimal_cache<C: Columns>(
+pub fn update_row_with_decimal_cache<C: Columns>(
     modes: &[AggInputMode<ColumnRead<'_>>],
     funcs: &[AggFunc],
     ctx: &C,

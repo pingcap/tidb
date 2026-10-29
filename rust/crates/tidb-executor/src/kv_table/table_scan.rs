@@ -5432,7 +5432,7 @@ impl TableScanExec {
                         .collect::<Result<Vec<_>, _>>()?;
                     let mut key = Vec::new();
                     for (group, field_type) in groups.iter().zip(group_types) {
-                        key.extend_from_slice(&crate::hash_agg::group_key_part(
+                        key.extend_from_slice(&tidb_executor_aggfuncs::aggfuncs::group_key_part(
                             &field_type.collation(),
                             group,
                         ));

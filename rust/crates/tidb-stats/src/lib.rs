@@ -40,8 +40,6 @@ pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
 pub mod fmsketch_codec;
-mod go_pdqsort;
-pub use go_pdqsort::go_sort_func_by;
 mod go_stable_sort;
 pub mod histogram;
 pub mod histogram_allocation;

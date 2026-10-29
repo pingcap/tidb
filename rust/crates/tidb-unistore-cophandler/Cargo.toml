@@ -11,6 +11,7 @@ description = "TiDB pkg/store/mockstore/unistore/cophandler: the unistore coproc
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }

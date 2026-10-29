@@ -152,7 +152,7 @@ pub fn set_len_from_args(result: &mut FieldType, eval_type: EvalType, args: &[&F
 /// [`set_len_from_args`] for a caller that has only the merged type to read
 /// an eval type from.
 ///
-/// `tidb_executor::window`'s `LAG`/`LEAD` inference is the one such caller:
+/// `tidb_executor_windows`'s `LAG`/`LEAD` inference is the one such caller:
 /// it reaches Go's merge through `typeInfer4LeadLag` and has no
 /// `AggregateEvalType` answer of its own to pass.
 pub fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {

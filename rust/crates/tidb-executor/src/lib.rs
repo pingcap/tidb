@@ -87,12 +87,10 @@ pub mod access_path;
 pub mod admin_check;
 pub mod checksum;
 
-pub mod agg_spill;
 pub mod analyze;
 pub mod cluster_analyze;
 pub mod real_tikv_analyze;
 pub mod apply;
-mod approx_count_distinct;
 pub(crate) use tidb_table::bad_null;
 #[cfg(test)]
 mod tests_bad_null;
@@ -110,7 +108,6 @@ pub mod dag_request;
 pub mod driver;
 pub mod wide_scan_selection;
 pub mod explain;
-mod farmhash;
 pub(crate) mod foreign_key;
 use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;
 use tidb_executor_internal_exec::table_access::TableAccess;
@@ -120,7 +117,6 @@ pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;
 use tidb_distsql::split_ranges_across_int64_boundary;
-pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
 pub mod index_merge_reader;
@@ -207,7 +203,6 @@ mod tests_oomtest_source;
 mod tests_passwordtest_source;
 pub mod union_scan;
 pub mod view;
-pub mod window;
 
 pub use apply::ApplyExec;
 pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_table_on, run_create_table_on_with, CreateTableSettings};
@@ -239,7 +234,6 @@ use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
-pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
 use tidb_ddl_build::table_backfill::KvTableBackfill;

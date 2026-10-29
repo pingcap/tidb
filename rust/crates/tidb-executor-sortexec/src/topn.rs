@@ -962,7 +962,7 @@ where
                     }
                 }
                 let mut compare_error = None;
-                crate::topn_chunk_heap::go_heap::init(&mut self.merge_heads, &mut |left, right| {
+                tidb_goruntime::go_heap::init(&mut self.merge_heads, &mut |left, right| {
                     match less_by_items(&self.by_items, &left.key, &right.key) {
                         Ok(ordering) => ordering == Ordering::Less,
                         Err(error) => {
@@ -993,7 +993,7 @@ where
                 if let Some(key) = runs[run_id].head_key() {
                     self.merge_heads[0].key = key.to_vec();
                     let mut compare_error = None;
-                    crate::topn_chunk_heap::go_heap::fix(
+                    tidb_goruntime::go_heap::fix(
                         &mut self.merge_heads,
                         0,
                         &mut |left, right| match less_by_items(
@@ -1015,7 +1015,7 @@ where
                     }
                 } else {
                     let mut compare_error = None;
-                    crate::topn_chunk_heap::go_heap::remove(
+                    tidb_goruntime::go_heap::remove(
                         &mut self.merge_heads,
                         0,
                         &mut |left, right| match less_by_items(

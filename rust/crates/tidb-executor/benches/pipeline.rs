@@ -63,7 +63,10 @@ use tidb_datatype::Datum;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
-use tidb_executor::hash_agg::{AggFunc, AggKind, HashAggContext, HashAggExec};
+use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+use tidb_executor_aggfuncs::aggfuncs::AggKind;
+use tidb_executor_aggregate::parallel::HashAggContext;
+use tidb_executor_aggregate::HashAggExec;
 use tidb_kv::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use tidb_expr::column::Column;
@@ -787,7 +790,7 @@ use tidb_exprctx::NoColumns;
 /// One chunk per pass keeps the replay globally sorted, including CI ties.
 fn bench_stream_grouping() {
     use tidb_charset::Collation;
-    use tidb_executor::hash_agg::GroupedStreamAggExec;
+    use tidb_executor_aggregate::GroupedStreamAggExec;
     use tidb_expr::constant::Constant;
     for (label, collation, constant_key) in [
         ("stream_group_bin", Collation::Utf8Mb4Bin, false),

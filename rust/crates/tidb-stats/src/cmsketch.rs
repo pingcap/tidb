@@ -26,7 +26,8 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-use crate::{estimate::calculate_estimate_ndv, go_pdqsort::go_sort_func_by};
+use crate::estimate::calculate_estimate_ndv;
+use tidb_goruntime::go_pdqsort::go_sort_func_by;
 use tidb_datatype::Datum;
 
 const MURMUR_C1: u64 = 0x87c3_7b91_1142_53d5;

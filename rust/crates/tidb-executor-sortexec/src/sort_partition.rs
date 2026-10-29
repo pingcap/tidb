@@ -298,7 +298,7 @@ impl SortPartition {
         // insertion sort that never swaps equal keys; beyond that its pivot
         // and pattern schedule decides where tied rows end up, so the port of
         // that schedule (`go_sort_func_by`) is what matches Go.
-        tidb_stats::go_sort_func_by(
+        tidb_goruntime::go_pdqsort::go_sort_func_by(
             &mut self.rows,
             |&(left_chunk, left_row), &(right_chunk, right_row)| {
                 if let Some((memory, checkpoint)) = memory {

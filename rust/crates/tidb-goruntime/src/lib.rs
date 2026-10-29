@@ -17,6 +17,8 @@
 //! (`go_runtime`), Go strings as byte sequences (`go_string`) and `strconv`'s
 //! number formatting (`go_strconv`).
 
+pub mod go_heap;
+pub mod go_pdqsort;
 pub mod worker_pool;
 pub mod go_runtime;
 pub mod go_strconv;

@@ -18,9 +18,11 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_executor::hash_agg::{AggFunc, AggKind, BitOp};
+use tidb_executor_aggfuncs::aggfuncs::AggFunc;
+use tidb_executor_aggfuncs::aggfuncs::AggKind;
+use tidb_executor_aggfuncs::aggfuncs::BitOp;
 use tidb_executor::mem_table::MemTableSourceExec;
-use tidb_executor::window::{
+use tidb_executor_windows::{
     WindowBound, WindowExec, WindowFrameSpec, WindowFuncSpec, WindowFunction,
 };
 use tidb_exprctx::NoColumns;
@@ -260,7 +262,7 @@ fn window_chunks_preserve_partitions_peers_projection_and_reopen() {
             3,
         );
         let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor::window::PipelinedWindowExec::new(executor))
+            Box::new(tidb_executor_windows::PipelinedWindowExec::new(executor))
         } else {
             Box::new(executor)
         };
@@ -529,7 +531,7 @@ fn moving_aggregates_nulls_empty_frames_chunks_and_partitions() {
                 2,
             );
             let mut executor: Box<dyn Executor> = if pipelined {
-                Box::new(tidb_executor::window::PipelinedWindowExec::new(executor))
+                Box::new(tidb_executor_windows::PipelinedWindowExec::new(executor))
             } else {
                 Box::new(executor)
             };
@@ -650,9 +652,9 @@ fn pipelined_ready_chunk_precedes_later_same_partition_error() {
             1,
         );
         let mut executor: Box<dyn Executor> = if ordered {
-            Box::new(tidb_executor::window::OrderedWindowExec::new(base))
+            Box::new(tidb_executor_windows::OrderedWindowExec::new(base))
         } else {
-            Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
         };
         executor.open().unwrap();
         let mut output = executor.new_chunk();
@@ -707,7 +709,7 @@ fn upstream_ordered_window_partitioned_row_number() {
         tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
         2,
     );
-    let mut executor = tidb_executor::window::OrderedWindowExec::new(base);
+    let mut executor = tidb_executor_windows::OrderedWindowExec::new(base);
     executor.open().unwrap();
     let mut output = executor.new_chunk();
     let mut rows = Vec::new();
@@ -893,7 +895,7 @@ use tidb_exprctx::EvalError;
             1,
         );
         let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
         } else {
             Box::new(base)
         };
@@ -976,7 +978,7 @@ use tidb_exprctx::EvalError;
             1,
         );
         let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
         } else {
             Box::new(base)
         };
@@ -1048,7 +1050,7 @@ use tidb_exprctx::EvalError;
             1,
         );
         let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
         } else {
             Box::new(base)
         };
@@ -1135,7 +1137,7 @@ use tidb_exprctx::EvalError;
                 1,
             );
             let mut executor: Box<dyn Executor> = if pipelined {
-                Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+                Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
             } else {
                 Box::new(base)
             };
@@ -1215,7 +1217,7 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
                     1,
                 );
                 let mut executor: Box<dyn Executor> = if pipelined {
-                    Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+                    Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
                 } else {
                     Box::new(base)
                 };

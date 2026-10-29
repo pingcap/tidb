@@ -4459,12 +4459,14 @@ dependencies = [
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor-aggfuncs",
+ "tidb-executor-aggregate",
  "tidb-executor-internal-applycache",
  "tidb-executor-internal-exec",
  "tidb-executor-internal-vecgroupchecker",
  "tidb-executor-join",
  "tidb-executor-join-joinversion",
  "tidb-executor-sortexec",
+ "tidb-executor-windows",
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
@@ -4587,10 +4589,58 @@ dependencies = [
 name = "tidb-executor-aggfuncs"
 version = "0.0.0"
 dependencies = [
+ "smallvec",
  "tidb-charset",
+ "tidb-chunk",
+ "tidb-codec",
  "tidb-datatype",
+ "tidb-disk",
+ "tidb-driver-error",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expression-aggregation",
+ "tidb-goruntime",
+ "tidb-memory",
+ "tidb-parser-types",
+ "tidb-selection",
+ "tidb-set",
+ "tidb-terror",
+]
+
+[[package]]
+name = "tidb-executor-aggregate"
+version = "0.0.0"
+dependencies = [
+ "hashbrown 0.15.5",
+ "smallvec",
+ "tidb-ast",
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-disk",
+ "tidb-driver-error",
+ "tidb-execdetails",
+ "tidb-executor-aggfuncs",
+ "tidb-executor-internal-exec",
+ "tidb-executor-internal-vecgroupchecker",
+ "tidb-executor-join",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-expression-aggregation",
+ "tidb-goruntime",
+ "tidb-kv",
+ "tidb-memory",
+ "tidb-model",
+ "tidb-murmur3",
+ "tidb-planner",
+ "tidb-selection",
+ "tidb-sessionctx",
+ "tidb-set",
+ "tidb-spill-storage",
+ "tidb-sqlkiller",
+ "tidb-vardef",
+ "tracing",
 ]
 
 [[package]]
@@ -4687,6 +4737,21 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-vardef",
  "tracing",
+]
+
+[[package]]
+name = "tidb-executor-windows"
+version = "0.0.0"
+dependencies = [
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-driver-error",
+ "tidb-executor-aggfuncs",
+ "tidb-executor-internal-exec",
+ "tidb-executor-internal-vecgroupchecker",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-planner",
 ]
 
 [[package]]
@@ -7717,6 +7782,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-goruntime",
  "tidb-model",
  "tidb-proto",
  "tidb-rowcodec",

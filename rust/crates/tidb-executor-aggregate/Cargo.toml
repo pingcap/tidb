@@ -1,0 +1,45 @@
+[package]
+name = "tidb-executor-aggregate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/aggregate (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+hashbrown = { workspace = true }
+smallvec = { workspace = true }
+tracing = "0.1"
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
+tidb-executor-join = { path = "../tidb-executor-join" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-model = { path = "../tidb-model" }
+tidb-murmur3 = { path = "../tidb-murmur3" }
+tidb-selection = { path = "../tidb-selection" }
+tidb-set = { path = "../tidb-set" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+tidb-planner = { path = "../tidb-planner" }

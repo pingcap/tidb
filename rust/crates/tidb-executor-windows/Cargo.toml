@@ -1,0 +1,22 @@
+[package]
+name = "tidb-executor-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/windows (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
+tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-planner = { path = "../tidb-planner" }

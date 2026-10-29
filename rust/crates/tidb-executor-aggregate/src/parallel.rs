@@ -147,7 +147,7 @@ impl HashAggContext for tidb_exprctx::NoColumns {
     }
 }
 
-impl HashAggContext for crate::StmtContext {
+impl HashAggContext for tidb_sessionctx::StmtContext {
     /// The production statement context shares every interior-mutable handle
     /// through `Arc` + `Mutex`/atomics (the transcreation of Go sharing one
     /// `sessionctx.Context` with every worker goroutine), so worker threads
@@ -155,7 +155,7 @@ impl HashAggContext for crate::StmtContext {
     const PARALLEL_WORKERS_MAY_EVAL: bool = true;
 
     fn hashagg_concurrency(&self) -> Option<(usize, usize)> {
-        Some(crate::StmtContext::hashagg_concurrency(self))
+        Some(tidb_sessionctx::StmtContext::hashagg_concurrency(self))
     }
 
     fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
@@ -168,7 +168,7 @@ impl HashAggContext for crate::StmtContext {
 // compiled anywhere in the workspace.
 const _: () = {
     const fn assert_sync<T: Sync>() {}
-    assert_sync::<crate::StmtContext>();
+    assert_sync::<tidb_sessionctx::StmtContext>();
 };
 
 /// Unit-test observations kept out of production HashAgg execution.
@@ -4507,8 +4507,8 @@ mod tests {
             funcs: Vec<AggFunc>,
             child: Box<dyn Executor>,
             types: &[FieldType],
-            ctx: crate::StmtContext,
-        ) -> HashAggExec<crate::StmtContext> {
+            ctx: tidb_sessionctx::StmtContext,
+        ) -> HashAggExec<tidb_sessionctx::StmtContext> {
             HashAggExec::new(
                 out_meta(types),
                 group_by,
@@ -4519,7 +4519,7 @@ mod tests {
             )
         }
 
-        fn drain(exec: &mut HashAggExec<crate::StmtContext>) -> Vec<Vec<Datum>> {
+        fn drain(exec: &mut HashAggExec<tidb_sessionctx::StmtContext>) -> Vec<Vec<Datum>> {
             let types: Vec<FieldType> = exec.ret_field_types().to_vec();
             let mut req = exec.new_chunk();
             let mut out = Vec::new();
@@ -4548,7 +4548,7 @@ mod tests {
             count_sum_min_max_first_funcs(),
             MultiChunkSource::new(&data, CHUNK_SIZE),
             &wide_out_types(),
-            crate::StmtContext::for_query(),
+            tidb_sessionctx::StmtContext::for_query(),
         )
         .with_pipeline_concurrency_override(1, 1);
         serial_exec.open().unwrap();
@@ -4562,7 +4562,7 @@ mod tests {
             count_sum_min_max_first_funcs(),
             MultiChunkSource::new(&data, CHUNK_SIZE),
             &wide_out_types(),
-            crate::StmtContext::for_query(),
+            tidb_sessionctx::StmtContext::for_query(),
         );
         assert!(
             exec.pipeline_eligibility().is_some(),
@@ -4595,7 +4595,7 @@ mod tests {
             vec![col(0)],
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
             MultiChunkSource::new(&[(1, 1)], 1),
-            crate::StmtContext::for_query().with_hashagg_concurrency(1, 1),
+            tidb_sessionctx::StmtContext::for_query().with_hashagg_concurrency(1, 1),
             StatementMemory::default(),
         );
 

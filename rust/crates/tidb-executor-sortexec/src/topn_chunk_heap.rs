@@ -38,7 +38,7 @@
 //! [`TopNChunkHeap::row_ptrs`] straight into
 //! [`crate::topn_spill::SpilledRun::write`] rather than keeping a second store.
 //! `TopNExec`'s suite -- including its recorded probe of Go's own
-//! `container/heap` -- therefore now pins THIS file's [`go_heap`], unchanged.
+//! `container/heap` -- therefore now pins `tidb_goruntime::go_heap`, unchanged.
 //!
 //! Why the sift rules are ported rather than delegated to [`std::collections::BinaryHeap`]:
 //! [`TopNChunkHeap::greater_keys`] returns FALSE for equal keys, so a tie never
@@ -69,6 +69,7 @@
 //!   the production file so an external test package can reach unexported
 //!   fields, and it drives the parallel spill helper this crate has not ported.
 
+use tidb_goruntime::go_heap;
 use std::cmp::Ordering;
 
 use tidb_chunk::chunk::Chunk;
@@ -77,99 +78,6 @@ use tidb_datatype::{Datum, FieldType};
 
 use tidb_driver_error::ExecError;
 use crate::{less_by_items, SortByItem};
-
-/// Go stdlib `container/heap`, which both `topn_chunk_heap.go` and
-/// `multi_way_merge.go` import.
-///
-/// The sift order of Go's implementation is observable whenever the comparison
-/// has ties, so it is reproduced rather than approximated. `less` takes the two
-/// ELEMENTS instead of two indices, which lets a caller keep its comparison
-/// state (evaluated keys, a captured comparison error) outside `data`.
-pub mod go_heap {
-    /// Go `container/heap.down`. Returns whether the element moved.
-    pub fn down<T>(
-        data: &mut [T],
-        i0: usize,
-        n: usize,
-        less: &mut dyn FnMut(&T, &T) -> bool,
-    ) -> bool {
-        let mut i = i0;
-        loop {
-            let j1 = 2 * i + 1;
-            if j1 >= n {
-                break;
-            }
-            let mut j = j1;
-            let j2 = j1 + 1;
-            if j2 < n && less(&data[j2], &data[j1]) {
-                j = j2;
-            }
-            if !less(&data[j], &data[i]) {
-                break;
-            }
-            data.swap(i, j);
-            i = j;
-        }
-        i > i0
-    }
-
-    /// Go `container/heap.up`.
-    pub fn up<T>(data: &mut [T], j0: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
-        let mut j = j0;
-        loop {
-            // Go's `i := (j - 1) / 2` on a signed int gives 0 for j == 0
-            // (division truncates toward zero), which is what ends the walk at
-            // the root; an unsigned `j - 1` would wrap instead.
-            let i = if j == 0 { 0 } else { (j - 1) / 2 };
-            if i == j || !less(&data[j], &data[i]) {
-                break;
-            }
-            data.swap(i, j);
-            j = i;
-        }
-    }
-
-    /// Go `container/heap.Init`.
-    pub fn init<T>(data: &mut [T], less: &mut dyn FnMut(&T, &T) -> bool) {
-        let n = data.len();
-        for i in (0..n / 2).rev() {
-            down(data, i, n, less);
-        }
-    }
-
-    /// Go `container/heap.Fix`.
-    pub fn fix<T>(data: &mut [T], i: usize, less: &mut dyn FnMut(&T, &T) -> bool) {
-        let n = data.len();
-        if !down(data, i, n, less) {
-            up(data, i, less);
-        }
-    }
-
-    /// Go `container/heap.Pop`: the root is swapped to the end, the rest is
-    /// sifted, and the tail element is removed and returned.
-    pub fn pop<T>(data: &mut Vec<T>, less: &mut dyn FnMut(&T, &T) -> bool) -> Option<T> {
-        let n = data.len().checked_sub(1)?;
-        data.swap(0, n);
-        down(data, 0, n, less);
-        data.pop()
-    }
-
-    /// Go `container/heap.Remove`.
-    pub fn remove<T>(
-        data: &mut Vec<T>,
-        i: usize,
-        less: &mut dyn FnMut(&T, &T) -> bool,
-    ) -> Option<T> {
-        let n = data.len().checked_sub(1)?;
-        if n != i {
-            data.swap(i, n);
-            if !down(data, i, n, less) {
-                up(data, i, less);
-            }
-        }
-        data.pop()
-    }
-}
 
 /// Go `chunk.RowPtr`: `(chunk index, row index)` into the heap's row store.
 pub type RowPtr = (usize, usize);
@@ -546,7 +454,7 @@ impl TopNChunkHeap {
         let mut sort_err: Option<ExecError> = None;
         // Go `slices.SortFunc(rowPtrs, keyColumnsCompare)`: the unstable
         // pdqsort, whose tie layout beyond 12 rows is its own.
-        tidb_stats::go_sort_func_by(&mut order, |&a, &b| {
+        tidb_goruntime::go_pdqsort::go_sort_func_by(&mut order, |&a, &b| {
             match less_by_items(by_items, &keys[a], &keys[b]) {
                 Ok(cmp) => cmp,
                 Err(err) => {

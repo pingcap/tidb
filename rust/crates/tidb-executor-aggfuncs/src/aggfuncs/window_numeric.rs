@@ -23,7 +23,7 @@ pub(super) struct NumericWindowState {
 }
 
 impl NumericWindowState {
-    pub(super) fn new(output_type: &FieldType) -> Self {
+    pub fn new(output_type: &FieldType) -> Self {
         Self {
             sum: if output_type.eval_type() == EvalType::Decimal {
                 Datum::Decimal(Decimal::from_int(0))
@@ -36,11 +36,11 @@ impl NumericWindowState {
     }
 
     #[cfg(test)]
-    pub(super) fn value<C: Columns>(
+    pub fn value<C: Columns>(
         &mut self,
         func: &AggFunc,
         ctx: &C,
-        chunk: &impl crate::window::FrameRows,
+        chunk: &impl crate::frame_rows::FrameRows,
         start: usize,
         end: usize,
         output_type: &FieldType,
@@ -49,11 +49,11 @@ impl NumericWindowState {
         self.finish(func, ctx, output_type)
     }
 
-    pub(super) fn update_frame<C: Columns>(
+    pub fn update_frame<C: Columns>(
         &mut self,
         func: &AggFunc,
         ctx: &C,
-        chunk: &impl crate::window::FrameRows,
+        chunk: &impl crate::frame_rows::FrameRows,
         start: usize,
         end: usize,
         output_type: &FieldType,
@@ -82,7 +82,7 @@ impl NumericWindowState {
         Ok(())
     }
 
-    pub(super) fn finish<C: Columns>(
+    pub fn finish<C: Columns>(
         &mut self,
         func: &AggFunc,
         ctx: &C,

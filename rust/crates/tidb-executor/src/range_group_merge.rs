@@ -25,7 +25,7 @@
 use std::cmp::Ordering;
 
 use tidb_executor_sortexec::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
-use tidb_executor_sortexec::topn_chunk_heap::go_heap;
+use tidb_goruntime::go_heap;
 use crate::ExecError;
 use crate::Executor;
 use crate::ExecutorMeta;
