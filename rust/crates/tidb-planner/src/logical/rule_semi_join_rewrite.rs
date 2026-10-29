@@ -20,7 +20,7 @@ use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 
-use crate::expression_rewriter::PREFER_REWRITE_SEMI_JOIN;
+use tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN as PREFER_REWRITE_SEMI_JOIN;
 use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::aggregation::AGG_FUNC_FIRST_ROW;
 
@@ -315,6 +315,25 @@ mod tests {
         ));
         assert_eq!(aggregation.agg_funcs.len(), 1);
         assert_eq!(aggregation.agg_funcs[0].base.name, AGG_FUNC_FIRST_ROW);
+    }
+
+    /// Go `PreferRewriteSemiJoin` is `1 << 14`; `1 << 12` is `PreferBCJoin`,
+    /// which a `BROADCAST_JOIN` hint naming the subquery's table sets on the
+    /// semi join. That bit neither asks for the rewrite nor is consumed by it.
+    #[test]
+    fn a_broadcast_join_preference_is_not_a_rewrite_request() {
+        let allocator = PlanIdAllocator::new();
+        let context = test_context(&allocator);
+        let bc_join = tidb_hint::join_hint_flags::BC_JOIN;
+        let (plan, changed) = SemiJoinRewriter
+            .optimize(&context, join(&allocator, LogicalJoinType::Semi, bc_join))
+            .expect("rule runs");
+        assert!(!changed);
+        let LogicalPlan::Join(join) = plan else {
+            panic!("an unhinted semi join stays a Join");
+        };
+        assert_eq!(join.join_type, LogicalJoinType::Semi);
+        assert_eq!(join.prefer_join_type, bc_join);
     }
 
     #[derive(Default)]

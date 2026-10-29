@@ -753,9 +753,6 @@ fn hash_join_candidates(
     candidates
 }
 
-/// Go `hint.PreferMergeJoin`: bit 7 of the `1 << iota` block opened by
-/// `PreferINLJ` (`pkg/util/hint/hint.go:141`).
-pub const PREFER_MERGE_JOIN: u32 = 1 << 7;
 
 /// Reduce one real logical join to the fields its physical enumeration reads.
 ///
@@ -819,7 +816,7 @@ pub(crate) fn project_one_join(
         right_schema: children.get(1).map(|c| schema_ids(c)).unwrap_or_default(),
         left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
         right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
-        force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
+        force_merge: join.prefer_join_type & tidb_hint::join_hint_flags::MERGE_JOIN != 0,
         no_merge: join.prefer_join_type & tidb_hint::join_hint_flags::NO_MERGE_JOIN
             != 0,
         has_null_eq,

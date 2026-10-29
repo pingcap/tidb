@@ -221,13 +221,7 @@ pub enum SubQueryCtx {
     Scalar,
 }
 
-/// Go `hint.HintFlagSemiJoinRewrite` (`util/hint/hint.go:138`).
-pub const HINT_FLAG_SEMI_JOIN_REWRITE: u64 = 1 << 0;
-/// Go `hint.HintFlagNoDecorrelate` (`util/hint/hint.go:139`).
-pub const HINT_FLAG_NO_DECORRELATE: u64 = 1 << 1;
-/// Go `h.PreferRewriteSemiJoin`, the `PreferJoinType` bit `buildSemiJoin`
-/// sets when the semi join must be rewritten to an inner join plus aggregate.
-pub const PREFER_REWRITE_SEMI_JOIN: u32 = 1 << 12;
+use tidb_hint::{HINT_FLAG_NO_DECORRELATE, HINT_FLAG_SEMI_JOIN_REWRITE};
 
 // ***** allocators and the ambient context *****
 
@@ -1087,7 +1081,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             join.attach_on_conds(&on_condition, &outer_schema, &inner_schema, &opts);
         }
         if force_rewrite || self.env.flags.enable_semi_join_rewrite {
-            join.prefer_join_type |= PREFER_REWRITE_SEMI_JOIN;
+            join.prefer_join_type |= tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN;
             self.env
                 .opt_flags
                 .set(self.env.opt_flags.get() | crate::logical::rule::flags::SEMI_JOIN_REWRITE);

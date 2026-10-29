@@ -1115,8 +1115,7 @@ fn test_build_distinct_reports_every_child_column() {
 
 #[test]
 fn aggregation_hints_reach_the_logical_aggregation() {
-    const PREFER_HASH_AGG: u32 = 1 << 25;
-    const PREFER_STREAM_AGG: u32 = 1 << 26;
+    use tidb_hint::{PREFER_HASH_AGG, PREFER_STREAM_AGG};
 
     for (hint, expected) in [
         ("HASH_AGG", PREFER_HASH_AGG),
