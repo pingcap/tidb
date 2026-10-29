@@ -1744,6 +1744,18 @@ var defaultSysVars = []*SysVar{
 		}},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
+		Name:                    TiDBMaxKeysRead,
+		Value:                   "0",
+		Type:                    TypeUnsigned,
+		MinValue:                0,
+		MaxValue:                math.MaxUint64,
+		IsHintUpdatableVerified: true,
+		SetSession: func(s *SessionVars, val string) error {
+			s.MaxKeysRead = TidbOptUint64(val, 0)
+			return nil
+		}},
+	{
+		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    TiKVClientReadTimeout,
 		Value:                   "0",
 		Type:                    TypeUnsigned,
@@ -4111,6 +4123,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TiDBMaxKeysRead is the maximum number of storage engine keys a SELECT may examine (0 = unlimited).
+	TiDBMaxKeysRead = "tidb_max_keys_read"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.
