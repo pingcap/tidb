@@ -70,7 +70,7 @@ struct Edge {
 struct JoinGroup {
     root: Rc<LogicalPlan>,
     vertexes: Vec<Rc<LogicalPlan>>,
-    leading_hints: Vec<Rc<crate::plan_builder::from::JoinHints>>,
+    leading_hints: Vec<Rc<tidb_planner_util::misc::JoinHints>>,
     has_user_leading_hint: bool,
     vertex_hints: BTreeMap<i32, JoinMethodHint>,
     all_inner_join: bool,
@@ -80,7 +80,7 @@ struct JoinGroup {
 #[derive(Clone, Debug)]
 pub(crate) struct JoinMethodHint {
     pub(crate) prefer_join_method: u32,
-    pub(crate) hint_info: Rc<crate::plan_builder::from::JoinHints>,
+    pub(crate) hint_info: Rc<tidb_planner_util::misc::JoinHints>,
 }
 
 impl JoinGroup {
@@ -235,7 +235,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
 /// that the LEADING hint names, so the join group keeps it whole.
 pub(crate) fn is_derived_table_in_leading_hint(
     plan: &LogicalPlan,
-    hint: &crate::plan_builder::from::JoinHints,
+    hint: &tidb_planner_util::misc::JoinHints,
 ) -> bool {
     let Some(elements) = hint.leading.as_deref() else {
         return false;
@@ -278,7 +278,7 @@ pub(crate) fn is_derived_table_in_leading_hint(
 pub(crate) fn find_plan_by_ast_hint<T>(
     plans: &[T],
     table: &tidb_ast::HintTable,
-    hint: &crate::plan_builder::from::JoinHints,
+    hint: &tidb_planner_util::misc::JoinHints,
     plan_of: impl Fn(&T) -> Option<&LogicalPlan>,
 ) -> Option<usize> {
     let hint_database = table.db_name.as_deref().unwrap_or("");
@@ -286,7 +286,7 @@ pub(crate) fn find_plan_by_ast_hint<T>(
         let Some(plan) = plan_of(item) else {
             continue;
         };
-        let Some(alias) = crate::plan_builder::from::extract_table_alias(plan.output_names())
+        let Some(alias) = tidb_planner_util::misc::extract_table_alias(plan.output_names())
         else {
             continue;
         };
@@ -1174,7 +1174,7 @@ pub(crate) fn set_new_join_with_hint(
 }
 
 fn preferred_join_type_from_side(mut preference: u32, left: bool) -> u32 {
-    use crate::plan_builder::from::join_hint_flags as flags;
+    use tidb_hint::join_hint_flags as flags;
 
     let mut result = 0;
     for (source, left_result, right_result) in [
@@ -1213,7 +1213,7 @@ fn preferred_join_type_from_side(mut preference: u32, left: bool) -> u32 {
 }
 
 fn contains_different_join_types(preference: u32) -> bool {
-    use crate::plan_builder::from::join_hint_flags as flags;
+    use tidb_hint::join_hint_flags as flags;
 
     let preference = preference
         & !flags::NO_HASH_JOIN
@@ -1554,7 +1554,7 @@ fn build_leading_tree_from_elements(
     elements: &[tidb_ast::LeadingElement],
     nodes: &mut Vec<Node>,
     group: &JoinGroup,
-    hint: &crate::plan_builder::from::JoinHints,
+    hint: &tidb_planner_util::misc::JoinHints,
 ) -> Result<Option<Node>, PlanError> {
     if elements.is_empty() {
         return Ok(None);
@@ -2216,7 +2216,7 @@ pub fn find_ordered_leading_choice(
         if !schema_contains_all_ordering_columns(schema, &unique_ids) {
             continue;
         }
-        let leading_table = crate::plan_builder::from::extract_table_alias(vertex.output_names())
+        let leading_table = tidb_planner_util::misc::extract_table_alias(vertex.output_names())
             .map(|alias| tidb_ast::HintTable {
                 db_name: (!alias.db_name.is_empty()).then_some(alias.db_name),
                 name: alias.table_name,
@@ -2296,10 +2296,10 @@ fn try_annotate_ordered_leading_anchor(
         return false;
     }
     anchor.internal_prefer_join_order = true;
-    anchor.internal_hint_info = Some(Rc::new(crate::plan_builder::from::JoinHints {
+    anchor.internal_hint_info = Some(Rc::new(tidb_planner_util::misc::JoinHints {
         tables: BTreeMap::new(),
         leading: Some(vec![tidb_ast::LeadingElement::Table(table)]),
-        ..crate::plan_builder::from::JoinHints::default()
+        ..tidb_planner_util::misc::JoinHints::default()
     }));
     true
 }

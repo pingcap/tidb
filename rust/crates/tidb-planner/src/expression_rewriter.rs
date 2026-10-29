@@ -350,7 +350,7 @@ pub struct RewriterEnv<'a, C: Columns> {
     /// join+agg inside it — so a `TIDB_INLJ(t)` hint on the outer table names
     /// the probe side of an `IN`-subquery join even though the join was never
     /// written in the FROM clause.
-    pub join_hints: std::rc::Rc<crate::plan_builder::from::JoinHints>,
+    pub join_hints: std::rc::Rc<tidb_planner_util::misc::JoinHints>,
     /// Go `b.optFlag`, for the bits these builders set
     /// ([`crate::plan_builder::PlanBuilder::rewriter_opt_flags`]).
     pub opt_flags: &'a std::cell::Cell<u64>,

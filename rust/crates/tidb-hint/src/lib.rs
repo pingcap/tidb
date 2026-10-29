@@ -22,6 +22,7 @@ mod query_block;
 mod statement;
 
 pub use plan::{
+    join_hint_flags,
     collect_unmatched_hint_warnings, extract_unmatched_tables, parse_plan_hints,
     remove_duplicated_hints, restore_index_hint, restore_join_hint, restore_storage_hint,
     HintedIndex, HintedIndexKind, HintedTable, IndexJoinHints, PlanHints, HINT_FLAG_NO_DECORRELATE,

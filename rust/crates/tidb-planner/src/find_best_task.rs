@@ -337,7 +337,7 @@ pub(crate) fn resolve_hash_join_hints(
     disable_hash_join: bool,
     warn: &mut dyn FnMut(String),
 ) -> HashJoinHints {
-    use crate::plan_builder::from::join_hint_flags as hint;
+    use tidb_hint::join_hint_flags as hint;
     let mut force_left =
         prefer_join_type & (hint::LEFT_AS_HJ_BUILD | hint::RIGHT_AS_HJ_PROBE) != 0;
     let mut force_right =
@@ -820,7 +820,7 @@ pub(crate) fn project_one_join(
         left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
         right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
         force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
-        no_merge: join.prefer_join_type & crate::plan_builder::from::join_hint_flags::NO_MERGE_JOIN
+        no_merge: join.prefer_join_type & tidb_hint::join_hint_flags::NO_MERGE_JOIN
             != 0,
         has_null_eq,
         keys_contain_enum_or_set,

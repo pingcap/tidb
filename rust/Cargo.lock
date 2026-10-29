@@ -6002,6 +6002,8 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-hint",
+ "tidb-mysql",
  "tidb-planner-cascades-base",
 ]
 

@@ -469,7 +469,7 @@ struct NoIndexLookupPushDownHint {
 
 struct QueryBlockHintFrame {
     hints: RewriterHints,
-    join_hints: Rc<from::JoinHints>,
+    join_hints: Rc<tidb_planner_util::misc::JoinHints>,
     plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
     index_merge_hints: Vec<IndexMergeHint>,
     index_hints: Vec<IndexHint>,
@@ -778,8 +778,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.TableHints()`, narrowed; see this module's boundaries.
     pub hints: RewriterHints,
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
-    /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
-    pub join_hints: Rc<from::JoinHints>,
+    /// `SetPreferredJoinTypeAndOrder`; see [`tidb_planner_util::misc::JoinHints`].
+    pub join_hints: Rc<tidb_planner_util::misc::JoinHints>,
     /// Canonical Go `PlanHints` for the current query block.
     plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
     /// Go `PlanHints.IndexMergeHintList` for the current query block.
@@ -1617,7 +1617,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             update_assigns: Vec::new(),
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
-            join_hints: Rc::new(from::JoinHints::default()),
+            join_hints: Rc::new(tidb_planner_util::misc::JoinHints::default()),
             plan_hints: None,
             index_merge_hints: Vec::new(),
             index_hints: Vec::new(),
@@ -1949,7 +1949,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         // is physicalized (`LogicalAggregation.ResetHintIfConflicted`).
         let current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
         let current_plan_hints = Rc::new(RefCell::new(parsed_plan_hints));
-        let current_join_hints = Rc::new(from::JoinHints::from_plan_hints(
+        let current_join_hints = Rc::new(tidb_planner_util::misc::JoinHints::from_plan_hints(
             Rc::clone(&current_plan_hints),
             select_offset,
             self.source.current_database(),

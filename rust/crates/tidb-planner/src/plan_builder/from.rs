@@ -57,7 +57,7 @@
 //!
 //! # Boundaries, by exact Go symbol
 //!
-//! * `hint.PlanHints` / `hint.HintedTable`'s query-block matching is retained
+//! * `hint.PlanHints` / `hint.tidb_planner_util::misc::HintedTable`'s query-block matching is retained
 //!   for the SELECT builder's preorder offsets and `sel_N` names. View-path
 //!   hint resolution remains owned by `BuildDataSourceFromView`, as in Go.
 //! * `coreusage.ExtractCorColumnsBySchema4LogicalPlan`. Present, as
@@ -145,275 +145,6 @@ use super::{
 /// matching beside the other two extra columns.
 pub const EXTRA_PHYS_TBL_ID_NAME: &str = "_tidb_tid";
 
-/// Go's `PreferXxx` join bits (`pkg/util/hint/hint.go:144-178`), in the same
-/// `1 << iota` order so a value read out of one is readable as the other.
-pub mod join_hint_flags {
-    /// Go `PreferINLJ`.
-    pub const INLJ: u32 = 1 << 0;
-    /// Go `PreferINLHJ`.
-    pub const INLHJ: u32 = 1 << 1;
-    /// Go `PreferINLMJ`.
-    pub const INLMJ: u32 = 1 << 2;
-    /// Go `PreferHJBuild`.
-    pub const HJ_BUILD: u32 = 1 << 3;
-    /// Go `PreferHJProbe`.
-    pub const HJ_PROBE: u32 = 1 << 4;
-    /// Go `PreferHashJoin`.
-    pub const HASH_JOIN: u32 = 1 << 5;
-    /// Go `PreferNoHashJoin`.
-    pub const NO_HASH_JOIN: u32 = 1 << 6;
-    /// Go `PreferMergeJoin`.
-    pub const MERGE_JOIN: u32 = 1 << 7;
-    /// Go `PreferNoMergeJoin`.
-    pub const NO_MERGE_JOIN: u32 = 1 << 8;
-    /// Go `PreferNoIndexJoin`.
-    pub const NO_INDEX_JOIN: u32 = 1 << 9;
-    /// Go `PreferNoIndexHashJoin`.
-    pub const NO_INDEX_HASH_JOIN: u32 = 1 << 10;
-    /// Go `PreferNoIndexMergeJoin`.
-    pub const NO_INDEX_MERGE_JOIN: u32 = 1 << 11;
-    /// Go `PreferBCJoin`.
-    pub const BC_JOIN: u32 = 1 << 12;
-    /// Go `PreferShuffleJoin`.
-    pub const SHUFFLE_JOIN: u32 = 1 << 13;
-    /// Go `PreferRewriteSemiJoin`.
-    pub const REWRITE_SEMI_JOIN: u32 = 1 << 14;
-    /// Go `PreferLeftAsINLJInner`.
-    pub const LEFT_AS_INLJ_INNER: u32 = 1 << 15;
-    /// Go `PreferRightAsINLJInner`.
-    pub const RIGHT_AS_INLJ_INNER: u32 = 1 << 16;
-    /// Go `PreferLeftAsINLHJInner`.
-    pub const LEFT_AS_INLHJ_INNER: u32 = 1 << 17;
-    /// Go `PreferRightAsINLHJInner`.
-    pub const RIGHT_AS_INLHJ_INNER: u32 = 1 << 18;
-    /// Go `PreferLeftAsINLMJInner`.
-    pub const LEFT_AS_INLMJ_INNER: u32 = 1 << 19;
-    /// Go `PreferRightAsINLMJInner`.
-    pub const RIGHT_AS_INLMJ_INNER: u32 = 1 << 20;
-    /// Go `PreferLeftAsHJBuild`.
-    pub const LEFT_AS_HJ_BUILD: u32 = 1 << 21;
-    /// Go `PreferRightAsHJBuild`.
-    pub const RIGHT_AS_HJ_BUILD: u32 = 1 << 22;
-    /// Go `PreferLeftAsHJProbe`.
-    pub const LEFT_AS_HJ_PROBE: u32 = 1 << 23;
-    /// Go `PreferRightAsHJProbe`.
-    pub const RIGHT_AS_HJ_PROBE: u32 = 1 << 24;
-}
-
-/// Go `hint.HintedTable` identity used by join hints.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct HintedTable {
-    /// Go `HintedTable.DBName.L`, empty when the plan's names carry none.
-    pub db_name: String,
-    /// Go `HintedTable.TblName.L`.
-    pub table_name: String,
-    /// Go `HintedTable.SelectOffset`: the plan's own query block, or its
-    /// parent's when the block is a named derived table.
-    pub select_offset: i32,
-}
-
-/// Go `hint.PlanHints`' join half for the current query block.
-#[derive(Clone, Debug, Default)]
-pub struct JoinHints {
-    /// Table alias (lowercase, `db.table` when the hint is qualified and
-    /// `table` otherwise) to the [`join_hint_flags`] bits hinted for it.
-    pub tables: BTreeMap<String, u32>,
-    /// Go `PlanHints.LeadingList`, retaining the nested AST order.
-    pub leading: Option<Vec<tidb_ast::LeadingElement>>,
-    pub(crate) canonical: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
-    pub(crate) select_offset: i32,
-    /// Go `SessionVars.CurrentDB`, which `ExtractTableAlias` gives an alias
-    /// whose names carry no database (a derived table's).
-    pub(crate) current_db: String,
-    /// Go `SessionVars.EnableAdvancedJoinHint`.
-    pub(crate) advanced_join_hint: bool,
-    /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's
-    /// alias by its query block, shared with the builder that records them.
-    pub(crate) block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
-}
-
-impl JoinHints {
-    /// Adapts the canonical Go `PlanHints` join fields to the preference bits
-    /// consumed by `LogicalJoin`.
-    #[must_use]
-    pub fn from_plan_hints(
-        canonical: Rc<RefCell<tidb_hint::PlanHints>>,
-        select_offset: i32,
-        current_db: &str,
-        advanced_join_hint: bool,
-        block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
-    ) -> Self {
-        let plan = canonical.borrow();
-        let mut hints = Self::default();
-        for (tables, flag) in [
-            (&plan.index_join.inlj_tables, join_hint_flags::INLJ),
-            (&plan.index_join.inlhj_tables, join_hint_flags::INLHJ),
-            (&plan.index_join.inlmj_tables, join_hint_flags::INLMJ),
-            (&plan.hash_join, join_hint_flags::HASH_JOIN),
-            (&plan.hash_join_build, join_hint_flags::HJ_BUILD),
-            (&plan.hash_join_probe, join_hint_flags::HJ_PROBE),
-            (&plan.no_hash_join, join_hint_flags::NO_HASH_JOIN),
-            (&plan.sort_merge_join, join_hint_flags::MERGE_JOIN),
-            (&plan.no_merge_join, join_hint_flags::NO_MERGE_JOIN),
-            (
-                &plan.no_index_join.inlj_tables,
-                join_hint_flags::NO_INDEX_JOIN,
-            ),
-            (
-                &plan.no_index_join.inlhj_tables,
-                join_hint_flags::NO_INDEX_HASH_JOIN,
-            ),
-            (
-                &plan.no_index_join.inlmj_tables,
-                join_hint_flags::NO_INDEX_MERGE_JOIN,
-            ),
-            (&plan.broadcast_join, join_hint_flags::BC_JOIN),
-            (&plan.shuffle_join, join_hint_flags::SHUFFLE_JOIN),
-        ] {
-            for table in tables
-                .iter()
-                .filter(|table| table.select_offset == select_offset)
-            {
-                hints.hint_table(&table.database_name, &table.table_name, flag);
-            }
-        }
-        hints.leading = plan.leading_list.clone();
-        drop(plan);
-        hints.canonical = Some(canonical);
-        hints.select_offset = select_offset;
-        hints.current_db = tidb_mysql::to_lowercase(current_db);
-        hints.advanced_join_hint = advanced_join_hint;
-        hints.block_as_names = block_as_names;
-        hints
-    }
-
-    /// Go `ExtractTableAlias`'s query-block choice: "For sub-queries like
-    /// `(select * from t) t1`, t1 should belong to its surrounding select
-    /// block."
-    fn alias_select_offset(&self, plan_offset: i32) -> i32 {
-        if plan_offset != self.select_offset
-            && plan_offset >= 0
-            && self
-                .block_as_names
-                .borrow()
-                .get(&plan_offset)
-                .is_some_and(|name| !name.is_empty())
-        {
-            self.select_offset
-        } else {
-            plan_offset
-        }
-    }
-
-    /// Go `ExtractTableAlias`'s database fallback: an alias whose names carry
-    /// no database takes the session's current one.
-    fn alias_database(&self, alias: &HintedTable) -> String {
-        if alias.db_name.is_empty() {
-            self.current_db.clone()
-        } else {
-            alias.db_name.clone()
-        }
-    }
-
-    /// Go `PlanHints.IfPreferXxx(alias)` for whichever bit `flag` is: the
-    /// alias carries the hint, matched qualified-first then bare.
-    #[must_use]
-    pub fn prefers(&self, alias: Option<&HintedTable>, flag: u32) -> bool {
-        let Some(alias) = alias else { return false };
-        if let Some(canonical) = &self.canonical {
-            // Go `ExtractTableAlias`: "if dbName.L == "" { dbName =
-            // CurrentDB }", the database the hint's own table defaulted to.
-            let table = tidb_hint::HintedTable {
-                database_name: self.alias_database(alias),
-                table_name: alias.table_name.clone(),
-                select_offset: alias.select_offset,
-                ..tidb_hint::HintedTable::default()
-            };
-            let tables = [Some(&table)];
-            let mut canonical = canonical.borrow_mut();
-            return match flag {
-                join_hint_flags::INLJ => canonical.prefer_index_join(&tables),
-                join_hint_flags::INLHJ => canonical.prefer_index_hash_join(&tables),
-                join_hint_flags::INLMJ => canonical.prefer_index_merge_join(&tables),
-                join_hint_flags::HJ_BUILD => canonical.prefer_hash_join_build(&tables),
-                join_hint_flags::HJ_PROBE => canonical.prefer_hash_join_probe(&tables),
-                join_hint_flags::HASH_JOIN => canonical.prefer_hash_join(&tables),
-                join_hint_flags::NO_HASH_JOIN => canonical.prefer_no_hash_join(&tables),
-                join_hint_flags::MERGE_JOIN => canonical.prefer_merge_join(&tables),
-                join_hint_flags::NO_MERGE_JOIN => canonical.prefer_no_merge_join(&tables),
-                join_hint_flags::NO_INDEX_JOIN => canonical.prefer_no_index_join(&tables),
-                join_hint_flags::NO_INDEX_HASH_JOIN => canonical.prefer_no_index_hash_join(&tables),
-                join_hint_flags::NO_INDEX_MERGE_JOIN => {
-                    canonical.prefer_no_index_merge_join(&tables)
-                }
-                join_hint_flags::BC_JOIN => canonical.prefer_broadcast_join(&tables),
-                join_hint_flags::SHUFFLE_JOIN => canonical.prefer_shuffle_join(&tables),
-                _ => false,
-            };
-        }
-        let qualified = format!("{}.{}", alias.db_name, alias.table_name);
-        let bits = self
-            .tables
-            .get(&qualified)
-            .or_else(|| self.tables.get(&alias.table_name))
-            .copied()
-            .unwrap_or(0);
-        bits & flag != 0
-    }
-
-    /// Records `flags` for an (optionally qualified) table alias.
-    pub fn hint_table(&mut self, db_name: &str, table_name: &str, flags: u32) {
-        let key = if db_name.is_empty() {
-            tidb_mysql::to_lowercase(table_name)
-        } else {
-            format!(
-                "{}.{}",
-                tidb_mysql::to_lowercase(db_name),
-                tidb_mysql::to_lowercase(table_name)
-            )
-        };
-        *self.tables.entry(key).or_insert(0) |= flags;
-    }
-}
-
-/// Go `util.ExtractTableAlias(p, parentOffset)`
-/// (`pkg/planner/util/misc.go:244`), minus the query-block comparison this
-/// crate has no offsets for (see this module's boundaries).
-///
-/// The rejection rules are Go's exactly: a plan whose output names disagree on
-/// the table (or carry a database with no table) has no single alias, so no
-/// hint can name it.
-#[must_use]
-pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
-    if names.is_empty() {
-        return None;
-    }
-    let first = names
-        .iter()
-        .find(|name| !name.names.table.lower.is_empty())?;
-    for name in names {
-        if name.names.table.lower.is_empty() {
-            // "A valid aliasable column should always carry both
-            // DBName/TblName together."
-            if !name.names.database.lower.is_empty() {
-                return None;
-            }
-            continue;
-        }
-        let db_conflicts = !name.names.database.lower.is_empty()
-            && !first.names.database.lower.is_empty()
-            && name.names.database.lower != first.names.database.lower;
-        if name.names.table.lower != first.names.table.lower || db_conflicts {
-            return None;
-        }
-    }
-    Some(HintedTable {
-        db_name: first.names.database.lower.clone(),
-        table_name: first.names.table.lower.clone(),
-        select_offset: 0,
-    })
-}
-
 /// Go `LogicalJoin.SetPreferredJoinTypeAndOrder(hintInfo)`
 /// (`logical_join.go:1596`), over the two children's already-snapshotted
 /// output names.
@@ -422,18 +153,18 @@ pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
 /// children have moved by then, so the names arrive as parameters.
 pub fn set_preferred_join_type_and_order(
     join: &mut LogicalJoin,
-    hints: &Rc<JoinHints>,
+    hints: &Rc<tidb_planner_util::misc::JoinHints>,
     (left_names, left_offset): (&[FieldName], i32),
     (right_names, right_offset): (&[FieldName], i32),
     ctx: &dyn tidb_exprctx::Columns,
 ) {
-    use join_hint_flags as f;
+    use tidb_hint::join_hint_flags as f;
 
-    let lhs = extract_table_alias(left_names).map(|alias| HintedTable {
+    let lhs = tidb_planner_util::misc::extract_table_alias(left_names).map(|alias| tidb_planner_util::misc::HintedTable {
         select_offset: hints.alias_select_offset(left_offset),
         ..alias
     });
-    let rhs = extract_table_alias(right_names).map(|alias| HintedTable {
+    let rhs = tidb_planner_util::misc::extract_table_alias(right_names).map(|alias| tidb_planner_util::misc::HintedTable {
         select_offset: hints.alias_select_offset(right_offset),
         ..alias
     });
@@ -558,7 +289,7 @@ pub fn set_preferred_join_type_and_order(
 
 /// Go `containDifferentJoinTypes` (`logical_join.go:2087`).
 fn contain_different_join_types(prefer_join_type: u32) -> bool {
-    use join_hint_flags as f;
+    use tidb_hint::join_hint_flags as f;
     let prefer_join_type = prefer_join_type
         & !f::NO_HASH_JOIN
         & !f::NO_MERGE_JOIN

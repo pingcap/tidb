@@ -52,7 +52,7 @@ struct BasicJoinGroupInfo {
 struct JoinGroupResult {
     group: Vec<LogicalPlan>,
     has_outer_join: bool,
-    join_order_hints: Vec<Rc<crate::plan_builder::from::JoinHints>>,
+    join_order_hints: Vec<Rc<tidb_planner_util::misc::JoinHints>>,
     info: BasicJoinGroupInfo,
     column_expressions: BTreeMap<i64, Expression>,
 }
@@ -648,8 +648,8 @@ fn set_hint_warning(context: &RuleContext<'_>, message: &str) {
 }
 
 fn check_and_generate_leading_hint(
-    hints: &[Rc<crate::plan_builder::from::JoinHints>],
-) -> (Option<Rc<crate::plan_builder::from::JoinHints>>, bool) {
+    hints: &[Rc<tidb_planner_util::misc::JoinHints>],
+) -> (Option<Rc<tidb_planner_util::misc::JoinHints>>, bool) {
     let Some(first) = hints.first() else {
         return (None, false);
     };
@@ -681,7 +681,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
     fn generate_leading_join_group(
         &mut self,
         plans: Vec<LogicalPlan>,
-        hints: &crate::plan_builder::from::JoinHints,
+        hints: &tidb_planner_util::misc::JoinHints,
         has_outer_join: bool,
     ) -> Result<Option<Vec<LogicalPlan>>, PlanError> {
         let Some(elements) = hints.leading.as_deref() else {
@@ -705,7 +705,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         &mut self,
         elements: &[tidb_ast::LeadingElement],
         mut available: Vec<LogicalPlan>,
-        hints: &crate::plan_builder::from::JoinHints,
+        hints: &tidb_planner_util::misc::JoinHints,
         has_outer_join: bool,
     ) -> Result<(Option<LogicalPlan>, Vec<LogicalPlan>, bool), PlanError> {
         if elements.is_empty() {
@@ -1637,12 +1637,12 @@ mod tests {
 
     #[test]
     fn conflicting_leading_hints_use_shared_owner_identity() {
-        let first = Rc::new(crate::plan_builder::from::JoinHints::default());
+        let first = Rc::new(tidb_planner_util::misc::JoinHints::default());
         let same = Rc::clone(&first);
         assert!(check_and_generate_leading_hint(&[first.clone(), same])
             .0
             .is_some());
-        let different = Rc::new(crate::plan_builder::from::JoinHints::default());
+        let different = Rc::new(tidb_planner_util::misc::JoinHints::default());
         let (hint, conflicting) = check_and_generate_leading_hint(&[first, different]);
         assert!(hint.is_none());
         assert!(conflicting);

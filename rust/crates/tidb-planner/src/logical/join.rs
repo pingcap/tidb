@@ -79,9 +79,9 @@ pub struct LogicalJoin {
     /// Go `InternalPreferJoinOrder`.
     pub internal_prefer_join_order: bool,
     /// Go `HintInfo`.
-    pub hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
+    pub hint_info: Option<Rc<tidb_planner_util::misc::JoinHints>>,
     /// Go `InternalHintInfo`.
-    pub internal_hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
+    pub internal_hint_info: Option<Rc<tidb_planner_util::misc::JoinHints>>,
     /// Go `LeftPreferJoinType`.
     pub left_prefer_join_type: u32,
     /// Go `RightPreferJoinType`.

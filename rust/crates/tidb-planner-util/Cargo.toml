@@ -15,3 +15,5 @@ tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-hint = { path = "../tidb-hint" }
+tidb-mysql = { path = "../tidb-mysql" }

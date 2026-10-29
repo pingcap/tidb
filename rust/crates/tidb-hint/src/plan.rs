@@ -23,6 +23,61 @@ pub const HINT_FLAG_SEMI_JOIN_REWRITE: u64 = 1;
 /// Go `HintFlagNoDecorrelate`.
 pub const HINT_FLAG_NO_DECORRELATE: u64 = 1 << 1;
 
+/// Go's `PreferXxx` join bits (`pkg/util/hint/hint.go:144-178`), in the same
+/// `1 << iota` order so a value read out of one is readable as the other.
+pub mod join_hint_flags {
+    /// Go `PreferINLJ`.
+    pub const INLJ: u32 = 1 << 0;
+    /// Go `PreferINLHJ`.
+    pub const INLHJ: u32 = 1 << 1;
+    /// Go `PreferINLMJ`.
+    pub const INLMJ: u32 = 1 << 2;
+    /// Go `PreferHJBuild`.
+    pub const HJ_BUILD: u32 = 1 << 3;
+    /// Go `PreferHJProbe`.
+    pub const HJ_PROBE: u32 = 1 << 4;
+    /// Go `PreferHashJoin`.
+    pub const HASH_JOIN: u32 = 1 << 5;
+    /// Go `PreferNoHashJoin`.
+    pub const NO_HASH_JOIN: u32 = 1 << 6;
+    /// Go `PreferMergeJoin`.
+    pub const MERGE_JOIN: u32 = 1 << 7;
+    /// Go `PreferNoMergeJoin`.
+    pub const NO_MERGE_JOIN: u32 = 1 << 8;
+    /// Go `PreferNoIndexJoin`.
+    pub const NO_INDEX_JOIN: u32 = 1 << 9;
+    /// Go `PreferNoIndexHashJoin`.
+    pub const NO_INDEX_HASH_JOIN: u32 = 1 << 10;
+    /// Go `PreferNoIndexMergeJoin`.
+    pub const NO_INDEX_MERGE_JOIN: u32 = 1 << 11;
+    /// Go `PreferBCJoin`.
+    pub const BC_JOIN: u32 = 1 << 12;
+    /// Go `PreferShuffleJoin`.
+    pub const SHUFFLE_JOIN: u32 = 1 << 13;
+    /// Go `PreferRewriteSemiJoin`.
+    pub const REWRITE_SEMI_JOIN: u32 = 1 << 14;
+    /// Go `PreferLeftAsINLJInner`.
+    pub const LEFT_AS_INLJ_INNER: u32 = 1 << 15;
+    /// Go `PreferRightAsINLJInner`.
+    pub const RIGHT_AS_INLJ_INNER: u32 = 1 << 16;
+    /// Go `PreferLeftAsINLHJInner`.
+    pub const LEFT_AS_INLHJ_INNER: u32 = 1 << 17;
+    /// Go `PreferRightAsINLHJInner`.
+    pub const RIGHT_AS_INLHJ_INNER: u32 = 1 << 18;
+    /// Go `PreferLeftAsINLMJInner`.
+    pub const LEFT_AS_INLMJ_INNER: u32 = 1 << 19;
+    /// Go `PreferRightAsINLMJInner`.
+    pub const RIGHT_AS_INLMJ_INNER: u32 = 1 << 20;
+    /// Go `PreferLeftAsHJBuild`.
+    pub const LEFT_AS_HJ_BUILD: u32 = 1 << 21;
+    /// Go `PreferRightAsHJBuild`.
+    pub const RIGHT_AS_HJ_BUILD: u32 = 1 << 22;
+    /// Go `PreferLeftAsHJProbe`.
+    pub const LEFT_AS_HJ_PROBE: u32 = 1 << 23;
+    /// Go `PreferRightAsHJProbe`.
+    pub const RIGHT_AS_HJ_PROBE: u32 = 1 << 24;
+}
+
 /// Go `PreferHashAgg`.
 pub const PREFER_HASH_AGG: u32 = 1 << 25;
 /// Go `PreferStreamAgg`.

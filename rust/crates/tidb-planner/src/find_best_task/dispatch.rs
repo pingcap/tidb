@@ -840,7 +840,7 @@ fn exhaust_physical_plans(
         }
         LogicalPlan::Join(op) => {
             use crate::find_best_task::JoinStrategy;
-            use crate::plan_builder::from::join_hint_flags;
+            use tidb_hint::join_hint_flags;
 
             let reduced = crate::find_best_task::project_one_join(op, plan)?;
             let (left_columns, right_columns, is_null_eq, _) = op.get_join_keys();
@@ -5198,7 +5198,7 @@ fn record_index_join_hint_warnings(
     prop: &PhysicalProperty,
     in_enforce: bool,
 ) -> Option<String> {
-    use crate::plan_builder::from::join_hint_flags as hint;
+    use tidb_hint::join_hint_flags as hint;
     if !join.prefer_any(&[
         hint::RIGHT_AS_INLJ_INNER,
         hint::RIGHT_AS_INLHJ_INNER,
@@ -5306,7 +5306,7 @@ fn normal_preference_applies(
 /// hinted task outranks ordinary candidates regardless of cost; multiple
 /// valid hinted tasks still compare by cost.
 fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> bool {
-    use crate::plan_builder::from::join_hint_flags as hint;
+    use tidb_hint::join_hint_flags as hint;
     use crate::plan_cost_ver2::IndexJoinKind;
 
     let LogicalPlan::Join(join) = plan else {
