@@ -115,7 +115,7 @@ fn topn_counts(topn: Option<&tidb_stats::cmsketch::TopN>) -> Vec<u64> {
 /// buckets contain only values 3 and 4.
 #[test]
 fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(a int, index idx(a))");
     insert(
         &mut catalog,
@@ -179,7 +179,7 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
 /// single-column index retains the source column's NDV and NULL count.
 #[test]
 fn single_column_index_ndv_and_null_count_match_the_column() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t(a int, b int, c varchar(20), d varchar(20), \
@@ -258,7 +258,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
 #[test]
 fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() {
     let handle = tidb_stats_handle::StatsHandle::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b)) \
@@ -329,7 +329,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
 
     // Second act: only p0 is analyzed. p0 keeps full coverage; the other
     // partitions have no statistics, which is Go's pseudo table.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b)) \
@@ -373,7 +373,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
 /// is one 11 plus nine 1s (Go's `show stats_topn` rows, sorted).
 #[test]
 fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table te(a int primary key, b int, index index_b(b))",
@@ -424,7 +424,7 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
 /// index has NDV 2, TopN `a` count 3, and one remaining bucket for `b`.
 #[test]
 fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table sampling_index_virtual_col(a int, b int as (a+1), index idx(b))",
@@ -465,7 +465,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
     assert_eq!(topn.num(), 1);
     assert_eq!(topn.entries()[0].count, 4, "the value 6 counts 4");
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table sampling_index_prefix_col(a varchar(3), index idx(a(1)))",
@@ -524,7 +524,7 @@ fn analyze_auto_adjusted_sample_rate_boundaries() {
 /// b:(2,0,6,2,-0.5), idxa:(3,0,6,2,0), idxb:(2,0,6,2,0).
 #[test]
 fn analyze_collation_sort_keys_shape_topn_and_histograms() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (a char(10) collate utf8mb4_unicode_ci not null, \
@@ -649,7 +649,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
 #[test]
 fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
     for name in ["t0", "t1"] {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         let spelling = if name == "t0" {
             "create table t0(a varchar(20), primary key(a) clustered)"
         } else {
@@ -725,7 +725,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
 #[test]
 fn analyze_partition_verify_per_partition_and_global_ndv() {
     let handle = tidb_stats_handle::StatsHandle::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let mut sql = String::from(
         "create table t(a int, b varchar(100), c int, INDEX idx_c(c)) PARTITION BY RANGE (a) (",
     );
@@ -799,7 +799,7 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
 /// the analyze column list).
 #[test]
 fn analyze_numeric_generated_column_with_index_succeeds() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t0(c0 NUMERIC, c1 BIGINT UNSIGNED AS ((CASE 0 WHEN 0 THEN 1358571571 ELSE trim(c0) END)), INDEX i0(c1))",
@@ -818,7 +818,7 @@ fn analyze_numeric_generated_column_with_index_succeeds() {
 /// must SCALE the sampled count by the table (topn entry 0 counting 10).
 #[test]
 fn analyze_single_sample_scales_topn_count_to_the_table() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (a int)");
     insert(
         &mut catalog,
@@ -848,7 +848,7 @@ fn analyze_single_sample_scales_topn_count_to_the_table() {
 /// v2 statistics (`0 2` / `1 2` in mysql.stats_histograms).
 #[test]
 fn analyze_stored_generated_column_from_json_with_unique_index() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t (j JSON, g VARCHAR(255) GENERATED ALWAYS AS (json_extract(j, '$.v')) STORED, UNIQUE INDEX g_idx (g))",

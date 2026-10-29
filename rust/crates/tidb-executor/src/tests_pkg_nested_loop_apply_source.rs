@@ -91,7 +91,7 @@ fn move_info_schema_to_front_source() {
     // ["INFORMATION_SCHEMA", "A", "B", "C"]; plus the bootstrapped
     // mysql/test, which sort after INFORMATION_SCHEMA byte-wise
     // ('m' 0x6d, 't' 0x74 > 'I' 0x49).
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for name in ["A", "B", "C"] {
         catalog.register_database_with_id_and_charset(name, 100, crate::TableCharset::default());
     }
@@ -118,7 +118,7 @@ fn move_info_schema_to_front_source() {
     // are case-insensitive in both implementations, so a catalog cannot hold
     // both "A" and "a" -- the same ordering property is pinned over distinct
     // names.)
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for name in ["Aa", "b"] {
         catalog.register_database_with_id_and_charset(name, 200, crate::TableCharset::default());
     }
@@ -140,7 +140,7 @@ fn move_info_schema_to_front_source() {
     // keep their sorted positions after the relocation. The bootstrapped
     // METRICS_SCHEMA, PERFORMANCE_SCHEMA and sys sort byte-wise too, as in
     // Go's `SHOW DATABASES`.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for name in ["A", "B", "C", "a1", "b1"] {
         catalog.register_database_with_id_and_charset(name, 300, crate::TableCharset::default());
     }
@@ -166,7 +166,7 @@ fn move_info_schema_to_front_source() {
     // INFORMATION_SCHEMA on this tier, so the closest realizable assertion is
     // that the bootstrap listing itself stays sorted with
     // INFORMATION_SCHEMA already at the front (the early-return state).
-    let catalog = Catalog::mock();
+    let catalog = tidb_infoschema_perfschema::mock_catalog();
     assert_eq!(
         catalog.database_names(),
         vec![

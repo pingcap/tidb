@@ -42,7 +42,7 @@ fn select_ints(catalog: &Catalog, sql: &str) -> Vec<i64> {
 /// (`tidb-session/tests/insert_auto_random_rebase_source.rs`).
 #[test]
 fn auto_random_allocates_positive_ids_for_null_zero_and_omitted() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = dml_ctx();
 
     run_create_table_on(
@@ -102,7 +102,7 @@ fn auto_random_allocates_positive_ids_for_null_zero_and_omitted() {
 /// (`pkg/executor/insert_common.go:826` keeps one rebase across the batch).
 #[test]
 fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = dml_ctx();
     run_create_table_on(
         "create table ar (id bigint key clustered auto_random, name char(10))",
@@ -142,7 +142,7 @@ fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
 /// `vars.InNoAutoValueOnZero`.
 #[test]
 fn auto_random_stores_explicit_zero_with_no_auto_value_on_zero() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = dml_ctx().with_auto_increment_zero_explicit(true);
     run_create_table_on(
         "create table ar (id bigint key clustered auto_random, name char(10))",

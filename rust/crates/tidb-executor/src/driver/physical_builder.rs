@@ -8113,7 +8113,7 @@ use super::*;
         let ctx =
             crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);
-        let mut executor = build(&plan, &Catalog::mock(), &ctx).unwrap();
+        let mut executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
 
         executor.open().unwrap();
         let mut req = executor.new_chunk();
@@ -8150,7 +8150,7 @@ use super::*;
     fn built_executor_checks_sql_killer_before_next() {
         let memory = crate::StatementMemory::default();
         let ctx = crate::StmtContext::for_query_with_memory(memory.clone());
-        let mut executor = build(&dual(1, 1), &Catalog::mock(), &ctx).unwrap();
+        let mut executor = build(&dual(1, 1), &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         executor.open().unwrap();
         memory
             .sql_killer()
@@ -8428,7 +8428,7 @@ use super::*;
             ids.alloc();
         }
         tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
-        let mut exec = build(&plan, &Catalog::mock(), &crate::StmtContext::default()).unwrap();
+        let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {
             exec.open().unwrap();
             let mut rows = 0;
@@ -8543,7 +8543,7 @@ use super::*;
             false,
             Some((1, 4)),
         );
-        let executor = build(&plan, &Catalog::mock(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
             .expect("build recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run recursive CTE"), 3);
     }
@@ -8551,14 +8551,14 @@ use super::*;
     #[test]
     fn physical_union_distinct_cte_stops_when_its_delta_is_empty() {
         let plan = cte(3, 42, dual(1, 1), Some(cte_table(2, 42)), true, None);
-        let executor = build(&plan, &Catalog::mock(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
             .expect("build distinct recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run distinct CTE"), 1);
     }
 
     #[test]
     fn cached_physical_union_and_max_one_row_build_directly() {
-        let catalog = Catalog::mock();
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
         let ctx = crate::StmtContext::default();
 
         let mut union_executor = build(&union(3, vec![dual(1, 1), dual(2, 1)]), &catalog, &ctx)
@@ -8640,7 +8640,7 @@ use super::*;
     fn index_probe_hash_join_distinguishes_aliases_of_one_table() {
         use tidb_planner::physical::{PhysicalHashJoin, PhysicalIndexJoin};
         for right_table in [40, 41] {
-            let mut catalog = Catalog::mock();
+            let mut catalog = tidb_infoschema_perfschema::mock_catalog();
             catalog.register_kv(
                 "t",
                 crate::KvTable::new(40, vec![long_column("id", 1), long_column("value", 2)]),
@@ -8712,7 +8712,7 @@ use super::*;
     #[test]
     fn table_reader_build_records_go_stmtctx_table_access() {
         let table_id = 40;
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv(
             "reader",
             crate::KvTable::new(
@@ -8761,7 +8761,7 @@ use super::*;
                 )
                 .expect("seed heap row");
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("heap", table);
 
         let mut handle = Column::new(
@@ -8804,7 +8804,7 @@ use super::*;
                 )
                 .expect("seed clustered row");
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("point", table);
 
         let mut base = BasePhysicalPlan::with_id(10, "PointGet", 0);
@@ -8872,7 +8872,7 @@ use super::*;
                 )
                 .expect("seed common-handle row");
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("unique_point", table);
 
         let mut base = BasePhysicalPlan::with_id(13, "PointGet", 0);
@@ -8920,7 +8920,7 @@ use super::*;
                 )
                 .expect("seed clustered row");
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("batch", table);
 
         let mut base = BasePhysicalPlan::with_id(11, "BatchPointGet", 0);
@@ -8991,7 +8991,7 @@ use super::*;
                 )
                 .expect("seed unique-index row");
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("unique_batch", table);
 
         let mut base = BasePhysicalPlan::with_id(12, "BatchPointGet", 0);
@@ -9110,7 +9110,7 @@ use super::*;
                 &crate::StmtContext::for_query(),
             )
             .unwrap();
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table.clone());
         let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(2, 2);
         for quota in [1, -1] {
@@ -9284,7 +9284,7 @@ use super::*;
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table);
         for (intersection, ordered) in [(false, false), (false, true), (true, false)] {
             let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
@@ -9369,7 +9369,7 @@ use super::*;
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table);
         let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
         let keys = partials.iter().map(runtime_plan_key).collect::<Vec<_>>();
@@ -9426,7 +9426,7 @@ use super::*;
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table);
         for batch_size in [3, 20_000] {
             for topn in [false, true] {
@@ -9576,7 +9576,7 @@ use super::*;
                         )
                         .expect("seed row");
                 }
-                let mut catalog = Catalog::mock();
+                let mut catalog = tidb_infoschema_perfschema::mock_catalog();
                 catalog.register_kv("im", table);
 
                 for table_partial in [false, true] {

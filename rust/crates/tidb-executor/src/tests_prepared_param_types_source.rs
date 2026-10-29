@@ -44,7 +44,7 @@ fn ctx() -> StmtContext {
 }
 
 fn go_t1_t2_catalog() -> Catalog {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t1(a varchar(20), b int, c float, key(b, a))",
         &mut catalog,

@@ -474,7 +474,7 @@ mod tests {
     /// real TiKV-format bytes and metadata as tidb-model structs.
     #[test]
     fn create_insert_select_from_sql() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         assert!(run_create_table_on(
             "CREATE TABLE t (a BIGINT, b BIGINT UNSIGNED, s VARCHAR(10))",
             &mut catalog
@@ -516,7 +516,7 @@ mod tests {
     /// (`tidb-session/tests/index_ddl_prefix_and_visibility_source.rs`).
     #[test]
     fn an_index_declared_invisible_is_maintained_but_never_planned() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE t (a INT, b INT, KEY idx_a (a) INVISIBLE, KEY idx_b (b))",
             &mut catalog,
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn if_not_exists_and_duplicates() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         assert!(run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap());
         assert!(run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).is_err());
         assert!(
@@ -553,7 +553,7 @@ mod tests {
     /// non-integer one does not (`isIntCol`).
     #[test]
     fn primary_key_sets_the_handle_flag_only_for_an_integer_column() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on("CREATE TABLE t (a INT, PRIMARY KEY (a))", &mut catalog).unwrap();
         run_create_table_on("CREATE TABLE s (a VARCHAR(4) PRIMARY KEY)", &mut catalog).unwrap();
         run_create_table_on("CREATE TABLE h (a INT)", &mut catalog).unwrap();
@@ -593,7 +593,7 @@ mod tests {
     /// charset's `_bin` collation.
     #[test]
     fn ddl_resolves_charset_and_collation_per_column() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE t1 (\
                  c_varchar VARCHAR(10), c_char CHAR(10), \
@@ -667,7 +667,7 @@ mod tests {
     /// `CHARACTER SET binary` turns a VARCHAR into a `varbinary`.
     #[test]
     fn ddl_column_charset_falls_back_to_the_table_default() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE t2 (a VARCHAR(10), b VARCHAR(10) CHARACTER SET utf8mb4, \
                  c VARCHAR(10) CHARACTER SET latin1, d VARCHAR(10) CHARACTER SET binary) \
@@ -698,7 +698,7 @@ mod tests {
     /// producing a contradictory field type.
     #[test]
     fn ddl_collate_alone_picks_the_charset_and_a_mismatched_pair_is_rejected() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE t (a VARCHAR(10) COLLATE latin1_bin)",
             &mut catalog,
@@ -720,7 +720,7 @@ mod tests {
     /// zero-padded to its flen -- while `VARBINARY(3)` keeps the two bytes.
     #[test]
     fn binary_column_zero_pads_to_its_length() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE tb (b BINARY(3), vb VARBINARY(3))",
             &mut catalog,

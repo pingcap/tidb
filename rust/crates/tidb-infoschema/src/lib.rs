@@ -66,7 +66,6 @@ pub mod metric_table_def;
 pub mod virtual_tables;
 pub mod infoschema_meta;
 pub mod metricsschema;
-pub mod perfschema;
 pub mod tidb_decode_key;
 use tidb_decode_key::TidbDecodeKeySnapshot;
 pub mod planner_view;
@@ -342,7 +341,10 @@ impl Catalog {
         // storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
         let (metric_tables, performance_tables) = if with_memory_tables {
-            (crate::metricsschema::tables(), crate::perfschema::tables())
+            (
+                crate::metricsschema::tables(),
+                PERFORMANCE_SCHEMA_TABLES.get().map(|tables| tables()).unwrap_or_default(),
+            )
         } else {
             (HashMap::new(), HashMap::new())
         };
@@ -1378,46 +1380,18 @@ impl Catalog {
     }
 }
 
-/// A memory schema's table built from its `CREATE TABLE` text, as Go's
-/// `perfschema.Init` builds it: `BuildTableInfoFromAST` under
-/// `metabuild.NewNonStrictContext()` (so `DEFAULT '0000-00-00 ...'` is
-/// admitted), the reserved `table_id`, column ids numbered from 1, then
-/// loaded like any table (`TableFromMeta`) and registered in `database`.
-pub fn run_create_system_table_in(
-    sql: &str,
-    catalog: &mut Catalog,
-    database: &str,
-    table_id: i64,
-) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql)
-        .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
-    let tidb_ast::Stmt::Ddl(ddl) = &stmt else {
-        return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
-    };
-    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else {
-        return Err(DriverError::unsupported("only CREATE TABLE is supported here"));
-    };
-    let mut info = tidb_ddl_build::table_info_build::build_table_info(
-        create,
-        tidb_mysql::charset::DefaultCharset,
-        "",
-    )
-    .map_err(|error| DriverError::Mysql(error.to_mysql_error()))?;
-    info.id = table_id;
-    for (offset, column) in info.columns.iter_deref().enumerate() {
-        column.write().id = i64::try_from(offset).unwrap_or(0) + 1;
-    }
-    info.db_id = catalog.database_id(database).unwrap_or_default();
-    info.state = tidb_model::SchemaState::PUBLIC;
-    let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
-    let table = tidb_table::table_from_meta::cluster_table(
-        &info,
-        &tidb_kv::storage::MemTableStorage::new(),
-        &tidb_table::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
-    )
-    .map_err(DriverError::unsupported)?;
-    let name = info.name.original().to_owned();
-    catalog.register_kv_in(database, &name, table)
+
+/// Go `perfschema`'s `init` registering its virtual tables
+/// (`infoschema.RegisterVirtualTable`): the builder of the
+/// `performance_schema` tables, which every catalog's memory schemas include
+/// once it is set. tidb-infoschema-perfschema sets it (its `register`).
+static PERFORMANCE_SCHEMA_TABLES: std::sync::OnceLock<
+    fn() -> HashMap<String, Arc<TableEntry>>,
+> = std::sync::OnceLock::new();
+
+/// Sets the `performance_schema` table builder; the first call wins.
+pub fn register_performance_schema(tables: fn() -> HashMap<String, Arc<TableEntry>>) {
+    let _ = PERFORMANCE_SCHEMA_TABLES.set(tables);
 }
 
 /// Where a staged table sits in the catalog.

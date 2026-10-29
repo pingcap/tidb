@@ -71,7 +71,7 @@ fn check_context() -> RowDecodeContext {
 /// (`pkg/util/consistency/errors.go`, `ErrAdminCheckInconsistentWithColInfo`).
 #[test]
 fn admin_check_detects_generated_column_index_value_corruption() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, val int, \
@@ -159,7 +159,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     // Test 1: enum column with a unique index. (Each Go section drops and
     // re-creates `admin_test`; this tier has no drop-table helper in scope,
     // so each section uses a fresh catalog — same table shape, same check.)
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table admin_test (id int primary key, \
@@ -192,7 +192,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     drop(table);
 
     // Test 2: varchar unique index.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table admin_test (id int primary key, name varchar(50), unique key uk_name(name))",
@@ -213,7 +213,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     drop(table);
 
     // Test 3: composite unique index over an enum column.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table admin_test (id int, type enum('A', 'B', 'C'), value int, \
@@ -241,7 +241,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
 /// index checks when only one of three table rows is indexed.
 #[test]
 fn admin_check_counts_only_rows_matching_partial_index_predicate() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (a int, b int, key idx_b (b) where a > 0)",
@@ -272,7 +272,7 @@ fn admin_check_counts_only_rows_matching_partial_index_predicate() {
 /// concurrency for the check logic itself.
 #[test]
 fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t_concurrent (id int primary key, val int, key idx_val(val))",

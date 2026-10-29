@@ -63,7 +63,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
 /// semantics of the preserved-side build orientation.
 #[test]
 fn outer_table_build_hash_table_row_semantics() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (a int, b int)");
     create(&mut catalog, "create table s (a int, b int)");
     insert(&mut catalog, "insert into t values (11,11),(1,2)");
@@ -100,7 +100,7 @@ fn outer_table_build_hash_table_row_semantics() {
 /// projection must retain the build-side columns after a residual predicate.
 #[test]
 fn inline_projection_hash_join_row_semantics() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table s (a int not null, b int, c int)",
@@ -127,7 +127,7 @@ fn inline_projection_hash_join_row_semantics() {
     // Retain that oracle across the staging and requested-output boundaries,
     // including duplicate keys, rejected NULL keys and residual filtering.
     for key_type in ["int", "varchar(8)"] {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         create(
             &mut catalog,
             &format!("create table s (a {key_type}, c int)"),
@@ -191,7 +191,7 @@ fn inline_projection_hash_join_row_semantics() {
 /// the preserved value through a NULL-matching residual.
 #[test]
 fn issue54755_outer_join_row_semantics() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t1(pk int primary key, col_int_nokey int, col_int_key int, col_varchar_key varchar(1), col_varchar_nokey varchar(1), key(col_int_key), key(col_varchar_key, col_int_key))",
@@ -229,7 +229,7 @@ fn issue54755_outer_join_row_semantics() {
 /// implementation.
 #[test]
 fn issue55016_char_varchar_equality() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (a varchar(10), b char(10))");
     insert(&mut catalog, "insert into t values ('aa','a')");
     assert_eq!(
@@ -245,7 +245,7 @@ fn issue55016_char_varchar_equality() {
 /// retain unmatched rows when the residual is evaluated after equality.
 #[test]
 fn issue56825_outer_join_residual() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t1(id int, col1 int)");
     create(
         &mut catalog,

@@ -63,7 +63,7 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
     )
     .expect("the fixture is buildable as a TableInfo");
 
-    let mut catalog = tidb_executor::Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     tidb_executor::run_create_table_on(FIXTURE, &mut catalog).expect("the fixture is runnable");
     let live = catalog
         .table_in("test", "y")

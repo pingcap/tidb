@@ -1,0 +1,24 @@
+[package]
+name = "tidb-infoschema-perfschema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/infoschema/perfschema: the performance_schema tables (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-table = { path = "../tidb-table" }
+tidb-util = { path = "../tidb-util" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-hack = { path = "../tidb-hack" }

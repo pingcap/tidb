@@ -65,7 +65,7 @@ fn datum_text(datum: &Datum) -> String {
 ///   row (2 affected) and read back `1.0000`, not insert a second row.
 #[test]
 fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_rows() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = dml_ctx();
     let insert =
         |sql: &str, catalog: &mut Catalog| run_insert_reporting(sql, catalog, "test", &ctx);

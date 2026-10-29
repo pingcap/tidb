@@ -1133,7 +1133,7 @@ mod tests {
             .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
@@ -1217,7 +1217,7 @@ mod tests {
                 .insert_row(&[Datum::Int(a), Datum::Int(b)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let cases: [(&str, Vec<Vec<Datum>>); 5] = [
@@ -1273,7 +1273,7 @@ mod tests {
         ] {
             table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let int = |value: i64| vec![Datum::Int(value)];
@@ -1338,7 +1338,7 @@ mod tests {
         ] {
             table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         let int = |value: i64| vec![Datum::Int(value)];
@@ -1401,7 +1401,7 @@ mod tests {
                 .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let ctx = crate::StmtContext::for_query();
         // `TAN` is deliberately absent from Go's TiKV whitelist (the comment

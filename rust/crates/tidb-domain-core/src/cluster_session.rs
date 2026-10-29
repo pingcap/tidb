@@ -181,7 +181,7 @@ pub fn cluster_session_catalog_with_templates(
     template_storage: &ClusterTableStorage,
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
-    let mut catalog = Catalog::new();
+    let mut catalog = tidb_infoschema_perfschema::catalog();
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.

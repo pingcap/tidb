@@ -33,7 +33,7 @@ use crate::{
 #[test]
 fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     let session = SessionMemory::new(-1, OomAction::Cancel, 7);
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t (id int)", &mut catalog).unwrap();
 
     let statement = |memory: &SessionMemory| -> StatementMemory { memory.statement() };

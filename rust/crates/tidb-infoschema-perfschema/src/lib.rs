@@ -23,7 +23,7 @@
 //! (`session_variables`, `events_statements_summary_by_digest`, ...) get
 //! their rows per statement, as the `information_schema` tables do.
 
-use crate::Catalog;
+use tidb_infoschema::Catalog;
 use tidb_hack::GoCaseCompare;
 
 /// The database name Go registers these tables under.
@@ -232,15 +232,15 @@ pub fn is_predefined_table(name: &str) -> bool {
 /// (`BuildTableInfoFromAST` under its Go id), as catalog entries keyed by
 /// name.
 pub fn tables(
-) -> std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>> {
+) -> std::collections::HashMap<String, std::sync::Arc<tidb_infoschema::TableEntry>> {
     static TABLES_BUILT: std::sync::OnceLock<
-        std::collections::HashMap<String, std::sync::Arc<crate::TableEntry>>,
+        std::collections::HashMap<String, std::sync::Arc<tidb_infoschema::TableEntry>>,
     > = std::sync::OnceLock::new();
     TABLES_BUILT
         .get_or_init(|| {
             let mut scratch = Catalog::memory_schema_scratch();
             for (_, offset, sql) in TABLES {
-                crate::run_create_system_table_in(
+                run_create_system_table_in(
                     sql,
                     &mut scratch,
                     PERFORMANCE_SCHEMA,
@@ -260,4 +260,66 @@ pub fn tables(
             tables
         })
         .clone()
+}
+
+/// A memory schema's table built from its `CREATE TABLE` text, as Go's
+/// `perfschema.Init` builds it: `BuildTableInfoFromAST` under
+/// `metabuild.NewNonStrictContext()` (so `DEFAULT '0000-00-00 ...'` is
+/// admitted), the reserved `table_id`, column ids numbered from 1, then
+/// loaded like any table (`TableFromMeta`) and registered in `database`.
+pub fn run_create_system_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    database: &str,
+    table_id: i64,
+) -> Result<(), tidb_driver_error::DriverError> {
+    let stmt = tidb_parser::parse(sql)
+        .map_err(|e| tidb_driver_error::DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
+    let tidb_ast::Stmt::Ddl(ddl) = &stmt else {
+        return Err(tidb_driver_error::DriverError::unsupported("only CREATE TABLE is supported here"));
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else {
+        return Err(tidb_driver_error::DriverError::unsupported("only CREATE TABLE is supported here"));
+    };
+    let mut info = tidb_ddl_build::table_info_build::build_table_info(
+        create,
+        tidb_mysql::charset::DefaultCharset,
+        "",
+    )
+    .map_err(|error| tidb_driver_error::DriverError::Mysql(error.to_mysql_error()))?;
+    info.id = table_id;
+    for (offset, column) in info.columns.iter_deref().enumerate() {
+        column.write().id = i64::try_from(offset).unwrap_or(0) + 1;
+    }
+    info.db_id = catalog.database_id(database).unwrap_or_default();
+    info.state = tidb_model::SchemaState::PUBLIC;
+    let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
+    let table = tidb_table::table_from_meta::cluster_table(
+        &info,
+        &tidb_kv::storage::MemTableStorage::new(),
+        &tidb_table::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
+    )
+    .map_err(tidb_driver_error::DriverError::unsupported)?;
+    let name = info.name.original().to_owned();
+    catalog.register_kv_in(database, &name, table)
+}
+
+/// Go `perfschema`'s `init`: registers the `performance_schema` tables with
+/// the infoschema, so every catalog built afterwards carries them.
+pub fn register() {
+    tidb_infoschema::register_performance_schema(tables);
+}
+
+/// A [`Catalog::new`] with `performance_schema` registered first.
+#[must_use]
+pub fn catalog() -> Catalog {
+    register();
+    Catalog::new()
+}
+
+/// A [`Catalog::mock`] with `performance_schema` registered first.
+#[must_use]
+pub fn mock_catalog() -> Catalog {
+    register();
+    Catalog::mock()
 }

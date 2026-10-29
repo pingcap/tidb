@@ -10,7 +10,7 @@ use super::*;
 /// wildcard expansion, and a three-table left-deep chain.
 #[test]
 fn joins() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -224,7 +224,7 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE anti_l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on(
         "CREATE TABLE anti_r (id BIGINT, w BIGINT NOT NULL)",
@@ -386,7 +386,7 @@ fn a_join_filter_is_charged_only_to_the_filtered_side() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -455,7 +455,7 @@ fn a_join_equality_propagates_its_constant_to_the_other_side() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -534,7 +534,7 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE jl (a INT PRIMARY KEY, b INT, c VARCHAR(32), KEY(b))",
         &mut catalog,
@@ -620,7 +620,7 @@ fn a_join_leaf_uses_a_single_table_constant_for_access() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE lp (id INT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -692,7 +692,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE order_line (\
             ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, \
@@ -812,7 +812,7 @@ fn a_complete_common_handle_equality_is_a_point_get() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE customer (\
             c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
@@ -892,7 +892,7 @@ fn a_complete_common_handle_equality_is_a_point_get() {
 /// lowering it. The assertion below pins the complete row set.
 #[test]
 fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for ddl in [
         "CREATE TABLE bot (a BIGINT PRIMARY KEY, k BIGINT)",
         "CREATE TABLE mid (a BIGINT PRIMARY KEY, k BIGINT)",
@@ -963,7 +963,7 @@ fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
 /// handle batches -- is what makes it fail.
 #[test]
 fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for ddl in [
         "CREATE TABLE il (h BIGINT PRIMARY KEY, s BIGINT NOT NULL, KEY ks (s))",
         "CREATE TABLE ir (h BIGINT PRIMARY KEY, s BIGINT NOT NULL, KEY ks (s))",
@@ -1023,7 +1023,7 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE oi (a INT NOT NULL, KEY idx (a))",
         &mut catalog,
@@ -1101,7 +1101,7 @@ fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for ddl in [
         "CREATE TABLE ncl (k BIGINT NOT NULL, o BIGINT NOT NULL, payload BIGINT, \
          PRIMARY KEY (k, o) NONCLUSTERED)",
@@ -1189,7 +1189,7 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE hj (a INT NOT NULL, KEY idx (a))",
         &mut catalog,
@@ -1275,7 +1275,7 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 /// (`buildRangesForIndexJoin`'s last slot) and extends the point range.
 #[test]
 fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, d_next_o_id INT, PRIMARY KEY (d_w_id,d_id))",
         &mut catalog,
@@ -1389,7 +1389,7 @@ fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE jc_a (pk VARCHAR(32) PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -1468,7 +1468,7 @@ fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
 /// exactly what an index join's build side returned here before the fix.
 #[test]
 fn a_join_leaf_limit_counts_after_its_residual_selection() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE jr_core (pk BIGINT PRIMARY KEY CLUSTERED, mi VARCHAR(8), m BIGINT, \
          country VARCHAR(4), KEY mi_m (mi, m))",

@@ -62,7 +62,7 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
 /// the 8003 count mismatch.
 #[test]
 fn admin_check_index_reports_each_corruption_shape() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))",
@@ -176,7 +176,7 @@ fn admin_check_index_reports_each_corruption_shape() {
 /// The rows must come back — empty — every time, with no panic.
 #[test]
 fn partition_hash_code_reads_are_stable_across_repeated_queries() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by hash (c1) partitions 4",
@@ -204,7 +204,7 @@ fn partition_hash_code_reads_are_stable_across_repeated_queries() {
 /// by `@@global.tidb_redact_log`) is the session's, and has no surface here.
 #[test]
 fn duplicate_entry_error_names_the_value_and_key() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (a int, unique key (a))");
     insert(&mut catalog, "insert into t values (1),(2)");
     let error = run_insert_on("insert into t values (1)", &mut catalog, &ctx())
@@ -219,7 +219,7 @@ fn duplicate_entry_error_names_the_value_and_key() {
 /// `tblInfo.Meta().Columns[0].GetFlag() == 0` after the query.
 #[test]
 fn any_value_comparison_leaves_the_column_flag_untouched() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(a decimal(16, 2))");
     let rows = run_select_on("select * from t where a > any_value(a)", &catalog, &ctx())
         .expect("Go runs this query against the empty table");

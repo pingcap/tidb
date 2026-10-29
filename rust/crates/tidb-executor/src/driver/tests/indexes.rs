@@ -12,7 +12,7 @@ use super::*;
 /// never collides.
 #[test]
 fn unique_indexes() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (id BIGINT PRIMARY KEY, email VARCHAR(32) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -126,7 +126,7 @@ fn unique_indexes() {
 /// rows with the same value are two entries (Go's non-distinct path).
 #[test]
 fn a_non_unique_index_accepts_repeats() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE n (id BIGINT PRIMARY KEY, tag VARCHAR(8), KEY tag_idx (tag))",
         &mut catalog,
@@ -154,7 +154,7 @@ fn a_non_unique_index_accepts_repeats() {
 /// unique-key lookup a point read (Go's PointGetPlan on a unique key).
 #[test]
 fn a_unique_index_entry_points_at_its_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE k (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
         &mut catalog,
@@ -211,7 +211,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
         }
     }
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE lookup_hint (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia(a))",
         &mut catalog,

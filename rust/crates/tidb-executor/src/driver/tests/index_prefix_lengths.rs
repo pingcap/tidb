@@ -19,7 +19,7 @@
 
 use super::*;
 fn create_error(sql: &str) -> DriverError {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(sql, &mut catalog).expect_err("this statement must be refused")
 }
 
@@ -104,7 +104,7 @@ fn a_key_part_longer_than_the_limit_is_1071() {
     // 1000 latin1 characters are 1000 bytes, so the length is legal and the
     // statement SUCCEEDS -- which is what proves the limit counts bytes
     // rather than characters.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(2000) CHARACTER SET latin1, KEY idx (a(1000)))",
         &mut catalog,
@@ -118,7 +118,7 @@ fn a_key_part_longer_than_the_limit_is_1071() {
 /// serve it precisely because the stored index is not a prefix index.
 #[test]
 fn a_full_length_char_prefix_is_an_ordinary_index() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(10), KEY idx (a(10)))",
         &mut catalog,
@@ -165,7 +165,7 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
             vec![-1, 4],
         ),
     ] {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(sql, &mut catalog).expect(sql);
         let crate::TableEntry::Kv(table) = catalog.table_in("test", "t").expect(sql) else {
             panic!("{sql}: the table is not storage-backed");
@@ -184,7 +184,7 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
 /// metadata retains the prefix length needed by reads and index encoding.
 #[test]
 fn a_prefix_primary_key_is_stored_on_the_common_handle() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, PRIMARY KEY (a(3), b) CLUSTERED)",
         &mut catalog,

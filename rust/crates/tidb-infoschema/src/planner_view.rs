@@ -180,8 +180,8 @@ fn mark_cluster_table(
 pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
     database.go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA)
         || database.go_lower_eq(crate::metricsschema::METRICS_SCHEMA)
-        || (database.go_lower_eq(crate::perfschema::PERFORMANCE_SCHEMA)
-            && crate::perfschema::is_predefined_table(name))
+        || (database.go_lower_eq("performance_schema")
+            && crate::virtual_tables::virtual_table(database, name).is_some())
 }
 
 /// The planner's view of one schema image: the position Go's immutable

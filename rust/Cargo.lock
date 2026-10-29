@@ -3709,6 +3709,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-fastrand",
+ "tidb-infoschema-perfschema",
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",
@@ -4159,6 +4160,7 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
+ "tidb-infoschema-perfschema",
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",
@@ -4439,6 +4441,7 @@ dependencies = [
  "tidb-hint",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
+ "tidb-infoschema-perfschema",
  "tidb-keydecoder",
  "tidb-keyspace",
  "tidb-kv",
@@ -4769,7 +4772,6 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
- "tidb-ddl-build",
  "tidb-driver-error",
  "tidb-error",
  "tidb-expr",
@@ -4780,7 +4782,6 @@ dependencies = [
  "tidb-meta",
  "tidb-model",
  "tidb-mysql",
- "tidb-parser",
  "tidb-plannererrors",
  "tidb-rowcodec",
  "tidb-sessionctx",
@@ -4789,7 +4790,6 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",
- "tidb-util",
  "tidb-variable",
 ]
 
@@ -4820,6 +4820,23 @@ name = "tidb-infoschema-isvalidator"
 version = "0.0.0"
 dependencies = [
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-infoschema-perfschema"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-ddl-build",
+ "tidb-driver-error",
+ "tidb-hack",
+ "tidb-infoschema",
+ "tidb-kv",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+ "tidb-table",
+ "tidb-util",
 ]
 
 [[package]]
@@ -5901,6 +5918,7 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
+ "tidb-infoschema-perfschema",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-lexer",

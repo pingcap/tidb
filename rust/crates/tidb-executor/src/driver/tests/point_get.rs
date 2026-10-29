@@ -20,7 +20,7 @@ use tidb_txnkv::Key;
 
 #[test]
 fn fix52592_disables_unique_index_point_conversion() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, u INT UNIQUE, v INT)",
         &mut catalog,
@@ -116,7 +116,7 @@ impl TableStorage for BatchGetCountingStorage {
 #[test]
 fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
     let cache = crate::SessionPlanCache::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE cache_no_replan (id BIGINT PRIMARY KEY, value BIGINT NOT NULL)",
@@ -170,7 +170,7 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 #[test]
 fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
     let cache = crate::SessionPlanCache::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE prepared_in_stats (id BIGINT PRIMARY KEY, k BIGINT, v BIGINT, KEY k_idx(k))",
         &mut catalog,
@@ -249,7 +249,7 @@ fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
 #[test]
 fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
     let cache = crate::SessionPlanCache::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE cache_tuple_range (\
@@ -327,7 +327,7 @@ fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
 
 #[test]
 fn composite_unique_prefix_is_not_a_point_get() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE point_prefix (\
@@ -367,7 +367,7 @@ fn composite_unique_prefix_is_not_a_point_get() {
 #[test]
 fn cached_physical_index_readers_build_without_legacy_planner() {
     let cache = crate::SessionPlanCache::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE cache_index_reader (\
@@ -440,7 +440,7 @@ fn cached_physical_index_readers_build_without_legacy_planner() {
 #[test]
 fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     let cache = crate::SessionPlanCache::default();
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let environment = PreparedPlanCacheEnvironment::default();
     crate::run_create_table_on(
         "CREATE TABLE range_cache (id BIGINT PRIMARY KEY, k BIGINT NOT NULL, c CHAR(8) NOT NULL)",
@@ -703,7 +703,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
 /// do NOT qualify and fall back.
 #[test]
 fn point_get_plans() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE g (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -890,7 +890,7 @@ fn point_get_plans() {
 /// and which it rejects.
 #[test]
 fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE d (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -1002,7 +1002,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
 
 #[test]
 fn prepared_point_plan_binds_common_handle_without_cloning_template() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE prepared_y (id VARCHAR(64) PRIMARY KEY, v VARCHAR(32))",
         &mut catalog,
@@ -1041,7 +1041,7 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
 /// key and retains residual predicates on the fetched row.
 #[test]
 fn prepared_point_cache_answers_a_unique_secondary_index() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE idx_pin (\
             id VARCHAR(8) PRIMARY KEY, \
@@ -1139,7 +1139,7 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
 /// scan hidden inside the point fast path.
 #[test]
 fn prepared_point_cache_declines_partial_and_non_unique_keys() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE partial_pin (\
             custacc VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
@@ -1189,7 +1189,7 @@ fn cached_rows(
 /// key, and the cached read answers only rows whose decoded slot is NULL.
 #[test]
 fn prepared_point_cache_answers_an_is_null_residual() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE null_pin (\
             alwcobj VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
@@ -1244,7 +1244,7 @@ fn prepared_point_cache_answers_an_is_null_residual() {
 /// Limit/TableReader path and applies the requested limit.
 #[test]
 fn shared_planner_reads_the_bounded_clustered_handle_range() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ycsb_scan (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
         &mut catalog,
@@ -1355,7 +1355,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
 /// match the scan in every case, including the shapes Go rejects.
 #[test]
 fn batch_point_get() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE b (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -1435,7 +1435,7 @@ fn batch_point_get() {
 /// tuples pin every column of a composite primary/unique key.
 #[test]
 fn batch_point_get_accepts_row_in_on_a_composite_key() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b INT, v INT, PRIMARY KEY (a, b))",
         &mut catalog,
@@ -1488,7 +1488,7 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
 
 #[test]
 fn primary_batch_reads_use_written_common_handle_encoding() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     for (name, key_type, inserted, predicate) in [
         (
@@ -1553,7 +1553,7 @@ fn primary_batch_reads_use_written_common_handle_encoding() {
 /// DECISION: which shapes Go's batch point get claims.
 #[test]
 fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE bd (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
         &mut catalog,
@@ -1794,7 +1794,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     // selected partitions before its single BatchGet. Include absent and
     // duplicate handles, and both integer and common-handle row keys.
     for primary in ["PRIMARY KEY(id)", "PRIMARY KEY(id, v) CLUSTERED"] {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             &format!("CREATE TABLE bp (id BIGINT, v BIGINT, {primary}) PARTITION BY HASH(id) PARTITIONS 4"),
             &mut catalog,
@@ -1930,7 +1930,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
 /// `rust/difftests/gorun` against a mock-backed session.
 #[test]
 fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE pk1 (pk BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -1971,7 +1971,7 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
     assert_eq!(rows("SELECT pk FROM pk1 WHERE pk BETWEEN 0.5 AND 1.5"), one);
 
     // A unique index is the same rule through the other arm.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE uq (id BIGINT PRIMARY KEY, u BIGINT UNIQUE)",
         &mut catalog,
@@ -2007,7 +2007,7 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_point (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
@@ -2053,7 +2053,7 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
 /// ordinary planner is needed.
 #[test]
 fn try_fast_plan_accepts_a_primary_key_point_read() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
@@ -2092,7 +2092,7 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
 /// refuses to build with 1235.
 #[test]
 fn row_checksum_is_a_fast_point_plan_select_field() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_checksum (id INT PRIMARY KEY, c VARCHAR(10))",
         &mut catalog,
@@ -2145,7 +2145,7 @@ fn row_checksum_is_a_fast_point_plan_select_field() {
 
 #[test]
 fn fast_point_get_uses_gos_smaller_index_hint_check() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_hint (id INT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
         &mut catalog,
@@ -2227,7 +2227,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
             .collect()
     }
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_write (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
@@ -2324,7 +2324,7 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
     use crate::explain::explain_update_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE heuristic_pin (i INT PRIMARY KEY, j INT, UNIQUE KEY ij (i, j))",
         &mut catalog,
@@ -2410,7 +2410,7 @@ fn exact_handle_range_uses_the_go_cop_projection_tree() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
@@ -2467,7 +2467,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE customer (\
          c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
@@ -2563,7 +2563,7 @@ fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ordered_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
@@ -2619,7 +2619,7 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
         &mut catalog,
@@ -2671,7 +2671,7 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
 /// answers the empty set without a storage read (Go plans a `TableDual`).
 #[test]
 fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE prepared_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -2709,7 +2709,7 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
 /// the plan is a `TableDual` instead of a full scan.
 #[test]
 fn out_of_range_point_literal_plans_a_table_dual() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE plain_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
@@ -2761,7 +2761,7 @@ fn snapshot_policy_catalog() -> (
     Catalog,
     Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
 ) {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE read_policy (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,

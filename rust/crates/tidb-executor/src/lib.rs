@@ -250,7 +250,6 @@ pub mod window;
 
 pub use apply::ApplyExec;
 pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_table_on, run_create_table_on_with, CreateTableSettings};
-use tidb_infoschema::run_create_system_table_in;
 use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]

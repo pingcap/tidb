@@ -161,7 +161,7 @@ fn a_missing_memory_table_is_reported_as_the_planner_resolves_it() {
 /// arms would be shadowed).
 #[test]
 fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
-    let catalog = tidb_executor::Catalog::mock();
+    let catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = tidb_sessionctx::StmtContext::default();
     let visibility = tidb_executor::infoschema_reader::SchemaVisibility::unrestricted();
     for table in tidb_executor::infoschema_reader::SERVED_TABLES {

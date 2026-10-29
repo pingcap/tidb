@@ -4,7 +4,7 @@
 use tidb_executor::{run_create_table_on, Catalog};
 
 fn create_error(sql: &str) -> String {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     match run_create_table_on(sql, &mut catalog) {
         Ok(_) => "ACCEPTED (should have been rejected)".to_string(),
         Err(e) => e.to_string(),
@@ -26,7 +26,7 @@ fn on_update_on_non_timestamp_is_rejected() {
 
 #[test]
 fn datetime_default_current_timestamp_is_accepted() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a datetime default current_timestamp)",
         &mut catalog,
@@ -36,7 +36,7 @@ fn datetime_default_current_timestamp_is_accepted() {
 
 #[test]
 fn datetime_default_on_update_is_accepted() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a datetime default current_timestamp on update current_timestamp)",
         &mut catalog,
@@ -58,7 +58,7 @@ fn current_timestamp_expression_default_on_int_is_rejected() {
 
 #[test]
 fn plain_expression_default_is_accepted() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t (a int default (1+2))", &mut catalog)
         .expect("expression default (1+2) on int creates fine");
 }

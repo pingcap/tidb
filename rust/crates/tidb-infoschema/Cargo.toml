@@ -22,7 +22,6 @@ tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-table = { path = "../tidb-table" }
 tidb-driver-error = { path = "../tidb-driver-error" }
-tidb-ddl-build = { path = "../tidb-ddl-build" }
 crossbeam-channel = "0.5"
 serde_json = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
@@ -34,10 +33,8 @@ tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
-tidb-util = { path = "../tidb-util" }
 
 
 [lints]

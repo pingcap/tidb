@@ -69,7 +69,7 @@ fn all_rows(catalog: &Catalog) -> Vec<Vec<String>> {
 /// `ON DUPLICATE KEY UPDATE` arms are the gap test below.
 #[test]
 fn non_strict_insert_null_semantics_follow_the_values_path() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let strict = StmtContext::for_dml(false, true, false);
     let strict_ignore = StmtContext::for_dml(false, true, true);
     let non_strict = StmtContext::for_dml(false, false, false);

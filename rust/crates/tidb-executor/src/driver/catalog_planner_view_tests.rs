@@ -22,7 +22,7 @@
 
     #[test]
     fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
-        let mut original = Catalog::mock();
+        let mut original = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE epoch(a INT)", &mut original).unwrap();
         let snapshot = original.clone();
         let mut branch = original.clone();
@@ -43,7 +43,7 @@
         crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch)
             .unwrap();
         assert_ne!(original.metadata_version(), branch.metadata_version());
-        let mut rebuilt = Catalog::mock();
+        let mut rebuilt = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE epoch(a INT, b INT)", &mut rebuilt).unwrap();
         assert_ne!(
             rebuilt.metadata_version(),
@@ -58,7 +58,7 @@
     /// counter without claiming to be DDL.
     #[test]
     fn the_planner_view_is_shared_until_the_catalog_moves() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE pv(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
         let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "pv").unwrap() else {
@@ -188,7 +188,7 @@
     /// by that same statement's write before anything else could reuse it.
     #[test]
     fn ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE od(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
         let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "od").unwrap() else {
@@ -232,7 +232,7 @@
     /// detach of the table entry has nothing to invalidate.
     #[test]
     fn independent_statement_contexts_do_not_share_staged_writes() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
         let mut active_transaction = catalog.clone();

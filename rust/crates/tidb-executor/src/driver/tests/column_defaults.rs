@@ -13,7 +13,7 @@ use super::*;
 /// NULL into a NOT NULL column is the different ErrColumnCantNull.
 #[test]
 fn column_defaults_and_not_null() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE d (id BIGINT PRIMARY KEY, n BIGINT NOT NULL, \
          w BIGINT DEFAULT 7, s VARCHAR(4) DEFAULT 'zz', plain BIGINT)",
@@ -181,7 +181,7 @@ fn column_defaults_and_not_null() {
 /// `DEFAULT` means the generation expression remains their value source.
 #[test]
 fn explicit_default_uses_the_column_value_source() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE explicit_default (id BIGINT PRIMARY KEY, v BIGINT DEFAULT 7, \
          n BIGINT DEFAULT NULL, g BIGINT GENERATED ALWAYS AS (v + 1) VIRTUAL)",
@@ -255,7 +255,7 @@ fn explicit_default_uses_the_column_value_source() {
 /// this conversion at all.
 #[test]
 fn explicit_timestamp_default_uses_the_writing_session_zone() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let utc = tidb_datatype::SessionTimeZone::utc();
     let plus_eight = tidb_datatype::SessionTimeZone::Fixed {
         name: "+08:00".to_owned(),
@@ -315,7 +315,7 @@ fn explicit_timestamp_default_uses_the_writing_session_zone() {
 /// ordinary leaves when nested in a larger scalar expression.
 #[test]
 fn named_and_nested_defaults_use_the_referenced_column() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE named_default (id BIGINT PRIMARY KEY, a BIGINT DEFAULT 1, \
          b BIGINT DEFAULT 2, c BIGINT DEFAULT 3)",
@@ -374,7 +374,7 @@ fn named_and_nested_defaults_use_the_referenced_column() {
 fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
     use std::sync::Arc;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE default_rng (a DOUBLE DEFAULT (rand()), b DOUBLE)",
         &mut catalog,
@@ -415,7 +415,7 @@ fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
 /// not encounter a conflict.
 #[test]
 fn generated_default_identity_matrix_and_on_duplicate_timing() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE generated_default (id BIGINT PRIMARY KEY, a BIGINT DEFAULT 5, \
          g BIGINT GENERATED ALWAYS AS (a + 1) VIRTUAL)",
@@ -486,7 +486,7 @@ fn generated_default_identity_matrix_and_on_duplicate_timing() {
 /// as typed constants when a conflict does occur.
 #[test]
 fn on_duplicate_defaults_cover_conflict_and_no_conflict() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE duplicate_default (id BIGINT PRIMARY KEY, a BIGINT DEFAULT 7, \
          b BIGINT DEFAULT 9)",
@@ -537,7 +537,7 @@ fn on_duplicate_defaults_cover_conflict_and_no_conflict() {
 /// and evaluates UPDATE defaults even when no row can match.
 #[test]
 fn explicit_no_default_and_not_null_enum_follow_go_order() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE nil_default (id BIGINT PRIMARY KEY, n BIGINT NOT NULL, \
          e ENUM('first','second') NOT NULL)",
@@ -597,7 +597,7 @@ fn explicit_no_default_and_not_null_enum_follow_go_order() {
 /// materializes the referenced base column's metadata once before row work.
 #[test]
 fn multi_update_defaults_resolve_across_sources() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE default_left (id BIGINT PRIMARY KEY, v BIGINT DEFAULT 11)",
         &mut catalog,
@@ -648,7 +648,7 @@ fn multi_update_defaults_resolve_across_sources() {
 fn insert_select_generated_target_is_rejected_before_source_effects() {
     use tidb_expr::user_vars::{UserVars, UserVarsReader};
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE select_default (a BIGINT, g BIGINT GENERATED ALWAYS AS (a + 1) VIRTUAL)",
         &mut catalog,
@@ -671,7 +671,7 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
 /// rows are 101, 102, 103 -- NULL and 0 both allocate.
 #[test]
 fn auto_increment() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE a1 (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)",
         &mut catalog,

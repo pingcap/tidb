@@ -12,7 +12,7 @@ use super::*;
 /// preserve the same rows and column names.
 #[test]
 fn common_table_expressions() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE c1 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO c1 VALUES (1, 10), (2, 20), (3, 30)",
@@ -116,7 +116,7 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
         "CREATE TABLE warehouse (w_id BIGINT, w_name VARCHAR(16))",
@@ -192,7 +192,7 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
 /// for the same data: u1 = 1,2,2,3 and u2 = 2,3,4.
 #[test]
 fn set_operations() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE u1 (a BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE u2 (a BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -326,7 +326,7 @@ fn intersect_and_except_explain_as_go_semi_join_chains() {
     use crate::explain::{explain_analyze_set_opr_stmt, explain_set_opr_stmt};
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for table in ["sx1", "sx2", "sx3"] {
         crate::run_create_table_on(&format!("CREATE TABLE {table} (a BIGINT)"), &mut catalog)
             .unwrap();
@@ -406,7 +406,7 @@ fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
     use crate::explain::explain_set_opr_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ul (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE ur (k BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -455,7 +455,7 @@ fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
 /// fold does not finish this test at all.
 #[test]
 fn a_distinct_fixpoint_dedups_incrementally() {
-    let catalog = Catalog::mock();
+    let catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query().with_cte_max_recursion_depth(200_000);
     let rows = run_select_on(
         "WITH RECURSIVE cte(a,b) AS (SELECT 1,1 UNION SELECT a+1,b+1 FROM cte \
@@ -497,7 +497,7 @@ fn a_distinct_fixpoint_dedups_incrementally() {
 /// ```
 #[test]
 fn a_recursive_block_is_cast_into_the_seed_schema() {
-    let catalog = Catalog::mock();
+    let catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query();
     let run = |sql: &str| run_select_on(sql, &catalog, &ctx).unwrap();
 

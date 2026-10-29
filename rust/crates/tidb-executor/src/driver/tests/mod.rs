@@ -35,7 +35,7 @@ use super::*;
 
 fn test_catalog() -> Catalog {
     use tidb_datatype::FieldTypeCode;
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register(
         "t",
         MemTable {

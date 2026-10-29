@@ -4,7 +4,7 @@
 use tidb_executor::{run_create_table_on, Catalog};
 
 fn create_error(sql: &str) -> String {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     match run_create_table_on(sql, &mut catalog) {
         Ok(_) => "ACCEPTED (should have been rejected)".to_string(),
         Err(e) => e.to_string(),
@@ -13,7 +13,7 @@ fn create_error(sql: &str) -> String {
 
 #[test]
 fn known_engine_is_accepted() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t (a int) engine = innodb", &mut catalog)
         .expect("innodb is in mysqlValidTableEngineNames");
 }

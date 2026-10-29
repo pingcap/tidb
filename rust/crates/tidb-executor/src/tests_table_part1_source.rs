@@ -96,7 +96,7 @@ fn test_dedup_index_columns4_test() {
 /// `pkg/table/tables/tables_test.go:77::TestBasic`.
 #[test]
 fn test_basic() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a int primary key auto_increment, b varchar(255) unique)",
         &mut catalog,
@@ -128,7 +128,7 @@ fn test_basic() {
 /// `pkg/table/tables/tables_test.go:179::TestTypes`.
 #[test]
 fn test_types() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c10 decimal(10,1))",
         &mut catalog,
@@ -153,7 +153,7 @@ fn test_types() {
 /// `pkg/table/tables/tables_test.go:231::TestUniqueIndexMultipleNullEntries`.
 #[test]
 fn test_unique_index_multiple_null_entries() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a int primary key, b varchar(255) unique)",
         &mut catalog,
@@ -205,7 +205,7 @@ fn test_row_key_codec() {
 /// `pkg/table/tables/tables_test.go:312::TestUnsignedPK`.
 #[test]
 fn test_unsigned_pk() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a bigint unsigned primary key, b varchar(255))",
         &mut catalog,
@@ -225,7 +225,7 @@ fn test_unsigned_pk() {
 /// `pkg/table/tables/tables_test.go:335::TestIterRecords`.
 #[test]
 fn test_iter_records() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t (a int primary key, b int)", &mut catalog).unwrap();
     run_insert_on(
         "insert into t values (-1, 2), (2, null)",
@@ -242,7 +242,7 @@ fn test_iter_records() {
 /// `pkg/table/tables/tables_test.go:657::TestConstraintCheckForUniqueIndex`.
 #[test]
 fn test_constraint_check_for_unique_index() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (id int primary key, k int not null, c varchar(20) not null, unique key uk(k, c))",
         &mut catalog,

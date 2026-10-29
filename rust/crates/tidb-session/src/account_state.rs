@@ -407,7 +407,7 @@ impl MemTableRetriever for VariablesRetriever {
                 .any(|name| read.table_name.go_lower_eq(name)))
             || (read
                 .db_name
-                .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
+                .go_lower_eq(tidb_infoschema_perfschema::PERFORMANCE_SCHEMA)
                 && read.table_name.go_lower_eq("SESSION_VARIABLES"))
     }
 

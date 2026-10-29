@@ -37,7 +37,7 @@ fn index_merge_partition_table_source() {
         "partition by hash(a) partitions 4",
         "partition by list(a) (partition p0 values in(1,2,3,4), partition p1 values in(5,6,7,8), partition p2 values in(9,10,11,12))",
     ] {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(&format!("create table t(a int, b int, primary key(a) clustered, index idx_b(b)) {partition}"), &mut catalog).unwrap();
         run_create_table_on("create table regular(a int, b int, primary key(a) clustered)", &mut catalog).unwrap();
         let values = if partition.contains("list") {
@@ -132,7 +132,7 @@ fn must_insert(catalog: &mut Catalog, sql: &str) {
 /// `partition:dual` explain text) are the `partition_plan_shape_gaps` test.
 #[test]
 fn point_get_over_range_and_list_partitions_data() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)\
          (partition p0 values in (NULL, 1, 2, 3, 4), partition p1 values in (5, 6, 7, 8), partition p2 values in (9, 10, 11, 12))",
@@ -246,7 +246,7 @@ fn point_get_over_range_and_list_partitions_data() {
 /// the hash boundaries.
 #[test]
 fn batch_get_and_point_get_hash_partition_differential() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table thash(a int, unique key(a)) partition by hash(a) partitions 4",
         &mut catalog,
@@ -296,7 +296,7 @@ fn batch_get_and_point_get_hash_partition_differential() {
 /// (values 1..12) tables must match the unpartitioned twins.
 #[test]
 fn batch_get_for_range_and_list_partition_differential() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)\
          (partition p0 values in (1, 2, 3, 4), partition p1 values in (5, 6, 7, 8), partition p2 values in (9, 10, 11, 12))",
@@ -376,7 +376,7 @@ fn batch_get_for_range_and_list_partition_differential() {
 /// `partition_plan_shape_gaps`.
 #[test]
 fn order_by_limit_partitions_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let index = "index idx_a(a), index idx_b(b), index idx_ab(a, b)";
     run_create_table_on(
         &format!("create table trange(a int, b int, {index}) partition by range(a) \
@@ -438,7 +438,7 @@ fn order_by_limit_partitions_match_regular() {
 /// the fixed filters below.
 #[test]
 fn view_over_partitioned_table_matches_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table thash (a int, b int, key(a)) partition by hash(a) partitions 4",
         &mut catalog,
@@ -511,7 +511,7 @@ fn view_over_partitioned_table_matches_regular() {
 /// update/delete range predicates Go generates.
 #[test]
 fn dml_partitions_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table tinner (a int, b int)", &mut catalog).unwrap();
     run_create_table_on(
         "create table thash (a int, b int) partition by hash(a) partitions 4",
@@ -588,7 +588,7 @@ fn dml_partitions_match_regular() {
 /// table and its hash/range twins (single-table and cross-table forms).
 #[test]
 fn union_partitions_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t(a int, b int, key(a))", &mut catalog).unwrap();
     run_create_table_on(
         "create table thash (a int, b int, key(a)) partition by hash(a) partitions 4",
@@ -646,7 +646,7 @@ fn union_partitions_match_regular() {
 /// boundaries.
 #[test]
 fn subqueries_partitions_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table touter (a int, b int, index(a))", &mut catalog).unwrap();
     run_create_table_on(
         "create table tinner (a int, b int, c int, index(a))",
@@ -730,7 +730,7 @@ fn subqueries_partitions_match_regular() {
 /// plan checks are recorded in `partition_plan_shape_gaps`.
 #[test]
 fn split_region_pruned_reads_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table tnormal (a int, b int)", &mut catalog).unwrap();
     run_create_table_on(
         "create table thash (a int, b int, index(a)) partition by hash(a) partitions 4",
@@ -790,7 +790,7 @@ fn split_region_pruned_reads_match_regular() {
 /// `partition_plan_shape_gaps`).
 #[test]
 fn parallel_apply_limit_on_range_columns_partition_data() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t_outer (join_id varchar(32) not null, part_col int not null, payload varchar(32))",
         &mut catalog,
@@ -834,7 +834,7 @@ fn parallel_apply_limit_on_range_columns_partition_data() {
 /// inner children) are plan surface, recorded in `partition_plan_shape_gaps`.
 #[test]
 fn parallel_apply_over_partitions_matches_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table touter (a int, b int)", &mut catalog).unwrap();
     run_create_table_on("create table tinner (a int, b int, key(a))", &mut catalog).unwrap();
     run_create_table_on(
@@ -890,7 +890,7 @@ fn parallel_apply_over_partitions_matches_regular() {
 /// `MustPointGet` plan assertions are `partition_plan_shape_gaps`.
 #[test]
 fn unsigned_partition_column_reads_match_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table thash_pk (a int unsigned, b int, primary key(a)) partition by hash (a) partitions 3",
         &mut catalog,
@@ -1035,7 +1035,7 @@ fn unsigned_partition_column_reads_match_regular() {
 /// partition boundaries.
 #[test]
 fn direct_reading_with_agg_matches_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let index = "index idx_a(a), index idx_b(b)";
     run_create_table_on(
         &format!("create table tlist(a int, b int, {index}) partition by list(a)\
@@ -1125,7 +1125,7 @@ fn direct_reading_with_agg_matches_regular() {
 /// boundaries.
 #[test]
 fn partition_table_different_join_matches_regular() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table thash(a int, b int, key(a)) partition by hash(a) partitions 4",
         &mut catalog,

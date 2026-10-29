@@ -100,7 +100,7 @@ fn assert_rows_sorted(catalog: &Catalog, sql: &str, expected: &[&str]) {
 /// their own order/limit.
 #[test]
 fn union2_matrix() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table union_test(id int)");
     insert(&mut catalog, "insert union_test values (1),(2)");
 
@@ -378,7 +378,7 @@ fn union2_matrix() {
 /// hash table read through the union executor's worker-count limit path.
 #[test]
 fn union_limit_over_hash_partitions_runs() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table union_limit (id int) partition by hash(id) partitions 30",
@@ -417,7 +417,7 @@ fn adapter_statement_keeps_origin_text() {
 /// `[planner:1054]Unknown column 'j' in 'order clause'`.
 #[test]
 fn point_get_order_by_unknown_column_is_1054() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (i int key)");
     let error = select_err(&catalog, "select * from t where i = 1 order by j limit 10");
     let sql_error = error.clone().to_mysql_error();
@@ -434,7 +434,7 @@ fn point_get_order_by_unknown_column_is_1054() {
 /// of `true`, so the mode was ignored.
 #[test]
 fn the_session_only_full_group_by_flag_reaches_the_planner() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (c int, d int)");
     let names = |ctx: &StmtContext| -> Vec<String> {
         let (columns, _) =
@@ -470,7 +470,7 @@ fn the_session_only_full_group_by_flag_reaches_the_planner() {
 /// `column_name_table_metadata` gap below.
 #[test]
 fn column_name_resolution() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (c int, d int)");
     insert(&mut catalog, "insert t values(1,1)");
 
@@ -513,7 +513,7 @@ fn column_name_resolution() {
 /// not yet supported by the rewriter".
 #[test]
 fn a_select_field_quantified_subquery_is_lowered() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (c int, d int)");
     insert(&mut catalog, "insert t values(1,1)");
     // `> ALL` is planned, named by its written text, and evaluated.
@@ -551,7 +551,7 @@ fn a_select_field_quantified_subquery_is_lowered() {
 /// read. (The `select @a, @a := d+1` head is the gap below.)
 #[test]
 fn select_var_read_hints_run() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (d int)");
     insert(&mut catalog, "insert into t values(1), (2), (1)");
     for hint in ["SQL_BIG_RESULT", "SQL_SMALL_RESULT", "SQL_BUFFER_RESULT"] {
@@ -565,7 +565,7 @@ fn select_var_read_hints_run() {
 /// row` at read time.
 #[test]
 fn max_one_row_scalar_subquery_is_1242() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t1(a double, b double)");
     create(&mut catalog, "create table t2(a double, b double)");
     insert(&mut catalog, "insert into t1 values(1, 1), (2, 2), (3, 3)");
@@ -615,7 +615,7 @@ fn session_root_tracker_fallback_detaches_after_the_statement() {
 /// exactly Go's expected rows in every nesting shape.
 #[test]
 fn issues49377_parenthesized_union_leaves() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table employee (employee_id int, name varchar(20), dept_id int)",
@@ -687,7 +687,7 @@ fn issues49377_parenthesized_union_leaves() {
 /// DISTINCT collapses it, and a constant DOUBLE cast DISTINCTs to one row.
 #[test]
 fn issue38756_sqrt_and_distinct() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (c1 int)");
     insert(&mut catalog, "insert into t values (1), (2), (3)");
     assert_eq!(
@@ -713,7 +713,7 @@ fn issue38756_sqrt_and_distinct() {
 /// `1.21428571428571428550` at 10).
 #[test]
 fn decimal_div_precision_increment() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (a decimal(3,0), b decimal(3,0))",
@@ -760,7 +760,7 @@ fn decimal_div_precision_increment() {
 /// unchanged. In-range writes keep working.
 #[test]
 fn issue50308_update_out_of_range_timestamp_is_1292() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(a timestamp)");
     insert(&mut catalog, "insert into t values('2000-01-01')");
     let error = run_update_on(
@@ -784,7 +784,7 @@ fn issue50308_update_out_of_range_timestamp_is_1292() {
 /// under `tidb_max_chunk_size=32`) — the frame pins each row's own value.
 #[test]
 fn issue52984_named_window_self_frame_runs_repeatedly() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(p int, o int, v int)");
     insert(
         &mut catalog,

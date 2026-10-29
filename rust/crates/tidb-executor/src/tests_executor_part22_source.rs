@@ -42,7 +42,7 @@ fn int_value(datum: &Datum) -> i64 {
 /// Go `pkg/executor/test/writetest/write_test.go:42::TestInsertIgnore`.
 #[test]
 fn insert_ignore_keeps_the_nonduplicate_rows() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (id int primary key, c int unique key)",
         &mut catalog,

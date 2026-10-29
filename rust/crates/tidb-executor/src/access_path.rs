@@ -6879,7 +6879,7 @@ use std::collections::HashMap;
                 .insert_row(&[Datum::Int(value)], &tidb_expr::NoColumns)
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("routed_batch", table);
         gets.store(0, Ordering::Relaxed);
         let mut rows = run_select_on(
@@ -7183,7 +7183,7 @@ use std::collections::HashMap;
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         // Only the reads the query performs are interesting.
         entries.store(0, Ordering::Relaxed);
@@ -7204,7 +7204,7 @@ use std::collections::HashMap;
     fn prefix_limit_resets_after_partial_reads_and_retains_a_group_across_batches() {
         use crate::table_access::TableAccess;
         let ctx = crate::StmtContext::for_query();
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE p (a VARCHAR(20), KEY idx(a(2)))",
             &mut catalog,
@@ -7292,7 +7292,7 @@ use std::collections::HashMap;
                 ],
             ),
         ] {
-            let mut catalog = Catalog::mock();
+            let mut catalog = tidb_infoschema_perfschema::mock_catalog();
             crate::run_create_table_on(ddl, &mut catalog).unwrap();
             let store = CountingStorage::default();
             let gets = Arc::clone(&store.gets);
@@ -8286,7 +8286,7 @@ use std::collections::HashMap;
                 )
                 .unwrap();
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("new_order", table);
         entries.store(0, Ordering::Relaxed);
 
@@ -8361,7 +8361,7 @@ use std::collections::HashMap;
                 }
             }
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("order_line", table);
         entries.store(0, Ordering::Relaxed);
 
@@ -8813,7 +8813,7 @@ use std::collections::HashMap;
     #[test]
     fn the_driver_offers_keep_order_to_an_order_by_the_index_produces() {
         let ctx = crate::StmtContext::for_query();
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", paired_order_table(200));
         let rows =
             run_select_on("SELECT a FROM t WHERE b = 50 ORDER BY b", &catalog, &ctx).unwrap();

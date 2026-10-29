@@ -107,7 +107,7 @@ fn edge_table() -> KvTable {
 
 #[test]
 fn edge_point_read_with_int_type_literal_returns_the_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -125,7 +125,7 @@ fn edge_point_read_with_int_type_literal_returns_the_row() {
 
 #[test]
 fn edge_point_read_without_type_filter_returns_the_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -147,7 +147,7 @@ fn edge_point_read_without_type_filter_returns_the_row() {
 
 #[test]
 fn bare_count_star_with_limit_over_covering_primary_answers() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on(
@@ -162,7 +162,7 @@ fn bare_count_star_with_limit_over_covering_primary_answers() {
 
 #[test]
 fn bare_count_star_matches_the_unlimited_answer() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let limited = run_select_on(
@@ -181,7 +181,7 @@ fn select_literal_over_table_limit_one_returns_one_row() {
     // Go's own motivating case for the forced handle column:
     // "For SQL like `select 1 from t`, tikv's response will be empty if no
     // column is in schema."
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
     let rows = run_select_on("SELECT 1 FROM t LIMIT 1", &catalog, &ctx).unwrap();
@@ -387,7 +387,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> KvTa
 #[test]
 fn bare_count_pushdown_request_carries_only_the_forced_key_column() {
     let captured = Arc::new(Mutex::new(Vec::new()));
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", edges_table_on_capturing_store(Arc::clone(&captured)));
     let ctx = StmtContext::for_query();
     let rows = run_select_on(

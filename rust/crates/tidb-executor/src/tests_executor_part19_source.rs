@@ -34,7 +34,7 @@ fn ctx() -> StmtContext {
 }
 
 fn prepared_catalog() -> Catalog {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "CREATE TABLE prepared_part19 (id INT PRIMARY KEY, v INT NOT NULL)",
         &mut catalog,
@@ -290,7 +290,7 @@ fn prepared_aggregation_rebinds_its_filter_parameter() {
 /// `prepared_test.go:328::TestPreparedInsert`.
 #[test]
 fn prepared_insert_writes_bound_values() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "CREATE TABLE prepared_insert_part19 (id VARCHAR(16) PRIMARY KEY, v INT)",
         &mut catalog,

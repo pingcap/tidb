@@ -54,7 +54,7 @@
 
     fn analyzed_lite_catalog() -> (Catalog, Arc<StatsHandle>, i64, i64) {
         let handle = Arc::new(StatsHandle::default());
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t(a INT, b INT, KEY ia(a))", &mut catalog)
             .expect("fixture DDL");
         let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
@@ -79,7 +79,7 @@
         partitioned: bool,
     ) -> (Catalog, Arc<StatsHandle>, i64, Vec<i64>, Vec<(String, i64)>) {
         let handle = Arc::new(StatsHandle::default());
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         let partition_clause = if partitioned {
             " PARTITION BY HASH(a) PARTITIONS 4"
         } else {
@@ -225,7 +225,7 @@
         // Go master TestSyncWaitStatsLoadWithFailedResultBeforeTimer: prepare
         // the result before waiting instead of relying on two racing timers.
         for pseudo in [false, true] {
-            let catalog = Catalog::mock();
+            let catalog = tidb_infoschema_perfschema::mock_catalog();
             let requested = tidb_model::StatsLoadItem {
                 table_item_id: tidb_model::TableItemID {
                     table_id: 9_800_001,
@@ -283,7 +283,7 @@
         let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TOTAL};
-        let catalog = Catalog::mock();
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
         let requested = tidb_model::StatsLoadItem {
             table_item_id: tidb_model::TableItemID {
                 table_id: 9_800_002,
@@ -334,7 +334,7 @@
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL};
         for closed in [false, true] {
-            let catalog = Catalog::mock();
+            let catalog = tidb_infoschema_perfschema::mock_catalog();
             let requested = tidb_model::StatsLoadItem {
                 table_item_id: tidb_model::TableItemID {
                     table_id: 9_800_003 + i64::from(closed),
@@ -548,7 +548,7 @@
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         // The table is dropped after queueing the column: the next schema
         // image no longer has it.
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         let loader = Arc::new(RecordingLoader::default());
         handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
@@ -610,7 +610,7 @@
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         // The table is dropped after queueing the index: the next schema
         // image no longer has it.
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         let loader = Arc::new(RecordingLoader::default());
         handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
@@ -732,7 +732,7 @@
     #[test]
     fn plan_cache_stats_hash_follows_histogram_versions_not_stats_meta() {
         let handle = Arc::new(StatsHandle::default());
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t(a INT, KEY ia(a))", &mut catalog)
             .expect("fixture DDL");
         let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
@@ -882,7 +882,7 @@
     #[test]
     fn direct_virtual_column_dependencies_request_expression_index_stats_only() {
         let handle = Arc::new(StatsHandle::default());
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE t(a INT, v INT AS (a + 1), KEY iv(v))",
             &mut catalog,
@@ -997,7 +997,7 @@
     }
 
     fn stats_usage_fixture() -> Catalog {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE t(a INT NOT NULL PRIMARY KEY, b INT NOT NULL, c INT NOT NULL)",
             &mut catalog,

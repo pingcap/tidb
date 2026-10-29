@@ -3394,7 +3394,7 @@ mod predicate_column_tests {
             is_sync_load_failed: false,
         };
         let demanded = std::collections::HashMap::from([(item(1), true), (item(2), false)]);
-        let catalog = Catalog::mock();
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
         let context = crate::StmtContext::default();
         let initializer = InitStats {
             error: None,
@@ -3452,7 +3452,7 @@ mod statistics_initialization_tests {
                 generated: None,
             }],
         );
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let context = crate::StmtContext::default();
         context.stats_handle().set_table_statistics(
@@ -3571,7 +3571,7 @@ mod statistics_initialization_tests {
             index.name = format!("ia_{id}");
             table.add_index(index, false);
         }
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
         source.db_name = "test".to_owned();
@@ -3745,7 +3745,7 @@ mod statistics_initialization_tests {
             },
             false,
         );
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
         source.db_name = "test".to_owned();

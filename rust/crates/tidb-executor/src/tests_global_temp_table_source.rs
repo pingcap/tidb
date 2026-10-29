@@ -20,7 +20,7 @@ use crate::{run_create_table_on, run_insert_reporting, run_select_on, Catalog, S
 /// `maxID := strconv.Itoa(loops * 3)` at :522 with `loops = 1`).
 #[test]
 fn global_temporary_table_auto_increment_allocates_one_two_three() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = StmtContext::for_dml(false, true, false);
 
     run_create_table_on(

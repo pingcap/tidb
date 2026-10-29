@@ -137,6 +137,7 @@ members = [
     "crates/tidb-cteutil",
     "crates/tidb-expensivequery",
     "crates/tidb-infoschema",
+    "crates/tidb-infoschema-perfschema",
     "crates/tidb-infoschema-isvalidator",
     "crates/tidb-infoschema-issyncer",
     "crates/tidb-stats-handle",

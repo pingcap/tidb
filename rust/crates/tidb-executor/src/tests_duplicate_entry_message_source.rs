@@ -47,7 +47,7 @@ fn expect_duplicate(catalog: &mut Catalog, sql: &str, value: &str, key: &str) {
 /// * `bigint unsigned` primary key at `18446744073709551615` (:499-503).
 #[test]
 fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
 
     // :444-449 unique char under general_ci, case-insensitive dup.
     run_create_table_on(

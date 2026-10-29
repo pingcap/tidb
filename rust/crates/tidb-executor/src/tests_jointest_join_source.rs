@@ -59,7 +59,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
 /// equality, and `hex()` renders the BIT side as `FFFFFFFFFFFFFFFF`.
 #[test]
 fn issue11895_bigint_unsigned_matches_bit64_max_pattern() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t(c1 bigint unsigned)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 bit(64))", &mut catalog).unwrap();
     run_insert_on(
@@ -94,7 +94,7 @@ fn issue11895_bigint_unsigned_matches_bit64_max_pattern() {
 /// and wrong match this comparison used to yield.
 #[test]
 fn issue11896_bigint_bit64_equality_sign_arms() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
 
     // Arm 1: 1 == 1.
     run_create_table_on("create table t(c1 bigint)", &mut catalog).unwrap();
@@ -111,7 +111,7 @@ fn issue11896_bigint_bit64_equality_sign_arms() {
 
     // Arm 2: -1 (signed) vs 18446744073709551615 stored in BIT(64) must not
     // match; Go checks the empty result with `.Check(nil)`.
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t(c1 bigint)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 bit(64))", &mut catalog).unwrap();
     run_insert_on("insert into t value(-1)", &mut catalog, &ctx()).unwrap();
@@ -133,7 +133,7 @@ fn issue11896_bigint_bit64_equality_sign_arms() {
 /// asserting shape. The final correlated `NOT IN` arm is a measured gap.
 #[test]
 fn single_task_incremental_index_hash_join_row_counts() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t1(a int primary key)", &mut catalog).unwrap();
     run_create_table_on(
         "create table t2(b int not null, c varchar(100), index idx_b(b))",

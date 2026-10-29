@@ -326,7 +326,7 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     ];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_client(client as Arc<dyn tidb_txnkv::Client>);
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv("t", KvTable::with_storage(93, columns, Box::new(storage)));
     (catalog, region)
 }

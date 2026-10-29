@@ -101,7 +101,7 @@ fn reconstructed(catalog: &Catalog, sql: &str) -> Vec<String> {
 /// rule applied by hand.
 #[test]
 fn group_concat_result_multiset_is_row_order_insensitive() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "CREATE TABLE t(a bigint, b bigint)");
     insert(
         &mut catalog,
@@ -136,7 +136,7 @@ fn group_concat_result_multiset_is_row_order_insensitive() {
 /// Group b=1 reads a ∈ {1, 3, NULL}; group b=2 reads a ∈ {2, 2, 6}.
 #[test]
 fn aggregate_family_group_values_match_the_go_definitions() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "CREATE TABLE t(a bigint, b bigint)");
     insert(
         &mut catalog,
@@ -245,7 +245,7 @@ fn aggregate_family_group_values_match_the_go_definitions() {
 /// `sum_int_distinct_semantics`).
 #[test]
 fn cross_join_grouped_avg_sums_to_the_go_value() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(a int)");
     let mut sql = String::from("insert into t values (0)");
     for i in 1..=200 {
@@ -264,7 +264,7 @@ fn cross_join_grouped_avg_sums_to_the_go_value() {
     // full — the joined aggregate's sum is unchanged by a duplicate 0 row's
     // group because Go asserts different queries there (sum_int ones live in
     // the gap rows); the no-groupby/no-data tails are pinned directly:
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(c int, c1 int)");
     assert_eq!(
         select(&catalog, "select count(c) from t"),
@@ -285,7 +285,7 @@ fn cross_join_grouped_avg_sums_to_the_go_value() {
 /// switch has no SQL surface on this tier.
 #[test]
 fn parallel_hash_agg_group_keys_stay_case_sensitive() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table test_parallel_hash_agg(k varchar(30), v int)",

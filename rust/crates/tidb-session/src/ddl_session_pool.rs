@@ -61,7 +61,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
         plan: &ForeignKeyCheck,
         storage: &ClusterTableStorage,
     ) -> Result<(), MysqlError> {
-        let mut catalog = tidb_executor::Catalog::new();
+        let mut catalog = tidb_infoschema_perfschema::catalog();
         let child = cluster_table(&plan.child, storage, &AutoIdSource::Unavailable)
             .map_err(MysqlError::unknown)?
             .with_new_collation_mode(plan.use_new_collation);

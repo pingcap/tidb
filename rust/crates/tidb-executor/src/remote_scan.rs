@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn virtual_dependency_expansion_preserves_reader_output() {
         for primary in ["PRIMARY KEY", ""] {
-            let mut catalog = Catalog::mock();
+            let mut catalog = tidb_infoschema_perfschema::mock_catalog();
             let ctx = crate::StmtContext::for_query();
             crate::run_create_table_on(
                 &format!(
@@ -1406,7 +1406,7 @@ mod tests {
     }
 
     fn catalog_of(table: KvTable) -> Catalog {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         catalog
     }
@@ -1626,7 +1626,7 @@ mod tests {
 
     #[test]
     fn common_reader_partition_order_retains_pruned_identity() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT, PRIMARY KEY(a,b) CLUSTERED) PARTITION BY HASH(a) PARTITIONS 2", &mut catalog).unwrap();
         let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
             panic!("KV table");
@@ -1682,7 +1682,7 @@ mod tests {
     }
 
     fn partition_reader_fixture() -> Fixture {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE t(a BIGINT,b BIGINT,c BIGINT) PARTITION BY HASH(a) PARTITIONS 2",
             &mut catalog,

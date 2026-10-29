@@ -4237,7 +4237,7 @@ mod tests {
     #[test]
     fn dynamic_partitions_belong_to_readers_not_scans() {
         use tidb_planner::physical::*;
-        let catalog = Catalog::mock();
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
         for (all_partitions, names, expected) in [
             (true, Vec::new(), "partition:all"),
             (
@@ -4369,7 +4369,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &index_join,
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             false,
             None,
         );
@@ -4398,7 +4398,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::IndexJoin(index),
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             false,
             None,
         );
@@ -4417,7 +4417,7 @@ mod tests {
         let access_conditions: [tidb_expr::expression::Expression; 0] = [];
         let eval_ctx = crate::StmtContext::default();
         let scan = PhysicalTableScan::default();
-        let catalog = Catalog::mock();
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
 
         for (range_bare, expected) in [
             (true, "range: decided by [Column#2]"),
@@ -4465,7 +4465,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::MergeJoin(merge),
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             true,
             None,
         );
@@ -4492,7 +4492,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(outer),
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             true,
             None,
         );
@@ -4513,7 +4513,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(inner),
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             true,
             None,
         );
@@ -4532,7 +4532,7 @@ mod tests {
                 &crate::StmtContext::default(),
                 &crate::StmtContext::default(),
                 &PhysicalPlan::HashJoin(join),
-                &Catalog::mock(),
+                &tidb_infoschema_perfschema::mock_catalog(),
                 true,
                 None
             ),
@@ -4556,7 +4556,7 @@ mod tests {
             &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(join),
-            &Catalog::mock(),
+            &tidb_infoschema_perfschema::mock_catalog(),
             true,
             None,
         );
@@ -4578,6 +4578,6 @@ mod tests {
             conditions: vec![tidb_expr::expression::Expression::Constant(parameter)],
             ..Default::default()
         });
-        assert!(!super::brief_binary_plan(&ctx, &plan, &Catalog::mock()).is_empty());
+        assert!(!super::brief_binary_plan(&ctx, &plan, &tidb_infoschema_perfschema::mock_catalog()).is_empty());
     }
 }

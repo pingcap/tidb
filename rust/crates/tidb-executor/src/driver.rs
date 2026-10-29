@@ -92,7 +92,7 @@ pub use error::{DriverError, MysqlError, VarError};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-    run_select_on(sql, &Catalog::mock(), &crate::StmtContext::for_query())
+    run_select_on(sql, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
 }
 
 /// Parses and runs a single-table (or `FROM`-less) `SELECT` against `catalog`,
@@ -1056,17 +1056,17 @@ mod field_name_tests {
     #[test]
     fn a_null_literal_column_is_named_uppercase_null() {
         let ctx = crate::StmtContext::for_query();
-        let (columns, _) = run_select_meta_on("select null", &Catalog::mock(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on("select null", &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
         // A parenthesized / unary-plus NULL reaches the same rule.
-        let (columns, _) = run_select_meta_on("select (null)", &Catalog::mock(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on("select (null)", &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
     }
 
     /// The label of the one field of `sql`.
     fn label_of(sql: &str) -> String {
         let ctx = crate::StmtContext::for_query();
-        let (columns, _) = run_select_meta_on(sql, &Catalog::mock(), &ctx).unwrap();
+        let (columns, _) = run_select_meta_on(sql, &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         columns[0].0.clone()
     }
 
@@ -1146,7 +1146,7 @@ mod field_name_tests {
     /// column.
     #[test]
     fn a_parenthesized_or_unary_plus_column_is_named_like_the_column() {
-        let mut catalog = Catalog::mock();
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
         let ctx = crate::StmtContext::for_query();
         for sql in [

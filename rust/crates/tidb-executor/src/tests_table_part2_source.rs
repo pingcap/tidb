@@ -42,7 +42,7 @@ fn query_ctx() -> StmtContext {
 /// are below this crate's session transaction boundary.
 #[test]
 fn partition_add_record_routes_rows_to_range_partitions() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (id int, index(id)) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21))",
         &mut catalog,
@@ -81,7 +81,7 @@ fn partition_add_record_routes_rows_to_range_partitions() {
 /// `partition_test.go:218::TestHashPartitionAddRecord`.
 #[test]
 fn hash_partition_add_record_routes_rows_to_all_hash_partitions() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (id int, index(id)) partition by hash(id) partitions 4",
         &mut catalog,
@@ -125,7 +125,7 @@ fn partition_get_physical_id_preserves_definition_ids() {
 /// LIST COLUMNS routing contract while omitting Go's concurrent EXPLAIN probe.
 #[test]
 fn locate_partition_routes_list_columns_rows() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (id bigint, type varchar(255)) partition by list columns(type) (partition push_event values in ('PushEvent'), partition watch_event values in ('WatchEvent'))",
         &mut catalog,
@@ -153,7 +153,7 @@ fn locate_partition_routes_list_columns_rows() {
 /// (`tests_partition_table_sql_source`).
 #[test]
 fn key_partition_table_basic_is_carried_by_partition_sql_tests() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (col1 int not null, col2 int not null, col3 int not null, unique key(col3)) partition by key(col3) partitions 4",
         &mut catalog,
@@ -183,7 +183,7 @@ fn key_partition_table_basic_is_carried_by_partition_sql_tests() {
 /// `partition_test.go:3221::TestPointGetKeyPartitioning`.
 #[test]
 fn point_get_key_partitioning_returns_the_matching_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a varchar(30) not null, b varchar(45) not null, c varchar(45) not null, primary key (b, a)) partition by key(b) partitions 5",
         &mut catalog,
@@ -219,7 +219,7 @@ fn point_get_key_partitioning_returns_the_matching_row() {
 /// large signed values.
 #[test]
 fn pruning_overflow_keeps_the_matching_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t (a int not null, b bigint not null, primary key(a, b)) partition by hash((a * b)) partitions 13",
         &mut catalog,

@@ -17,7 +17,7 @@ use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStor
 
 #[test]
 fn insert_set_operation_source_uses_the_common_query_plan() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
@@ -104,7 +104,7 @@ impl TableStorage for BatchReadCountingStorage {
 
 #[test]
 fn batch_point_delete_reads_records_with_one_batch_get() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE batch_delete (id BIGINT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -146,7 +146,7 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
 
 #[test]
 fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE conflict_identity (id INT PRIMARY KEY, v INT, UNIQUE KEY unique_v(v))",
         &mut catalog,
@@ -277,7 +277,7 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 /// branch in `all_clustered_insert_keys_absent`.
 #[test]
 fn clustered_batch_insert_keeps_primary_duplicate_errors() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -297,7 +297,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
     )
     .expect_err("an existing clustered key must not be overwritten");
     assert!(existing.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS));
-    let mut repeated_catalog = Catalog::mock();
+    let mut repeated_catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
         &mut repeated_catalog,
@@ -320,7 +320,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
     use crate::explain::explain_update_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE target (id INT PRIMARY KEY, value INT)",
         &mut catalog,
@@ -363,7 +363,7 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
     use crate::explain::explain_delete_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
         &mut catalog,
@@ -432,7 +432,7 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
 /// declared columns instead. Do not "fix" this back to a constant.
 #[test]
 fn dml_positional_order_by_resolves_to_column() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
@@ -503,7 +503,7 @@ fn dml_positional_order_by_resolves_to_column() {
 /// instead of silently touching nothing.
 #[test]
 fn limit_zero_dml_still_validates_the_statement() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE lz (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx).unwrap();
@@ -629,7 +629,7 @@ fn matrix_tables_are_read_only() {
 
 #[test]
 fn update_and_delete_rows() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
@@ -793,7 +793,7 @@ fn update_and_delete_rows() {
 
 #[test]
 fn write_diagnostics_batch_single_update_reports_source_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
         &mut catalog,
@@ -810,7 +810,7 @@ fn write_diagnostics_batch_single_update_reports_source_row() {
 
 #[test]
 fn write_diagnostics_batch_join_update_reports_source_row() {
-    let mut catalog = Catalog::mock();
+    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
         &mut catalog,
