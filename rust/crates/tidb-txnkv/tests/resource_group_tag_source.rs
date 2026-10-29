@@ -54,6 +54,19 @@ fn TestResourceGroupTagEncodingPB() {
     assert_eq!(decoded.plan_digest, None);
 }
 
+/// Go `kv.decodeTableID` with no `DecodeTableIDFunc` installed (this test
+/// binary never runs `tablecodec`'s `init`): every key tags table 0.
+#[test]
+fn tag_table_id_is_zero_until_tablecodec_installs_its_decoder() {
+    // `t{7}_r`: a table-7 record prefix.
+    let key = [116, 128, 0, 0, 0, 0, 0, 0, 7, 95, 114];
+    let tag = tidb_txnkv::ResourceGroupTagBuilder::new(None).encode_tag_with_key(&key);
+    assert_eq!(
+        ResourceGroupTag::decode(tag.as_slice()).unwrap().table_id,
+        Some(0)
+    );
+}
+
 #[test]
 fn TestGetResourceGroupLabelByKey() {
     assert_eq!(

@@ -3545,7 +3545,7 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
         .expect("the notifier table is bootstrapped");
-    let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(notifier.id);
     let record = write
         .mutations
         .iter()
@@ -3611,7 +3611,7 @@ fn clustered_notifier_events_use_the_composite_primary_key() {
         "CREATE TABLE u6.clustered_notified (id BIGINT PRIMARY KEY)",
         7,
     );
-    let prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(notifier.id);
     let record = write
         .mutations
         .iter()
@@ -3660,7 +3660,7 @@ fn notifier_events(
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
         .expect("the notifier table is bootstrapped");
-    let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(notifier.id);
     let field_types: BTreeMap<_, _> = notifier
         .cols()
         .iter_deref()

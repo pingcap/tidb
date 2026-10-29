@@ -24,7 +24,7 @@
 //! 3. the row-ID allocator key, so the next writer does not hand out a handle
 //!    this bootstrap already used.
 
-use tidb_codec::gen_table_record_prefix;
+use tidb_tablecodec::table_key::gen_table_record_prefix;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;

@@ -16,7 +16,8 @@
 //! A passing subset does not accept the complete upstream package.
 
 use prost::Message;
-use tidb_codec::{encode_int, encode_key, encode_row_key};
+use tidb_codec::{encode_int, encode_key};
+use tidb_tablecodec::table_key::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
 use tidb_txnkv::KvRequestMetadata;
@@ -637,6 +638,9 @@ fn build_table_ranges_reads_indexes_over_gos_full_range() {
 // Go pkg/distsql/request_builder_test.go::TestRequestBuilderHandle.
 #[test]
 fn test_request_builder_handle() {
+    // Go's test binary links `tablecodec`, whose `init` installs the
+    // tagger's table-ID decoder.
+    tidb_tablecodec::init();
     let handles = [0, 2, 3, 4, 5, 10, 11, 100].map(|value| Handle::Int(IntHandle::new(value)));
     let mut builder = RequestBuilder::new();
     builder

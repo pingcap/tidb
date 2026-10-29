@@ -501,14 +501,14 @@ pub fn verify_table_ids_for_ranges(
         let Some(first) = ranges.first() else {
             continue;
         };
-        let table_id = tidb_codec::decode_table_id(&first.start_key);
+        let table_id = crate::table_key::decode_table_id(&first.start_key);
         if table_id <= 0 {
             return Err(TableIndexError::Invalid(
                 "Incorrect keyRange is constrcuted",
             ));
         }
         for range in ranges.iter().skip(1) {
-            let next_table_id = tidb_codec::decode_table_id(&range.start_key);
+            let next_table_id = crate::table_key::decode_table_id(&range.start_key);
             if next_table_id <= 0 {
                 return Err(TableIndexError::Invalid(
                     "Incorrect keyRange is constrcuted",

@@ -17,6 +17,7 @@
 //! derived from the ported formula.
 
 use super::*;
+use tidb_autoid::sequence::calc_sequence_batch_size;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;

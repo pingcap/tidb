@@ -273,8 +273,8 @@ fn common_handle_record_key_ranges(
                 Key::from_bytes(high).prefix_next().into_bytes()
             };
             key_ranges.push((
-                Key::from_bytes(tidb_codec::encode_row_key(id, &low)),
-                Key::from_bytes(tidb_codec::encode_row_key(id, &high)),
+                Key::from_bytes(tidb_tablecodec::table_key::encode_row_key(id, &low)),
+                Key::from_bytes(tidb_tablecodec::table_key::encode_row_key(id, &high)),
             ));
         }
     }

@@ -149,8 +149,8 @@ impl KvTable {
                 return Ok((None, Some(temp_raw)));
             }
             // Several modifications hit the key; the origin's row decides.
-            let row_key = tidb_codec::encode_row_key(
-                tidb_codec::decode_table_id(temp_key),
+            let row_key = tidb_tablecodec::table_key::encode_row_key(
+                tidb_tablecodec::table_key::decode_table_id(temp_key),
                 &origin_handle.clone().encoded(),
             );
             if self.get_key_in_txn(&row_key)?.is_none() {

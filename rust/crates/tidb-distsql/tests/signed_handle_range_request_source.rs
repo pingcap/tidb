@@ -15,7 +15,8 @@
 //! Source-shaped coverage for signed integer handle range encoding from
 //! `pkg/distsql/request_builder.go` and `request_builder_test.go`.
 
-use tidb_codec::{encode_int, encode_row_key};
+use tidb_codec::encode_int;
+use tidb_tablecodec::table_key::encode_row_key;
 use tidb_distsql::{signed_handle_ranges_to_kv_ranges, KvRequestBuildError, SignedHandleRange};
 use tidb_txnkv::Key;
 

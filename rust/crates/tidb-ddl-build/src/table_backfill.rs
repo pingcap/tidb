@@ -168,7 +168,7 @@ impl KvTableBackfill for KvTable {
         &mut self,
         physical_id: i64,
     ) -> Result<Option<(Vec<u8>, Vec<u8>)>, KvTableError> {
-        let prefix = tidb_codec::gen_table_record_prefix(physical_id);
+        let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(physical_id);
         let upper = Key::from_bytes(prefix.clone()).prefix_next();
         let start = {
             let mut iter = self.store_mut()

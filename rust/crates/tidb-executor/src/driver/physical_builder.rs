@@ -1451,7 +1451,7 @@ fn build_table_sample(
     // region boundaries, then `sortRanges` by start key.
     let mut ranges = Vec::new();
     for (position, physical_id) in physical_ids.iter().enumerate() {
-        let start = tidb_codec::gen_table_record_prefix(*physical_id);
+        let start = tidb_tablecodec::table_key::gen_table_record_prefix(*physical_id);
         let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next();
         ranges.extend(
             ctx.region_store()

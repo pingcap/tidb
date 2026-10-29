@@ -50,11 +50,11 @@ pub mod row_decoder;
 pub mod table_meta;
 
 use tidb_autoid::{
-    AutoIdError, AutoIdStore, AutoIdStoreError,
+    AutoIdError, AutoIdStoreError,
     LocalAutoIdStore, DEFAULT_AUTO_ID_STEP,
 };
 
-use tidb_autoid::{AutoIdCall, AutoIdService};
+use tidb_autoid::AutoIdCall;
 pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
@@ -4066,7 +4066,7 @@ impl KvTable {
         if !clustered
             && old_key
                 .as_ref()
-                .is_some_and(|key| tidb_codec::decode_table_id(key.as_bytes()) != new_physical_id)
+                .is_some_and(|key| tidb_tablecodec::table_key::decode_table_id(key.as_bytes()) != new_physical_id)
         {
             // Go partitionedTableUpdateRecord removes then AddRecords a heap
             // row crossing partitions, allocating a fresh hidden row ID.
@@ -4081,7 +4081,7 @@ impl KvTable {
         // before the row's own write: a heap row whose reorganized copy
         // diverged moves to a fresh handle in both partitions.
         let old_physical_for_reorg = old_key.as_ref().map_or(self.table_id, |key| {
-            tidb_codec::decode_table_id(key.as_bytes())
+            tidb_tablecodec::table_key::decode_table_id(key.as_bytes())
         });
         let reorg_plan = if self.partition_reorg.is_some() {
             let owned_old;
@@ -4144,7 +4144,7 @@ impl KvTable {
             false
         };
         let old_physical_id = old_key.as_ref().map_or(self.table_id, |key| {
-            tidb_codec::decode_table_id(key.as_bytes())
+            tidb_tablecodec::table_key::decode_table_id(key.as_bytes())
         });
         // Go removes the old index entries and writes the new ones. They point
         // AT the handle, so a moved row needs them rewritten even when the
@@ -4289,7 +4289,7 @@ impl KvTable {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
         };
-        let physical_id = tidb_codec::decode_table_id(key.as_bytes());
+        let physical_id = tidb_tablecodec::table_key::decode_table_id(key.as_bytes());
         let mut removed_row = None;
         if !self.indexes.is_empty()
             || !self.nonpublic_indexes.is_empty()

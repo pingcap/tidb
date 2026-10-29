@@ -60,7 +60,8 @@ use std::fmt;
 
 use tidb_tablecodec::table_key::cut_row_key_prefix;
 use tidb_tablecodec::table_key::encode_index_seek_key;
-use tidb_codec::{decode as decode_datums, encode_key, encode_row_key, gen_table_record_prefix};
+use tidb_codec::{decode as decode_datums, encode_key};
+use tidb_tablecodec::table_key::{encode_row_key, gen_table_record_prefix};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;

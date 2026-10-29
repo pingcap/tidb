@@ -50,7 +50,7 @@
 
 use tidb_model::table::SequenceInfo;
 use tidb_autoid::sequence::{
-    calc_sequence_batch_size, seek_to_first_sequence_value, sequence_offset, LocalSequenceCounter,
+    seek_to_first_sequence_value, sequence_offset, LocalSequenceCounter,
     SequenceCounter, SequenceError,
 };
 use std::sync::{Arc, Mutex};

@@ -21,6 +21,10 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
+[dev-dependencies]
+prost.workspace = true
+tidb-proto = { path = "../tidb-proto" }
+
 [[test]]
 name = "all"
 path = "tests/all.rs"

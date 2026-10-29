@@ -1125,28 +1125,28 @@ fn async_global_stats_loads_each_payload_by_item() {
     assert_eq!(
         store.scans,
         vec![
-            tidb_codec::encode_row_key(
+            tidb_tablecodec::table_key::encode_row_key(
                 system_table_id(&catalog, "stats_histograms"),
                 &column_kind,
             ),
-            tidb_codec::encode_row_key(
+            tidb_tablecodec::table_key::encode_row_key(
                 system_table_id(&catalog, "stats_histograms"),
                 &index_kind,
             ),
-            tidb_codec::encode_row_key(system_table_id(&catalog, "stats_fm_sketch"), &column_item,),
-            tidb_codec::encode_row_key(
+            tidb_tablecodec::table_key::encode_row_key(system_table_id(&catalog, "stats_fm_sketch"), &column_item,),
+            tidb_tablecodec::table_key::encode_row_key(
                 system_table_id(&catalog, "stats_fm_sketch"),
                 &cms_item_prefix,
             ),
-            tidb_codec::encode_row_key(
+            tidb_tablecodec::table_key::encode_row_key(
                 system_table_id(&catalog, "stats_histograms"),
                 &cms_item_prefix,
             ),
-            tidb_codec::encode_row_key(
+            tidb_tablecodec::table_key::encode_row_key(
                 system_table_id(&catalog, "stats_histograms"),
                 &column_item,
             ),
-            tidb_codec::encode_row_key(system_table_id(&catalog, "stats_buckets"), &column_item,),
+            tidb_tablecodec::table_key::encode_row_key(system_table_id(&catalog, "stats_buckets"), &column_item,),
             tidb_tablecodec::table_key::encode_index_seek_key(
                 system_table_id(&catalog, "stats_top_n"),
                 1,
@@ -1591,7 +1591,7 @@ fn topn_load_uses_the_declared_secondary_index() {
         &encoded_prefix,
     );
     assert!(store.scans.contains(&index_prefix));
-    assert!(!store.scans.contains(&tidb_codec::gen_table_record_prefix(
+    assert!(!store.scans.contains(&tidb_tablecodec::table_key::gen_table_record_prefix(
         system_table_id(&catalog, "stats_top_n"),
     )));
 }
@@ -1639,12 +1639,12 @@ fn one_item_load_uses_only_that_items_key_ranges() {
 
     let item = [Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)];
     let encoded_item = tidb_codec::encode_key(&item).unwrap();
-    let histogram_prefix = tidb_codec::encode_row_key(
+    let histogram_prefix = tidb_tablecodec::table_key::encode_row_key(
         system_table_id(&catalog, "stats_histograms"),
         &encoded_item,
     );
     let bucket_prefix =
-        tidb_codec::encode_row_key(system_table_id(&catalog, "stats_buckets"), &encoded_item);
+        tidb_tablecodec::table_key::encode_row_key(system_table_id(&catalog, "stats_buckets"), &encoded_item);
     let topn_prefix = tidb_tablecodec::table_key::encode_index_seek_key(
         system_table_id(&catalog, "stats_top_n"),
         1,
@@ -1702,7 +1702,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     let item = [Datum::Int(stats.table_id), Datum::Int(0), Datum::Int(1)];
     let encoded_item = tidb_codec::encode_key(&item).unwrap();
-    let histogram_prefix = tidb_codec::encode_row_key(
+    let histogram_prefix = tidb_tablecodec::table_key::encode_row_key(
         system_table_id(&catalog, "stats_histograms"),
         &encoded_item,
     );
@@ -1712,7 +1712,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
         &encoded_item,
     );
     let bucket_prefix =
-        tidb_codec::encode_row_key(system_table_id(&catalog, "stats_buckets"), &encoded_item);
+        tidb_tablecodec::table_key::encode_row_key(system_table_id(&catalog, "stats_buckets"), &encoded_item);
 
     store.scans.clear();
     store.fail_scan_prefix = Some(topn_prefix.clone());

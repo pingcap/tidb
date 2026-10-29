@@ -177,7 +177,7 @@ pub use range_diagnostics::{
     range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
 };
 pub use resource_group::{
-    set_decode_table_id, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+    set_decode_table_id_func, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RegionBackoffBudget,

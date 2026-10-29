@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/internal/pdhelper: the approximate table-count 
 workspace = true
 
 [dependencies]
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tokio = { workspace = true }
 tikv-client = { workspace = true }
 tidb-codec = { path = "../tidb-codec" }

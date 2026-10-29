@@ -612,7 +612,7 @@ fn exec_index_scan(
                 }
             }
             if has_physical_id && row.len() < idx_scan.columns.len() {
-                row.push(Datum::Int(tidb_codec::decode_table_id(&pair.key)));
+                row.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(&pair.key)));
             }
             if row.len() != idx_scan.columns.len() {
                 return other_error("decoded index entry does not match its executor schema");
@@ -1168,7 +1168,7 @@ fn exec_table_scan(
                 // hold a prefix or a collation sort key rather than the data.
                 let stored = decoded.get(&column.column_id());
                 if physical_id_offset == Some(offset) {
-                    row_datums.push(Datum::Int(tidb_codec::decode_table_id(&pair.key)));
+                    row_datums.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(&pair.key)));
                 } else if let Some(datum) = stored.filter(|datum| !matches!(datum, Datum::Null)) {
                     row_datums.push(datum.clone());
                 } else if column.pk_handle() {

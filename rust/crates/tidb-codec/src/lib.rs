@@ -27,7 +27,6 @@ mod join_keys;
 mod json;
 mod number;
 mod package;
-mod row_index;
 mod temporal;
 mod value;
 
@@ -69,9 +68,6 @@ pub use package::{
     HashColumnOutput, SerializeMode,
 };
 pub(crate) use package::{value_size_of_signed_int, value_size_of_unsigned_int};
-pub use row_index::{
-    decode_table_id, encode_row_key, gen_table_record_prefix,
-};
 pub use temporal::{decode_packed_time, encode_packed_time};
 pub use value::{
     decode_default_row, decode_default_rows, decode_value, RawValue, VALUE_BYTES_FLAG,

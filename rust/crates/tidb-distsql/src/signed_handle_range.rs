@@ -19,7 +19,8 @@
 //! `pkg/distsql/request_builder.go::encodeHandleKey`: it only converts a valid
 //! logical range into TiDB's half-open table-record key interval.
 
-use tidb_codec::{encode_int, encode_row_key};
+use tidb_codec::encode_int;
+use tidb_tablecodec::table_key::encode_row_key;
 use tidb_txnkv::Key;
 
 use crate::{KvRequestBuildError, RequestKeyRange};

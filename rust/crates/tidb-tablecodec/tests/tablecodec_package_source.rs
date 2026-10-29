@@ -18,7 +18,8 @@ use std::collections::BTreeMap;
 
 /// Go `time.UTC`, the zone these source tests encode and decode in.
 const UTC: tidb_datatype::SessionTimeZone = tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
-use tidb_codec::{cut_one, decode_int, decode_one, decode_table_id, encode_bytes, encode_int, encode_key, encode_value, Encoder, BYTES_FLAG, DECIMAL_FLAG};
+use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_key, encode_value, Encoder, BYTES_FLAG, DECIMAL_FLAG};
+use tidb_tablecodec::table_key::decode_table_id;
 use tidb_rowcodec::{encode_row, ColumnInfo};
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
@@ -90,7 +91,7 @@ fn test_table_codec() {
     assert_eq!(decode_row_key(&key).unwrap(), RecordHandle::Int(2));
     let mut encoded = Vec::new();
     encode_int(&mut encoded, 2);
-    assert_eq!(tidb_codec::encode_row_key(1, &encoded), key);
+    assert_eq!(tidb_tablecodec::table_key::encode_row_key(1, &encoded), key);
 
     let start = encode_row_key_with_handle(100, &RecordHandle::Int(100));
     assert_eq!(start.len(), RECORD_ROW_KEY_LEN);
@@ -106,7 +107,7 @@ fn test_table_codec_invalid() {
     let mut handle = Vec::new();
     encode_int(&mut handle, -9_078_412_423_848_787_968);
     handle.push(b'0');
-    let error = decode_row_key(&tidb_codec::encode_row_key(100, &handle)).unwrap_err();
+    let error = decode_row_key(&tidb_tablecodec::table_key::encode_row_key(100, &handle)).unwrap_err();
     assert_eq!(error.mysql_error_code(), 8221);
 }
 

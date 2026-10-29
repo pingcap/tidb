@@ -183,7 +183,8 @@ mod tests {
 
     use tidb_tablecodec::table_key::encode_index_seek_key;
     use tidb_tablecodec::table_key::RecordHandle;
-    use tidb_codec::{encode_int, encode_row_key, INT_FLAG};
+    use tidb_codec::{encode_int, INT_FLAG};
+    use tidb_tablecodec::table_key::encode_row_key;
 
     use super::*;
 

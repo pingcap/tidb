@@ -23,9 +23,6 @@ use tidb_codec::{decode_one, encode_key, INT_FLAG};
 use tidb_codec::{decode_int, decode_uint, encode_int};
 use tidb_codec::CodecError;
 
-// Preserve the already-connected DistSQL/resource-group authority as the
-// implementation of the three table-row primitives instead of cloning it.
-pub use tidb_codec::{decode_table_id, encode_row_key, gen_table_record_prefix};
 
 /// Leading byte of every encoded table record or index key.
 pub const TABLE_PREFIX: &[u8] = b"t";
@@ -269,6 +266,44 @@ pub fn encode_table_prefix(table_id: i64) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + ID_LEN);
     key.extend_from_slice(TABLE_PREFIX);
     encode_int(&mut key, table_id);
+    key
+}
+
+/// Go `DecodeTableID`: the table ID of a `t[table_id]...` key.
+///
+/// API V2 keys carry the four-byte `x + keyspace ID` prefix, which is removed
+/// before applying the same decoder.
+pub fn decode_table_id(key: &[u8]) -> i64 {
+    let key = if key.first() == Some(&b'x') && key.len() >= 4 {
+        &key[4..]
+    } else {
+        key
+    };
+    if !key.starts_with(TABLE_PREFIX) {
+        return 0;
+    }
+    decode_int(&key[1..]).map_or(0, |(_, table_id)| table_id)
+}
+
+/// Go `GenTableRecordPrefix`: the `t[table_id]_r` table-record prefix.
+pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(PREFIX_LEN);
+    key.extend_from_slice(TABLE_PREFIX);
+    encode_int(&mut key, table_id);
+    key.extend_from_slice(RECORD_PREFIX);
+    key
+}
+
+/// Go `EncodeRowKey`: one table row key from an already encoded handle.
+pub fn encode_row_key(table_id: i64, encoded_handle: &[u8]) -> Vec<u8> {
+    // Go sizes the buffer to `prefixLen + len(encodedHandle)` up front;
+    // growing the 11-byte prefix for the handle would be a second allocation
+    // per key.
+    let mut key = Vec::with_capacity(PREFIX_LEN + encoded_handle.len());
+    key.extend_from_slice(TABLE_PREFIX);
+    encode_int(&mut key, table_id);
+    key.extend_from_slice(RECORD_PREFIX);
+    key.extend_from_slice(encoded_handle);
     key
 }
 

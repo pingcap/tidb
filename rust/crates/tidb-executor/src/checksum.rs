@@ -448,7 +448,7 @@ mod tests {
                     tipb::ChecksumRequest::decode(task.request.metadata().data.as_deref().unwrap())
                         .unwrap();
                 let (start, _) = key_ranges(&task.request).remove(0);
-                (tidb_codec::decode_table_id(&start), request.scan_on())
+                (tidb_tablecodec::table_key::decode_table_id(&start), request.scan_on())
             })
             .collect();
         use tipb::ChecksumScanOn::{Index, Table};
@@ -535,8 +535,8 @@ mod tests {
         assert_eq!(
             key_ranges(&tasks[0].request),
             vec![(
-                tidb_codec::encode_row_key(100, &low),
-                tidb_codec::encode_row_key(100, &high)
+                tidb_tablecodec::table_key::encode_row_key(100, &low),
+                tidb_tablecodec::table_key::encode_row_key(100, &high)
             )]
         );
     }

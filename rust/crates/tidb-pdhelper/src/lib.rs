@@ -163,7 +163,7 @@ pub async fn load_record_region_stats(
     table_id: i64,
     timeout: Duration,
 ) -> Result<RegionCountStats, String> {
-    let start = tidb_codec::gen_table_record_prefix(table_id);
+    let start = tidb_tablecodec::table_key::gen_table_record_prefix(table_id);
     let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next();
     let mut encoded_start = Vec::new();
     let mut encoded_end = Vec::new();

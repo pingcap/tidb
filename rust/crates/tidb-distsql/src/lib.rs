@@ -48,25 +48,19 @@ pub use chunk_decode::{
 pub use context::{DistSqlContext, PagingConfig, RequestContext, SessionContext, DEFAULT_DIST_SQL_CONCURRENCY};
 use tidb_mysql::Priority;
 pub use distsql_runtime::{analyze_request_source, analyze_result_metadata, checksum_result_metadata, mpp_result_metadata, select_result_metadata, select_with_runtime_stats, system_endian, EncodeType, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL};
-use tidb_txnkv::LimiterWaitStats;
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CpuUsage, ExecutionState, KillHandle};
-use tidb_txnkv::KvVariables;
 use tidb_txnkv::CancelHandle;
 pub use kv_request::{request_from_context, RequestKeyRange, RequestKeyRanges, DC_LABEL_KEY, GLOBAL_REPLICA_SCOPE};
 use tidb_txnkv::PartitionIdAndRanges;
 use tidb_txnkv::KvRequestMetadata;
 pub use query_runtime::{checksum, select_with_runtime_stats_over_client, InjectedQueryRuntime, QueryDispatch, QueryResponse, QueryResultContext};
-use tidb_txnkv::CopInfo;
-use tidb_txnkv::QueryResponseError;
 pub use request::{ReadRequestBuilder, ReadRequestMetadata};
 pub use request_builder::{
     build_table_ranges, common_handle_ranges_to_kv_ranges, index_ranges_to_kv_ranges,
     table_ranges_to_kv_ranges, DatumRange,
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
-use tidb_txnkv::ResponseRuntimeStats;
-use tidb_txnkv::RequestStatsSample;
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
@@ -78,14 +72,11 @@ use tidb_txnkv::RequestType;
 use tidb_txnkv::StoreLabel;
 use tidb_txnkv::StoreType;
 pub use tidb_txnkv::Priority as KvPriority;
-use tidb_paging::grow_paging_size;
 pub use tidb_paging::calculate_seek_cnt as calculate_seek_count;
 pub use tidb_paging::THRESHOLD as PAGING_THRESHOLD;
 pub use transport::RegionTaskRequest;
-use tidb_txnkv::TransportRequestError;
 use tidb_txnkv::TransportRequest;
-use tidb_txnkv::TransportBinding;
-use tidb_context::{Warning, WarningClass, WarningCollector, WarningLevel};
+use tidb_context::{Warning, WarningCollector};
 
 pub mod remote_scan;
 #[cfg(test)]

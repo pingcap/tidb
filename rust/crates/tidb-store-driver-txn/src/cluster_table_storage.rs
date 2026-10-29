@@ -76,7 +76,7 @@ use tidb_txnkv::Key;
 
 use tidb_store_driver_error::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
-    is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
+    is_retryable_statement_failure, lock_failure_to_sql_error,
     LockSqlError, PessimisticStatementRetry,
 };
 
@@ -2313,7 +2313,7 @@ pub fn commit_staged_buffer<S: StoreClient>(
 pub fn physical_table_ids(mutations: &[BufferMutation]) -> Vec<i64> {
     let mut ids: Vec<i64> = mutations
         .iter()
-        .map(|mutation| tidb_codec::decode_table_id(mutation.key()))
+        .map(|mutation| tidb_tablecodec::table_key::decode_table_id(mutation.key()))
         .filter(|id| *id > 0)
         .collect();
     ids.sort_unstable();
@@ -2329,7 +2329,7 @@ fn schema_lease_for_keys<'a>(
 ) -> Option<SchemaLease> {
     checker.map(|checker| {
         let mut related_physical_table_ids: Vec<i64> = keys
-            .map(tidb_codec::decode_table_id)
+            .map(tidb_tablecodec::table_key::decode_table_id)
             .filter(|id| *id > 0)
             .collect();
         related_physical_table_ids.sort_unstable();

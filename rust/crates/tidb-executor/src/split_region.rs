@@ -459,7 +459,7 @@ fn table_split_keys(
     keys: &mut Vec<Vec<u8>>,
 ) -> Result<(), DriverError> {
     let zone = ctx.session_zone();
-    let record_prefix = tidb_codec::gen_table_record_prefix(physical_id);
+    let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(physical_id);
     let common_handle = !table.common_handle_offsets().is_empty();
     match values {
         SplitValues::Lists(lists) => {

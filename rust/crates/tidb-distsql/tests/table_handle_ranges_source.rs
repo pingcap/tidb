@@ -15,7 +15,8 @@
 //! Direct translations of the table-handle range tests in
 //! `pkg/distsql/request_builder_test.go`.
 
-use tidb_codec::{encode_int, encode_key, encode_row_key};
+use tidb_codec::{encode_int, encode_key};
+use tidb_tablecodec::table_key::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_distsql::{table_handles_to_kv_ranges, KvRequestBuilder};
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};

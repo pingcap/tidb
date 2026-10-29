@@ -908,7 +908,7 @@ use tidb_table::table_from_meta::kv_index;
                 .insert_row(&[Datum::Int(3)], &tidb_expr::NoColumns)
                 .expect("the insert succeeds");
             let key = |id: i64, physical: i64| {
-                tidb_codec::encode_row_key(
+                tidb_tablecodec::table_key::encode_row_key(
                     physical,
                     &tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(id)).encoded(),
                 )

@@ -28,9 +28,6 @@ pub use cop_read_task_runtime::{
     CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
 pub use native_transport::{NativeCopResponse, NativeCopTransport};
-use tidb_store_driver_txn::driver::cop_store::NativeCopStore;
-use tidb_store_driver_txn::driver::cop_store::NativeCopSend;
-use tidb_store_driver_txn::driver::cop_store::CopBackoffer;
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
 };

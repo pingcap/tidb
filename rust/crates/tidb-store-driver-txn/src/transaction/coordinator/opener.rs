@@ -100,6 +100,9 @@ where
         if store.cluster_id() == 0 {
             return Err(OptimisticCoordinatorError::ZeroClusterId);
         }
+        // Go `store/driver/txn` imports `tablecodec`, whose `init` has run
+        // before any transaction of this store tags a request.
+        tidb_tablecodec::init();
         let cop_store: Arc<dyn crate::driver::cop_store::NativeCopStore> = Arc::new(store.clone());
         Ok(Self {
             store,

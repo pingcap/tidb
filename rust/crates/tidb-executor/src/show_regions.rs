@@ -254,7 +254,7 @@ fn table_regions(
     let decoder = |index_prefix: Vec<u8>, index_id: i64| KeyDecoder {
         physical_id,
         table_prefix: tidb_tablecodec::table_key::gen_table_prefix(physical_id),
-        record_prefix: tidb_codec::gen_table_record_prefix(physical_id),
+        record_prefix: tidb_tablecodec::table_key::gen_table_record_prefix(physical_id),
         index_prefix,
         index_id,
         unsigned_int_handle: target.table.is_some_and(KvTable::unsigned_pk_handle),
@@ -293,7 +293,7 @@ fn index_regions(
     let decoder = KeyDecoder {
         physical_id,
         table_prefix: tidb_tablecodec::table_key::gen_table_prefix(physical_id),
-        record_prefix: tidb_codec::gen_table_record_prefix(physical_id),
+        record_prefix: tidb_tablecodec::table_key::gen_table_record_prefix(physical_id),
         index_prefix,
         index_id,
         unsigned_int_handle: false,

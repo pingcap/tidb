@@ -420,7 +420,7 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
         // A clustered primary key owns no index entry: the lock is the
         // record's key.
         let prefix = if table.is_common_handle {
-            tidb_codec::gen_table_record_prefix(table.id)
+            tidb_tablecodec::table_key::gen_table_record_prefix(table.id)
         } else {
             tidb_tablecodec::table_key::encode_index_seek_key(table.id, primary, &[])
         };

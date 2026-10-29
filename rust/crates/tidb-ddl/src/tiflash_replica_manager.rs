@@ -663,7 +663,7 @@ fn zap_error(error: &str) -> Field {
 fn table_region_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
     let mut start = Vec::new();
     let mut end = Vec::new();
-    tidb_codec::encode_bytes(&mut start, &tidb_codec::gen_table_record_prefix(table_id));
+    tidb_codec::encode_bytes(&mut start, &tidb_tablecodec::table_key::gen_table_record_prefix(table_id));
     tidb_codec::encode_bytes(
         &mut end,
         &tidb_tablecodec::table_key::encode_table_prefix(table_id + 1),
@@ -686,7 +686,7 @@ pub fn make_new_rule(id: i64, count: u64, location_labels: &[String]) -> pd_http
         id: make_rule_id(id),
         index: tidb_placement::RULE_INDEX_TIFLASH,
         r#override: false,
-        start_key: tidb_codec::gen_table_record_prefix(id),
+        start_key: tidb_tablecodec::table_key::gen_table_record_prefix(id),
         end_key: tidb_tablecodec::table_key::encode_table_prefix(id + 1),
         role: pd_http::LEARNER,
         count: count as i64,

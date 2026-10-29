@@ -15,24 +15,26 @@
 //! Resource-group request-tag encoding from `pkg/kv/kv.go`.
 
 use prost::Message;
-use std::sync::{Arc, LazyLock, RwLock};
-use tidb_codec::decode_table_id;
+use std::sync::OnceLock;
 use tidb_proto::ResourceGroupTag;
 
 use tidb_resourcegrouptag::{
     get_first_key_from_request, get_resource_group_label_by_key, FirstKeyRequest,
 };
 
-type DecodeTableId = dyn Fn(&[u8]) -> i64 + Send + Sync;
+/// Go `kv.DecodeTableIDFunc`, which `tablecodec`'s `init` installs
+/// (`tidb_tablecodec::init`); unset, a key's table ID is 0, as Go's
+/// `kv.decodeTableID` returns for a nil function.
+static DECODE_TABLE_ID_FUNC: OnceLock<fn(&[u8]) -> i64> = OnceLock::new();
 
-static DECODE_TABLE_ID: LazyLock<RwLock<Arc<DecodeTableId>>> =
-    LazyLock::new(|| RwLock::new(Arc::new(decode_table_id)));
+/// Go's assignment `kv.DecodeTableIDFunc = ...`; the first installation wins.
+pub fn set_decode_table_id_func(decoder: fn(&[u8]) -> i64) {
+    let _ = DECODE_TABLE_ID_FUNC.set(decoder);
+}
 
-/// Replaces the process-wide table-ID decoder used to avoid an import cycle.
-pub fn set_decode_table_id(decoder: impl Fn(&[u8]) -> i64 + Send + Sync + 'static) {
-    *DECODE_TABLE_ID
-        .write()
-        .expect("table-id decoder lock poisoned") = Arc::new(decoder);
+/// Go `kv.decodeTableID`.
+fn decode_table_id(key: &[u8]) -> i64 {
+    DECODE_TABLE_ID_FUNC.get().map_or(0, |decoder| decoder(key))
 }
 
 /// Request mutation consumed by the resource-group tagger.
@@ -94,9 +96,7 @@ impl ResourceGroupTagBuilder {
         let table_id = if key.is_empty() {
             self.table_id
         } else {
-            DECODE_TABLE_ID
-                .read()
-                .expect("table-id decoder lock poisoned")(key)
+            decode_table_id(key)
         };
         ResourceGroupTag {
             sql_digest: self.sql_digest.clone(),

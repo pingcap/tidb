@@ -1300,7 +1300,7 @@ fn decode_table_id_from_rule(rule: &tidb_ddl_label::Rule) -> Option<i64> {
     if let Ok((_, decoded)) = tidb_codec::decode_bytes(&key) {
         key = decoded;
     }
-    match tidb_codec::decode_table_id(&key) {
+    match tidb_tablecodec::table_key::decode_table_id(&key) {
         0 => None,
         table_id => Some(table_id),
     }

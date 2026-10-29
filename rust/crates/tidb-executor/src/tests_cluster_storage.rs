@@ -218,7 +218,7 @@ use tidb_txnkv::Key;
         assert!(buffer
             .staged_keys()
             .iter()
-            .any(|k| tidb_codec::decode_table_id(k.as_bytes()) == 43
+            .any(|k| tidb_tablecodec::table_key::decode_table_id(k.as_bytes()) == 43
                 && *k != key(43, 1)
                 && buffer.get(k).unwrap().is_some()));
     }

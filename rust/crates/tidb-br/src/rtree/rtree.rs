@@ -821,7 +821,8 @@ mod tests {
     use std::rc::Rc;
 
     use tidb_tablecodec::table_key::{encode_index_seek_key, encode_record_key, RecordHandle};
-    use tidb_codec::{encode_int, gen_table_record_prefix};
+    use tidb_codec::encode_int;
+    use tidb_tablecodec::table_key::gen_table_record_prefix;
 
     use super::*;
 

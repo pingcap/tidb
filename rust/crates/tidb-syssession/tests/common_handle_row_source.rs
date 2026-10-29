@@ -103,7 +103,7 @@ fn a_common_handle_row_reads_back_whole() {
     let info = table();
     let wanted = row(&info);
     let mutations = store_clustered_row(&info, None, &wanted).expect("the row encodes");
-    let record_prefix = tidb_codec::gen_table_record_prefix(info.id);
+    let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(info.id);
     let record = mutations
         .iter()
         .find(|mutation| mutation.key().starts_with(&record_prefix))

@@ -5268,6 +5268,7 @@ name = "tidb-pdhelper"
 version = "0.0.0"
 dependencies = [
  "tidb-codec",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tikv-client",
  "tokio",
@@ -6845,9 +6846,11 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "prost 0.14.4",
  "tidb-codec",
  "tidb-datatype",
  "tidb-errno",
+ "tidb-proto",
  "tidb-rowcodec",
  "tidb-terror",
  "tidb-txnkv",

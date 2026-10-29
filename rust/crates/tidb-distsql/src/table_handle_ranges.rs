@@ -15,7 +15,8 @@
 //! Sorted table handles to half-open KV ranges, translated from
 //! `pkg/distsql/request_builder.go::TableHandlesToKVRanges`.
 
-use tidb_codec::{encode_int, encode_row_key};
+use tidb_codec::encode_int;
+use tidb_tablecodec::table_key::encode_row_key;
 use tidb_txnkv::{Handle, Key};
 
 use crate::RequestKeyRange;

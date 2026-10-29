@@ -15,6 +15,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use super::*;
+use tidb_context::WarningLevel;
 
 #[test]
 fn test_context_detach_preserves_handles_and_copies_owned_state() {

@@ -19,7 +19,8 @@
 use std::collections::BTreeMap;
 
 use tidb_tablecodec::table_key::{encode_table_index_prefix, encode_table_prefix};
-use tidb_codec::{decode_bytes, decode_table_id, encode_bytes, gen_table_record_prefix};
+use tidb_codec::{decode_bytes, encode_bytes};
+use tidb_tablecodec::table_key::{decode_table_id, gen_table_record_prefix};
 use tidb_model::TableInfo;
 use tidb_redact as redact;
 

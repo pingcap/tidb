@@ -25,9 +25,6 @@
 pub mod query_response;
 
 pub use query_response::{QueryResponse, QuerySelectResult};
-use tidb_txnkv::QueryResultSubset;
-use tidb_txnkv::QueryResponseError;
-use tidb_txnkv::CopInfo;
 
 use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_trxevents::EventCallback;
@@ -37,7 +34,7 @@ use tidb_copr::query_transport::{send_request, QueryOperation, QueryRuntimeError
 use crate::{
     analyze_request_source, analyze_result_metadata, checksum_result_metadata,
     select_result_metadata, select_with_runtime_stats, RequestSource, RequestType, SelectInput,
-    SelectResultMetadata, TransportBinding, TransportRequest, TransportRequestError,
+    SelectResultMetadata, TransportRequest,
     WarningCollector,
 };
 
