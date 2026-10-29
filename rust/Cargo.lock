@@ -5913,6 +5913,7 @@ dependencies = [
  "tidb-funcdep",
  "tidb-intset",
  "tidb-size",
+ "tidb-stats",
 ]
 
 [[package]]

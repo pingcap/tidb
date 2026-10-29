@@ -35,7 +35,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::logical::{schema_producer, BaseLogicalPlan};
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalTableDual` (`logical_table_dual.go:33`).
 #[derive(Clone, Debug, Default)]

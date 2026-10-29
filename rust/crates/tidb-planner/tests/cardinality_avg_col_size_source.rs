@@ -32,10 +32,8 @@
 //! - row 2 `(132, '123456789112', ...)` adds varint(132)=2 bytes to c1
 //!   (TotColSize 3 over 2 rows) and 13 bytes to c2 (TotColSize 21).
 
-use tidb_planner::cardinality::row_size::{
-    avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows, RowSizeColumnStats,
-    RowSizeType,
-};
+use tidb_planner::cardinality::row_size::{avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows};
+use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 
 fn column(kind: RowSizeType, total_column_size: i64, null_count: i64) -> RowSizeColumnStats {
     RowSizeColumnStats {

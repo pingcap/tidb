@@ -67,7 +67,7 @@ use tidb_expr::simple_expr::extract_cor_columns;
 
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.CTEClass` (`logical_cte.go:51`): "holds the information and
 /// plan for a CTE".

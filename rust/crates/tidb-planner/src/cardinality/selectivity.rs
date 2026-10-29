@@ -36,7 +36,8 @@ use super::row_count_estimator::{
 use tidb_ranger::Range;
 use tidb_ranger::points::{ExpressionEvaluator, PointBuilderError};
 use crate::selectivity_greedy::{StatsNode, StatsNodeType, get_usable_sets_by_greedy};
-use crate::stats_info::HistColl;
+use tidb_planner_property::stats_info::HistColl;
+use crate::cardinality::row_count_estimator::HistCollIndexEstimation;
 
 /// The `PlanContext` state `Selectivity` reads.
 pub struct SelectivityContext<'a> {
@@ -522,7 +523,7 @@ fn mask_and_selectivity_for_mv_index(
     ctx: &SelectivityContext<'_>,
     coll: &HistColl,
     index_id: i64,
-    info: &crate::stats_info::HistCollIndexInfo,
+    info: &tidb_planner_property::stats_info::HistCollIndexInfo,
     exprs: &[Expression],
 ) -> Option<(f64, i64)> {
     use crate::access_path::mv_index;
@@ -810,10 +811,11 @@ use tidb_charset::Collation;
     use tidb_stats::{Bucket, Histogram, TopN};
 
     use super::get_row_count_by_index_ranges;
-    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRowCounts};
+    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use tidb_planner_property::stats_info::IndexRowCounts;
     use tidb_ranger::Range;
     use tidb_stats::table_statistics::IndexStats;
-    use crate::stats_info::HistColl;
+    use tidb_planner_property::stats_info::HistColl;
 
     fn column(unique_id: i64) -> Column {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))

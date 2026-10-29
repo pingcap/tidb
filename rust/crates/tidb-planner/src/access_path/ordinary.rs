@@ -171,7 +171,7 @@ pub(crate) fn correlated_access_count_after_access(
     };
     let hist = stats.hist_coll();
     let realtime = hist.map_or(stats.row_count(), |hist| hist.realtime_count() as f64);
-    if hist.is_none_or(crate::stats_info::HistColl::pseudo) {
+    if hist.is_none_or(tidb_planner_property::stats_info::HistColl::pseudo) {
         return crate::cardinality::pseudo::pseudo_avg_count_per_value(realtime);
     }
     let selectivity = count_after_access / realtime;

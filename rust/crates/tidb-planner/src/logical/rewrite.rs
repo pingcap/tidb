@@ -47,7 +47,7 @@ use crate::cardinality::join::{
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 use super::fold::{Descend, OwnedRewrite, RewriteFailure, fold_owned};
 use super::rule::{
@@ -59,6 +59,7 @@ use super::{
     LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
 use tidb_hack::go_to_lower;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// The schema an operator effectively exposes, materialized.
 ///
@@ -2280,7 +2281,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         let resolve = |unique_id: i64| {
                             let position = schema_ids.iter().position(|id| *id == unique_id)?;
                             let column = op.columns.get(position)?;
-                            Some(crate::cardinality::pseudo::PseudoColumn {
+                            Some(tidb_planner_property::stats_info::PseudoColumn {
                                 lower_name: go_to_lower(&column.name),
                                 unique_key_flag: false,
                             })
@@ -2843,7 +2844,7 @@ mod analyzed_filter_selectivity_tests {
     use super::{analyzed_filter_selectivity, analyzed_filter_selectivity_with_options};
     use crate::cardinality::row_count_estimator::EstimatorOptions;
     use tidb_stats::table_statistics::ColumnStats;
-    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::constant::Constant;
@@ -3008,7 +3009,7 @@ mod analyzed_filter_selectivity_tests {
             HistColl::new(false, rows, []).with_column_and_index_infos(
                 [(
                     7,
-                    crate::cardinality::pseudo::PseudoColumn {
+                    tidb_planner_property::stats_info::PseudoColumn {
                         lower_name: "l_orderkey".to_owned(),
                         unique_key_flag: false,
                     },
@@ -3543,7 +3544,7 @@ mod analyzed_filter_selectivity_tests {
             HistColl::new(false, 128, []).with_column_and_index_infos(
                 [(
                     unique_id + 1,
-                    crate::cardinality::pseudo::PseudoColumn {
+                    tidb_planner_property::stats_info::PseudoColumn {
                         lower_name: "other".to_owned(),
                         unique_key_flag: false,
                     },
@@ -3611,12 +3612,12 @@ mod access_path_context_tests {
             // Go `initStats` attaches `PseudoTable`'s collection, whose
             // handle column is `IsHandle`.
             table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)]).with_hist_coll(
-                crate::stats_info::HistColl::new(true, 10_000, [])
+                tidb_planner_property::stats_info::HistColl::new(true, 10_000, [])
                     .with_pk_is_handle(true)
                     .with_column_and_index_infos(
                         [(
                             1,
-                            crate::cardinality::pseudo::PseudoColumn {
+                            tidb_planner_property::stats_info::PseudoColumn {
                                 lower_name: "id".to_owned(),
                                 unique_key_flag: false,
                             },
@@ -3652,7 +3653,7 @@ mod access_path_context_tests {
     #[test]
     fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
         use tidb_stats::table_statistics::ColumnStats;
-        use crate::stats_info::HistColl;
+        use tidb_planner_property::stats_info::HistColl;
         let allocator = crate::plan_base::PlanIdAllocator::new();
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let columns = [1, 2].map(|id| {

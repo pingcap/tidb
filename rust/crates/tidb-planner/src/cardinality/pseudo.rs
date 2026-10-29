@@ -22,6 +22,10 @@
 //! scalar bounds and prefix-equality lengths; no statistics/catalog/session
 //! facade is invented here.
 
+use tidb_planner_property::stats_info::PseudoColumn;
+
+use crate::cardinality::derive_stats::StatsInfoScale;
+
 /// Source pseudo divisor for equality predicates and one value's average
 /// frequency.
 pub const PSEUDO_EQUAL_RATE: f64 = 1_000.0;
@@ -366,14 +370,6 @@ pub enum PseudoFunctionKind {
     Other,
 }
 
-/// The column a pseudo predicate resolved to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PseudoColumn {
-    /// Lowercased column name, the key of the source's `colExists` map.
-    pub lower_name: String,
-    /// Whether `mysql.HasUniKeyFlag(col.Info.GetFlag())` holds.
-    pub unique_key_flag: bool,
-}
 
 /// One CNF item as `pseudoSelectivity` sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -528,7 +524,7 @@ pub fn classify_pseudo_predicate(
 /// holds neither columns nor indexes (`selectivity.go:69-73`).
 #[must_use]
 pub fn hist_coll_pseudo_selectivity(
-    hist_coll: &crate::stats_info::HistColl,
+    hist_coll: &tidb_planner_property::stats_info::HistColl,
     conditions: &[tidb_expr::expression::Expression],
     selectivity_factor: f64,
 ) -> f64 {
@@ -564,13 +560,13 @@ pub fn hist_coll_pseudo_selectivity(
 /// work and stays a named boundary at the caller.
 #[must_use]
 pub fn derive_stats_by_filter_pseudo(
-    table_stats: &crate::stats_info::StatsInfo,
+    table_stats: &tidb_planner_property::stats_info::StatsInfo,
     conds: &[tidb_expr::expression::Expression],
     resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
     indexes: &[PseudoIndex],
     selectivity_factor: f64,
     scale_ndv_skew_ratio: f64,
-) -> crate::stats_info::StatsInfo {
+) -> tidb_planner_property::stats_info::StatsInfo {
     // `Selectivity`: zero rows or no conditions is 100% (`selectivity.go:61`).
     let selectivity = if table_stats.row_count() == 0.0 || conds.is_empty() {
         1.0

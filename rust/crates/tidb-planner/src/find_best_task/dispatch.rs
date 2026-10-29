@@ -58,6 +58,7 @@ use tidb_planner_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::Task;
 use tidb_planner_property::task_type::TaskType;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
 ///
@@ -302,9 +303,9 @@ impl<'a> DispatchContext<'a> {
     fn pushed_filter_stats(
         &self,
         source: &crate::logical::DataSource,
-        input: Option<&crate::stats_info::StatsInfo>,
+        input: Option<&tidb_planner_property::stats_info::StatsInfo>,
         filters: &[tidb_expr::expression::Expression],
-    ) -> Option<crate::stats_info::StatsInfo> {
+    ) -> Option<tidb_planner_property::stats_info::StatsInfo> {
         let selectivity = source
             .table_stats
             .as_ref()
@@ -954,12 +955,12 @@ fn exhaust_physical_plans(
                     // GetMergeJoin adjusts naturally ordered children; Go's
                     // getEnforcedMergeJoin deliberately keeps unbounded inputs.
                     let join_rows = op.base.base.stats_info().map_or(
-                        0.0, crate::stats_info::StatsInfo::row_count,
+                        0.0, tidb_planner_property::stats_info::StatsInfo::row_count,
                     );
                     if prop.expected_cnt < join_rows {
                         for (child_prop, child) in child_props.iter_mut().zip(plan.children()) {
                             let child_rows = child.stats_info().map_or(
-                                0.0, crate::stats_info::StatsInfo::row_count,
+                                0.0, tidb_planner_property::stats_info::StatsInfo::row_count,
                             );
                             child_prop.expected_cnt = calc_child_expected_cnt(
                                 prop, child_rows, join_rows, ctx.ordering_index_selectivity_ratio,
@@ -972,14 +973,14 @@ fn exhaust_physical_plans(
                     // wants fewer rows than the join estimates asks the OUTER
                     // child for the same fraction of its own rows.
                     let join_rows = op.base.base.stats_info().map_or(
-                        0.0, crate::stats_info::StatsInfo::row_count,
+                        0.0, tidb_planner_property::stats_info::StatsInfo::row_count,
                     );
                     if prop.expected_cnt < join_rows {
                         let outer_rows = plan
                             .children()
                             .get(1 - shape.inner_idx)
                             .and_then(LogicalPlan::stats_info)
-                            .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                            .map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
                         child_props[1 - shape.inner_idx].expected_cnt =
                             outer_rows * (prop.expected_cnt / join_rows);
                     }
@@ -1000,7 +1001,7 @@ fn exhaust_physical_plans(
                         .children()
                         .get(*outer_idx)
                         .and_then(LogicalPlan::stats_info)
-                        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                        .map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
                     // Go `enumerateIndexJoinByOuterIdx`: `avgInnerRowCnt =
                     // p.EqualCondOutCnt / buildRows`. The equal-condition
                     // output is what the per-outer-row probe sees; the join's
@@ -1020,7 +1021,7 @@ fn exhaust_physical_plans(
                         .base
                         .base
                         .stats_info()
-                        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                        .map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
                     child_props[*outer_idx].expected_cnt = calc_child_expected_cnt(
                         prop,
                         outer_rows,
@@ -1247,11 +1248,11 @@ fn exhaust_physical_plans(
             }
 
             let outer_stats = plan.children().first().and_then(LogicalPlan::stats_info);
-            let outer_rows = outer_stats.map_or(0.0, crate::stats_info::StatsInfo::row_count);
+            let outer_rows = outer_stats.map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
             let stats = op.base().base.stats_info().cloned();
             let apply_rows = stats
                 .as_ref()
-                .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                .map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
             // Go only adjusts an Apply's outer requirement for ordered output.
             // Reuse the same helper as index and natural merge joins.
             let outer_expected_cnt = if prop.is_sort_item_empty() {
@@ -2639,7 +2640,7 @@ fn find_best_task_4_logical_data_source(
 }
 
 fn filter_column_correlation(
-    stats: &crate::stats_info::StatsInfo,
+    stats: &tidb_planner_property::stats_info::StatsInfo,
     filters: &[tidb_expr::expression::Expression],
     threshold: f64,
 ) -> (usize, Option<tidb_expr::column::Column>, f64) {
@@ -2759,7 +2760,7 @@ mod index_scan_limit_adjustment_tests {
 mod correlation_tests {
     use super::filter_column_correlation;
     use tidb_stats::table_statistics::ColumnStats;
-    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -2832,7 +2833,7 @@ mod cross_estimate_dispatch_tests {
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::{BaseLogicalPlan, DataSource};
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -2998,8 +2999,8 @@ fn find_best_task_4_logical_data_source_paths(
         .table_stats
         .as_ref()
         .or_else(|| ds.base.base.stats_info())
-        .and_then(crate::stats_info::StatsInfo::hist_coll)
-        .is_none_or(crate::stats_info::HistColl::pseudo);
+        .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
+        .is_none_or(tidb_planner_property::stats_info::HistColl::pseudo);
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
@@ -3021,7 +3022,7 @@ fn find_best_task_4_logical_data_source_paths(
         );
         base.base.set_schema(ds.base.base.schema().cloned());
         base.base
-            .set_stats(Some(crate::stats_info::StatsInfo::new(1.0, [])));
+            .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
         let mut root = crate::task::RootTask::default();
         root.set_plan(PhysicalPlan::TableSample(
             crate::physical::PhysicalTableSample {
@@ -3333,7 +3334,7 @@ fn find_best_task_4_logical_data_source_paths(
                                         && !table_filters.is_empty()
                                         && !table_stats
                                             .hist_coll()
-                                            .is_some_and(crate::stats_info::HistColl::pseudo)
+                                            .is_some_and(tidb_planner_property::stats_info::HistColl::pseudo)
                                     {
                                         filter_column_correlation(
                                             table_stats,
@@ -3441,7 +3442,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // (q50: 78.92 vs go's 40) and flipped IndexJoin to
                     // IndexHashJoin.
                     stats = Some(
-                        crate::stats_info::StatsInfo::new(runtime_rows, []).with_stats_version(
+                        tidb_planner_property::stats_info::StatsInfo::new(runtime_rows, []).with_stats_version(
                             ds.base
                                 .base
                                 .stats_info()
@@ -4414,7 +4415,7 @@ fn find_best_task_4_logical_data_source_paths(
                     let access_rows = cap(index_rows / selectivity(&index_filters));
                     let scale = |rows| table_stats.as_ref()
                         .map(|stats| stats.scale_by_expect_cnt(rows, ctx.skew_ratio))
-                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(rows, []));
+                        .unwrap_or_else(|| tidb_planner_property::stats_info::StatsInfo::new(rows, []));
                     // Go `addPushedDownSelection4PhysicalIndexScan`: the index
                     // Selection is the scan's (possibly table-capped) row count
                     // times `CountAfterIndex / CountAfterAccess`, both RAW
@@ -4436,7 +4437,7 @@ fn find_best_task_4_logical_data_source_paths(
                         table_stats
                             .as_ref()
                             .map(|stats| stats.scale_by_expect_cnt(count, ctx.skew_ratio))
-                            .unwrap_or_else(|| crate::stats_info::StatsInfo::new(count, []))
+                            .unwrap_or_else(|| tidb_planner_property::stats_info::StatsInfo::new(count, []))
                     });
                 base.base.set_stats(scan_stats.clone());
                 // Go `getPlanCostVer24PhysicalIndexScan` prices the scan's own
@@ -4654,7 +4655,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 .filter(|value| *value > 0.0);
                             let count = scan_stats
                                 .as_ref()
-                                .map(crate::stats_info::StatsInfo::row_count)
+                                .map(tidb_planner_property::stats_info::StatsInfo::row_count)
                                 .zip(selectivity)
                                 .map(|(rows, selectivity)| rows * selectivity);
                             match count {
@@ -4664,7 +4665,7 @@ fn find_best_task_4_logical_data_source_paths(
                                     .map(|table_stats| {
                                         table_stats.scale_by_expect_cnt(count, ctx.skew_ratio)
                                     })
-                                    .or_else(|| Some(crate::stats_info::StatsInfo::new(count, []))),
+                                    .or_else(|| Some(tidb_planner_property::stats_info::StatsInfo::new(count, []))),
                                 None => stats.clone(),
                             }
                         } else {
@@ -5361,7 +5362,7 @@ mod tests {
         BaseLogicalPlan, LogicalMaxOneRow, LogicalMemTable, LogicalSelection, LogicalTableDual,
     };
     use tidb_planner_property::SortItem;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use std::cell::RefCell;
     use tidb_datatype::{
         FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,

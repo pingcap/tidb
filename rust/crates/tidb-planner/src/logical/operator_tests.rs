@@ -77,7 +77,7 @@ use super::window::{
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 fn column(unique_id: i64) -> Column {
     Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))

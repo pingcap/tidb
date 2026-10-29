@@ -52,7 +52,7 @@ use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::EvalError;
 
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `ctx.GetSessionVars().PlanID.Add(1)`, without the session.
 ///

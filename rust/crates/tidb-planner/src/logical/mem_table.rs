@@ -40,7 +40,7 @@
 //!   and reads its `RealtimeCount`, plus a `HistColl` from
 //!   `GenerateHistCollFromColumnInfo`. `statistics.PseudoTable` is not
 //!   transcreated, so [`LogicalMemTable::derive_stats`] takes the realtime count
-//!   from the caller; [`crate::stats_info::StatsInfo`] carries no `HistColl` or
+//!   from the caller; [`tidb_planner_property::stats_info::StatsInfo`] carries no `HistColl` or
 //!   `StatsVersion`, so those two assignments have no counterpart.
 //! * `QueryTimeRange util.QueryTimeRange` is the `time_range` hint's window; it
 //!   is carried as its two bounds and no body here reads it.
@@ -54,7 +54,7 @@ use tidb_datatype::FieldName;
 use crate::logical::topn::LogicalTopN;
 use crate::logical::{schema_producer, BaseLogicalPlan};
 use crate::memtable_predicate_extractor::MemTablePredicateExtractor;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `variable.SlowLogTimeStr`.
 pub const SLOW_LOG_TIME_STR: &str = "Time";

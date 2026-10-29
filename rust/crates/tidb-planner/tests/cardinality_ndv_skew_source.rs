@@ -18,7 +18,8 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::cardinality::ndv::{estimate_cols_ndv_with_matched_len, scale_ndv, GroupNdv};
+use tidb_planner::cardinality::ndv::{estimate_cols_ndv_with_matched_len, scale_ndv};
+use tidb_planner_property::stats_info::GroupNdv;
 
 /// `pkg/planner/cardinality/property.StatsInfo` shape used by the group-NDV
 /// test: row count plus per-column NDVs plus observed group NDVs.

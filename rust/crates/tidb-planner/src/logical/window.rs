@@ -59,7 +59,7 @@ use tidb_planner_cascades_base::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLA
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `ast.FrameType`, as `WindowFrame.Type` uses it.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]

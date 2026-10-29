@@ -26,7 +26,7 @@ use tidb_expr::schema::Schema;
 
 use crate::logical::show::get_fake_stats;
 use crate::logical::BaseLogicalPlan;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalShowDDLJobs` (`logical_show_ddl_jobs.go:25`).
 #[derive(Clone, Debug, Default)]

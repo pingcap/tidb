@@ -42,6 +42,7 @@
 mod memory;
 pub mod part_info;
 pub use part_info::PhysPlanPartInfo;
+use crate::cardinality::derive_stats::StatsInfoScale;
 mod resolve_indices;
 pub mod shuffle;
 pub mod shuffle_optimize;
@@ -61,7 +62,7 @@ use crate::physical_table_reader::{
     MissingTableDescriptorError, ReadReqType, StoreType, TableScanCountError,
 };
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator};
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 use crate::task::{RootTask, Task};
 
 /// Go `physicalop.BasePhysicalPlan` (`base_physical_plan.go:120`).

@@ -69,7 +69,7 @@ pub type ColumnId = i64;
 /// `StatsInfo` (the second port of `property/stats_info.go`, keyed `u64`)
 /// is deleted; what the DP rules read is the same profile every plan node
 /// carries.
-pub use crate::stats_info::StatsInfo;
+pub use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `cardinality.ScaleNDV` (`cardinality/ndv.go:215-262`).
 ///
@@ -133,4 +133,23 @@ pub fn estimate_cols_ndv_with_matched_len_and_skew_ratio(
     skew_ratio: f64,
 ) -> (f64, usize) {
     crate::cardinality::ndv::estimate_cols_ndv_with_stats(cols, profile, skew_ratio)
+}
+
+/// `StatsInfo.Scale` and `ScaleByExpectCnt` with this package's NDV scaling,
+/// the function Go's `cardinality` registers as `property.ScaleNDVFunc`.
+pub trait StatsInfoScale {
+    /// Go `StatsInfo.Scale`.
+    fn scale(&self, factor: f64, skew_ratio: f64) -> StatsInfo;
+    /// Go `StatsInfo.ScaleByExpectCnt`.
+    fn scale_by_expect_cnt(&self, expect_cnt: f64, skew_ratio: f64) -> StatsInfo;
+}
+
+impl StatsInfoScale for StatsInfo {
+    fn scale(&self, factor: f64, skew_ratio: f64) -> StatsInfo {
+        self.scale_with(factor, skew_ratio, scale_ndv)
+    }
+
+    fn scale_by_expect_cnt(&self, expect_cnt: f64, skew_ratio: f64) -> StatsInfo {
+        self.scale_by_expect_cnt_with(expect_cnt, skew_ratio, scale_ndv)
+    }
 }

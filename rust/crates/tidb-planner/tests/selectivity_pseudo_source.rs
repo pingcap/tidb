@@ -57,10 +57,8 @@
 //! `Selectivity` down the `len(exprs) > 63` arm into `pseudoSelectivity`
 //! (`selectivity.go:69-73`); the rest exercise the node-product tail.
 
-use tidb_planner::cardinality::pseudo::{
-    pseudo_row_count_by_scalar_ranges, pseudo_selectivity, PseudoBoundKind, PseudoColumn,
-    PseudoFunctionKind, PseudoIndex, PseudoPredicate, ScalarRange,
-};
+use tidb_planner::cardinality::pseudo::{pseudo_row_count_by_scalar_ranges, pseudo_selectivity, PseudoBoundKind, PseudoFunctionKind, PseudoIndex, PseudoPredicate, ScalarRange};
+use tidb_planner_property::stats_info::PseudoColumn;
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };

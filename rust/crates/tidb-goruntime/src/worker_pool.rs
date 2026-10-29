@@ -218,6 +218,7 @@ pub struct TaskGroup {
 }
 
 impl TaskGroup {
+    /// A task group on the process's shared worker pool.
     pub fn new() -> Self {
         Self::on_pool(Arc::clone(shared()))
     }
@@ -232,6 +233,7 @@ impl TaskGroup {
         }
     }
 
+    /// Runs `task` on the pool as a member of this group.
     pub fn submit(&self, task: impl FnOnce() + Send + 'static) {
         let completion = self.completion.as_ref().expect("live task group").clone();
         let cancelled = Arc::clone(&self.cancelled);

@@ -2475,7 +2475,7 @@ mod tests {
     use crate::plan_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::constant::Constant;

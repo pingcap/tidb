@@ -141,7 +141,7 @@ use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
 use crate::physical_table_reader::StoreType;
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.ApplyGenFromXFDeCorrelateRuleFlag` (`base_logical_plan.go:38`).
 pub const APPLY_GEN_FROM_XF_DECORRELATE_RULE_FLAG: u64 = 1 << 0;

@@ -128,7 +128,7 @@ use crate::logical::rule::flags;
 use crate::logical::sequence::LogicalSequence;
 use crate::logical::LogicalPlan;
 use crate::plan_base::PlanError;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;

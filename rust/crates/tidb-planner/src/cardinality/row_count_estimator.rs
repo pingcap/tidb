@@ -36,6 +36,7 @@
 //! expression-to-range extraction, and the MV-index paths. Each is called
 //! out at its use site.
 
+use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_datatype::CollationCollator;
 #[cfg(test)]
 use tidb_codec::encode_key;
@@ -1152,32 +1153,7 @@ pub fn ordinal_of_range_cond(range: &Range) -> usize {
 /// backoff gives way to the full index histogram instead of dropping it.
 pub type IndexColumnStats<'a> = Vec<Option<&'a ColumnStats>>;
 
-/// Table counts retained for column backoff alongside the possibly scaled
-/// index-entry counts from Go `HistColl.GetScaledRealtimeAndModifyCnt`.
-#[derive(Clone, Copy, Debug)]
-pub struct IndexRowCounts {
-    /// Rows currently in the table.
-    pub table_realtime: i64,
-    /// Modified table rows since analysis.
-    pub table_modify: i64,
-    /// Current index entries (multiple entries per row for MV indexes).
-    pub index_realtime: i64,
-    /// Modified index entries since analysis.
-    pub index_modify: i64,
-}
 
-impl IndexRowCounts {
-    /// Counts for an ordinary index or an index ineligible for scaling.
-    #[must_use]
-    pub const fn unscaled(realtime: i64, modify: i64) -> Self {
-        Self {
-            table_realtime: realtime,
-            table_modify: modify,
-            index_realtime: realtime,
-            index_modify: modify,
-        }
-    }
-}
 
 /// Statistics for one index together with its collection-owned column inputs.
 /// Raw NDVs and valid histograms are distinct in Go's V1 cross validation.
@@ -1193,7 +1169,7 @@ pub struct IndexEstimationStats<'a> {
     /// Unscaled table and independently scaled index-entry counts.
     pub row_counts: IndexRowCounts,
     /// IndexInfo conditions controlling full-range short-circuiting.
-    pub policy: super::index_range_policy::IndexRangePolicy,
+    pub policy: tidb_planner_property::stats_info::IndexRangePolicy,
     /// Go `len(idx.Info.Columns)` when `idx.Info.Unique`: the collection
     /// knows every index's metadata, histogram or not, and the pseudo
     /// estimate caps a full unique-key point at one row.
@@ -2993,5 +2969,50 @@ mod version_one_index_dispatch_tests {
         )
         .unwrap();
         assert!((estimate.est - 21.0).abs() < 1e-10, "{estimate:?}");
+    }
+}
+
+/// The index estimation view of a statistics collection: the collection is
+/// `planner/property`'s, the view the row-count estimator's.
+pub trait HistCollIndexEstimation {
+    /// Borrowed collection view using Go's current Idx2ColUniqueIDs mapping.
+    /// Path preparation may extend the declared prefix with handle columns.
+    fn index_estimation_stats(&self, index_id: i64) -> IndexEstimationStats<'_>;
+}
+
+impl HistCollIndexEstimation for tidb_planner_property::stats_info::HistColl {
+    fn index_estimation_stats(&self, index_id: i64) -> IndexEstimationStats<'_> {
+        let columns = self.index_columns(index_id);
+        let valid = columns
+            .iter()
+            .map(|id| self.histogram_for_estimation(*id).map(std::sync::Arc::as_ref))
+            .collect();
+        let mut stats = IndexEstimationStats::new(
+            self.index_histogram(index_id).map(std::sync::Arc::as_ref),
+            valid,
+            self.index_row_counts(index_id).unwrap_or_else(|| {
+                IndexRowCounts::unscaled(self.realtime_count(), self.modify_count())
+            }),
+        );
+        if stats
+            .index
+            .is_some_and(|index| index.stats_ver == 1 && index.cms.is_some())
+        {
+            stats.column_ndvs = columns
+                .iter()
+                .map(|id| self.histogram(*id).map(|column| column.histogram.ndv))
+                .collect();
+            stats.column_is_handle = columns
+                .iter()
+                .map(|id| {
+                    self.pk_is_handle() && self.column(*id).is_some_and(|column| column.is_handle)
+                })
+                .collect();
+        }
+        stats.policy = self.index_range_policy(index_id);
+        if let Some(info) = self.index_info(index_id) {
+            stats.unique_columns = info.unique.then_some(info.column_lower_names.len());
+        }
+        stats
     }
 }

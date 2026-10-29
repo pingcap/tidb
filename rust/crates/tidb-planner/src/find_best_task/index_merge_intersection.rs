@@ -21,6 +21,7 @@ use crate::logical::DataSource;
 use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::task::Task;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// Builds the IndexMerge of a finished path: one partial plan per partial
 /// path, then the table lookup. Any conditions no partial range enforces
@@ -100,7 +101,7 @@ pub(super) fn build_prepared_index_merge_task(
             selection.base.set_schema(partial_plan.schema().cloned());
             selection
                 .base
-                .set_stats(Some(crate::stats_info::StatsInfo::new(
+                .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(
                     filled
                         .count_after_index
                         .unwrap_or(rows * tidb_planner_core_cost::SELECTION_FACTOR),

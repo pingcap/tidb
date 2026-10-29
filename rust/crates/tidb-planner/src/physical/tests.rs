@@ -1206,7 +1206,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
     // at 2 — one row to keep, one to prove the violation.
     use crate::logical::{BaseLogicalPlan, LogicalMaxOneRow};
     use tidb_planner_property::SortItem;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_planner_property::task_type::TaskType;
 
     let allocator = PlanIdAllocator::new();
@@ -1285,7 +1285,7 @@ fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
 fn mpp_hash_agg_enumeration_matches_go_run_modes() {
     use crate::logical::{BaseLogicalPlan, LogicalAggregation};
     use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expression_aggregation::{names, AggFuncDesc};
     use tidb_exprctx::ZonedNoColumns;
     use tidb_datatype::SessionTimeZone;
@@ -1364,7 +1364,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     // carries the logical dual's stats, offset, schema, names and RowCount.
     use crate::logical::{BaseLogicalPlan, LogicalTableDual};
     use tidb_planner_property::SortItem;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_datatype::FieldName;
 
     let allocator = PlanIdAllocator::new();
@@ -1409,7 +1409,7 @@ fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
     // Go's fixed query-block offset 0, and explains as `Scan on CTE_N`.
     use crate::logical::{BaseLogicalPlan, LogicalCTETable};
     use tidb_planner_property::SortItem;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalCTETable::TYPE, 5);
@@ -1549,7 +1549,7 @@ fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
     // (ScaleByExpectCnt) and the child property drops CanAddEnforcer
     // (CloneEssentialFields does not copy it).
     use crate::logical::{BaseLogicalPlan, LogicalSelection};
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 2);
@@ -1581,7 +1581,7 @@ fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
 #[test]
 fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
     use crate::logical::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
     let mut selection_base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
@@ -1858,7 +1858,7 @@ fn a_lock_enumerates_one_candidate_and_explains_go_style() {
     // `{LockType} {WaitSec}` ExplainInfo — Go prints WaitSec even for lock
     // types that carry none.
     use crate::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0);
@@ -2456,8 +2456,8 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
 
 #[test]
 fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
-    use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
-    use crate::stats_info::HistColl;
+    use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
+    use tidb_planner_property::stats_info::HistColl;
     let mut table = scan(1, &[1, 2]);
     table.set_stats(Some(StatsInfo::new(100.0, []).with_hist_coll(
         HistColl::new(

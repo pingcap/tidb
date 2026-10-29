@@ -1513,7 +1513,7 @@ mod tests {
     use super::*;
     use crate::logical::data_source::DataSource;
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{
         Datum, FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,

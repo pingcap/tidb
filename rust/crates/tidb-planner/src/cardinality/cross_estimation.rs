@@ -20,11 +20,12 @@ use crate::cardinality::row_count_estimator::{
     get_row_count_by_column_ranges,
 };
 use tidb_ranger::types::Range;
-use crate::stats_info::HistColl;
+use tidb_planner_property::stats_info::HistColl;
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
+use crate::cardinality::row_count_estimator::HistCollIndexEstimation;
 
 /// Session controls for Go's correlation-adjusted scan estimates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -315,7 +316,7 @@ mod tests {
     };
     use tidb_stats::table_statistics::ColumnStats;
     use tidb_ranger::types::Range;
-    use crate::stats_info::HistColl;
+    use tidb_planner_property::stats_info::HistColl;
     use std::sync::Arc;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
@@ -538,7 +539,7 @@ use tidb_charset::Collation;
 
     #[test]
     fn table_cross_estimate_does_not_skip_the_first_leading_index() {
-        use crate::cardinality::row_count_estimator::IndexRowCounts;
+        use tidb_planner_property::stats_info::IndexRowCounts;
         use tidb_stats::table_statistics::IndexStats;
 
         let (column_stats, column, filters) = correlated_fixture();

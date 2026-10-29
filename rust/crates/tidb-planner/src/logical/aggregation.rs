@@ -40,7 +40,7 @@ use crate::logical::BaseLogicalPlan;
 use crate::plan_base::{
     hash_possible_properties, possible_properties_equal, PossiblePropertiesInfo,
 };
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `ast.AggFuncFirstRow`.
 pub const AGG_FUNC_FIRST_ROW: &str = "firstrow";

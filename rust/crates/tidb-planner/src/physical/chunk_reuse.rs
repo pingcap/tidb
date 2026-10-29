@@ -24,7 +24,7 @@
 //! chunk's estimated size stays within `MaxBlobWidth * 2`.
 
 use super::PhysicalPlan;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 use tidb_datatype::FieldTypeCode;
 use tidb_expr::column::Column;
 

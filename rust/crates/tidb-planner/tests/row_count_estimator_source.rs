@@ -46,7 +46,8 @@
 use tidb_codec::encode_key;
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
-use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions, IndexRowCounts};
+use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions};
+use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_ranger::Range;
 use tidb_stats::table_statistics::ColumnStats;
 use tidb_stats::table_statistics::IndexStats;

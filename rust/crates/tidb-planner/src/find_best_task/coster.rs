@@ -287,7 +287,7 @@ impl Ver2Coster {
         Self::row_size_for_columns(
             plan.schema().into_iter().flat_map(|schema| &schema.columns),
             plan.stats_info()
-                .and_then(crate::stats_info::StatsInfo::hist_coll),
+                .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
         )
     }
 
@@ -318,7 +318,7 @@ impl Ver2Coster {
 
     fn row_size_for_columns<'a>(
         columns: impl Iterator<Item = &'a Column>,
-        hist_coll: Option<&crate::stats_info::HistColl>,
+        hist_coll: Option<&tidb_planner_property::stats_info::HistColl>,
     ) -> f64 {
         let columns = columns
             .map(|column| {
@@ -410,7 +410,7 @@ impl Ver2Coster {
                             .iter()
                             .filter(|column| column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID),
                         plan.stats_info()
-                            .and_then(crate::stats_info::StatsInfo::hist_coll),
+                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
                     )
                 };
                 if scan.store_type == crate::physical_table_reader::StoreType::TiFlash {
@@ -459,7 +459,7 @@ impl Ver2Coster {
                     Self::row_size_for_columns(
                         scan.cost_columns.iter(),
                         plan.stats_info()
-                            .and_then(crate::stats_info::StatsInfo::hist_coll),
+                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
                     )
                 },
                 self.factors.task_scan(
@@ -1198,7 +1198,7 @@ mod tests {
         PhysicalUnionAll,
     };
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::schema::Schema;

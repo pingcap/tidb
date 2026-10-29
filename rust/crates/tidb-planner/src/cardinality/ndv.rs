@@ -19,6 +19,7 @@
 //! the future planner can adapt its real `SessionVars` owner without adding a
 //! second formula or guessing context from runtime values.
 
+use tidb_planner_property::stats_info::GroupNdv;
 use super::apply_exponential_backoff;
 
 fn go_max(x: f64, y: f64) -> f64 {
@@ -55,18 +56,6 @@ fn go_min(x: f64, y: f64) -> f64 {
     }
 }
 
-/// A dependency-closed group NDV row copied from `property.GroupNDV`.
-///
-/// The full Go planner stores this beside histograms and session statistics.
-/// The Rust seed keeps only the source fields needed by the estimator so the
-/// arithmetic can be exercised before those owners are migrated.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GroupNdv {
-    /// Sorted column unique IDs participating in the group.
-    pub columns: Vec<i64>,
-    /// Observed number of distinct values for the group.
-    pub ndv: f64,
-}
 
 /// Estimates the NDV for a set of column IDs using the source's conservative
 /// and exponential-backoff paths.
@@ -106,7 +95,7 @@ pub fn estimate_cols_ndv_with_matched_len(
 #[must_use]
 pub fn estimate_cols_ndv_with_stats(
     column_ids: &[i64],
-    profile: &crate::stats_info::StatsInfo,
+    profile: &tidb_planner_property::stats_info::StatsInfo,
     skew_ratio: f64,
 ) -> (f64, usize) {
     estimate_cols_ndv_with_matched_len_lookup(

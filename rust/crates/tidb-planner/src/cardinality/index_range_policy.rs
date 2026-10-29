@@ -21,6 +21,8 @@
 //! evicted index histogram; the leaf carries only the normalized range and
 //! index metadata needed for that decision.
 
+use tidb_planner_property::stats_info::IndexRangePolicy;
+
 /// The normalized kind of a range endpoint needed by the source fast path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RangeBoundKind {
@@ -86,16 +88,6 @@ impl IndexRangeShape {
     }
 }
 
-/// The index metadata used by `canSkipIndexEstimation`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct IndexRangePolicy {
-    /// A non-empty partial-index predicate means the index does not cover all
-    /// table rows, even when the key range itself is full.
-    pub has_condition: bool,
-    /// Multi-valued indexes can contain multiple entries per row and therefore
-    /// cannot use the realtime-row-count fast path.
-    pub is_multi_value: bool,
-}
 
 /// Returns whether a single range covers every value, including NULLs.
 ///

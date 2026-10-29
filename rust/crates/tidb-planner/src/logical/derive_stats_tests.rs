@@ -30,7 +30,7 @@ use tidb_expr::schema::Schema;
 use tidb_planner_core_cost::SELECTION_FACTOR;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 use super::apply::LogicalApply;
 use super::aggregation::LogicalAggregation;
@@ -85,7 +85,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
         .map(|(metadata, column)| {
             (
                 column.unique_id,
-                crate::cardinality::pseudo::PseudoColumn {
+                tidb_planner_property::stats_info::PseudoColumn {
                     lower_name: metadata.name.to_lowercase(),
                     unique_key_flag: false,
                 },
@@ -108,7 +108,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
     let index_infos = op
         .indexes
         .iter()
-        .map(|index| crate::stats_info::HistCollIndexInfo {
+        .map(|index| tidb_planner_property::stats_info::HistCollIndexInfo {
             id: index.id,
             unique: index.unique,
             mv_index: index.is_multi_valued,
@@ -118,7 +118,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
         .collect::<Vec<_>>();
     op.table_stats = Some(
         StatsInfo::new(rows, profile.col_ndvs().iter().map(|(id, ndv)| (*id, *ndv))).with_hist_coll(
-            crate::stats_info::HistColl::new(true, rows as i64, [])
+            tidb_planner_property::stats_info::HistColl::new(true, rows as i64, [])
                 .with_index_columns(index_columns)
                 .with_column_and_index_infos(columns, index_infos),
         ),

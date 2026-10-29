@@ -54,7 +54,7 @@ use crate::access_path::DataSourceAccessPath;
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `model.ExtraHandleID`: the id of the implicit `_tidb_rowid` column.
 pub const EXTRA_HANDLE_ID: i64 = -1;
@@ -1297,7 +1297,8 @@ fn index_covers_column(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stats_info::HistColl;
+    use crate::cardinality::derive_stats::StatsInfoScale;
+    use tidb_planner_property::stats_info::HistColl;
     use std::sync::Arc;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};

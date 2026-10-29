@@ -44,11 +44,12 @@ use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_infoschema::table_source::TableSource;
 use super::{CatalogStatisticsLoad, PlannerCatalogContext};
-use tidb_planner::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 use super::FromTable;
 use tidb_infoschema::Catalog;
 use super::from::FromScope;
+use tidb_planner::cardinality::derive_stats::StatsInfoScale;
 
 enum ListColumnsLocated {
     Full,

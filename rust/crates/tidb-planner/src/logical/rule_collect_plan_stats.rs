@@ -175,7 +175,7 @@ impl InterestingColumnPruner {
                     .collect::<Vec<_>>();
                 asked.sort_unstable();
                 if asked == sorted {
-                    group_ndvs.push(crate::cardinality::ndv::GroupNdv {
+                    group_ndvs.push(tidb_planner_property::stats_info::GroupNdv {
                         columns: sorted.clone(),
                         ndv,
                     });
@@ -194,7 +194,7 @@ impl InterestingColumnPruner {
             let mut stats = stats;
             let scaled = group_ndvs
                 .iter()
-                .map(|group| crate::cardinality::ndv::GroupNdv {
+                .map(|group| tidb_planner_property::stats_info::GroupNdv {
                     columns: group.columns.clone(),
                     ndv: scale_ndv(
                         group.ndv,
@@ -715,7 +715,7 @@ mod tests {
     use crate::plan_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
-    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
 
     fn column(id: i64) -> Column {
         let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));

@@ -41,9 +41,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
-use crate::cardinality::ndv::GroupNdv;
+use tidb_planner_property::stats_info::GroupNdv;
 use crate::expression_rewriter::ColumnIdAllocator;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// Go `AggInfo` (`base_physical_agg.go:592`): the descriptor triple either
 /// half of a split carries.

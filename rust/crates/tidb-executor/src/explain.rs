@@ -1946,7 +1946,7 @@ fn physical_explain_operator(
                             .children()
                             .get(1 - inner)
                             .and_then(|outer| outer.stats_info())
-                            .map_or(1.0, tidb_planner::stats_info::StatsInfo::row_count);
+                            .map_or(1.0, tidb_planner_property::stats_info::StatsInfo::row_count);
                         probe_count * outer_rows
                     }
                     _ => probe_count,
@@ -2028,7 +2028,7 @@ fn physical_explain_operator(
     operator.build_side_swapped = build_side_swapped;
     if let Some(rows) = plan
         .stats_info()
-        .map(tidb_planner::stats_info::StatsInfo::row_count)
+        .map(tidb_planner_property::stats_info::StatsInfo::row_count)
     {
         operator = operator.with_estimated_rows(rows * probe_count);
     }
@@ -2148,7 +2148,7 @@ fn cte_definitions(
                 .with_children(children);
             definition.estimated_rows = plan
                 .stats_info()
-                .map(tidb_planner::stats_info::StatsInfo::row_count);
+                .map(tidb_planner_property::stats_info::StatsInfo::row_count);
             out.push(definition);
         }
         cte_definitions(

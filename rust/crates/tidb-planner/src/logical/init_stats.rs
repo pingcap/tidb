@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 
 use super::DataSource;
 use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
-use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
-use crate::stats_info::{HistColl, StatsInfo};
+use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
+use tidb_planner_property::stats_info::{HistColl, StatsInfo};
 
 
 
@@ -317,7 +317,7 @@ impl DataSource {
                 statistics.indexes().get(&index.id)?;
                 source.schema_column_for_index_column(index.columns.first()?)?;
                 let mut row_counts =
-                    crate::cardinality::row_count_estimator::IndexRowCounts::unscaled(
+                    tidb_planner_property::stats_info::IndexRowCounts::unscaled(
                         statistics.row_count(),
                         statistics.modify_count(),
                     );
@@ -457,7 +457,7 @@ impl DataSource {
             .map(|(metadata, column)| {
                 (
                     column.unique_id,
-                    crate::cardinality::pseudo::PseudoColumn {
+                    tidb_planner_property::stats_info::PseudoColumn {
                         lower_name: tidb_hack::go_to_lower(&metadata.name),
                         unique_key_flag: column.ret_type.as_ref().is_some_and(|field_type| {
                             field_type.flags() & tidb_datatype::FieldTypeFlags::UNIQUE_KEY != 0
@@ -470,7 +470,7 @@ impl DataSource {
             .indexes
             .iter()
             .filter(|index| index_in_collection(index))
-            .map(|index| crate::stats_info::HistCollIndexInfo {
+            .map(|index| tidb_planner_property::stats_info::HistCollIndexInfo {
                 id: index.id,
                 unique: index.unique,
                 mv_index: index.is_multi_valued,
@@ -505,7 +505,7 @@ impl DataSource {
                     .with_index_range_policies(source.indexes.iter().map(|index| {
                         (
                             index.id,
-                            crate::cardinality::index_range_policy::IndexRangePolicy {
+                            tidb_planner_property::stats_info::IndexRangePolicy {
                                 has_condition: !index.condition_expr_string.is_empty(),
                                 is_multi_value: index.is_multi_valued,
                             },

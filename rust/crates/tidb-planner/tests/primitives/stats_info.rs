@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_planner::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 #[test]
 fn derive_limit_stats_caps_rows_and_ndvs() {

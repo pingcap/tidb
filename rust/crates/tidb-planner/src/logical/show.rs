@@ -46,7 +46,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::logical::BaseLogicalPlan;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 use tidb_hack::go_to_lower;
 
 /// Go `logicalop.ShowStatsMetaPredicateExtractor` (`logical_show.go:43`): the

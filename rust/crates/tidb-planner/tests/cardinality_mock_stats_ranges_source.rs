@@ -20,7 +20,8 @@
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
-use tidb_planner::cardinality::row_count_estimator::{ColumnRange, EstimatorOptions, IndexColumnStats, IndexRowCounts, get_column_row_count, get_index_row_count_for_stats_v2};
+use tidb_planner::cardinality::row_count_estimator::{ColumnRange, EstimatorOptions, IndexColumnStats, get_column_row_count, get_index_row_count_for_stats_v2};
+use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_ranger::Range;
 use tidb_stats::table_statistics::ColumnStats;
 use tidb_stats::table_statistics::IndexStats;

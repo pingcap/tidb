@@ -20,12 +20,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::cardinality::ndv::GroupNdv;
-use crate::cardinality::pseudo::PseudoColumn;
-use crate::cardinality::row_count_estimator::IndexRowCounts;
+use tidb_datatype::FieldTypeCode;
+
 use tidb_stats::table_statistics::ColumnStats;
 use tidb_stats::table_statistics::IndexStats;
-use crate::cardinality::row_size::RowSizeColumnStats;
 
 /// Go `statistics.HistColl` state consumed by planner cardinality and costing.
 ///
@@ -57,7 +55,7 @@ pub struct HistColl {
     index_columns: BTreeMap<i64, Vec<i64>>,
     /// Table and index entry counts used by the Go index range estimator.
     index_row_counts: BTreeMap<i64, IndexRowCounts>,
-    index_range_policies: BTreeMap<i64, crate::cardinality::index_range_policy::IndexRangePolicy>,
+    index_range_policies: BTreeMap<i64, IndexRangePolicy>,
     /// Go `HistColl.ModifyCount`, which the row-count estimator's skew
     /// branches read.
     modify_count: i64,
@@ -363,7 +361,7 @@ impl HistColl {
         policies: impl IntoIterator<
             Item = (
                 i64,
-                crate::cardinality::index_range_policy::IndexRangePolicy,
+                IndexRangePolicy,
             ),
         >,
     ) -> Self {
@@ -371,50 +369,6 @@ impl HistColl {
         self
     }
 
-    /// Borrowed collection view using Go's current Idx2ColUniqueIDs mapping.
-    /// Path preparation may extend the declared prefix with handle columns.
-    pub fn index_estimation_stats(
-        &self,
-        index_id: i64,
-    ) -> crate::cardinality::row_count_estimator::IndexEstimationStats<'_> {
-        use crate::cardinality::row_count_estimator::IndexEstimationStats;
-        let columns = self.index_columns(index_id);
-        let valid = columns
-            .iter()
-            .map(|id| self.histogram_for_estimation(*id).map(Arc::as_ref))
-            .collect();
-        let mut stats = IndexEstimationStats::new(
-            self.index_histogram(index_id).map(Arc::as_ref),
-            valid,
-            self.index_row_counts(index_id).unwrap_or_else(|| {
-                IndexRowCounts::unscaled(self.realtime_count, self.modify_count)
-            }),
-        );
-        if stats
-            .index
-            .is_some_and(|index| index.stats_ver == 1 && index.cms.is_some())
-        {
-            stats.column_ndvs = columns
-                .iter()
-                .map(|id| self.histogram(*id).map(|column| column.histogram.ndv))
-                .collect();
-            stats.column_is_handle = columns
-                .iter()
-                .map(|id| {
-                    self.pk_is_handle && self.column(*id).is_some_and(|column| column.is_handle)
-                })
-                .collect();
-        }
-        stats.policy = self
-            .index_range_policies
-            .get(&index_id)
-            .copied()
-            .unwrap_or_default();
-        if let Some(info) = self.index_info(index_id) {
-            stats.unique_columns = info.unique.then_some(info.column_lower_names.len());
-        }
-        stats
-    }
 
     /// Attaches the realtime and modified row counts for each loaded index.
     #[must_use]
@@ -526,6 +480,12 @@ impl HistColl {
             .map_or(&[], Vec::as_slice)
     }
 
+    /// The range policy of an index, the default for one never registered.
+    #[must_use]
+    pub fn index_range_policy(&self, index_id: i64) -> IndexRangePolicy {
+        self.index_range_policies.get(&index_id).copied().unwrap_or_default()
+    }
+
     /// Go `HistColl.Idx2ColUniqueIDs` for one loaded index.
     #[must_use]
     pub fn index_columns(&self, index_id: i64) -> &[i64] {
@@ -546,7 +506,7 @@ impl HistColl {
 /// one the DP cardinality rules read too. Its `i64` key is Go's
 /// `expression.Column.UniqueID`, matching
 /// [`tidb_expr::column::Column::unique_id`] and
-/// [`crate::cardinality::ndv::GroupNdv::columns`]. The former second port in
+/// [`GroupNdv::columns`]. The former second port in
 /// `cardinality::derive_stats` (keyed `u64`) is deleted; that module
 /// re-exports this type.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -567,14 +527,14 @@ pub struct StatsInfo {
 impl StatsInfo {
     // `derive_limit_stats`: its awaited Go caller arrived --
     // `attach2Task4PhysicalLimit`'s single-read push-down
-    // (`crate::task::attach2_task`'s Limit arm) derives the pushed partial
+    // (`tidb_planner::task::attach2_task`'s Limit arm) derives the pushed partial
     // limit's profile through it, exactly the `task.go:633` call site the
     // old verdict named. The TopN arms remain future callers. The live
     // tier's own limit costing stays `tidb_executor::access_cost`
     // (`scan_limit_cap`), a DIFFERENT ranger by design.
 
     /// Changes only row count, as Go does when Expand replicates input rows.
-    pub(crate) fn set_row_count(&mut self, row_count: f64) {
+    pub fn set_row_count(&mut self, row_count: f64) {
         self.row_count = row_count;
     }
 
@@ -638,7 +598,7 @@ impl StatsInfo {
     /// Go `StatsInfo.Scale` (`property/stats_info.go:69-86`).
     ///
     /// Every column NDV is re-scaled through
-    /// [`scale_ndv`](crate::cardinality::derive_stats::scale_ndv) against the
+    /// `scale_ndv` (the planner's `cardinality::derive_stats::scale_ndv`) against the
     /// row count BEFORE the factor was applied — not multiplied by the
     /// factor. At the default skew ratio of `1.0` the two happen to coincide,
     /// because the skewed branch is `ndv * selectedRows / originalRows` and
@@ -649,19 +609,24 @@ impl StatsInfo {
     /// down to `expect_cnt` — but only when it is genuinely smaller, and only
     /// when the row count is above 1.0, Go's own overflow guard ("if
     /// s.RowCount is too small, it will cause overflow").
-    pub fn scale_by_expect_cnt(&self, expect_cnt: f64, skew_ratio: f64) -> Self {
+    pub fn scale_by_expect_cnt_with(
+        &self,
+        expect_cnt: f64,
+        skew_ratio: f64,
+        scale_ndv: ScaleNdvFunc,
+    ) -> Self {
         if expect_cnt >= self.row_count {
             return self.clone();
         }
         if self.row_count > 1.0 {
-            return self.scale(expect_cnt / self.row_count, skew_ratio);
+            return self.scale_with(expect_cnt / self.row_count, skew_ratio, scale_ndv);
         }
         self.clone()
     }
 
-    /// Scale row count and every NDV using Go's `ScaleNDVFunc` behavior.
-    pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
-        let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
+    /// Scale row count and every NDV through `scale_ndv` (Go's `ScaleNDVFunc`,
+    /// which `cardinality` registers to avoid the import cycle).
+    pub fn scale_with(&self, factor: f64, skew_ratio: f64, scale_ndv: ScaleNdvFunc) -> Self {
         let scaled_row_count = self.row_count * factor;
         let col_ndvs = self
             .col_ndvs
@@ -805,9 +770,14 @@ fn source_min(left: f64, right: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{HistColl, StatsInfo};
-    use crate::cardinality::ndv::GroupNdv;
-    use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
+    use super::{GroupNdv, RowSizeColumnStats, RowSizeType};
     use tidb_expr::column::Column;
+
+    /// An NDV that scales with the selected rows, the planner's `scale_ndv`
+    /// at skew ratio 1.0.
+    fn proportional(ndv: f64, rows: f64, selected: f64, _skew_ratio: f64) -> f64 {
+        ndv * selected / rows
+    }
 
     #[test]
     fn scale_and_limit_retain_hist_coll_like_go() {
@@ -821,7 +791,7 @@ mod tests {
         );
         let profile = StatsInfo::new(100.0, [(7, 80.0)]).with_hist_coll(hist_coll);
 
-        for derived in [profile.scale(0.5, 1.0), profile.derive_limit_stats(10.0)] {
+        for derived in [profile.scale_with(0.5, 1.0, proportional), profile.derive_limit_stats(10.0)] {
             let retained = derived.hist_coll().expect("Go retains HistColl");
             assert!(retained.pseudo());
             assert_eq!(retained.realtime_count(), 100);
@@ -849,7 +819,7 @@ mod tests {
                 columns: vec![7, 9],
                 ndv: 60.0,
             }]);
-        let scaled = profile.scale(0.5, 1.0);
+        let scaled = profile.scale_with(0.5, 1.0, proportional);
         assert_eq!(scaled.stats_version(), 42);
         assert_eq!(scaled.group_ndvs()[0].ndv, 30.0);
 
@@ -901,4 +871,234 @@ mod tests {
         assert_eq!(hist.ndv_lower_bound(&[]), None);
         assert_eq!(HistColl::new(false, 1000, []).ndv_lower_bound(&[1]), None);
     }
+}
+
+/// Go `property.ScaleNDVFunc`: how an NDV scales with the rows it was
+/// observed over (`original_ndv`, `original_rows`, `selected_rows`, skew ratio).
+pub type ScaleNdvFunc = fn(f64, f64, f64, f64) -> f64;
+
+/// A dependency-closed group NDV row copied from `property.GroupNDV`.
+///
+/// The full Go planner stores this beside histograms and session statistics.
+/// The Rust seed keeps only the source fields needed by the estimator so the
+/// arithmetic can be exercised before those owners are migrated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupNdv {
+    /// Sorted column unique IDs participating in the group.
+    pub columns: Vec<i64>,
+    /// Observed number of distinct values for the group.
+    pub ndv: f64,
+}
+
+/// The column a pseudo predicate resolved to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PseudoColumn {
+    /// Lowercased column name, the key of the source's `colExists` map.
+    pub lower_name: String,
+    /// Whether `mysql.HasUniKeyFlag(col.Info.GetFlag())` holds.
+    pub unique_key_flag: bool,
+}
+
+/// The MySQL storage types whose row-size encoding has a fixed or special
+/// planner width in TiDB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowSizeType {
+    /// 32-bit floating-point values.
+    Float,
+    /// 64-bit floating-point values.
+    Double,
+    /// Duration/time values.
+    Duration,
+    /// Date values.
+    Date,
+    /// Datetime values.
+    Datetime,
+    /// Timestamp values.
+    Timestamp,
+    /// TINYINT values.
+    Tiny,
+    /// SMALLINT values.
+    Short,
+    /// MEDIUMINT values.
+    Int24,
+    /// INT values.
+    Long,
+    /// BIGINT values.
+    LongLong,
+    /// YEAR values.
+    Year,
+    /// ENUM values.
+    Enum,
+    /// BIT values.
+    Bit,
+    /// SET values.
+    Set,
+    /// DECIMAL values.
+    Decimal,
+    /// Variable-length string/blob-like values.
+    Variable,
+}
+
+impl RowSizeType {
+    /// Maps Go `FieldType.GetType()` onto the branches in `GetFixedLen`,
+    /// `AvgColSize`, and `AvgColSizeDataInDiskByRows`.
+    #[must_use]
+    pub const fn from_field_type_code(code: FieldTypeCode) -> Self {
+        match code {
+            FieldTypeCode::Float => Self::Float,
+            FieldTypeCode::Double => Self::Double,
+            FieldTypeCode::Duration => Self::Duration,
+            FieldTypeCode::Date | FieldTypeCode::NewDate => Self::Date,
+            FieldTypeCode::Datetime => Self::Datetime,
+            FieldTypeCode::Timestamp => Self::Timestamp,
+            FieldTypeCode::Tiny => Self::Tiny,
+            FieldTypeCode::Short => Self::Short,
+            FieldTypeCode::Int24 => Self::Int24,
+            FieldTypeCode::Long => Self::Long,
+            FieldTypeCode::LongLong => Self::LongLong,
+            FieldTypeCode::Year => Self::Year,
+            FieldTypeCode::Enum => Self::Enum,
+            FieldTypeCode::Bit => Self::Bit,
+            FieldTypeCode::Set => Self::Set,
+            FieldTypeCode::NewDecimal => Self::Decimal,
+            FieldTypeCode::Unspecified
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::Json
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::String
+            | FieldTypeCode::Geometry
+            | FieldTypeCode::VectorFloat32
+            | FieldTypeCode::Null
+            | FieldTypeCode::VarString
+            | FieldTypeCode::Blob
+            | FieldTypeCode::Unknown(_) => Self::Variable,
+        }
+    }
+
+    /// Returns the chunk-memory width used by `GetFixedLen`.
+    #[must_use]
+    pub const fn fixed_len(self) -> Option<f64> {
+        match self {
+            Self::Float => Some(4.0),
+            Self::Tiny
+            | Self::Short
+            | Self::Int24
+            | Self::Long
+            | Self::LongLong
+            | Self::Double
+            | Self::Year
+            | Self::Duration => Some(8.0),
+            // `unsafe.Sizeof(types.ZeroTime)` in the Go source is 8 bytes.
+            Self::Date | Self::Datetime | Self::Timestamp => Some(8.0),
+            // `types.MyDecimalStructSize` in the Go source is 40 bytes.
+            Self::Decimal => Some(40.0),
+            Self::Enum | Self::Bit | Self::Set | Self::Variable => None,
+        }
+    }
+
+    /// Returns whether `AvgColSize` uses the 8-byte encoded-key/value rule.
+    #[must_use]
+    pub const fn uses_eight_byte_encoding(self, is_key: bool) -> bool {
+        matches!(
+            self,
+            Self::Float
+                | Self::Double
+                | Self::Duration
+                | Self::Date
+                | Self::Datetime
+                | Self::Timestamp
+        ) || (is_key
+            && matches!(
+                self,
+                Self::Tiny
+                    | Self::Short
+                    | Self::Int24
+                    | Self::Long
+                    | Self::LongLong
+                    | Self::Year
+                    | Self::Enum
+                    | Self::Bit
+                    | Self::Set
+            ))
+    }
+}
+
+/// The statistics fields consumed by the row-size formulas.
+///
+/// `total_row_count` mirrors Go's `Column.TotalRowCount()` (`float64`, because
+/// histogram and TopN counts are summed as floating-point values). The
+/// histogram's source integer fields retain their integer widths; arithmetic
+/// conversion happens only where the Go implementation divides them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RowSizeColumnStats {
+    /// Source histogram type.
+    pub kind: RowSizeType,
+    /// Whether this column is the handle column.
+    pub is_handle: bool,
+    /// Source `Histogram.TotColSize`.
+    pub total_column_size: i64,
+    /// Source `Histogram.NullCount`.
+    pub null_count: i64,
+    /// Source `Column.TotalRowCount()`.
+    pub total_row_count: f64,
+}
+
+impl RowSizeColumnStats {
+    /// Builds one source-shaped statistics record.
+    #[must_use]
+    pub const fn new(
+        kind: RowSizeType,
+        total_column_size: i64,
+        null_count: i64,
+        total_row_count: f64,
+        is_handle: bool,
+    ) -> Self {
+        Self {
+            kind,
+            is_handle,
+            total_column_size,
+            null_count,
+            total_row_count,
+        }
+    }
+}
+
+/// Table counts retained for column backoff alongside the possibly scaled
+/// index-entry counts from Go `HistColl.GetScaledRealtimeAndModifyCnt`.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexRowCounts {
+    /// Rows currently in the table.
+    pub table_realtime: i64,
+    /// Modified table rows since analysis.
+    pub table_modify: i64,
+    /// Current index entries (multiple entries per row for MV indexes).
+    pub index_realtime: i64,
+    /// Modified index entries since analysis.
+    pub index_modify: i64,
+}
+
+impl IndexRowCounts {
+    /// Counts for an ordinary index or an index ineligible for scaling.
+    #[must_use]
+    pub const fn unscaled(realtime: i64, modify: i64) -> Self {
+        Self {
+            table_realtime: realtime,
+            table_modify: modify,
+            index_realtime: realtime,
+            index_modify: modify,
+        }
+    }
+}
+
+/// The index metadata used by `canSkipIndexEstimation`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IndexRangePolicy {
+    /// A non-empty partial-index predicate means the index does not cover all
+    /// table rows, even when the key range itself is full.
+    pub has_condition: bool,
+    /// Multi-valued indexes can contain multiple entries per row and therefore
+    /// cannot use the realtime-row-count fast path.
+    pub is_multi_value: bool,
 }

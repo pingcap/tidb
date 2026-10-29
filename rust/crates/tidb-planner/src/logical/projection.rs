@@ -32,7 +32,7 @@ use tidb_expr::simple_expr::{
 use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalProjection` (`logical_projection.go:33`).
 #[derive(Clone, Debug, Default)]
@@ -447,7 +447,7 @@ impl LogicalProjection {
         &self,
         child: &StatsInfo,
         schema: &Schema,
-    ) -> Vec<crate::cardinality::ndv::GroupNdv> {
+    ) -> Vec<tidb_planner_property::stats_info::GroupNdv> {
         let mapping: std::collections::HashMap<_, _> = self
             .exprs
             .iter()
@@ -467,7 +467,7 @@ impl LogicalProjection {
                     .map(|id| mapping.get(id).copied())
                     .collect::<Option<Vec<_>>>()?;
                 columns.sort_unstable();
-                Some(crate::cardinality::ndv::GroupNdv {
+                Some(tidb_planner_property::stats_info::GroupNdv {
                     columns,
                     ndv: group.ndv,
                 })
@@ -530,7 +530,7 @@ impl LogicalProjection {
 #[cfg(test)]
 mod statistics_tests {
     use super::*;
-    use crate::cardinality::ndv::GroupNdv;
+    use tidb_planner_property::stats_info::GroupNdv;
 
     #[test]
     fn projection_preserves_and_refreshes_renamed_group_ndvs() {

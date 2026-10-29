@@ -14,9 +14,10 @@
 
 //! Direct translation of `pkg/planner/cardinality/exponential_test.go`.
 
+use tidb_planner_property::stats_info::GroupNdv;
 use tidb_planner::cardinality::{
     apply_exponential_backoff,
-    ndv::{estimate_cols_ndv_with_matched_len, scale_ndv, GroupNdv},
+    ndv::{estimate_cols_ndv_with_matched_len, scale_ndv},
     pseudo::{
         pseudo_avg_count_per_value, pseudo_between_count, pseudo_equal_count, pseudo_less_count,
         pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges,

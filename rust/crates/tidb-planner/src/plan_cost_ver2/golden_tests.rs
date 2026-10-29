@@ -34,7 +34,8 @@
 //! `len(PhysicalIndexJoin.LeftJoinKeys)`.
 
 use super::*;
-use crate::cardinality::row_size::{RowSizeColumn, RowSizeColumnStats, RowSizeType};
+use crate::cardinality::row_size::RowSizeColumn;
+use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 use tidb_planner_costusage::COST_FLAG_TRACE;
 
 /// A child cost taken verbatim from a recording, expressed through the source

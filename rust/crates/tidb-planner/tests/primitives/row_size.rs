@@ -14,11 +14,8 @@
 
 //! Direct translation of `pkg/planner/cardinality/row_size_test.go`.
 
-use tidb_planner::cardinality::row_size::{
-    avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows, get_avg_row_size,
-    get_avg_row_size_data_in_disk_by_rows, get_index_avg_row_size, get_table_avg_row_size,
-    RowSizeColumn, RowSizeColumnStats, RowSizeStore, RowSizeType,
-};
+use tidb_planner::cardinality::row_size::{avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows, get_avg_row_size, get_avg_row_size_data_in_disk_by_rows, get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeStore};
+use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 
 fn stats(kind: RowSizeType, total_column_size: i64, null_count: i64) -> RowSizeColumnStats {
     RowSizeColumnStats::new(kind, total_column_size, null_count, 1.0, false)

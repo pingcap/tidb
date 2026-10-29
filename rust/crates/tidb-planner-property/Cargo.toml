@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/property (Rust)."
 workspace = true
 
 [dependencies]
+tidb-stats = { path = "../tidb-stats" }
 tidb-intset = { path = "../tidb-intset" }
 tidb-size = { path = "../tidb-size" }
 tidb-codec = { path = "../tidb-codec" }

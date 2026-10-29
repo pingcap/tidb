@@ -423,7 +423,7 @@ fn build_fast_point_physical_plan(
         if batch.key_values.is_empty() {
             let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
-                .set_stats(Some(crate::stats_info::StatsInfo::new(0.0, [])));
+                .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
             return Ok(Some(crate::physical::PhysicalPlan::TableDual(
                 crate::physical::PhysicalTableDual::new(base, 0),
@@ -432,7 +432,7 @@ fn build_fast_point_physical_plan(
         let mut base =
             crate::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
         base.base
-            .set_stats(Some(crate::stats_info::StatsInfo::new(
+            .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(
                 batch.plan_rows as f64,
                 [],
             )));
@@ -489,7 +489,7 @@ fn build_fast_point_physical_plan(
             // equal no stored row, so the answer is empty and no read runs.
             let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
-                .set_stats(Some(crate::stats_info::StatsInfo::new(0.0, [])));
+                .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
             return Ok(Some(crate::physical::PhysicalPlan::TableDual(
                 crate::physical::PhysicalTableDual::new(base, 0),
@@ -536,7 +536,7 @@ fn build_fast_point_physical_plan(
     }
     let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
     base.base
-        .set_stats(Some(crate::stats_info::StatsInfo::new(1.0, [])));
+        .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
     // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
     let constants = crate::physical_plan_cache::PointConstantsRebuild {

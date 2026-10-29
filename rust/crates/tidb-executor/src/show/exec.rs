@@ -1157,8 +1157,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 continue;
                             }
                             let row_size =
-                                tidb_planner::cardinality::row_size::RowSizeColumnStats::new(
-                                    tidb_planner::cardinality::row_size::RowSizeType::from_field_type_code(
+                                tidb_planner_property::stats_info::RowSizeColumnStats::new(
+                                    tidb_planner_property::stats_info::RowSizeType::from_field_type_code(
                                         column.field_type.code(),
                                     ),
                                     column_stats.histogram.tot_col_size,

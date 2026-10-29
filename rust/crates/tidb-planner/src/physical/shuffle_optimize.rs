@@ -167,7 +167,7 @@ mod tests {
         PhysicalMergeJoin, PhysicalSort, PhysicalStreamAgg, PhysicalTableDual, PhysicalWindow,
     };
     use tidb_planner_property::ColumnSortItem;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use crate::task::RootTask;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;

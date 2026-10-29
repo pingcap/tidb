@@ -22,6 +22,7 @@ use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::task::Task;
 use tidb_expr::expression::Expression;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 #[cfg(test)]
 /// Go `generateIndexMergePath`'s union candidate for a DataSource whose
@@ -381,11 +382,11 @@ pub(super) fn merge_scan_stats(
     ds: &DataSource,
     rows: f64,
     ctx: &DispatchContext<'_>,
-) -> crate::stats_info::StatsInfo {
+) -> tidb_planner_property::stats_info::StatsInfo {
     ds.table_stats
         .as_ref()
         .map(|stats| stats.scale_by_expect_cnt(rows, ctx.skew_ratio))
-        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(rows, []))
+        .unwrap_or_else(|| tidb_planner_property::stats_info::StatsInfo::new(rows, []))
 }
 
 pub(super) fn build_converged_union_index_merge_task(
@@ -1322,13 +1323,13 @@ mod tests {
         };
         let mut logical_source = choices.clone();
         logical_source.table_stats = Some(
-            crate::stats_info::StatsInfo::new(1000.0, [])
-                .with_hist_coll(crate::stats_info::HistColl::new(true, 1000, [])),
+            tidb_planner_property::stats_info::StatsInfo::new(1000.0, [])
+                .with_hist_coll(tidb_planner_property::stats_info::HistColl::new(true, 1000, [])),
         );
         logical_source
             .base
             .base
-            .set_stats(Some(crate::stats_info::StatsInfo::new(2.0, [])));
+            .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(2.0, [])));
         logical_source.index_merge_hints = vec![Default::default()];
         let mut logical = crate::logical::LogicalPlan::DataSource(logical_source);
         let rule_context = crate::logical::rule_tests::test_context(&allocator);
@@ -1441,11 +1442,11 @@ mod tests {
             "physical convergence must not destroy another property's alternatives"
         );
         let mut ordinary_source = choices.clone();
-        ordinary_source.table_stats = Some(crate::stats_info::StatsInfo::new(1000.0, []));
+        ordinary_source.table_stats = Some(tidb_planner_property::stats_info::StatsInfo::new(1000.0, []));
         ordinary_source
             .base
             .base
-            .set_stats(Some(crate::stats_info::StatsInfo::new(2.0, [])));
+            .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(2.0, [])));
         ordinary_source.pushed_down_conds = vec![eq(1)];
         ordinary_source.all_conds = ordinary_source.pushed_down_conds.clone();
         ordinary_source.index_merge_hints.clear();
@@ -1511,7 +1512,7 @@ mod tests {
             "a skyline-dominated index must not allocate a physical task"
         );
         let mut table_source = choices.clone();
-        table_source.table_stats = Some(crate::stats_info::StatsInfo::new(1000.0, []));
+        table_source.table_stats = Some(tidb_planner_property::stats_info::StatsInfo::new(1000.0, []));
         table_source.pushed_down_conds = vec![eq(1)];
         table_source.all_conds = table_source.pushed_down_conds.clone();
         table_source.index_merge_hints.clear();

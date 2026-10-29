@@ -693,7 +693,7 @@ pub trait CteOptimizer {
     fn optimize_cte(
         &self,
         class: &std::rc::Rc<std::cell::RefCell<super::cte::CteClass>>,
-        seed_stat: Option<&std::rc::Rc<std::cell::RefCell<crate::stats_info::StatsInfo>>>,
+        seed_stat: Option<&std::rc::Rc<std::cell::RefCell<tidb_planner_property::stats_info::StatsInfo>>>,
         context: &RuleContext<'_>,
     ) -> Result<(), PlanError>;
 }

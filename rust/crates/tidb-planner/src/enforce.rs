@@ -239,7 +239,7 @@ mod tests {
     use super::*;
     use crate::physical::{BasePhysicalPlan, ExchangeType, PhysicalPlan, PhysicalTableDual};
     use tidb_planner_property::{MppPartitionColumn, MppPartitionType};
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
 
     fn mpp_task(allocator: &PlanIdAllocator) -> MppTask {
         let mut base = BasePhysicalPlan::new(allocator, "Dual", 0);
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn mpp_enforcer_builds_the_source_exchange_pair() {
         let allocator = PlanIdAllocator::new();
-        let source_stats = std::sync::Arc::new(crate::stats_info::StatsInfo::new(1000.0, []));
+        let source_stats = std::sync::Arc::new(tidb_planner_property::stats_info::StatsInfo::new(1000.0, []));
         let task = mpp_task(&allocator).with_stats_context(crate::task::TaskStatsContext {
             root_filter_stats: Some(source_stats.clone()),
             scale_ndv_skew_ratio: 0.25,

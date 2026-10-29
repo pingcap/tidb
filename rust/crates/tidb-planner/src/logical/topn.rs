@@ -39,7 +39,7 @@ use crate::logical::sort::{get_possible_property_from_by_items, prune_by_items};
 use crate::logical::{schema_producer, BaseLogicalPlan, LogicalPlan};
 use tidb_planner_property::SortItem;
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalTopN` (`logical_top_n.go:30`).
 #[derive(Clone, Debug, Default)]

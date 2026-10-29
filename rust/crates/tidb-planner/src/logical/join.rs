@@ -58,7 +58,7 @@ use crate::logical::schema_producer;
 use crate::logical::selection::SELECTION_FACTOR;
 use crate::logical::BaseLogicalPlan;
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalJoin` (`logical_join.go:45`).
 #[derive(Clone, Debug)]

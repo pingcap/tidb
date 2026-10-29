@@ -45,6 +45,7 @@ use crate::physical_table_reader::{ReadReqType, StoreType};
 use crate::plan_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 mod virtual_columns;
 
@@ -53,7 +54,7 @@ mod virtual_columns;
 #[derive(Clone, Debug)]
 pub struct TaskStatsContext {
     /// Go CopTask.TblColHists: the source population, before access/filter scaling.
-    pub root_filter_stats: Option<Arc<crate::stats_info::StatsInfo>>,
+    pub root_filter_stats: Option<Arc<tidb_planner_property::stats_info::StatsInfo>>,
     pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
     pub scale_ndv_skew_ratio: f64,
 }
@@ -509,7 +510,7 @@ impl CopTask {
         plan.and_then(|plan| plan.base().base.stats_info())
             .map_or_else(
                 || panic!("CopTask.Count on a task with no stats: Go nil-derefs here"),
-                crate::stats_info::StatsInfo::row_count,
+                tidb_planner_property::stats_info::StatsInfo::row_count,
             )
     }
 
@@ -543,7 +544,7 @@ impl CopTask {
             }
             fn set_bottom_stats(
                 plan: &mut PhysicalPlan,
-                stats: Option<crate::stats_info::StatsInfo>,
+                stats: Option<tidb_planner_property::stats_info::StatsInfo>,
             ) {
                 let Some(child) = plan.base_mut().children_mut().first_mut() else {
                     plan.base_mut().base.set_stats(stats);
@@ -558,7 +559,7 @@ impl CopTask {
                 .base()
                 .base
                 .stats_info()
-                .map(crate::stats_info::StatsInfo::stats_version);
+                .map(tidb_planner_property::stats_info::StatsInfo::stats_version);
             let index_stats = match (index_stats, origin_version) {
                 (Some(stats), Some(version)) => Some(stats.with_stats_version(version)),
                 (stats, _) => stats,
@@ -1154,7 +1155,7 @@ impl Task {
             // Go: `t.p.StatsInfo().RowCount`, nil-deref on an invalid task.
             Task::Root(task) => task.get_plan().base().base.stats_info().map_or_else(
                 || panic!("RootTask.Count with no stats: Go nil-derefs here"),
-                crate::stats_info::StatsInfo::row_count,
+                tidb_planner_property::stats_info::StatsInfo::row_count,
             ),
             Task::Cop(task) => task.count(),
             Task::Mpp(task) => task
@@ -1163,7 +1164,7 @@ impl Task {
                 .and_then(|plan| plan.base().base.stats_info())
                 .map_or_else(
                     || panic!("MppTask.Count with no stats: Go nil-derefs here"),
-                    crate::stats_info::StatsInfo::row_count,
+                    tidb_planner_property::stats_info::StatsInfo::row_count,
                 ),
         }
     }
@@ -1280,7 +1281,7 @@ mod tests {
     use super::*;
     use crate::physical::PhysicalPlan;
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     // All WRITTEN: Go's coverage of the task layer is exercised through
     // planner integration suites; `task_base.go` has no unit tests of its
     // own beside them.
@@ -1343,7 +1344,7 @@ mod tests {
                 tidb_expr::column::Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
             ])));
         plan.set_stats(Some(StatsInfo::new(100.0, [(1, 10.0)]).with_hist_coll(
-            crate::stats_info::HistColl::new(false, 100, []).with_histograms([(1, histogram)]),
+            tidb_planner_property::stats_info::HistColl::new(false, 100, []).with_histograms([(1, histogram)]),
         )));
         let mpp = Task::Mpp(MppTask {
             plan: Some(Box::new(plan.clone())),
@@ -1901,7 +1902,7 @@ mod tests {
         });
         let mut base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
         base.base
-            .set_stats(Some(crate::stats_info::StatsInfo::new(5.0, [])));
+            .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(5.0, [])));
         let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
             base,
             partition_by: Vec::new(),
@@ -2111,7 +2112,7 @@ mod tests {
     #[test]
     fn root_task_filter_preserves_go_one_row_floor() {
         use tidb_stats::table_statistics::ColumnStats;
-        use crate::stats_info::HistColl;
+        use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::Constant;
@@ -2238,7 +2239,7 @@ mod tests {
     fn root_task_filter_uses_the_task_session_estimator_options() {
         use crate::cardinality::row_count_estimator::EstimatorOptions;
         use tidb_stats::table_statistics::ColumnStats;
-        use crate::stats_info::HistColl;
+        use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::Constant;
@@ -3395,7 +3396,7 @@ fn push_limit_down_to_tidb_cop(
         let mut selection_rows = None;
         while let Some(child) = node.children().first() {
             selection_rows = matches!(node, PhysicalPlan::Selection(_))
-                .then(|| node.stats_info().map(crate::stats_info::StatsInfo::row_count))
+                .then(|| node.stats_info().map(tidb_planner_property::stats_info::StatsInfo::row_count))
                 .flatten();
             node = child;
         }
@@ -3418,7 +3419,7 @@ fn push_limit_down_to_tidb_cop(
         if item.col.unique_id != handle {
             return Ok(Err(cop));
         }
-        let scan_rows = node.stats_info().map_or(0.0, crate::stats_info::StatsInfo::row_count);
+        let scan_rows = node.stats_info().map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
         if let Some(rows) = selection_rows {
             if scan_rows > 0.0 {
                 selectivity_source = Some(rows / scan_rows);
@@ -3464,7 +3465,7 @@ fn push_limit_down_to_tidb_cop(
     if let Some(selectivity) = selectivity_source.filter(|s| *s > 0.0 && *s < 1.0) {
         let scaled_row_count = table_plan
             .stats_info()
-            .map_or(0.0, crate::stats_info::StatsInfo::row_count)
+            .map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count)
             / selectivity;
         fn rescale_scan(plan: &mut PhysicalPlan, expect: f64, skew_ratio: f64) {
             match plan {
@@ -4699,7 +4700,7 @@ mod attach_tests {
     use super::*;
     use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expr::schema::Schema;
 
     // All WRITTEN: Go's Attach2Task coverage is planner-integration bound.
@@ -5257,8 +5258,8 @@ mod attach_tests {
         });
         let source_stats = StatsInfo::new(12.0, [(1, 3.0), (2, 5.0), (3, 7.0)])
             .with_stats_version(2)
-            .with_hist_coll(crate::stats_info::HistColl::new(false, 12, []))
-            .with_group_ndvs(vec![crate::cardinality::ndv::GroupNdv {
+            .with_hist_coll(tidb_planner_property::stats_info::HistColl::new(false, 12, []))
+            .with_group_ndvs(vec![tidb_planner_property::stats_info::GroupNdv {
                 columns: vec![1, 2],
                 ndv: 8.0,
             }]);

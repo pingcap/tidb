@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed physical-property classifications from
-//! `pkg/planner/property/physical_property.go`.
+//! Go `pkg/planner/property`: the physical property a plan is required to
+//! provide (`physical_property.go`, at this root), the statistics a plan
+//! carries (`stats_info`) and the task types (`task_type`).
 //!
 //! Full expression columns are retained for structural hashing and equality;
 //! order and partition matching use their Go `UniqueID` where the source does.
+
+pub mod stats_info;
+pub mod task_type;
 
 /// MPP exchange partitioning requirement.
 ///
 /// `Any` is the default: Go's `AnyType` is the iota zero value
 /// (`property/physical_property.go:110`), which is what a zero
 /// `MppTask.partTp` reads as.
-pub mod task_type;
-
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum MppPartitionType {
     /// No special partitioning requirement.

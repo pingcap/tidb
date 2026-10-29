@@ -19,6 +19,7 @@ use crate::logical::LogicalExpand;
 use tidb_planner_property::{MppPartitionType, PhysicalProperty, TaskType};
 use crate::plan_base::PlanIdAllocator;
 use tidb_expr::expression::Expression;
+use crate::cardinality::derive_stats::StatsInfoScale;
 
 /// Expand's output is one projection per grouping level per input batch.
 #[derive(Clone, Debug)]

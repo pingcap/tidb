@@ -28,7 +28,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::logical::BaseLogicalPlan;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalMaxOneRow` (`logical_max_one_row.go:26`).
 ///

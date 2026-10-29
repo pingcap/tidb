@@ -62,7 +62,7 @@ use crate::find_best_task::LogicalJoinType;
 use crate::logical::join::LogicalJoin;
 use crate::logical::selection::SELECTION_FACTOR;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalApply` (`logical_apply.go:37`).
 #[derive(Clone, Debug, Default)]

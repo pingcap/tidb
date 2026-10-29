@@ -23,173 +23,11 @@
 //! integers at this boundary; conversion happens only where Go converts them
 //! to `float64` for arithmetic.
 
-use tidb_datatype::FieldTypeCode;
+use tidb_planner_property::stats_info::RowSizeColumnStats;
 
-/// The MySQL storage types whose row-size encoding has a fixed or special
-/// planner width in TiDB.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RowSizeType {
-    /// 32-bit floating-point values.
-    Float,
-    /// 64-bit floating-point values.
-    Double,
-    /// Duration/time values.
-    Duration,
-    /// Date values.
-    Date,
-    /// Datetime values.
-    Datetime,
-    /// Timestamp values.
-    Timestamp,
-    /// TINYINT values.
-    Tiny,
-    /// SMALLINT values.
-    Short,
-    /// MEDIUMINT values.
-    Int24,
-    /// INT values.
-    Long,
-    /// BIGINT values.
-    LongLong,
-    /// YEAR values.
-    Year,
-    /// ENUM values.
-    Enum,
-    /// BIT values.
-    Bit,
-    /// SET values.
-    Set,
-    /// DECIMAL values.
-    Decimal,
-    /// Variable-length string/blob-like values.
-    Variable,
-}
 
-impl RowSizeType {
-    /// Maps Go `FieldType.GetType()` onto the branches in `GetFixedLen`,
-    /// `AvgColSize`, and `AvgColSizeDataInDiskByRows`.
-    #[must_use]
-    pub const fn from_field_type_code(code: FieldTypeCode) -> Self {
-        match code {
-            FieldTypeCode::Float => Self::Float,
-            FieldTypeCode::Double => Self::Double,
-            FieldTypeCode::Duration => Self::Duration,
-            FieldTypeCode::Date | FieldTypeCode::NewDate => Self::Date,
-            FieldTypeCode::Datetime => Self::Datetime,
-            FieldTypeCode::Timestamp => Self::Timestamp,
-            FieldTypeCode::Tiny => Self::Tiny,
-            FieldTypeCode::Short => Self::Short,
-            FieldTypeCode::Int24 => Self::Int24,
-            FieldTypeCode::Long => Self::Long,
-            FieldTypeCode::LongLong => Self::LongLong,
-            FieldTypeCode::Year => Self::Year,
-            FieldTypeCode::Enum => Self::Enum,
-            FieldTypeCode::Bit => Self::Bit,
-            FieldTypeCode::Set => Self::Set,
-            FieldTypeCode::NewDecimal => Self::Decimal,
-            FieldTypeCode::Unspecified
-            | FieldTypeCode::Varchar
-            | FieldTypeCode::Json
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob
-            | FieldTypeCode::String
-            | FieldTypeCode::Geometry
-            | FieldTypeCode::VectorFloat32
-            | FieldTypeCode::Null
-            | FieldTypeCode::VarString
-            | FieldTypeCode::Blob
-            | FieldTypeCode::Unknown(_) => Self::Variable,
-        }
-    }
 
-    /// Returns the chunk-memory width used by `GetFixedLen`.
-    #[must_use]
-    pub const fn fixed_len(self) -> Option<f64> {
-        match self {
-            Self::Float => Some(4.0),
-            Self::Tiny
-            | Self::Short
-            | Self::Int24
-            | Self::Long
-            | Self::LongLong
-            | Self::Double
-            | Self::Year
-            | Self::Duration => Some(8.0),
-            // `unsafe.Sizeof(types.ZeroTime)` in the Go source is 8 bytes.
-            Self::Date | Self::Datetime | Self::Timestamp => Some(8.0),
-            // `types.MyDecimalStructSize` in the Go source is 40 bytes.
-            Self::Decimal => Some(40.0),
-            Self::Enum | Self::Bit | Self::Set | Self::Variable => None,
-        }
-    }
 
-    /// Returns whether `AvgColSize` uses the 8-byte encoded-key/value rule.
-    #[must_use]
-    pub const fn uses_eight_byte_encoding(self, is_key: bool) -> bool {
-        matches!(
-            self,
-            Self::Float
-                | Self::Double
-                | Self::Duration
-                | Self::Date
-                | Self::Datetime
-                | Self::Timestamp
-        ) || (is_key
-            && matches!(
-                self,
-                Self::Tiny
-                    | Self::Short
-                    | Self::Int24
-                    | Self::Long
-                    | Self::LongLong
-                    | Self::Year
-                    | Self::Enum
-                    | Self::Bit
-                    | Self::Set
-            ))
-    }
-}
-
-/// The statistics fields consumed by the row-size formulas.
-///
-/// `total_row_count` mirrors Go's `Column.TotalRowCount()` (`float64`, because
-/// histogram and TopN counts are summed as floating-point values). The
-/// histogram's source integer fields retain their integer widths; arithmetic
-/// conversion happens only where the Go implementation divides them.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RowSizeColumnStats {
-    /// Source histogram type.
-    pub kind: RowSizeType,
-    /// Whether this column is the handle column.
-    pub is_handle: bool,
-    /// Source `Histogram.TotColSize`.
-    pub total_column_size: i64,
-    /// Source `Histogram.NullCount`.
-    pub null_count: i64,
-    /// Source `Column.TotalRowCount()`.
-    pub total_row_count: f64,
-}
-
-impl RowSizeColumnStats {
-    /// Builds one source-shaped statistics record.
-    #[must_use]
-    pub const fn new(
-        kind: RowSizeType,
-        total_column_size: i64,
-        null_count: i64,
-        total_row_count: f64,
-        is_handle: bool,
-    ) -> Self {
-        Self {
-            kind,
-            is_handle,
-            total_column_size,
-            null_count,
-            total_row_count,
-        }
-    }
-}
 
 /// A requested planner column and the type-width fallback used for pseudo
 /// or missing statistics.
@@ -450,8 +288,9 @@ pub fn get_avg_row_size_data_in_disk_by_rows(
 
 #[cfg(test)]
 mod tests {
+    use tidb_planner_property::stats_info::RowSizeType;
     use super::{
-        RowSizeColumnStats, RowSizeType, avg_col_size, avg_col_size_chunk_format,
+        RowSizeColumnStats, avg_col_size, avg_col_size_chunk_format,
         avg_col_size_data_in_disk_by_rows,
     };
 

@@ -1125,7 +1125,7 @@ mod tests {
     use crate::logical::rule_tests::test_context;
     use crate::logical::LogicalPartitionUnionAll;
     use crate::plan_base::PlanIdAllocator;
-    use crate::stats_info::StatsInfo;
+    use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};
     use tidb_expression_aggregation::BaseFuncDesc;

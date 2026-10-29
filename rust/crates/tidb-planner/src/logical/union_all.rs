@@ -52,7 +52,7 @@ use crate::logical::schema_producer;
 use crate::logical::topn::LogicalTopN;
 use crate::logical::BaseLogicalPlan;
 use crate::plan_base::PossiblePropertiesInfo;
-use crate::stats_info::StatsInfo;
+use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalUnionAll` (`logical_union_all.go:30`).
 ///

@@ -338,7 +338,7 @@ pub struct OuterCte {
     pub opt_flag: u64,
     /// Go `cteInfo.seedStat`, aliased by every `LogicalCTE`/`LogicalCTETable`
     /// for this CTE; see [`crate::logical::cte`]'s header.
-    pub seed_stat: std::rc::Rc<std::cell::RefCell<crate::stats_info::StatsInfo>>,
+    pub seed_stat: std::rc::Rc<std::cell::RefCell<tidb_planner_property::stats_info::StatsInfo>>,
     /// Go `cteInfo.cteClass`, created at the FIRST reference and shared.
     pub cte_class: Option<std::rc::Rc<std::cell::RefCell<crate::logical::cte::CteClass>>>,
     /// Go `cteInfo.isInline`.
@@ -375,7 +375,7 @@ impl Default for OuterCte {
             storage_id: 0,
             opt_flag: 0,
             seed_stat: std::rc::Rc::new(std::cell::RefCell::new(
-                crate::stats_info::StatsInfo::new(0.0, []),
+                tidb_planner_property::stats_info::StatsInfo::new(0.0, []),
             )),
             cte_class: None,
             is_inline: false,
