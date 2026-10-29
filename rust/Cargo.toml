@@ -243,6 +243,7 @@ members = [
     "crates/tidb-autoid",
     "crates/tidb-table",
     "crates/tidb-tblctx",
+    "crates/tidb-tablecodec-rowindexcodec",
     "crates/tidb-infoschema-context",
     "crates/tidb-temptable",
     "crates/tidb-unistore-dbreader",

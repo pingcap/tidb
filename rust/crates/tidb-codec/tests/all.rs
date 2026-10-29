@@ -28,7 +28,6 @@ mod json_source;
 mod number_boundaries;
 mod row_decoder_source;
 mod row_encoder_source;
-mod row_index_source;
 mod row_layout_source;
 mod rowcodec_package_source;
 mod rowv2_go_vectors;

@@ -11,6 +11,6 @@ description = "TiDB pkg/util/resourcegrouptag: the resource group tag of a reque
 workspace = true
 
 [dependencies]
+tidb-tablecodec-rowindexcodec = { path = "../tidb-tablecodec-rowindexcodec" }
 prost.workspace = true
-tidb-codec = { path = "../tidb-codec" }
 tidb-proto = { path = "../tidb-proto" }

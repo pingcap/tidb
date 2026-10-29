@@ -19,7 +19,6 @@ tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-filter = { path = "../tidb-filter" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-meta = { path = "../tidb-meta" }
-tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-kv = { path = "../tidb-kv" }

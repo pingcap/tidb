@@ -16,7 +16,6 @@ tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-codec = { path = "../tidb-codec" }
-tidb-expr = { path = "../tidb-expr" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-meta = { path = "../tidb-meta" }

@@ -22,7 +22,6 @@ tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-meta = { path = "../tidb-meta" }
 tikv-client.workspace = true
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-kv = { path = "../tidb-kv" }

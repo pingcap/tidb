@@ -18,7 +18,6 @@ tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-syssession = { path = "../tidb-syssession" }
-tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-hack = { path = "../tidb-hack" }

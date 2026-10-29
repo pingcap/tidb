@@ -16,7 +16,7 @@
 //! `pkg/util/resourcegrouptag`.
 
 use prost::Message;
-use tidb_codec::{get_key_kind, KeyKind};
+use tidb_tablecodec_rowindexcodec::{get_key_kind, KeyKind};
 use tidb_proto::{
     CoprocessorBatchRequest, CoprocessorRequest, KvrpcBatchGetRequest, KvrpcBatchRollbackRequest,
     KvrpcCommitRequest, KvrpcGetRequest, KvrpcPessimisticLockRequest, KvrpcPrewriteRequest,

@@ -1,0 +1,13 @@
+[package]
+name = "tidb-tablecodec-rowindexcodec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/tablecodec/rowindexcodec: a key's row/index kind from its prefix (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]

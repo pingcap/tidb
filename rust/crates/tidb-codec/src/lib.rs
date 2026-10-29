@@ -70,7 +70,7 @@ pub use package::{
 };
 pub(crate) use package::{value_size_of_signed_int, value_size_of_unsigned_int};
 pub use row_index::{
-    decode_table_id, encode_row_key, gen_table_record_prefix, get_key_kind, KeyKind,
+    decode_table_id, encode_row_key, gen_table_record_prefix,
 };
 pub use temporal::{decode_packed_time, encode_packed_time};
 pub use value::{

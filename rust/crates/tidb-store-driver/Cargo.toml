@@ -10,7 +10,6 @@ description = "TiDB's TiKV store: Go pkg/store/driver (Rust rewrite)."
 [dependencies]
 tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
-tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tikv-client.workspace = true
 tidb-distsql = { path = "../tidb-distsql" }

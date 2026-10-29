@@ -19,8 +19,6 @@ serde_json.workspace = true
 tokio.workspace = true
 prost.workspace = true
 tidb-config = { path = "../tidb-config" }
-tidb-errno = { path = "../tidb-errno" }
-tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-terror = { path = "../tidb-terror" }

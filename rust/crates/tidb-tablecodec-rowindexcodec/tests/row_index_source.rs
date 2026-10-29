@@ -14,7 +14,7 @@
 
 //! Source-exact coverage for `pkg/tablecodec/rowindexcodec`.
 
-use tidb_codec::{get_key_kind, KeyKind};
+use tidb_tablecodec_rowindexcodec::{get_key_kind, KeyKind};
 
 #[test]
 fn get_key_kind_executes_the_complete_original_source_table() {

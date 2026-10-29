@@ -4784,7 +4784,6 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-terror",
- "tidb-txnkv",
  "tidb-util",
  "tidb-variable",
 ]
@@ -4885,7 +4884,6 @@ name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
  "smallvec",
- "tidb-codec",
  "tidb-config-kerneltype",
  "tidb-datatype",
  "tidb-dbterror",
@@ -5613,8 +5611,8 @@ name = "tidb-resourcegrouptag"
 version = "0.0.0"
 dependencies = [
  "prost 0.14.4",
- "tidb-codec",
  "tidb-proto",
+ "tidb-tablecodec-rowindexcodec",
 ]
 
 [[package]]
@@ -6271,7 +6269,6 @@ dependencies = [
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
- "tidb-txnkv",
  "tidb-vardef",
 ]
 
@@ -6492,7 +6489,6 @@ dependencies = [
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
- "tidb-txnkv",
  "tidb-worker-stack",
 ]
 
@@ -6512,7 +6508,6 @@ dependencies = [
  "tidb-stats-handle-storage",
  "tidb-store-driver-txn",
  "tidb-syssession",
- "tidb-txnkv",
  "tidb-vardef",
 ]
 
@@ -6628,7 +6623,6 @@ dependencies = [
 name = "tidb-store-driver"
 version = "0.0.0"
 dependencies = [
- "tidb-codec",
  "tidb-config",
  "tidb-copr",
  "tidb-distsql",
@@ -6643,7 +6637,6 @@ dependencies = [
 name = "tidb-store-driver-error"
 version = "0.0.0"
 dependencies = [
- "tidb-codec",
  "tidb-config",
  "tidb-dbterror",
  "tidb-errno",
@@ -6668,11 +6661,9 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-deadlockhistory",
- "tidb-errno",
  "tidb-hack",
  "tidb-kv",
  "tidb-meta",
- "tidb-mysql",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-store-driver-error",
@@ -6732,7 +6723,6 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-ddl-build",
- "tidb-expr",
  "tidb-infoschema",
  "tidb-intest",
  "tidb-kv",
@@ -6803,7 +6793,6 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kv",
- "tidb-meta",
  "tidb-metabuild",
  "tidb-model",
  "tidb-mysql",
@@ -6863,6 +6852,10 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
 ]
+
+[[package]]
+name = "tidb-tablecodec-rowindexcodec"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-tblctx"
@@ -7124,7 +7117,6 @@ dependencies = [
  "reqwest 0.13.4",
  "serde_json",
  "tidb-codec",
- "tidb-config",
  "tidb-datatype",
  "tidb-errno",
  "tidb-go-time-layout",

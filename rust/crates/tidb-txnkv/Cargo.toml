@@ -35,7 +35,6 @@ hyper.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 tidb-codec = { path = "../tidb-codec" }
-tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-log = { path = "../tidb-log" }

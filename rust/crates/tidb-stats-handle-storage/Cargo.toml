@@ -29,7 +29,6 @@ tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-table = { path = "../tidb-table" }
-tidb-txnkv = { path = "../tidb-txnkv" }
 chrono.workspace = true
 
 [lints]
